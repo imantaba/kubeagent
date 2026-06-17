@@ -1,0 +1,29 @@
+# Compiled binary
+/kubeagent
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary and coverage output
+*.test
+*.out
+coverage.*
+
+# Go workspace files
+go.work
+go.work.sum
+
+# Vendored deps (we use modules)
+vendor/
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+
+# Secrets — never commit an API key or kubeconfig
+.env
+*.kubeconfig
+kubeconfig

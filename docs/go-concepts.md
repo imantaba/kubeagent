@@ -321,12 +321,38 @@ func TestCrashLoopDetector(t *testing.T) {
 
 ---
 
+## 10. JSON encoding (`encoding/json`)
+
+Go turns structs into JSON (and back) with the `encoding/json` package. Struct
+field tags like `` `json:"pod"` `` control the JSON key names.
+
+**Simple example:**
+
+```go
+type User struct {
+    Name string `json:"name"`
+    Age  int    `json:"age"`
+}
+
+b, _ := json.Marshal(User{Name: "ann", Age: 30}) // {"name":"ann","age":30}
+```
+
+**kubeagent example:** `Finding` carries JSON tags, so `--output json` emits a
+clean array:
+
+```go
+enc := json.NewEncoder(w)
+enc.SetIndent("", "  ")
+enc.Encode(findings)
+```
+
+---
+
 ## Coming later
 
 These will be added to this file when we reach them:
 
 - **Goroutines & channels** — Go's lightweight concurrency, for fetching pod
   facts in parallel.
-- **JSON encoding** (`encoding/json`) — for `--output json`.
 - **Working with the `client-go` typed API** — clientsets, list options, and the
   big Kubernetes object model.

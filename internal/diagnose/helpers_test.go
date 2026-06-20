@@ -36,3 +36,19 @@ func podOOMKilled(namespace, name, container string, exitCode int32, viaLastTerm
 		Status:     corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{cs}},
 	}
 }
+
+// podUnschedulable returns a Pending pod with a PodScheduled=False/Unschedulable condition.
+func podUnschedulable(namespace, name, message string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodPending,
+			Conditions: []corev1.PodCondition{{
+				Type:    corev1.PodScheduled,
+				Status:  corev1.ConditionFalse,
+				Reason:  "Unschedulable",
+				Message: message,
+			}},
+		},
+	}
+}

@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: bad-image
+  namespace: kubeagent-test
+spec:
+  containers:
+    - name: app
+      image: does-not-exist.example.com/nope:latest
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: crash-loop
+  namespace: kubeagent-test
+spec:
+  containers:
+    - name: app
+      image: busybox
+      command: ["sh", "-c", "echo starting; exit 1"]
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: unschedulable
+  namespace: kubeagent-test
+spec:
+  nodeSelector:
+    kubeagent.example/nonexistent: "true"
+  containers:
+    - name: app
+      image: busybox
+      command: ["sleep", "3600"]

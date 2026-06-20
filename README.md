@@ -16,8 +16,26 @@ operates **read-only**.
 
 ## Status
 
-🚧 Early development. v1 is a deterministic diagnostic CLI (no LLM). A later
-version adds a single Claude API call to summarize findings in plain English.
+✅ **v1 shipped** — `kubeagent scan` performs a read-only, whole-cluster scan and
+reports CrashLoopBackOff, ImagePullBackOff/ErrImagePull, OOMKilled, and
+Pending/Unschedulable pods, in text or JSON.
+
+🔜 **v2** — an optional `--explain` flag that makes a single Claude API call to
+summarize findings in plain English.
+
+## Usage
+
+```bash
+go build -o kubeagent .
+
+# scan the whole cluster (uses $KUBECONFIG or ~/.kube/config)
+./kubeagent scan
+
+# point at a specific kubeconfig, emit JSON
+./kubeagent scan --kubeconfig /path/to/config --output json
+```
+
+Run the tests with `go test ./...`.
 
 ## Roadmap
 

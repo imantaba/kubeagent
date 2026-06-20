@@ -31,3 +31,22 @@ spec:
     - name: app
       image: busybox
       command: ["sleep", "3600"]
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: oom-killed
+  namespace: kubeagent-test
+spec:
+  containers:
+    - name: app
+      image: busybox
+      # Fill tmpfs past the memory limit; tmpfs usage counts against the
+      # container's memory cgroup, so the kernel OOM-kills it. It restarts and
+      # OOMs again, surfacing as OOMKilled.
+      command: ["sh", "-c", "dd if=/dev/zero of=/dev/shm/fill bs=1M count=150"]
+      resources:
+        limits:
+          memory: 64Mi
+        requests:
+          memory: 64Mi

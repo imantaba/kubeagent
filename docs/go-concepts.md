@@ -348,11 +348,33 @@ enc.Encode(findings)
 
 ---
 
+## 11. context.Context and the fake clientset
+
+`context.Context` is Go's standard way to carry cancellation/timeout through a
+call chain. Most `client-go` calls take a `ctx` as their first argument.
+
+Depending on the **interface** `kubernetes.Interface` (instead of the concrete
+`*kubernetes.Clientset`) lets tests substitute a fake implementation — no real
+cluster needed.
+
+**kubeagent example:**
+
+```go
+func Cluster(ctx context.Context, client kubernetes.Interface) ([]diagnose.PodFacts, error) {
+    pods, err := client.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+    ...
+}
+
+// test:
+client := fake.NewSimpleClientset(&corev1.Pod{ /* ... */ })
+facts, _ := Cluster(context.Background(), client)
+```
+
+---
+
 ## Coming later
 
 These will be added to this file when we reach them:
 
 - **Goroutines & channels** — Go's lightweight concurrency, for fetching pod
   facts in parallel.
-- **Working with the `client-go` typed API** — clientsets, list options, and the
-  big Kubernetes object model.

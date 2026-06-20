@@ -56,3 +56,11 @@ func TestPrint_UnknownFormatErrors(t *testing.T) {
 		t.Error("expected an error for unknown format")
 	}
 }
+
+func TestPrint_EmptyFormatErrors(t *testing.T) {
+	// Print's contract requires an explicit format; main supplies the default.
+	var buf bytes.Buffer
+	if err := Print(nil, "", &buf); err == nil {
+		t.Error("expected an error for an empty format")
+	}
+}

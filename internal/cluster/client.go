@@ -12,7 +12,10 @@ import (
 // NewClient builds a Kubernetes clientset from a kubeconfig file.
 // If kubeconfigPath is empty, it falls back to $KUBECONFIG, then ~/.kube/config.
 func NewClient(kubeconfigPath string) (*kubernetes.Clientset, error) {
-	path := resolveKubeconfig(kubeconfigPath)
+	path, err := resolveKubeconfig(kubeconfigPath)
+	if err != nil {
+		return nil, err
+	}
 
 	config, err := clientcmd.BuildConfigFromFlags("", path)
 	if err != nil {
@@ -25,13 +28,16 @@ func NewClient(kubeconfigPath string) (*kubernetes.Clientset, error) {
 	return clientset, nil
 }
 
-func resolveKubeconfig(explicit string) string {
+func resolveKubeconfig(explicit string) (string, error) {
 	if explicit != "" {
-		return explicit
+		return explicit, nil
 	}
 	if env := os.Getenv("KUBECONFIG"); env != "" {
-		return env
+		return env, nil
 	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".kube", "config")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("locating home directory for default kubeconfig: %w", err)
+	}
+	return filepath.Join(home, ".kube", "config"), nil
 }

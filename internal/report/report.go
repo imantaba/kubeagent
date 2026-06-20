@@ -15,7 +15,7 @@ func Print(findings []diagnose.Finding, format string, w io.Writer) error {
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
 		return enc.Encode(findings)
-	case "text", "":
+	case "text":
 		return printText(findings, w)
 	default:
 		return fmt.Errorf("unknown output format %q (want text or json)", format)

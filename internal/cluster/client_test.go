@@ -3,14 +3,22 @@ package cluster
 import "testing"
 
 func TestResolveKubeconfig_PrefersExplicitPath(t *testing.T) {
-	if got := resolveKubeconfig("/tmp/my.kubeconfig"); got != "/tmp/my.kubeconfig" {
+	got, err := resolveKubeconfig("/tmp/my.kubeconfig")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "/tmp/my.kubeconfig" {
 		t.Errorf("got %q, want the explicit path", got)
 	}
 }
 
 func TestResolveKubeconfig_FallsBackToEnv(t *testing.T) {
 	t.Setenv("KUBECONFIG", "/tmp/env.kubeconfig")
-	if got := resolveKubeconfig(""); got != "/tmp/env.kubeconfig" {
+	got, err := resolveKubeconfig("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "/tmp/env.kubeconfig" {
 		t.Errorf("got %q, want the KUBECONFIG value", got)
 	}
 }

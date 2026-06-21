@@ -10,10 +10,11 @@ import (
 	"github.com/imantaba/kubeagent/internal/diagnose"
 )
 
-// Cluster lists every pod in every namespace and wraps each in PodFacts.
-// It is read-only: it performs a single List call and never mutates anything.
-func Cluster(ctx context.Context, client kubernetes.Interface) ([]diagnose.PodFacts, error) {
-	pods, err := client.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+// Cluster lists pods (in the given namespace, or all namespaces when namespace
+// is empty) and wraps each in PodFacts. It is read-only: a single List call,
+// never mutating anything.
+func Cluster(ctx context.Context, client kubernetes.Interface, namespace string) ([]diagnose.PodFacts, error) {
+	pods, err := client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("listing pods: %w", err)
 	}

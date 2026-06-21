@@ -41,10 +41,11 @@ spec:
   containers:
     - name: app
       image: busybox
-      # Fill tmpfs past the memory limit; tmpfs usage counts against the
-      # container's memory cgroup, so the kernel OOM-kills it. It restarts and
-      # OOMs again, surfacing as OOMKilled.
-      command: ["sh", "-c", "dd if=/dev/zero of=/dev/shm/fill bs=1M count=150"]
+      # The container starts cheaply, then `tail /dev/zero` buffers an endless
+      # stream into memory and grows past the limit, so the cgroup OOM-kills the
+      # running process — a clean OOMKilled (exit 137), not an init StartError.
+      # (A too-low limit OOM-kills during init instead and shows as CrashLoop.)
+      command: ["sh", "-c", "tail /dev/zero"]
       resources:
         limits:
           memory: 64Mi

@@ -11,15 +11,20 @@ import (
 
 // NewClient builds a Kubernetes clientset from a kubeconfig file.
 // If kubeconfigPath is empty, it falls back to $KUBECONFIG, then ~/.kube/config.
-func NewClient(kubeconfigPath string) (*kubernetes.Clientset, error) {
+// If contextName is empty, the kubeconfig's current-context is used.
+func NewClient(kubeconfigPath, contextName string) (*kubernetes.Clientset, error) {
 	path, err := resolveKubeconfig(kubeconfigPath)
 	if err != nil {
 		return nil, err
 	}
 
-	config, err := clientcmd.BuildConfigFromFlags("", path)
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	loadingRules.ExplicitPath = path
+	overrides := &clientcmd.ConfigOverrides{CurrentContext: contextName}
+
+	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides).ClientConfig()
 	if err != nil {
-		return nil, fmt.Errorf("loading kubeconfig %q: %w", path, err)
+		return nil, fmt.Errorf("loading kubeconfig %q (context %q): %w", path, contextName, err)
 	}
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {

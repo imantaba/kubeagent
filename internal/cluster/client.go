@@ -24,6 +24,9 @@ func NewClient(kubeconfigPath, contextName string) (*kubernetes.Clientset, error
 
 	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides).ClientConfig()
 	if err != nil {
+		if contextName == "" {
+			return nil, fmt.Errorf("loading kubeconfig %q: %w", path, err)
+		}
 		return nil, fmt.Errorf("loading kubeconfig %q (context %q): %w", path, contextName, err)
 	}
 	clientset, err := kubernetes.NewForConfig(config)

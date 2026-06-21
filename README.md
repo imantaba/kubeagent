@@ -33,6 +33,9 @@ go build -o kubeagent .
 
 # pick a context and scope to one namespace, emit JSON
 ./kubeagent scan --context my-cluster -n my-namespace --output json
+
+# point at a specific kubeconfig file
+./kubeagent scan --kubeconfig /path/to/config
 ```
 
 Run the tests with `go test ./...`.

@@ -28,11 +28,11 @@ summarize findings in plain English.
 ```bash
 go build -o kubeagent .
 
-# scan the whole cluster (uses $KUBECONFIG or ~/.kube/config)
+# scan the whole cluster (uses $KUBECONFIG or ~/.kube/config, current-context)
 ./kubeagent scan
 
-# point at a specific kubeconfig, emit JSON
-./kubeagent scan --kubeconfig /path/to/config --output json
+# pick a context and scope to one namespace, emit JSON
+./kubeagent scan --context my-cluster -n my-namespace --output json
 ```
 
 Run the tests with `go test ./...`.

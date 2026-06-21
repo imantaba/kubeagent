@@ -372,6 +372,31 @@ facts, _ := Cluster(context.Background(), client)
 
 ---
 
+## 12. A short flag alias with the stdlib `flag` package
+
+Go's standard `flag` package has no built-in "long and short" option. The idiom
+is to bind **two flag names to the same variable** with `StringVar` — whichever
+the user passes writes to that one variable.
+
+**Simple example:**
+
+```go
+var name string
+fs.StringVar(&name, "name", "", "your name")
+fs.StringVar(&name, "n", "", "your name (shorthand)")
+// `--name ann` and `-n ann` both set name = "ann"
+```
+
+**kubeagent example:** `--namespace` and `-n` both set the scan namespace:
+
+```go
+var namespace string
+fs.StringVar(&namespace, "namespace", "", "namespace to scan (default: all namespaces)")
+fs.StringVar(&namespace, "n", "", "namespace to scan (shorthand)")
+```
+
+---
+
 ## Coming later
 
 These will be added to this file when we reach them:

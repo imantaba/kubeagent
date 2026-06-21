@@ -21,12 +21,16 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 || args[0] != "scan" {
-		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--output text|json]")
+		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json]")
 	}
 
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
 	kubeconfig := fs.String("kubeconfig", "", "path to kubeconfig (default: $KUBECONFIG or ~/.kube/config)")
+	contextName := fs.String("context", "", "kubeconfig context to use (default: current-context)")
 	output := fs.String("output", "text", "output format: text | json")
+	var namespace string
+	fs.StringVar(&namespace, "namespace", "", "namespace to scan (default: all namespaces)")
+	fs.StringVar(&namespace, "n", "", "namespace to scan (shorthand)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -36,11 +40,11 @@ func run(args []string) error {
 		return fmt.Errorf("unknown output format %q (want text or json)", *output)
 	}
 
-	client, err := cluster.NewClient(*kubeconfig)
+	client, err := cluster.NewClient(*kubeconfig, *contextName)
 	if err != nil {
 		return err
 	}
-	facts, err := collect.Cluster(context.Background(), client)
+	facts, err := collect.Cluster(context.Background(), client, namespace)
 	if err != nil {
 		return err
 	}

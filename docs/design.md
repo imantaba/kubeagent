@@ -249,10 +249,11 @@ Exit codes: `0` = ran successfully (whether or not issues were found),
 ## Roadmap
 
 - **v1** (this design) — deterministic whole-cluster scan + diagnosis.
-- **v2 — `--explain`** — an optional flag that takes the collected findings (and
-  a little raw context) and makes **one** Claude API call to produce a plain-
-  English summary and suggested next steps. Kept as a single, well-bounded call
-  so the deterministic core stays usable offline and without an API key.
+- **v2 (shipped) — `--explain`** — an optional flag that takes the collected
+  findings and makes **one** Claude API call (via the official Go SDK) to
+  produce a plain-English summary and suggested next steps. Only the structured
+  findings are sent. Kept as a single, well-bounded call so the deterministic
+  core stays usable offline and without an API key.
 - **Later (learning extensions):** concurrent fact-collection with goroutines;
   more detectors (probe failures, `CreateContainerConfigError`); a `diagnose
   <pod>` command via Cobra.

@@ -20,8 +20,9 @@ operates **read-only**.
 reports CrashLoopBackOff, ImagePullBackOff/ErrImagePull, OOMKilled, and
 Pending/Unschedulable pods, in text or JSON.
 
-🔜 **v2** — an optional `--explain` flag that makes a single Claude API call to
-summarize findings in plain English.
+✅ **v2 shipped** — an optional `--explain` flag makes a single Claude API call
+(via the official Go SDK) to summarize findings in plain English. The
+deterministic core still works offline with no API key.
 
 ## Usage
 
@@ -36,7 +37,15 @@ go build -o kubeagent .
 
 # point at a specific kubeconfig file
 ./kubeagent scan --kubeconfig /path/to/config
+
+# summarize the findings in plain English (needs ANTHROPIC_API_KEY)
+export ANTHROPIC_API_KEY=sk-ant-...
+./kubeagent scan --explain
 ```
+
+> `--explain` sends **only** the structured findings (pod name, issue, reason,
+> evidence) to the Claude API — never raw pod specs, environment variables, or
+> secrets. Without the flag, kubeagent makes no external calls.
 
 Run the tests with `go test ./...`.
 

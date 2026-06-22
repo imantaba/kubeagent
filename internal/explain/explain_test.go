@@ -1,0 +1,77 @@
+package explain
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/imantaba/kubeagent/internal/diagnose"
+)
+
+// fakeSummarizer stands in for the Anthropic-backed summarizer so tests never
+// touch the network. It records whether it was called.
+type fakeSummarizer struct {
+	called bool
+	reply  string
+	err    error
+}
+
+func (f *fakeSummarizer) summarize(ctx context.Context, prompt string) (string, error) {
+	f.called = true
+	return f.reply, f.err
+}
+
+func TestBuildPrompt_IncludesEveryFindingField(t *testing.T) {
+	findings := []diagnose.Finding{
+		{Pod: "default/web", Issue: "CrashLoopBackOff", Reason: "exits 1 on boot", Evidence: "restartCount=14"},
+	}
+	got := buildPrompt(findings)
+	for _, want := range []string{"default/web", "CrashLoopBackOff", "exits 1 on boot", "restartCount=14", "next steps"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("prompt missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestExplain_SkipsCallWhenNoFindings(t *testing.T) {
+	f := &fakeSummarizer{reply: "should not be used"}
+	c := &Client{s: f}
+	got, err := c.Explain(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "" {
+		t.Errorf("expected empty explanation, got %q", got)
+	}
+	if f.called {
+		t.Error("summarizer should not be called when there are no findings")
+	}
+}
+
+func TestExplain_ReturnsTrimmedSummary(t *testing.T) {
+	f := &fakeSummarizer{reply: "  Two pods are failing.  \n"}
+	c := &Client{s: f}
+	got, err := c.Explain(context.Background(), []diagnose.Finding{{Pod: "default/web", Issue: "X"}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "Two pods are failing." {
+		t.Errorf("got %q, want the trimmed summary", got)
+	}
+	if !f.called {
+		t.Error("expected the summarizer to be called")
+	}
+}
+
+func TestExplain_WrapsSummarizerError(t *testing.T) {
+	f := &fakeSummarizer{err: errors.New("boom")}
+	c := &Client{s: f}
+	_, err := c.Explain(context.Background(), []diagnose.Finding{{Pod: "default/web"}})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), "explaining findings") || !strings.Contains(err.Error(), "boom") {
+		t.Errorf("error not wrapped as expected: %v", err)
+	}
+}

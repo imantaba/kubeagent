@@ -70,7 +70,7 @@ Mirrors the isolation of the other stage packages.
 
 ## Wiring & flags (`main.go`)
 
-- Add `explain := fs.Bool("explain", false, "summarize findings via one Claude API call (needs ANTHROPIC_API_KEY)")`.
+- Add `explainFlag := fs.Bool("explain", false, "summarize findings via one Claude API call (needs ANTHROPIC_API_KEY)")`.
 - **Fail fast, before the scan:** if `--explain` is set and `ANTHROPIC_API_KEY`
   is empty, return a clear error immediately — same spirit as the existing
   up-front `--output` validation, so we don't run a full scan and then fail.

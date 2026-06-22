@@ -92,3 +92,13 @@ func TestPrint_EmptyFormatErrors(t *testing.T) {
 		t.Error("expected an error for an empty format")
 	}
 }
+
+func TestPrint_TextNoExplanationBlockWhenEmpty(t *testing.T) {
+	var buf bytes.Buffer
+	if err := Print(sampleFindings(), "", "text", &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(buf.String(), "Explanation") {
+		t.Errorf("expected no Explanation block when explanation is empty:\n%s", buf.String())
+	}
+}

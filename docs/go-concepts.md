@@ -421,7 +421,8 @@ bound it so a hung connection can't wedge the CLI:
 ```go
 ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 defer cancel()
-explanation, err := explain.New().Explain(ctx, findings)
+// explanation and err are already declared earlier, so this is assignment (=), not :=
+explanation, err = explain.New().Explain(ctx, findings)
 ```
 
 This is also the first time kubeagent pulls in a **third-party module**:

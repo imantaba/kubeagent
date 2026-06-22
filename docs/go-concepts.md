@@ -397,6 +397,40 @@ fs.StringVar(&namespace, "n", "", "namespace to scan (shorthand)")
 
 ---
 
+## 13. context.WithTimeout (bounding a slow call)
+
+A `context.Context` can carry a **deadline**. `context.WithTimeout` returns a
+child context that is automatically cancelled after the given duration — any
+function that respects the context (like a network call) will stop and return an
+error instead of hanging forever. Always `defer cancel()` to release the timer.
+
+**Simple example:**
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+defer cancel() // release the timer, even if the call returns early
+
+if err := slowCall(ctx); err != nil {
+    // err is context.DeadlineExceeded if slowCall ran past 2s
+}
+```
+
+**kubeagent example:** `--explain` makes a network call to the Claude API. We
+bound it so a hung connection can't wedge the CLI:
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+defer cancel()
+// explanation and err are already declared earlier, so this is assignment (=), not :=
+explanation, err = explain.New().Explain(ctx, findings)
+```
+
+This is also the first time kubeagent pulls in a **third-party module**:
+`go get github.com/anthropics/anthropic-sdk-go` downloads it into the module
+cache and records it in `go.mod`/`go.sum`; later builds reuse the cached copy.
+
+---
+
 ## Coming later
 
 These will be added to this file when we reach them:

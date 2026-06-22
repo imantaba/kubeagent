@@ -57,5 +57,5 @@ func run(args []string) error {
 	}
 	findings := diagnose.Run(detectors, facts)
 
-	return report.Print(findings, *output, os.Stdout)
+	return report.Print(findings, "", *output, os.Stdout)
 }

@@ -52,7 +52,7 @@ Run the tests with `go test ./...`.
 ## Roadmap
 
 - **v1** — `kubeagent scan`: deterministic whole-cluster scan + diagnosis
-- **v2** — optional `--explain` flag: one Claude API call summarizes findings
+- **v2 (shipped)** — optional `--explain` flag: one Claude API call summarizes findings
 
 ## Design
 

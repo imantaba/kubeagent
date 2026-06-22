@@ -425,8 +425,8 @@ explanation, err := explain.New().Explain(ctx, findings)
 ```
 
 This is also the first time kubeagent pulls in a **third-party module**:
-`go get github.com/anthropics/anthropic-sdk-go` records it in `go.mod`/`go.sum`,
-and Go fetches it (and its dependencies) when you build.
+`go get github.com/anthropics/anthropic-sdk-go` downloads it into the module
+cache and records it in `go.mod`/`go.sum`; later builds reuse the cached copy.
 
 ---
 

@@ -75,3 +75,18 @@ func TestExplain_WrapsSummarizerError(t *testing.T) {
 		t.Errorf("error not wrapped as expected: %v", err)
 	}
 }
+
+func TestExplain_ErrorsOnEmptySummary(t *testing.T) {
+	f := &fakeSummarizer{reply: "   \n"}
+	c := &Client{s: f}
+	_, err := c.Explain(context.Background(), []diagnose.Finding{{Pod: "default/web"}})
+	if err == nil {
+		t.Fatal("expected an error when the model returns no text")
+	}
+	if !strings.Contains(err.Error(), "explaining findings") {
+		t.Errorf("error not wrapped as expected: %v", err)
+	}
+	if !f.called {
+		t.Error("expected the summarizer to be called when findings are present")
+	}
+}

@@ -45,7 +45,11 @@ func (c *Client) Explain(ctx context.Context, findings []diagnose.Finding) (stri
 	if err != nil {
 		return "", fmt.Errorf("explaining findings: %w", err)
 	}
-	return strings.TrimSpace(out), nil
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return "", fmt.Errorf("explaining findings: model returned no text")
+	}
+	return out, nil
 }
 
 // buildPrompt renders the findings into a compact prompt. Only the structured

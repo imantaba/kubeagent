@@ -27,3 +27,6 @@ vendor/
 .env
 *.kubeconfig
 kubeconfig
+
+# Claude Code local session settings
+.claude/

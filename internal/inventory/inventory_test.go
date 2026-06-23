@@ -53,6 +53,12 @@ func TestControllerOwner(t *testing.T) {
 	if o := controllerOwner(nil); o != nil {
 		t.Errorf("expected nil for no refs, got %+v", o)
 	}
+	noController := []metav1.OwnerReference{
+		{Kind: "Node", Name: "n1", Controller: &no},
+	}
+	if o := controllerOwner(noController); o == nil || o.Kind != "Node" {
+		t.Errorf("expected first ref when no controller is set, got %+v", o)
+	}
 }
 
 func TestPodRestarts(t *testing.T) {

@@ -18,6 +18,20 @@ read-only cluster scan. Explain in plain English what is going wrong and suggest
 concrete next steps an operator can take. Be concise. Respond with only the
 explanation, no preamble.`
 
+// DefaultModel is used when neither --model nor KUBEAGENT_MODEL is set.
+const DefaultModel = "claude-opus-4-8"
+
+// ResolveModel picks the model by precedence: flag, then env, then DefaultModel.
+func ResolveModel(flagVal, envVal string) string {
+	if flagVal != "" {
+		return flagVal
+	}
+	if envVal != "" {
+		return envVal
+	}
+	return DefaultModel
+}
+
 // summarizer turns a prompt into a single plain-text completion. The
 // Anthropic-backed implementation lives in this package; tests use a fake.
 type summarizer interface {
@@ -29,10 +43,13 @@ type Client struct {
 	s summarizer
 }
 
-// New returns a Client backed by the Anthropic API. The SDK reads the
-// ANTHROPIC_API_KEY environment variable.
-func New() *Client {
-	return &Client{s: anthropicSummarizer{client: anthropic.NewClient()}}
+// New returns a Client backed by the Anthropic API, using the given model
+// (empty falls back to DefaultModel). The SDK reads ANTHROPIC_API_KEY.
+func New(model string) *Client {
+	if model == "" {
+		model = DefaultModel
+	}
+	return &Client{s: anthropicSummarizer{client: anthropic.NewClient(), model: model}}
 }
 
 // Explain summarizes findings in plain English. With no findings it returns
@@ -67,11 +84,12 @@ func buildPrompt(findings []diagnose.Finding) string {
 // anthropicSummarizer is the real summarizer, backed by the Anthropic SDK.
 type anthropicSummarizer struct {
 	client anthropic.Client
+	model  string
 }
 
 func (a anthropicSummarizer) summarize(ctx context.Context, prompt string) (string, error) {
 	resp, err := a.client.Messages.New(ctx, anthropic.MessageNewParams{
-		Model:     anthropic.ModelClaudeOpus4_8,
+		Model:     anthropic.Model(a.model),
 		MaxTokens: 1024,
 		System:    []anthropic.TextBlockParam{{Text: systemPrompt}},
 		Messages: []anthropic.MessageParam{

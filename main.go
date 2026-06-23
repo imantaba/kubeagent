@@ -68,7 +68,7 @@ func run(args []string) error {
 	if *explainFlag {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		explanation, err = explain.New().Explain(ctx, findings)
+		explanation, err = explain.New(explain.DefaultModel).Explain(ctx, findings)
 		if err != nil {
 			return err
 		}

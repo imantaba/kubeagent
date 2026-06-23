@@ -90,3 +90,21 @@ func TestExplain_ErrorsOnEmptySummary(t *testing.T) {
 		t.Error("expected the summarizer to be called when findings are present")
 	}
 }
+
+func TestResolveModel(t *testing.T) {
+	cases := []struct {
+		name, flag, env, want string
+	}{
+		{"flag wins over env and default", "claude-opus-4-8", "claude-sonnet-4-6", "claude-opus-4-8"},
+		{"env used when flag empty", "", "claude-sonnet-4-6", "claude-sonnet-4-6"},
+		{"default when both empty", "", "", DefaultModel},
+		{"flag wins when env empty", "claude-haiku-4-5", "", "claude-haiku-4-5"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ResolveModel(tc.flag, tc.env); got != tc.want {
+				t.Errorf("ResolveModel(%q, %q) = %q, want %q", tc.flag, tc.env, got, tc.want)
+			}
+		})
+	}
+}

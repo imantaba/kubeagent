@@ -5,6 +5,7 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -291,6 +292,47 @@ func TestHumanSince(t *testing.T) {
 	}
 	if got := HumanSince("2026-06-02T08:14:03Z", now); got != "20d ago" {
 		t.Errorf("got %q, want \"20d ago\"", got)
+	}
+}
+
+func TestJobStatus(t *testing.T) {
+	failed := batchv1.Job{Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue}}}}
+	if jobStatus(failed) != "Failed" {
+		t.Errorf("failed job: got %q", jobStatus(failed))
+	}
+	complete := batchv1.Job{Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}}}
+	if jobStatus(complete) != "Complete" {
+		t.Errorf("complete job: got %q", jobStatus(complete))
+	}
+	running := batchv1.Job{Status: batchv1.JobStatus{Active: 2}}
+	if jobStatus(running) != "Running" {
+		t.Errorf("active job: got %q", jobStatus(running))
+	}
+	pending := batchv1.Job{}
+	if jobStatus(pending) != "Pending" {
+		t.Errorf("idle job: got %q", jobStatus(pending))
+	}
+}
+
+func TestCronJobStatus(t *testing.T) {
+	active := batchv1.CronJob{Status: batchv1.CronJobStatus{Active: []corev1.ObjectReference{{}, {}}}}
+	if cronJobStatus(active) != "Active(2)" {
+		t.Errorf("active cronjob: got %q", cronJobStatus(active))
+	}
+	idle := batchv1.CronJob{}
+	if cronJobStatus(idle) != "Idle" {
+		t.Errorf("idle cronjob: got %q", cronJobStatus(idle))
+	}
+}
+
+func TestFlagged_FailedStatus(t *testing.T) {
+	w := Workload{Kind: "Job", Ready: 0, Desired: 0, Status: "Failed"}
+	if !w.Flagged() {
+		t.Error("a Failed job should be flagged")
+	}
+	ok := Workload{Kind: "Job", Ready: 0, Desired: 0, Status: "Complete"}
+	if ok.Flagged() {
+		t.Error("a Complete job should not be flagged")
 	}
 }
 

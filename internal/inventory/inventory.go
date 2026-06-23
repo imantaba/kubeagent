@@ -9,6 +9,7 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -41,12 +42,13 @@ type Workload struct {
 	Image       string             `json:"image"`
 	Pods        []PodRow           `json:"pods"`
 	Findings    []diagnose.Finding `json:"findings,omitempty"`
+	PodsOmitted int                `json:"podsOmitted,omitempty"`
+	Schedule    string             `json:"schedule,omitempty"`
 }
 
-// Flagged reports whether the workload needs attention: it has a detector
-// finding or is not fully ready.
+// Flagged reports whether the workload needs attention.
 func (w Workload) Flagged() bool {
-	return len(w.Findings) > 0 || w.Ready < w.Desired
+	return len(w.Findings) > 0 || w.Ready < w.Desired || w.Status == "Failed"
 }
 
 func termTime(t metav1.Time) string {
@@ -158,6 +160,34 @@ type Inputs struct {
 	ReplicaSets  []appsv1.ReplicaSet
 	StatefulSets []appsv1.StatefulSet
 	DaemonSets   []appsv1.DaemonSet
+	Jobs         []batchv1.Job
+	CronJobs     []batchv1.CronJob
+}
+
+// jobStatus maps a Job's conditions/counts to a status string.
+func jobStatus(j batchv1.Job) string {
+	for _, c := range j.Status.Conditions {
+		if c.Status == corev1.ConditionTrue {
+			switch c.Type {
+			case batchv1.JobFailed:
+				return "Failed"
+			case batchv1.JobComplete:
+				return "Complete"
+			}
+		}
+	}
+	if j.Status.Active > 0 {
+		return "Running"
+	}
+	return "Pending"
+}
+
+// cronJobStatus summarizes a CronJob by its active-job count.
+func cronJobStatus(cj batchv1.CronJob) string {
+	if n := len(cj.Status.Active); n > 0 {
+		return fmt.Sprintf("Active(%d)", n)
+	}
+	return "Idle"
 }
 
 // Assemble groups pods into workloads, reads controller status for ready/desired,

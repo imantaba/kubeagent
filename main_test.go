@@ -35,3 +35,16 @@ func TestRun_ExplainRequiresAPIKey(t *testing.T) {
 		t.Fatalf("expected error to mention ANTHROPIC_API_KEY, got: %v", err)
 	}
 }
+
+func TestRun_ModelFlagIsRecognized(t *testing.T) {
+	// --model must be a known flag: with it set and no API key, the error is
+	// the fail-fast key error, NOT "flag provided but not defined".
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	err := run([]string{"scan", "--explain", "--model", "claude-sonnet-4-6"})
+	if err == nil {
+		t.Fatal("expected the fail-fast API-key error")
+	}
+	if !strings.Contains(err.Error(), "ANTHROPIC_API_KEY") {
+		t.Fatalf("expected ANTHROPIC_API_KEY error (proves --model parsed), got: %v", err)
+	}
+}

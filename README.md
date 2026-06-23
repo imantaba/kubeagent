@@ -41,11 +41,17 @@ go build -o kubeagent .
 # summarize the findings in plain English (needs ANTHROPIC_API_KEY)
 export ANTHROPIC_API_KEY=sk-ant-...
 ./kubeagent scan --explain
+
+# choose the model (default: claude-opus-4-8; or set KUBEAGENT_MODEL)
+./kubeagent scan --explain --model claude-sonnet-4-6
 ```
 
 > `--explain` sends **only** the structured findings (pod name, issue, reason,
 > evidence) to the Claude API — never raw pod specs, environment variables, or
 > secrets. Without the flag, kubeagent makes no external calls.
+>
+> Model precedence for `--explain`: the `--model` flag, then the
+> `KUBEAGENT_MODEL` environment variable, then the default `claude-opus-4-8`.
 
 Run the tests with `go test ./...`.
 

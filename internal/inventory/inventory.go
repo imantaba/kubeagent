@@ -56,6 +56,19 @@ func termTime(t metav1.Time) string {
 	return t.Time.UTC().Format(time.RFC3339)
 }
 
+// HumanSince formats an RFC3339 timestamp as a relative age like "20d ago".
+// Returns "" for an empty or unparseable timestamp.
+func HumanSince(rfc3339 string, now time.Time) string {
+	if rfc3339 == "" {
+		return ""
+	}
+	t, err := time.Parse(time.RFC3339, rfc3339)
+	if err != nil {
+		return ""
+	}
+	return humanAge(t, now) + " ago"
+}
+
 func humanAge(t, now time.Time) string {
 	d := now.Sub(t)
 	if d < 0 {
@@ -161,10 +174,18 @@ func Assemble(in Inputs, findings []diagnose.Finding) []Workload {
 		controllerKeys[k] = true
 	}
 	for _, d := range in.Deployments {
-		seed("Deployment", d.Namespace, d.Name, int(d.Status.Replicas), int(d.Status.ReadyReplicas))
+		desired := 1
+		if d.Spec.Replicas != nil {
+			desired = int(*d.Spec.Replicas)
+		}
+		seed("Deployment", d.Namespace, d.Name, desired, int(d.Status.ReadyReplicas))
 	}
 	for _, s := range in.StatefulSets {
-		seed("StatefulSet", s.Namespace, s.Name, int(s.Status.Replicas), int(s.Status.ReadyReplicas))
+		desired := 1
+		if s.Spec.Replicas != nil {
+			desired = int(*s.Spec.Replicas)
+		}
+		seed("StatefulSet", s.Namespace, s.Name, desired, int(s.Status.ReadyReplicas))
 	}
 	for _, ds := range in.DaemonSets {
 		seed("DaemonSet", ds.Namespace, ds.Name, int(ds.Status.DesiredNumberScheduled), int(ds.Status.NumberReady))
@@ -219,6 +240,8 @@ func Assemble(in Inputs, findings []diagnose.Finding) []Workload {
 		podKey[p.Namespace+"/"+p.Name] = k
 	}
 
+	// Pods and findings come from the same scan snapshot, so every finding's
+	// pod is present in podKey; an unmatched finding (none today) is dropped.
 	for _, f := range findings {
 		if k, ok := podKey[f.Pod]; ok {
 			workloads[k].Findings = append(workloads[k].Findings, f)

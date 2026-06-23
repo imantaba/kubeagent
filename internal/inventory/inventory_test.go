@@ -141,6 +141,8 @@ func readyPod(ns, name string, owners []metav1.OwnerReference, image string) cor
 	return p
 }
 
+func p32(n int32) *int32 { return &n }
+
 func ctrlRef(kind, name string) []metav1.OwnerReference {
 	yes := true
 	return []metav1.OwnerReference{{Kind: kind, Name: name, Controller: &yes}}
@@ -150,7 +152,8 @@ func TestAssemble_DeploymentGroupsPodsAndAggregates(t *testing.T) {
 	in := Inputs{
 		Deployments: []appsv1.Deployment{{
 			ObjectMeta: metav1.ObjectMeta{Namespace: "cattle-system", Name: "rancher"},
-			Status:     appsv1.DeploymentStatus{Replicas: 3, ReadyReplicas: 3},
+			Spec:       appsv1.DeploymentSpec{Replicas: p32(3)},
+			Status:     appsv1.DeploymentStatus{ReadyReplicas: 3},
 		}},
 		ReplicaSets: []appsv1.ReplicaSet{{
 			ObjectMeta: metav1.ObjectMeta{Namespace: "cattle-system", Name: "rancher-f7fb", OwnerReferences: ctrlRef("Deployment", "rancher")},
@@ -188,8 +191,8 @@ func TestAssemble_DeploymentGroupsPodsAndAggregates(t *testing.T) {
 func TestAssemble_AttachesFindingsAndSortsFlaggedFirst(t *testing.T) {
 	in := Inputs{
 		Deployments: []appsv1.Deployment{
-			{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "healthy"}, Status: appsv1.DeploymentStatus{Replicas: 1, ReadyReplicas: 1}},
-			{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "broken"}, Status: appsv1.DeploymentStatus{Replicas: 2, ReadyReplicas: 2}},
+			{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "healthy"}, Spec: appsv1.DeploymentSpec{Replicas: p32(1)}, Status: appsv1.DeploymentStatus{ReadyReplicas: 1}},
+			{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "broken"}, Spec: appsv1.DeploymentSpec{Replicas: p32(2)}, Status: appsv1.DeploymentStatus{ReadyReplicas: 2}},
 		},
 		ReplicaSets: []appsv1.ReplicaSet{
 			{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "healthy-rs", OwnerReferences: ctrlRef("Deployment", "healthy")}},
@@ -233,7 +236,8 @@ func TestAssemble_StatefulSetSeeding(t *testing.T) {
 	in := Inputs{
 		StatefulSets: []appsv1.StatefulSet{{
 			ObjectMeta: metav1.ObjectMeta{Namespace: "db", Name: "etcd"},
-			Status:     appsv1.StatefulSetStatus{Replicas: 3, ReadyReplicas: 3},
+			Spec:       appsv1.StatefulSetSpec{Replicas: p32(3)},
+			Status:     appsv1.StatefulSetStatus{ReadyReplicas: 3},
 		}},
 		Pods: []corev1.Pod{pod("db", "etcd-0", ctrlRef("StatefulSet", "etcd"), 0, "etcd:3.5")},
 	}
@@ -274,6 +278,19 @@ func TestAssemble_ReplicaSetWithoutDeploymentFallback(t *testing.T) {
 	}
 	if ws[0].Desired != 1 || ws[0].Ready != 1 {
 		t.Errorf("derived counts = %d/%d, want 1/1", ws[0].Ready, ws[0].Desired)
+	}
+}
+
+func TestHumanSince(t *testing.T) {
+	now := time.Date(2026, 6, 22, 8, 14, 3, 0, time.UTC)
+	if got := HumanSince("", now); got != "" {
+		t.Errorf("empty -> %q, want \"\"", got)
+	}
+	if got := HumanSince("not-a-time", now); got != "" {
+		t.Errorf("unparseable -> %q, want \"\"", got)
+	}
+	if got := HumanSince("2026-06-02T08:14:03Z", now); got != "20d ago" {
+		t.Errorf("got %q, want \"20d ago\"", got)
 	}
 }
 

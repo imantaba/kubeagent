@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/imantaba/kubeagent/internal/inventory"
 )
@@ -43,7 +44,7 @@ func printInventoryText(workloads []inventory.Workload, explanation string, w io
 		if wl.Restarts > 0 {
 			header += fmt.Sprintf("  · %d restarts", wl.Restarts)
 			if wl.LastRestart != "" {
-				header += fmt.Sprintf(", last %s", wl.LastRestart)
+				header += fmt.Sprintf(", last %s", inventory.HumanSince(wl.LastRestart, time.Now()))
 			}
 		}
 		if _, err := fmt.Fprintln(w, header); err != nil {
@@ -62,7 +63,7 @@ func printInventoryText(workloads []inventory.Workload, explanation string, w io
 		for _, p := range wl.Pods {
 			restarts := fmt.Sprintf("%d", p.Restarts)
 			if p.LastRestart != "" {
-				restarts += " (" + p.LastRestart + ")"
+				restarts += " (" + inventory.HumanSince(p.LastRestart, time.Now()) + ")"
 			}
 			if _, err := fmt.Fprintf(w, "    %s  %s  %s  restarts=%s  %s  %s  %s\n",
 				p.Name, p.Ready, p.Phase, restarts, p.Node, p.IP, p.Age); err != nil {

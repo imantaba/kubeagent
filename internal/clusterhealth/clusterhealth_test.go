@@ -80,6 +80,18 @@ func TestAssess_HealthyClusterAndSystem(t *testing.T) {
 	}
 }
 
+func TestNamespaceScopeNote(t *testing.T) {
+	if NamespaceScopeNote("") != "" {
+		t.Error("all-namespaces should have no caveat")
+	}
+	if NamespaceScopeNote("kube-system") != "" {
+		t.Error("-n kube-system should have no caveat")
+	}
+	if NamespaceScopeNote("cattle-system") == "" {
+		t.Error("-n cattle-system should produce a caveat")
+	}
+}
+
 func TestAssess_DegradedByNodeAndSystem(t *testing.T) {
 	nodes := []corev1.Node{
 		node("a", true, nil, false),

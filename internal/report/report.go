@@ -46,6 +46,11 @@ func printInventoryText(cluster clusterhealth.ClusterHealth, workloads []invento
 				return err
 			}
 		}
+		if cluster.ScopeNote != "" {
+			if _, err := fmt.Fprintf(w, "  · %s\n", cluster.ScopeNote); err != nil {
+				return err
+			}
+		}
 		if _, err := fmt.Fprintln(w); err != nil {
 			return err
 		}

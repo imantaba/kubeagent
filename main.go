@@ -74,6 +74,7 @@ func run(args []string) error {
 		return err
 	}
 	health := clusterhealth.Assess(nodes, workloads)
+	health.ScopeNote = clusterhealth.NamespaceScopeNote(namespace)
 
 	var explanation string
 	if *explainFlag {

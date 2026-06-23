@@ -19,6 +19,7 @@ type ClusterHealth struct {
 	NodesReady   int      `json:"nodesReady"`
 	NodeIssues   []string `json:"nodeIssues,omitempty"`
 	SystemIssues []string `json:"systemIssues,omitempty"`
+	ScopeNote    string   `json:"scopeNote,omitempty"`
 }
 
 // Assess computes the verdict from nodes and the assembled workloads. A node is
@@ -48,6 +49,16 @@ func Assess(nodes []corev1.Node, workloads []inventory.Workload) ClusterHealth {
 		ch.Verdict = "Degraded"
 	}
 	return ch
+}
+
+// NamespaceScopeNote returns a caveat for the verdict when the scan is scoped to
+// a single namespace that excludes kube-system, so the system rollup could not
+// run. Returns "" when the rollup was in scope (all namespaces, or -n kube-system).
+func NamespaceScopeNote(namespace string) string {
+	if namespace != "" && namespace != systemNamespace {
+		return "node health only — re-run without -n (or with -n kube-system) for the system workload check"
+	}
+	return ""
 }
 
 // nodeHealth returns whether the node's Ready condition is true and a list of

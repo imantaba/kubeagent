@@ -128,6 +128,17 @@ func TestPrintInventory_TextHealthyClusterSingleLine(t *testing.T) {
 	}
 }
 
+func TestPrintInventory_TextShowsScopeNote(t *testing.T) {
+	var buf bytes.Buffer
+	ch := clusterhealth.ClusterHealth{Verdict: "Healthy", NodesTotal: 3, NodesReady: 3, ScopeNote: "node health only — re-run without -n"}
+	if err := PrintInventory(ch, sampleWorkloads(), "", "text", &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(buf.String(), "node health only") {
+		t.Errorf("expected the scope note in output:\n%s", buf.String())
+	}
+}
+
 func TestPrintInventory_JSONIncludesCluster(t *testing.T) {
 	var buf bytes.Buffer
 	if err := PrintInventory(sampleCluster(), sampleWorkloads(), "", "json", &buf); err != nil {

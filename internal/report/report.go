@@ -86,9 +86,8 @@ func PrintInventory(workloads []inventory.Workload, explanation, format string, 
 
 func printInventoryText(workloads []inventory.Workload, explanation string, w io.Writer) error {
 	if len(workloads) == 0 {
-		if _, err := fmt.Fprintln(w, "No workloads found."); err != nil {
-			return err
-		}
+		_, err := fmt.Fprintln(w, "No workloads found.")
+		return err
 	}
 	for _, wl := range workloads {
 		flag := "  "

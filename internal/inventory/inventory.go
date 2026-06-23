@@ -252,8 +252,8 @@ func Assemble(in Inputs, findings []diagnose.Finding) []Workload {
 		}
 	}
 
-	podKey := map[string]string{}
-	derivedReady := map[string]int{}
+	podKey := map[string]string{}    // "ns/name" -> workload key
+	derivedReady := map[string]int{} // ready-pod count for pod-derived workloads
 	for _, p := range in.Pods {
 		kind, name := "Pod", p.Name
 		if o := controllerOwner(p.OwnerReferences); o != nil {
@@ -265,7 +265,7 @@ func Assemble(in Inputs, findings []diagnose.Finding) []Workload {
 					kind, name = "ReplicaSet", o.Name
 				}
 			case "Job":
-				if cj, ok := jobToCronJob[p.Namespace+"/"+o.Name]; ok {
+				if cj, ok := jobToCronJob[p.Namespace+"/"+o.Name]; ok && controllerKeys[key("CronJob", p.Namespace, cj)] {
 					kind, name = "CronJob", cj
 				} else {
 					kind, name = "Job", o.Name

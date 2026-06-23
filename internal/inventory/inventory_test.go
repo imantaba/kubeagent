@@ -403,6 +403,19 @@ func TestAssemble_CapsJobPods(t *testing.T) {
 	}
 }
 
+func TestAssemble_OrphanedCronJobPodFallsBackToJob(t *testing.T) {
+	// The Job is owned by a CronJob, but that CronJob object isn't in Inputs.
+	// The pod must group under the Job, not a phantom CronJob workload.
+	in := Inputs{
+		Jobs: []batchv1.Job{{ObjectMeta: metav1.ObjectMeta{Namespace: "batch", Name: "backup-28000", OwnerReferences: ctrlRef("CronJob", "gone")}}},
+		Pods: []corev1.Pod{pod("batch", "backup-28000-aaa", ctrlRef("Job", "backup-28000"), 0, "i")},
+	}
+	ws := Assemble(in, nil)
+	if len(ws) != 1 || ws[0].Kind != "Job" || ws[0].Name != "backup-28000" {
+		t.Fatalf("expected a Job fallback workload, got %+v", ws)
+	}
+}
+
 func TestAssemble_AggregatesLastRestart(t *testing.T) {
 	p := readyPod("a", "p1", nil, "img")
 	p.Status.ContainerStatuses[0].LastTerminationState = corev1.ContainerState{

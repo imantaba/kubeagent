@@ -6,31 +6,50 @@ import (
 	"io"
 	"time"
 
+	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
 )
 
 // inventoryReport is the JSON shape for the workload inventory.
 type inventoryReport struct {
-	Workloads   []inventory.Workload `json:"workloads"`
-	Explanation string               `json:"explanation,omitempty"`
+	Cluster     clusterhealth.ClusterHealth `json:"cluster"`
+	Workloads   []inventory.Workload        `json:"workloads"`
+	Explanation string                      `json:"explanation,omitempty"`
 }
 
-// PrintInventory writes the grouped workload inventory to w in the chosen
-// format. explanation, when non-empty, is appended (text) or added (json).
-func PrintInventory(workloads []inventory.Workload, explanation, format string, w io.Writer) error {
+// PrintInventory writes the cluster verdict and grouped workload inventory to w.
+func PrintInventory(cluster clusterhealth.ClusterHealth, workloads []inventory.Workload, explanation, format string, w io.Writer) error {
 	switch format {
 	case "json":
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
-		return enc.Encode(inventoryReport{Workloads: workloads, Explanation: explanation})
+		return enc.Encode(inventoryReport{Cluster: cluster, Workloads: workloads, Explanation: explanation})
 	case "text":
-		return printInventoryText(workloads, explanation, w)
+		return printInventoryText(cluster, workloads, explanation, w)
 	default:
 		return fmt.Errorf("unknown output format %q (want text or json)", format)
 	}
 }
 
-func printInventoryText(workloads []inventory.Workload, explanation string, w io.Writer) error {
+func printInventoryText(cluster clusterhealth.ClusterHealth, workloads []inventory.Workload, explanation string, w io.Writer) error {
+	if cluster.Verdict != "" {
+		if _, err := fmt.Fprintf(w, "Cluster: %s — %d/%d nodes Ready\n", cluster.Verdict, cluster.NodesReady, cluster.NodesTotal); err != nil {
+			return err
+		}
+		for _, iss := range cluster.NodeIssues {
+			if _, err := fmt.Fprintf(w, "  ⚠ node %s\n", iss); err != nil {
+				return err
+			}
+		}
+		for _, iss := range cluster.SystemIssues {
+			if _, err := fmt.Fprintf(w, "  ⚠ system %s\n", iss); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintln(w); err != nil {
+			return err
+		}
+	}
 	if len(workloads) == 0 {
 		_, err := fmt.Fprintln(w, "No workloads found.")
 		return err

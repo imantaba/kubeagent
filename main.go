@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/imantaba/kubeagent/internal/cluster"
+	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/collect"
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/explain"
@@ -78,5 +79,5 @@ func run(args []string) error {
 		}
 	}
 
-	return report.PrintInventory(workloads, explanation, *output, os.Stdout)
+	return report.PrintInventory(clusterhealth.ClusterHealth{}, workloads, explanation, *output, os.Stdout)
 }

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/inventory"
 )
@@ -21,9 +22,17 @@ func sampleWorkloads() []inventory.Workload {
 	}}
 }
 
+func sampleCluster() clusterhealth.ClusterHealth {
+	return clusterhealth.ClusterHealth{
+		Verdict: "Degraded", NodesTotal: 3, NodesReady: 2,
+		NodeIssues:   []string{"nova-worker-2 NotReady"},
+		SystemIssues: []string{"kube-system/coredns 1/2 Degraded"},
+	}
+}
+
 func TestPrintInventory_TextShowsWorkloadAndPods(t *testing.T) {
 	var buf bytes.Buffer
-	if err := PrintInventory(sampleWorkloads(), "", "text", &buf); err != nil {
+	if err := PrintInventory(clusterhealth.ClusterHealth{}, sampleWorkloads(), "", "text", &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -40,7 +49,7 @@ func TestPrintInventory_TextFlagsWorkloadWithFinding(t *testing.T) {
 		Findings: []diagnose.Finding{{Pod: "kube-system/coredns-x", Issue: "CrashLoopBackOff", Reason: "boom", Evidence: "e"}},
 	}}
 	var buf bytes.Buffer
-	if err := PrintInventory(ws, "", "text", &buf); err != nil {
+	if err := PrintInventory(clusterhealth.ClusterHealth{}, ws, "", "text", &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -54,7 +63,7 @@ func TestPrintInventory_TextFlagsWorkloadWithFinding(t *testing.T) {
 
 func TestPrintInventory_JSONObjectWithWorkloads(t *testing.T) {
 	var buf bytes.Buffer
-	if err := PrintInventory(sampleWorkloads(), "", "json", &buf); err != nil {
+	if err := PrintInventory(clusterhealth.ClusterHealth{}, sampleWorkloads(), "", "json", &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	var got struct {
@@ -71,7 +80,7 @@ func TestPrintInventory_JSONObjectWithWorkloads(t *testing.T) {
 
 func TestPrintInventory_JSONIncludesExplanation(t *testing.T) {
 	var buf bytes.Buffer
-	if err := PrintInventory(sampleWorkloads(), "rancher is fine", "json", &buf); err != nil {
+	if err := PrintInventory(clusterhealth.ClusterHealth{}, sampleWorkloads(), "rancher is fine", "json", &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), `"explanation": "rancher is fine"`) {
@@ -81,7 +90,53 @@ func TestPrintInventory_JSONIncludesExplanation(t *testing.T) {
 
 func TestPrintInventory_UnknownFormatErrors(t *testing.T) {
 	var buf bytes.Buffer
-	if err := PrintInventory(nil, "", "xml", &buf); err == nil {
+	if err := PrintInventory(clusterhealth.ClusterHealth{}, nil, "", "xml", &buf); err == nil {
 		t.Error("expected an error for unknown format")
+	}
+}
+
+func TestPrintInventory_TextLeadsWithClusterVerdict(t *testing.T) {
+	var buf bytes.Buffer
+	if err := PrintInventory(sampleCluster(), sampleWorkloads(), "", "text", &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{"Cluster: Degraded", "2/3 nodes Ready", "nova-worker-2 NotReady", "kube-system/coredns 1/2 Degraded"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("text output missing %q:\n%s", want, out)
+		}
+	}
+	// The verdict must come before the workload inventory.
+	if strings.Index(out, "Cluster: Degraded") > strings.Index(out, "cattle-system/rancher") {
+		t.Error("cluster verdict should be printed before the inventory")
+	}
+}
+
+func TestPrintInventory_TextHealthyClusterSingleLine(t *testing.T) {
+	var buf bytes.Buffer
+	ch := clusterhealth.ClusterHealth{Verdict: "Healthy", NodesTotal: 3, NodesReady: 3}
+	if err := PrintInventory(ch, sampleWorkloads(), "", "text", &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "Cluster: Healthy — 3/3 nodes Ready") {
+		t.Errorf("expected healthy one-liner:\n%s", out)
+	}
+}
+
+func TestPrintInventory_JSONIncludesCluster(t *testing.T) {
+	var buf bytes.Buffer
+	if err := PrintInventory(sampleCluster(), sampleWorkloads(), "", "json", &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var got struct {
+		Cluster   clusterhealth.ClusterHealth `json:"cluster"`
+		Workloads []inventory.Workload        `json:"workloads"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("not the expected object: %v", err)
+	}
+	if got.Cluster.Verdict != "Degraded" || got.Cluster.NodesReady != 2 || len(got.Workloads) != 1 {
+		t.Errorf("cluster/workloads mismatch: %+v", got)
 	}
 }

@@ -73,7 +73,7 @@ func run(args []string) error {
 	if *explainFlag {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		explanation, err = explain.New(explain.ResolveModel(*model, os.Getenv("KUBEAGENT_MODEL"))).ExplainInventory(ctx, workloads)
+		explanation, err = explain.New(explain.ResolveModel(*model, os.Getenv("KUBEAGENT_MODEL"))).ExplainInventory(ctx, clusterhealth.ClusterHealth{}, workloads)
 		if err != nil {
 			return err
 		}

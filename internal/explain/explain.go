@@ -10,6 +10,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 
+	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
 )
 
@@ -68,14 +69,15 @@ func Notable(workloads []inventory.Workload) []inventory.Workload {
 	return out
 }
 
-// ExplainInventory summarizes the notable workloads in plain English. With
-// nothing notable it returns "" and makes no API call.
-func (c *Client) ExplainInventory(ctx context.Context, workloads []inventory.Workload) (string, error) {
+// ExplainInventory summarizes the cluster verdict (when degraded) and the
+// notable workloads. It skips the API call and returns "" when the cluster is
+// healthy and nothing is notable.
+func (c *Client) ExplainInventory(ctx context.Context, cluster clusterhealth.ClusterHealth, workloads []inventory.Workload) (string, error) {
 	notable := Notable(workloads)
-	if len(notable) == 0 {
+	if cluster.Verdict != "Degraded" && len(notable) == 0 {
 		return "", nil
 	}
-	out, err := c.s.summarize(ctx, buildInventoryPrompt(notable))
+	out, err := c.s.summarize(ctx, buildInventoryPrompt(cluster, notable))
 	if err != nil {
 		return "", fmt.Errorf("explaining workloads: %w", err)
 	}
@@ -86,11 +88,22 @@ func (c *Client) ExplainInventory(ctx context.Context, workloads []inventory.Wor
 	return out, nil
 }
 
-// buildInventoryPrompt renders the notable workloads into a compact prompt.
-// Only structured fields are sent — never raw pod specs or secrets.
-func buildInventoryPrompt(workloads []inventory.Workload) string {
+// buildInventoryPrompt renders the cluster verdict (when degraded) and the
+// notable workloads. Only structured fields are sent — never raw pod specs or
+// secrets (node names in the cluster section are infrastructure identifiers).
+func buildInventoryPrompt(cluster clusterhealth.ClusterHealth, workloads []inventory.Workload) string {
 	var b strings.Builder
-	b.WriteString("A read-only scan summarized these Kubernetes workloads needing attention:\n\n")
+	if cluster.Verdict == "Degraded" {
+		fmt.Fprintf(&b, "Cluster health: DEGRADED — %d/%d nodes Ready.\n", cluster.NodesReady, cluster.NodesTotal)
+		for _, iss := range cluster.NodeIssues {
+			fmt.Fprintf(&b, "  node %s\n", iss)
+		}
+		for _, iss := range cluster.SystemIssues {
+			fmt.Fprintf(&b, "  system %s\n", iss)
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("These Kubernetes workloads need attention:\n\n")
 	for _, w := range workloads {
 		fmt.Fprintf(&b, "- %s/%s (%s): %d/%d ready, status %s, %d restarts\n",
 			w.Namespace, w.Name, w.Kind, w.Ready, w.Desired, w.Status, w.Restarts)

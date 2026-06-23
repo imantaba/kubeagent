@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/inventory"
 )
@@ -47,7 +48,7 @@ func TestNotable_SelectsFlaggedAndHighRestarts(t *testing.T) {
 func TestExplainInventory_SkipsWhenNothingNotable(t *testing.T) {
 	f := &fakeSummarizer{reply: "should not be used"}
 	c := &Client{s: f}
-	got, err := c.ExplainInventory(context.Background(), []inventory.Workload{{Name: "ok", Ready: 1, Desired: 1}})
+	got, err := c.ExplainInventory(context.Background(), clusterhealth.ClusterHealth{Verdict: "Healthy"}, []inventory.Workload{{Name: "ok", Ready: 1, Desired: 1}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -60,7 +61,7 @@ func TestExplainInventory_SummarizesNotable(t *testing.T) {
 	f := &fakeSummarizer{reply: "  coredns is degraded.  "}
 	c := &Client{s: f}
 	ws := []inventory.Workload{{Namespace: "kube-system", Name: "coredns", Kind: "Deployment", Ready: 1, Desired: 2}}
-	got, err := c.ExplainInventory(context.Background(), ws)
+	got, err := c.ExplainInventory(context.Background(), clusterhealth.ClusterHealth{Verdict: "Healthy"}, ws)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -72,7 +73,7 @@ func TestExplainInventory_SummarizesNotable(t *testing.T) {
 func TestExplainInventory_WrapsError(t *testing.T) {
 	f := &fakeSummarizer{err: errors.New("boom")}
 	c := &Client{s: f}
-	_, err := c.ExplainInventory(context.Background(), []inventory.Workload{{Name: "x", Ready: 1, Desired: 2}})
+	_, err := c.ExplainInventory(context.Background(), clusterhealth.ClusterHealth{Verdict: "Healthy"}, []inventory.Workload{{Name: "x", Ready: 1, Desired: 2}})
 	if err == nil || !strings.Contains(err.Error(), "explaining workloads") || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("expected wrapped error, got %v", err)
 	}
@@ -81,7 +82,7 @@ func TestExplainInventory_WrapsError(t *testing.T) {
 func TestExplainInventory_ErrorsOnEmptyText(t *testing.T) {
 	f := &fakeSummarizer{reply: "  \n"}
 	c := &Client{s: f}
-	_, err := c.ExplainInventory(context.Background(), []inventory.Workload{{Name: "x", Ready: 1, Desired: 2}})
+	_, err := c.ExplainInventory(context.Background(), clusterhealth.ClusterHealth{Verdict: "Healthy"}, []inventory.Workload{{Name: "x", Ready: 1, Desired: 2}})
 	if err == nil || !strings.Contains(err.Error(), "model returned no text") {
 		t.Fatalf("expected empty-text error, got %v", err)
 	}
@@ -93,7 +94,7 @@ func TestBuildInventoryPrompt_OnlyStructuredFields(t *testing.T) {
 		Findings: []diagnose.Finding{{Pod: "kube-system/coredns-x", Issue: "CrashLoopBackOff", Reason: "boom", Evidence: "restartCount=7"}},
 		Pods:     []inventory.PodRow{{Name: "coredns-x", IP: "10.42.9.9", Node: "secret-node-name"}},
 	}}
-	got := buildInventoryPrompt(ws)
+	got := buildInventoryPrompt(clusterhealth.ClusterHealth{}, ws)
 	for _, want := range []string{"kube-system", "coredns", "Deployment", "CrashLoopBackOff", "boom"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("prompt missing %q:\n%s", want, got)
@@ -104,6 +105,27 @@ func TestBuildInventoryPrompt_OnlyStructuredFields(t *testing.T) {
 		if strings.Contains(got, leak) {
 			t.Errorf("prompt leaked %q:\n%s", leak, got)
 		}
+	}
+}
+
+func TestExplainInventory_ExplainsDegradedClusterWithNoNotableWorkloads(t *testing.T) {
+	f := &fakeSummarizer{reply: "two nodes are NotReady"}
+	c := &Client{s: f}
+	ch := clusterhealth.ClusterHealth{Verdict: "Degraded", NodesTotal: 3, NodesReady: 1, NodeIssues: []string{"n2 NotReady", "n3 NotReady"}}
+	got, err := c.ExplainInventory(context.Background(), ch, []inventory.Workload{{Name: "ok", Ready: 1, Desired: 1}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "two nodes are NotReady" || !f.called {
+		t.Errorf("expected the degraded cluster to be explained; got %q called=%v", got, f.called)
+	}
+}
+
+func TestBuildInventoryPrompt_LeadsWithDegradedCluster(t *testing.T) {
+	ch := clusterhealth.ClusterHealth{Verdict: "Degraded", NodesTotal: 3, NodesReady: 1, NodeIssues: []string{"n2 NotReady"}}
+	got := buildInventoryPrompt(ch, nil)
+	if !strings.Contains(got, "DEGRADED") || !strings.Contains(got, "n2 NotReady") {
+		t.Errorf("prompt should lead with the degraded cluster:\n%s", got)
 	}
 }
 

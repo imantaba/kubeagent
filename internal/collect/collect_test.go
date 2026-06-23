@@ -42,6 +42,20 @@ func TestCollectInventory_ScopesToNamespace(t *testing.T) {
 	}
 }
 
+func TestNodes_ListsAllNodes(t *testing.T) {
+	client := fake.NewSimpleClientset(
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"}},
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n2"}},
+	)
+	nodes, err := Nodes(context.Background(), client)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(nodes) != 2 {
+		t.Fatalf("expected 2 nodes, got %d", len(nodes))
+	}
+}
+
 func TestFactsFrom_WrapsEachPod(t *testing.T) {
 	pods := []corev1.Pod{
 		{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "p1"}},

@@ -51,6 +51,16 @@ func CollectInventory(ctx context.Context, client kubernetes.Interface, namespac
 	return in, nil
 }
 
+// Nodes lists all cluster nodes (read-only). Nodes are cluster-scoped, so this
+// is not affected by the scan's namespace filter.
+func Nodes(ctx context.Context, client kubernetes.Interface) ([]corev1.Node, error) {
+	nodes, err := client.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("listing nodes: %w", err)
+	}
+	return nodes.Items, nil
+}
+
 // FactsFrom wraps each pod in a diagnose.PodFacts for the detectors.
 func FactsFrom(pods []corev1.Pod) []diagnose.PodFacts {
 	facts := make([]diagnose.PodFacts, 0, len(pods))

@@ -116,6 +116,9 @@ func TestWorkloadStatusAndFlagged(t *testing.T) {
 	if !withFinding.Flagged() {
 		t.Error("a workload with a finding should be flagged even when ready==desired")
 	}
+	if workloadStatus(0, 0) != "Scaled Down" {
+		t.Error("0/0 should be Scaled Down, not Degraded")
+	}
 }
 
 // pod builds a one-container pod with the given restart count (recorded in the
@@ -164,6 +167,9 @@ func TestAssemble_DeploymentGroupsPodsAndAggregates(t *testing.T) {
 	w := ws[0]
 	if w.Kind != "Deployment" || w.Name != "rancher" {
 		t.Errorf("kind/name = %s/%s, want Deployment/rancher", w.Kind, w.Name)
+	}
+	if w.Namespace != "cattle-system" {
+		t.Errorf("namespace = %q, want cattle-system", w.Namespace)
 	}
 	if w.Desired != 3 || w.Ready != 3 || w.Status != "Running" {
 		t.Errorf("got %d/%d %s, want 3/3 Running", w.Ready, w.Desired, w.Status)
@@ -220,5 +226,67 @@ func TestAssemble_BarePodBecomesItsOwnWorkload(t *testing.T) {
 	}
 	if ws[0].Desired != 1 || ws[0].Ready != 1 || ws[0].Status != "Running" {
 		t.Errorf("bare pod health = %d/%d %s, want 1/1 Running", ws[0].Ready, ws[0].Desired, ws[0].Status)
+	}
+}
+
+func TestAssemble_StatefulSetSeeding(t *testing.T) {
+	in := Inputs{
+		StatefulSets: []appsv1.StatefulSet{{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "db", Name: "etcd"},
+			Status:     appsv1.StatefulSetStatus{Replicas: 3, ReadyReplicas: 3},
+		}},
+		Pods: []corev1.Pod{pod("db", "etcd-0", ctrlRef("StatefulSet", "etcd"), 0, "etcd:3.5")},
+	}
+	ws := Assemble(in, nil)
+	if len(ws) != 1 || ws[0].Kind != "StatefulSet" || ws[0].Name != "etcd" {
+		t.Fatalf("got %+v", ws)
+	}
+	if ws[0].Desired != 3 || ws[0].Ready != 3 || ws[0].Status != "Running" {
+		t.Errorf("got %d/%d %s, want 3/3 Running", ws[0].Ready, ws[0].Desired, ws[0].Status)
+	}
+}
+
+func TestAssemble_DaemonSetSeeding(t *testing.T) {
+	in := Inputs{
+		DaemonSets: []appsv1.DaemonSet{{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "kube-system", Name: "node-exporter"},
+			Status:     appsv1.DaemonSetStatus{DesiredNumberScheduled: 5, NumberReady: 4},
+		}},
+		Pods: []corev1.Pod{pod("kube-system", "node-exporter-abc", ctrlRef("DaemonSet", "node-exporter"), 0, "node-exporter:1")},
+	}
+	ws := Assemble(in, nil)
+	if len(ws) != 1 || ws[0].Kind != "DaemonSet" {
+		t.Fatalf("got %+v", ws)
+	}
+	if ws[0].Desired != 5 || ws[0].Ready != 4 || ws[0].Status != "Degraded" {
+		t.Errorf("got %d/%d %s, want 4/5 Degraded", ws[0].Ready, ws[0].Desired, ws[0].Status)
+	}
+}
+
+func TestAssemble_ReplicaSetWithoutDeploymentFallback(t *testing.T) {
+	// The pod's ReplicaSet owner is not resolvable to a Deployment (no matching
+	// ReplicaSet in Inputs), so it falls back to a ReplicaSet workload with
+	// pod-derived counts.
+	in := Inputs{Pods: []corev1.Pod{readyPod("a", "orphan-rs-1", ctrlRef("ReplicaSet", "orphan-rs"), "img")}}
+	ws := Assemble(in, nil)
+	if len(ws) != 1 || ws[0].Kind != "ReplicaSet" || ws[0].Name != "orphan-rs" {
+		t.Fatalf("expected a ReplicaSet fallback workload, got %+v", ws)
+	}
+	if ws[0].Desired != 1 || ws[0].Ready != 1 {
+		t.Errorf("derived counts = %d/%d, want 1/1", ws[0].Ready, ws[0].Desired)
+	}
+}
+
+func TestAssemble_AggregatesLastRestart(t *testing.T) {
+	p := readyPod("a", "p1", nil, "img")
+	p.Status.ContainerStatuses[0].LastTerminationState = corev1.ContainerState{
+		Terminated: &corev1.ContainerStateTerminated{FinishedAt: metav1.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC)},
+	}
+	ws := Assemble(Inputs{Pods: []corev1.Pod{p}}, nil)
+	if len(ws) != 1 || ws[0].LastRestart != "2026-06-10T00:00:00Z" {
+		t.Fatalf("workload LastRestart = %q, want 2026-06-10T00:00:00Z; ws=%+v", ws[0].LastRestart, ws)
+	}
+	if ws[0].Pods[0].LastRestart != "2026-06-10T00:00:00Z" {
+		t.Errorf("pod row LastRestart = %q", ws[0].Pods[0].LastRestart)
 	}
 }

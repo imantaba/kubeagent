@@ -129,7 +129,10 @@ func podImage(p corev1.Pod) string {
 }
 
 func workloadStatus(ready, desired int) string {
-	if desired > 0 && ready >= desired {
+	if desired == 0 {
+		return "Scaled Down"
+	}
+	if ready >= desired {
 		return "Running"
 	}
 	return "Degraded"

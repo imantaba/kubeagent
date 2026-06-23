@@ -10,7 +10,8 @@ health report**. `scan` lists every workload in scope grouped by its controller,
 shows each workload's replica health, restart history, and per-pod detail, and
 surfaces detector problems integrated into that view. A workload that is healthy
 now but restarted many times in the past (e.g. `rancher`: 3/3 Running, 64
-restarts weeks ago, reachable now) is shown — today it produces no output at all.
+restarts weeks ago, reachable now) is shown — today it produces no output at all. A **first-line cluster-health
+verdict** (node health + core system workloads) leads the report.
 
 No new subcommand and no new flag gate this: **`scan` does it all** by default.
 
@@ -30,6 +31,8 @@ This design also absorbs two previously-approved smaller items:
 - **`--explain`:** summarize **notable items only** (findings, degraded
   workloads, high restarts, failed Jobs) — not the whole inventory.
 - **Model:** `--model` flag › `KUBEAGENT_MODEL` env › `claude-opus-4-8`.
+- **Cluster health:** a first-line verdict over node health **plus** a
+  `kube-system` core-workload rollup.
 
 ## Invariants preserved
 
@@ -47,14 +50,16 @@ This design also absorbs two previously-approved smaller items:
 ## Architecture / pipeline
 
 ```text
-cluster → collect (pods + all controllers) → inventory (group → Workloads)
-        → diagnose (attach findings) → report (grouped) → [--explain: notable]
+cluster → collect (pods + controllers + nodes) → inventory (group → Workloads)
+        → diagnose (attach findings) → clusterhealth (nodes + kube-system rollup)
+        → report (verdict + grouped) → [--explain: cluster verdict + notable]
 ```
 
 The new **`internal/inventory`** stage is where grouping, health computation, and
-restart aggregation live. Detectors are unchanged (still per-pod, same `Finding`
-type); their findings are attached to the owning workload during assembly. Each
-stage is independently testable with fakes.
+restart aggregation live; **`internal/clusterhealth`** derives the first-line
+verdict from the node list and the assembled workloads. Detectors are unchanged
+(still per-pod, same `Finding` type); their findings are attached to the owning
+workload during assembly. Each stage is independently testable with fakes.
 
 ## Data model (`internal/inventory`)
 
@@ -86,6 +91,15 @@ type PodRow struct {
     Age         string // human duration, e.g. "36d"
     Image       string
 }
+
+// ClusterHealth is the first-line cluster verdict.
+type ClusterHealth struct {
+    Verdict      string   // Healthy | Degraded
+    NodesTotal   int
+    NodesReady   int
+    NodeIssues   []string // e.g. "nova-worker-2 NotReady", "nova-worker-1 DiskPressure"
+    SystemIssues []string // e.g. "kube-system/coredns 1/2 Degraded"
+}
 ```
 
 ## Collection (`internal/collect`)
@@ -93,9 +107,10 @@ type PodRow struct {
 `collect` gains a function that lists, read-only and namespace-scoped (or all):
 Pods, Deployments, ReplicaSets, StatefulSets, DaemonSets, Jobs, CronJobs. The
 existing `collect.Cluster(...) []diagnose.PodFacts` is retained for the detector
-inputs; the new lists feed the inventory stage. Typed client-go clients:
+inputs; the new lists feed the inventory and cluster-health stages. It also lists
+cluster-scoped **Nodes** for the health verdict. Typed client-go clients:
 `AppsV1().{Deployments,ReplicaSets,StatefulSets,DaemonSets}`,
-`BatchV1().{Jobs,CronJobs}`, `CoreV1().Pods`.
+`BatchV1().{Jobs,CronJobs}`, `CoreV1().{Pods,Nodes}`.
 
 ## Grouping & health rules (`internal/inventory`)
 
@@ -129,11 +144,32 @@ formats a `metav1.Time` → RFC3339 or `""`.
 **Completed Job/CronJob pods are capped** in the per-pod rows (show a count plus
 the most recent few — default 3) to avoid flooding output with finished pods.
 
+## Cluster health header (first line)
+
+A new **`internal/clusterhealth`** stage produces the top-of-report verdict from
+two inputs:
+
+- **Nodes** (cluster-scoped `List`): a node is unhealthy when its `Ready`
+  condition is not `True`, it reports `MemoryPressure`/`DiskPressure`/`PIDPressure`,
+  or it is unschedulable (cordoned).
+- **System workloads:** a rollup over `kube-system` workloads from the inventory —
+  any that are `Degraded`/flagged (CoreDNS, kube-proxy, CNI, etc.). CNI lives in
+  `kube-system` on most distros; namespaces beyond `kube-system` are out of scope
+  for v3.
+
+`Assess(nodes, workloads) ClusterHealth` is a **pure function** (testable with
+fakes). The `Verdict` is `Healthy` only when every node is healthy and no
+`kube-system` workload is degraded; otherwise `Degraded`, with the specific node
+and system issues listed.
+
 ## Output (`internal/report`)
 
-Default `scan` output, grouped, **flagged workloads sorted first**:
+Default `scan` output: the cluster verdict first, then the grouped inventory with
+**flagged workloads sorted first**:
 
 ```text
+Cluster: DEGRADED — 3/3 nodes Ready · system: kube-system/coredns 1/2 Degraded
+
 cattle-system/rancher  Deployment  3/3 Running  · 64 restarts, last 20d ago
     image rancher/rancher:v2.14.1
     …64smq  1/1  Running  31 (20d ago)  nova-worker-3  10.42.4.41   36d
@@ -143,23 +179,27 @@ cattle-system/rancher  Deployment  3/3 Running  · 64 restarts, last 20d ago
     …
 ```
 
-- **text:** one workload header + indented pod rows; flagged workloads carry a
-  `⚠` and the detector reason; an all-healthy cluster still prints the inventory
-  (no more bare "No issues found").
-- **json:** an **array of `Workload` objects**. With `--explain`, wrapped as
-  `{"workloads": [...], "explanation": "..."}`.
+- **text:** the **cluster-health verdict prints first** (a single line when
+  healthy; a short block listing node/system issues when degraded), then the
+  inventory — workload header + indented pod rows, flagged workloads carrying a
+  `⚠` and the detector reason. An all-healthy cluster still prints the full
+  inventory (no bare "No issues found").
+- **json:** a top-level **object** `{"cluster": {…}, "workloads": [ … ]}`; with
+  `--explain`, an `"explanation"` field is added. `cluster` is the
+  `ClusterHealth` summary; findings live nested in each workload's `findings`.
 
 > ⚠️ **Breaking change:** this replaces v2's scan JSON (a bare `findings` array /
-> `{findings, explanation}` wrapper). Findings now live nested inside each
-> workload's `findings` field. Accepted because `scan` now reports the whole
-> picture.
+> `{findings, explanation}` wrapper) with the object above. Accepted because
+> `scan` now reports the whole picture.
 
 ## `--explain` — notable filtering + model selection
 
 A pure `notable(workloads) []Workload` selects only workloads that (a) have a
 detector finding, (b) are `Degraded` (ready<desired), (c) exceed a restart-count
-threshold (default: ≥ 5 total restarts), or (d) are failed Jobs. `buildPrompt` renders that filtered set, so
-the single Claude call stays bounded even on large clusters. If nothing is
+threshold (default: ≥ 5 total restarts), or (d) are failed Jobs.
+`buildPrompt(cluster, notable)` leads with the cluster-health verdict **when it is
+`Degraded`**, then renders the filtered workloads — so the single Claude call
+stays bounded even on large clusters. If the cluster is healthy and nothing is
 notable, the call is skipped (returns `""`, as today).
 
 **Model selection:** a pure `explain.ResolveModel(flagVal, envVal) string`
@@ -175,7 +215,11 @@ call time (no brittle hardcoded allow-list).
   ready/desired from controller `.status`, status labels, restart sum + max
   `LastRestart`, and Job/CronJob capping — all with fake pods + controller
   objects, no cluster.
-- `collect` — the new multi-resource list uses the client-go fake clientset.
+- `clusterhealth` — `Assess` is a pure unit test (fake nodes + workloads):
+  Ready/pressure/cordon detection, the `kube-system` rollup, and the overall
+  verdict. Node collection uses the fake clientset.
+- `collect` — the new multi-resource list (incl. Nodes) uses the client-go fake
+  clientset.
 - `report` — table tests for the grouped text rendering (flagged-first ordering,
   pod rows, healthy inventory) and the JSON workloads array (+ wrapper with
   explanation).
@@ -194,7 +238,10 @@ The plan builds in three phases so value lands early and the noisy part is last:
   pods → grouping, health, restart aggregation (incl. per-pod `LastRestart`
   timestamps), grouped text+JSON report, integrated detectors, and notable-only
   `--explain`. This fully delivers the rancher scenario.
-- **Phase C — Jobs & CronJobs.** Job/CronJob collection, Job→CronJob grouping,
+- **Phase C — cluster-health header.** Node collection + `clusterhealth.Assess`
+  (nodes + `kube-system` rollup) + the first-line verdict in text/JSON + its
+  inclusion in `--explain`.
+- **Phase D — Jobs & CronJobs.** Job/CronJob collection, Job→CronJob grouping,
   Job status, and capping completed-pod rows.
 
 ## Out of scope (explicit non-goals)

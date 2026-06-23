@@ -69,15 +69,21 @@ func run(args []string) error {
 	findings := diagnose.Run(detectors, collect.FactsFrom(inputs.Pods))
 	workloads := inventory.Assemble(inputs, findings)
 
+	nodes, err := collect.Nodes(context.Background(), client)
+	if err != nil {
+		return err
+	}
+	health := clusterhealth.Assess(nodes, workloads)
+
 	var explanation string
 	if *explainFlag {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		explanation, err = explain.New(explain.ResolveModel(*model, os.Getenv("KUBEAGENT_MODEL"))).ExplainInventory(ctx, clusterhealth.ClusterHealth{}, workloads)
+		explanation, err = explain.New(explain.ResolveModel(*model, os.Getenv("KUBEAGENT_MODEL"))).ExplainInventory(ctx, health, workloads)
 		if err != nil {
 			return err
 		}
 	}
 
-	return report.PrintInventory(clusterhealth.ClusterHealth{}, workloads, explanation, *output, os.Stdout)
+	return report.PrintInventory(health, workloads, explanation, *output, os.Stdout)
 }

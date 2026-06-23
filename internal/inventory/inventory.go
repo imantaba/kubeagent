@@ -190,6 +190,8 @@ func cronJobStatus(cj batchv1.CronJob) string {
 	return "Idle"
 }
 
+const jobPodCap = 3 // max pod rows shown per Job/CronJob workload
+
 // Assemble groups pods into workloads, reads controller status for ready/desired,
 // aggregates restarts, attaches findings, and returns workloads sorted
 // flagged-first then by namespace/name.
@@ -221,6 +223,27 @@ func Assemble(in Inputs, findings []diagnose.Finding) []Workload {
 		seed("DaemonSet", ds.Namespace, ds.Name, int(ds.Status.DesiredNumberScheduled), int(ds.Status.NumberReady))
 	}
 
+	// seedJobLike seeds a Job/CronJob workload with a controller-derived status
+	// (and schedule), keeping Desired/Ready at 0.
+	seedJobLike := func(kind, ns, name, status, schedule string) {
+		k := key(kind, ns, name)
+		workloads[k] = &Workload{Namespace: ns, Name: name, Kind: kind, Status: status, Schedule: schedule}
+		controllerKeys[k] = true
+	}
+	for _, cj := range in.CronJobs {
+		seedJobLike("CronJob", cj.Namespace, cj.Name, cronJobStatus(cj), cj.Spec.Schedule)
+	}
+	// jobToCronJob resolves a Job to its owning CronJob (namespaced); CronJob-owned
+	// Jobs are NOT seeded as their own workloads (their pods roll up to the CronJob).
+	jobToCronJob := map[string]string{}
+	for _, j := range in.Jobs {
+		if o := controllerOwner(j.OwnerReferences); o != nil && o.Kind == "CronJob" {
+			jobToCronJob[j.Namespace+"/"+j.Name] = o.Name
+			continue
+		}
+		seedJobLike("Job", j.Namespace, j.Name, jobStatus(j), "")
+	}
+
 	// rsToDeploy resolves ReplicaSet -> Deployment name (namespaced).
 	rsToDeploy := map[string]string{}
 	for _, rs := range in.ReplicaSets {
@@ -229,18 +252,25 @@ func Assemble(in Inputs, findings []diagnose.Finding) []Workload {
 		}
 	}
 
-	podKey := map[string]string{}    // "ns/name" -> workload key
-	derivedReady := map[string]int{} // ready-pod count for pod-derived workloads
+	podKey := map[string]string{}
+	derivedReady := map[string]int{}
 	for _, p := range in.Pods {
 		kind, name := "Pod", p.Name
 		if o := controllerOwner(p.OwnerReferences); o != nil {
-			if o.Kind == "ReplicaSet" {
+			switch o.Kind {
+			case "ReplicaSet":
 				if dep, ok := rsToDeploy[p.Namespace+"/"+o.Name]; ok {
 					kind, name = "Deployment", dep
 				} else {
 					kind, name = "ReplicaSet", o.Name
 				}
-			} else {
+			case "Job":
+				if cj, ok := jobToCronJob[p.Namespace+"/"+o.Name]; ok {
+					kind, name = "CronJob", cj
+				} else {
+					kind, name = "Job", o.Name
+				}
+			default:
 				kind, name = o.Kind, o.Name
 			}
 		}
@@ -284,7 +314,13 @@ func Assemble(in Inputs, findings []diagnose.Finding) []Workload {
 			w.Desired = len(w.Pods)
 			w.Ready = derivedReady[k]
 		}
-		w.Status = workloadStatus(w.Ready, w.Desired)
+		if (w.Kind == "Job" || w.Kind == "CronJob") && len(w.Pods) > jobPodCap {
+			w.PodsOmitted = len(w.Pods) - jobPodCap
+			w.Pods = w.Pods[:jobPodCap]
+		}
+		if w.Status == "" {
+			w.Status = workloadStatus(w.Ready, w.Desired)
+		}
 		out = append(out, *w)
 	}
 	sortWorkloads(out)

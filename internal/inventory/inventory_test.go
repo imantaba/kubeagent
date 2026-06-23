@@ -336,6 +336,73 @@ func TestFlagged_FailedStatus(t *testing.T) {
 	}
 }
 
+func TestAssemble_StandaloneJob(t *testing.T) {
+	in := Inputs{
+		Jobs: []batchv1.Job{{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "batch", Name: "migrate"},
+			Status:     batchv1.JobStatus{Conditions: []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}},
+		}},
+		Pods: []corev1.Pod{pod("batch", "migrate-xyz", ctrlRef("Job", "migrate"), 0, "migrate:1")},
+	}
+	ws := Assemble(in, nil)
+	if len(ws) != 1 || ws[0].Kind != "Job" || ws[0].Name != "migrate" {
+		t.Fatalf("got %+v", ws)
+	}
+	if ws[0].Status != "Complete" {
+		t.Errorf("status = %q, want Complete", ws[0].Status)
+	}
+	if len(ws[0].Pods) != 1 {
+		t.Errorf("expected 1 pod row, got %d", len(ws[0].Pods))
+	}
+}
+
+func TestAssemble_CronJobRollsUpItsJobsPods(t *testing.T) {
+	in := Inputs{
+		CronJobs: []batchv1.CronJob{{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "batch", Name: "backup"},
+			Spec:       batchv1.CronJobSpec{Schedule: "0 2 * * *"},
+		}},
+		Jobs: []batchv1.Job{{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "batch", Name: "backup-28000", OwnerReferences: ctrlRef("CronJob", "backup")},
+		}},
+		Pods: []corev1.Pod{pod("batch", "backup-28000-aaa", ctrlRef("Job", "backup-28000"), 0, "backup:1")},
+	}
+	ws := Assemble(in, nil)
+	// Only the CronJob workload (the Job is not seeded separately; its pod rolls up).
+	if len(ws) != 1 || ws[0].Kind != "CronJob" || ws[0].Name != "backup" {
+		t.Fatalf("expected one CronJob workload, got %+v", ws)
+	}
+	if ws[0].Schedule != "0 2 * * *" {
+		t.Errorf("schedule = %q", ws[0].Schedule)
+	}
+	if len(ws[0].Pods) != 1 || ws[0].Pods[0].Name != "backup-28000-aaa" {
+		t.Errorf("expected the job's pod under the cronjob, got %+v", ws[0].Pods)
+	}
+}
+
+func TestAssemble_CapsJobPods(t *testing.T) {
+	in := Inputs{
+		Jobs: []batchv1.Job{{ObjectMeta: metav1.ObjectMeta{Namespace: "batch", Name: "noisy"}}},
+		Pods: []corev1.Pod{
+			pod("batch", "noisy-1", ctrlRef("Job", "noisy"), 0, "i"),
+			pod("batch", "noisy-2", ctrlRef("Job", "noisy"), 0, "i"),
+			pod("batch", "noisy-3", ctrlRef("Job", "noisy"), 0, "i"),
+			pod("batch", "noisy-4", ctrlRef("Job", "noisy"), 0, "i"),
+			pod("batch", "noisy-5", ctrlRef("Job", "noisy"), 0, "i"),
+		},
+	}
+	ws := Assemble(in, nil)
+	if len(ws) != 1 {
+		t.Fatalf("got %d workloads", len(ws))
+	}
+	if len(ws[0].Pods) != 3 {
+		t.Errorf("expected pods capped to 3, got %d", len(ws[0].Pods))
+	}
+	if ws[0].PodsOmitted != 2 {
+		t.Errorf("PodsOmitted = %d, want 2", ws[0].PodsOmitted)
+	}
+}
+
 func TestAssemble_AggregatesLastRestart(t *testing.T) {
 	p := readyPod("a", "p1", nil, "img")
 	p.Status.ContainerStatuses[0].LastTerminationState = corev1.ContainerState{

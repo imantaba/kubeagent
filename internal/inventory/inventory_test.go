@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -114,5 +115,110 @@ func TestWorkloadStatusAndFlagged(t *testing.T) {
 	withFinding := Workload{Ready: 1, Desired: 1, Findings: []diagnose.Finding{{Pod: "ns/p", Issue: "X"}}}
 	if !withFinding.Flagged() {
 		t.Error("a workload with a finding should be flagged even when ready==desired")
+	}
+}
+
+// pod builds a one-container pod with the given restart count (recorded in the
+// current container status) and image. It is NOT ready by default.
+func pod(ns, name string, owners []metav1.OwnerReference, restarts int32, image string) corev1.Pod {
+	return corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name, OwnerReferences: owners},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: image}}},
+		Status: corev1.PodStatus{
+			Phase:             corev1.PodRunning,
+			ContainerStatuses: []corev1.ContainerStatus{{Name: "c", RestartCount: restarts, Ready: false}},
+		},
+	}
+}
+
+// readyPod is like pod but its single container is Ready.
+func readyPod(ns, name string, owners []metav1.OwnerReference, image string) corev1.Pod {
+	p := pod(ns, name, owners, 0, image)
+	p.Status.ContainerStatuses[0].Ready = true
+	return p
+}
+
+func ctrlRef(kind, name string) []metav1.OwnerReference {
+	yes := true
+	return []metav1.OwnerReference{{Kind: kind, Name: name, Controller: &yes}}
+}
+
+func TestAssemble_DeploymentGroupsPodsAndAggregates(t *testing.T) {
+	in := Inputs{
+		Deployments: []appsv1.Deployment{{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "cattle-system", Name: "rancher"},
+			Status:     appsv1.DeploymentStatus{Replicas: 3, ReadyReplicas: 3},
+		}},
+		ReplicaSets: []appsv1.ReplicaSet{{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "cattle-system", Name: "rancher-f7fb", OwnerReferences: ctrlRef("Deployment", "rancher")},
+		}},
+		Pods: []corev1.Pod{
+			pod("cattle-system", "rancher-f7fb-64smq", ctrlRef("ReplicaSet", "rancher-f7fb"), 31, "rancher/rancher:v2.14.1"),
+			pod("cattle-system", "rancher-f7fb-d2th5", ctrlRef("ReplicaSet", "rancher-f7fb"), 32, "rancher/rancher:v2.14.1"),
+		},
+	}
+	ws := Assemble(in, nil)
+	if len(ws) != 1 {
+		t.Fatalf("expected 1 workload, got %d: %+v", len(ws), ws)
+	}
+	w := ws[0]
+	if w.Kind != "Deployment" || w.Name != "rancher" {
+		t.Errorf("kind/name = %s/%s, want Deployment/rancher", w.Kind, w.Name)
+	}
+	if w.Desired != 3 || w.Ready != 3 || w.Status != "Running" {
+		t.Errorf("got %d/%d %s, want 3/3 Running", w.Ready, w.Desired, w.Status)
+	}
+	if w.Restarts != 63 {
+		t.Errorf("restarts = %d, want 63", w.Restarts)
+	}
+	if len(w.Pods) != 2 {
+		t.Errorf("expected 2 pod rows, got %d", len(w.Pods))
+	}
+	if w.Image != "rancher/rancher:v2.14.1" {
+		t.Errorf("image = %q", w.Image)
+	}
+}
+
+func TestAssemble_AttachesFindingsAndSortsFlaggedFirst(t *testing.T) {
+	in := Inputs{
+		Deployments: []appsv1.Deployment{
+			{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "healthy"}, Status: appsv1.DeploymentStatus{Replicas: 1, ReadyReplicas: 1}},
+			{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "broken"}, Status: appsv1.DeploymentStatus{Replicas: 2, ReadyReplicas: 2}},
+		},
+		ReplicaSets: []appsv1.ReplicaSet{
+			{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "healthy-rs", OwnerReferences: ctrlRef("Deployment", "healthy")}},
+			{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "broken-rs", OwnerReferences: ctrlRef("Deployment", "broken")}},
+		},
+		Pods: []corev1.Pod{
+			pod("a", "healthy-rs-1", ctrlRef("ReplicaSet", "healthy-rs"), 0, "img"),
+			pod("a", "broken-rs-1", ctrlRef("ReplicaSet", "broken-rs"), 5, "img"),
+		},
+	}
+	findings := []diagnose.Finding{{Pod: "a/broken-rs-1", Issue: "CrashLoopBackOff", Reason: "boom", Evidence: "x"}}
+	ws := Assemble(in, findings)
+	if len(ws) != 2 {
+		t.Fatalf("expected 2 workloads, got %d", len(ws))
+	}
+	if ws[0].Name != "broken" || !ws[0].Flagged() {
+		t.Errorf("flagged workload should sort first; got %+v", ws[0])
+	}
+	if len(ws[0].Findings) != 1 || ws[0].Findings[0].Issue != "CrashLoopBackOff" {
+		t.Errorf("finding not attached to broken: %+v", ws[0].Findings)
+	}
+	if ws[1].Name != "healthy" || ws[1].Flagged() {
+		t.Errorf("healthy workload should sort last and be unflagged; got %+v", ws[1])
+	}
+}
+
+func TestAssemble_BarePodBecomesItsOwnWorkload(t *testing.T) {
+	in := Inputs{Pods: []corev1.Pod{
+		readyPod("default", "lonely", nil, "img"), // no owner refs → bare pod
+	}}
+	ws := Assemble(in, nil)
+	if len(ws) != 1 || ws[0].Kind != "Pod" || ws[0].Name != "lonely" {
+		t.Fatalf("expected a bare-pod workload, got %+v", ws)
+	}
+	if ws[0].Desired != 1 || ws[0].Ready != 1 || ws[0].Status != "Running" {
+		t.Errorf("bare pod health = %d/%d %s, want 1/1 Running", ws[0].Ready, ws[0].Desired, ws[0].Status)
 	}
 }

@@ -5,8 +5,10 @@ package inventory
 
 import (
 	"fmt"
+	"sort"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -131,4 +133,116 @@ func workloadStatus(ready, desired int) string {
 		return "Running"
 	}
 	return "Degraded"
+}
+
+// Inputs are the raw lists Assemble consumes (Phase B kinds only).
+type Inputs struct {
+	Pods         []corev1.Pod
+	Deployments  []appsv1.Deployment
+	ReplicaSets  []appsv1.ReplicaSet
+	StatefulSets []appsv1.StatefulSet
+	DaemonSets   []appsv1.DaemonSet
+}
+
+// Assemble groups pods into workloads, reads controller status for ready/desired,
+// aggregates restarts, attaches findings, and returns workloads sorted
+// flagged-first then by namespace/name.
+func Assemble(in Inputs, findings []diagnose.Finding) []Workload {
+	key := func(kind, ns, name string) string { return kind + "/" + ns + "/" + name }
+
+	workloads := map[string]*Workload{}
+	controllerKeys := map[string]bool{}
+	seed := func(kind, ns, name string, desired, ready int) {
+		k := key(kind, ns, name)
+		workloads[k] = &Workload{Namespace: ns, Name: name, Kind: kind, Desired: desired, Ready: ready}
+		controllerKeys[k] = true
+	}
+	for _, d := range in.Deployments {
+		seed("Deployment", d.Namespace, d.Name, int(d.Status.Replicas), int(d.Status.ReadyReplicas))
+	}
+	for _, s := range in.StatefulSets {
+		seed("StatefulSet", s.Namespace, s.Name, int(s.Status.Replicas), int(s.Status.ReadyReplicas))
+	}
+	for _, ds := range in.DaemonSets {
+		seed("DaemonSet", ds.Namespace, ds.Name, int(ds.Status.DesiredNumberScheduled), int(ds.Status.NumberReady))
+	}
+
+	// rsToDeploy resolves ReplicaSet -> Deployment name (namespaced).
+	rsToDeploy := map[string]string{}
+	for _, rs := range in.ReplicaSets {
+		if o := controllerOwner(rs.OwnerReferences); o != nil && o.Kind == "Deployment" {
+			rsToDeploy[rs.Namespace+"/"+rs.Name] = o.Name
+		}
+	}
+
+	podKey := map[string]string{}    // "ns/name" -> workload key
+	derivedReady := map[string]int{} // ready-pod count for pod-derived workloads
+	for _, p := range in.Pods {
+		kind, name := "Pod", p.Name
+		if o := controllerOwner(p.OwnerReferences); o != nil {
+			if o.Kind == "ReplicaSet" {
+				if dep, ok := rsToDeploy[p.Namespace+"/"+o.Name]; ok {
+					kind, name = "Deployment", dep
+				} else {
+					kind, name = "ReplicaSet", o.Name
+				}
+			} else {
+				kind, name = o.Kind, o.Name
+			}
+		}
+		k := key(kind, p.Namespace, name)
+		w, ok := workloads[k]
+		if !ok {
+			w = &Workload{Namespace: p.Namespace, Name: name, Kind: kind}
+			workloads[k] = w
+		}
+		restarts, last := podRestarts(p)
+		w.Restarts += restarts
+		if lt := termTime(last); lt != "" && lt > w.LastRestart {
+			w.LastRestart = lt
+		}
+		if w.Image == "" {
+			w.Image = podImage(p)
+		}
+		if podIsReady(p) {
+			derivedReady[k]++
+		}
+		w.Pods = append(w.Pods, PodRow{
+			Name: p.Name, Phase: string(p.Status.Phase), Ready: podReady(p),
+			Restarts: restarts, LastRestart: termTime(last),
+			Node: p.Spec.NodeName, IP: p.Status.PodIP,
+			Age: humanAge(p.CreationTimestamp.Time, time.Now()), Image: podImage(p),
+		})
+		podKey[p.Namespace+"/"+p.Name] = k
+	}
+
+	for _, f := range findings {
+		if k, ok := podKey[f.Pod]; ok {
+			workloads[k].Findings = append(workloads[k].Findings, f)
+		}
+	}
+
+	out := make([]Workload, 0, len(workloads))
+	for k, w := range workloads {
+		if !controllerKeys[k] {
+			w.Desired = len(w.Pods)
+			w.Ready = derivedReady[k]
+		}
+		w.Status = workloadStatus(w.Ready, w.Desired)
+		out = append(out, *w)
+	}
+	sortWorkloads(out)
+	return out
+}
+
+func sortWorkloads(ws []Workload) {
+	sort.Slice(ws, func(i, j int) bool {
+		if ws[i].Flagged() != ws[j].Flagged() {
+			return ws[i].Flagged() // flagged first
+		}
+		if ws[i].Namespace != ws[j].Namespace {
+			return ws[i].Namespace < ws[j].Namespace
+		}
+		return ws[i].Name < ws[j].Name
+	})
 }

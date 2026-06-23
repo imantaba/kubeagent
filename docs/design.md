@@ -254,6 +254,9 @@ Exit codes: `0` = ran successfully (whether or not issues were found),
   produce a plain-English summary and suggested next steps. Only the structured
   findings are sent. Kept as a single, well-bounded call so the deterministic
   core stays usable offline and without an API key.
+- **v3 (in progress)** — `scan` becomes a complete workload health report
+  (grouped inventory + integrated detectors); `--explain` summarizes notable
+  workloads; model selectable via `--model`/`KUBEAGENT_MODEL`.
 - **Later (learning extensions):** concurrent fact-collection with goroutines;
   more detectors (probe failures, `CreateContainerConfigError`); a `diagnose
   <pod>` command via Cobra.

@@ -29,7 +29,8 @@ deterministic core still works offline with no API key.
 ```bash
 go build -o kubeagent .
 
-# scan the whole cluster (uses $KUBECONFIG or ~/.kube/config, current-context)
+# scan the whole cluster — prints every workload (Deployments, StatefulSets,
+# DaemonSets, bare pods) with replica health, restart history, and any problems
 ./kubeagent scan
 
 # pick a context and scope to one namespace, emit JSON

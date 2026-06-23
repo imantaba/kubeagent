@@ -10,7 +10,6 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 
-	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/inventory"
 )
 
@@ -51,35 +50,6 @@ func New(model string) *Client {
 		model = DefaultModel
 	}
 	return &Client{s: anthropicSummarizer{client: anthropic.NewClient(), model: model}}
-}
-
-// Explain summarizes findings in plain English. With no findings it returns
-// "" and makes no API call.
-func (c *Client) Explain(ctx context.Context, findings []diagnose.Finding) (string, error) {
-	if len(findings) == 0 {
-		return "", nil
-	}
-	out, err := c.s.summarize(ctx, buildPrompt(findings))
-	if err != nil {
-		return "", fmt.Errorf("explaining findings: %w", err)
-	}
-	out = strings.TrimSpace(out)
-	if out == "" {
-		return "", fmt.Errorf("explaining findings: model returned no text")
-	}
-	return out, nil
-}
-
-// buildPrompt renders the findings into a compact prompt. Only the structured
-// fields are sent — never raw pod specs or secrets.
-func buildPrompt(findings []diagnose.Finding) string {
-	var b strings.Builder
-	b.WriteString("A read-only scan found these Kubernetes pod issues:\n\n")
-	for _, f := range findings {
-		fmt.Fprintf(&b, "- pod %s: %s\n    reason: %s\n    evidence: %s\n", f.Pod, f.Issue, f.Reason, f.Evidence)
-	}
-	b.WriteString("\nExplain what is going wrong and suggest concrete next steps.")
-	return b.String()
 }
 
 // notableRestartThreshold: a healthy workload with at least this many total

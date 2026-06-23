@@ -11,6 +11,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/collect"
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/explain"
+	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/report"
 )
 
@@ -52,7 +53,8 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	facts, err := collect.Cluster(context.Background(), client, namespace)
+
+	inputs, err := collect.CollectInventory(context.Background(), client, namespace)
 	if err != nil {
 		return err
 	}
@@ -63,17 +65,18 @@ func run(args []string) error {
 		diagnose.OOMKilledDetector{},
 		diagnose.PendingDetector{},
 	}
-	findings := diagnose.Run(detectors, facts)
+	findings := diagnose.Run(detectors, collect.FactsFrom(inputs.Pods))
+	workloads := inventory.Assemble(inputs, findings)
 
 	var explanation string
 	if *explainFlag {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		explanation, err = explain.New(explain.ResolveModel(*model, os.Getenv("KUBEAGENT_MODEL"))).Explain(ctx, findings)
+		explanation, err = explain.New(explain.ResolveModel(*model, os.Getenv("KUBEAGENT_MODEL"))).ExplainInventory(ctx, workloads)
 		if err != nil {
 			return err
 		}
 	}
 
-	return report.Print(findings, explanation, *output, os.Stdout)
+	return report.PrintInventory(workloads, explanation, *output, os.Stdout)
 }

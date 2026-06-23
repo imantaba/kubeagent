@@ -138,6 +138,44 @@ func TestExplainInventory_SummarizesNotable(t *testing.T) {
 	}
 }
 
+func TestExplainInventory_WrapsError(t *testing.T) {
+	f := &fakeSummarizer{err: errors.New("boom")}
+	c := &Client{s: f}
+	_, err := c.ExplainInventory(context.Background(), []inventory.Workload{{Name: "x", Ready: 1, Desired: 2}})
+	if err == nil || !strings.Contains(err.Error(), "explaining workloads") || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("expected wrapped error, got %v", err)
+	}
+}
+
+func TestExplainInventory_ErrorsOnEmptyText(t *testing.T) {
+	f := &fakeSummarizer{reply: "  \n"}
+	c := &Client{s: f}
+	_, err := c.ExplainInventory(context.Background(), []inventory.Workload{{Name: "x", Ready: 1, Desired: 2}})
+	if err == nil || !strings.Contains(err.Error(), "model returned no text") {
+		t.Fatalf("expected empty-text error, got %v", err)
+	}
+}
+
+func TestBuildInventoryPrompt_OnlyStructuredFields(t *testing.T) {
+	ws := []inventory.Workload{{
+		Namespace: "kube-system", Name: "coredns", Kind: "Deployment", Ready: 1, Desired: 2, Status: "Degraded", Restarts: 7,
+		Findings: []diagnose.Finding{{Pod: "kube-system/coredns-x", Issue: "CrashLoopBackOff", Reason: "boom", Evidence: "restartCount=7"}},
+		Pods:     []inventory.PodRow{{Name: "coredns-x", IP: "10.42.9.9", Node: "secret-node-name"}},
+	}}
+	got := buildInventoryPrompt(ws)
+	for _, want := range []string{"kube-system", "coredns", "Deployment", "CrashLoopBackOff", "boom"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("prompt missing %q:\n%s", want, got)
+		}
+	}
+	// Egress guard: per-pod IPs / node names must NOT be sent to the model.
+	for _, leak := range []string{"10.42.9.9", "secret-node-name"} {
+		if strings.Contains(got, leak) {
+			t.Errorf("prompt leaked %q:\n%s", leak, got)
+		}
+	}
+}
+
 func TestResolveModel(t *testing.T) {
 	cases := []struct {
 		name, flag, env, want string

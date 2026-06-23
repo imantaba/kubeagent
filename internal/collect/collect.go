@@ -48,6 +48,18 @@ func CollectInventory(ctx context.Context, client kubernetes.Interface, namespac
 	}
 	in.DaemonSets = ds.Items
 
+	jobs, err := client.BatchV1().Jobs(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return in, fmt.Errorf("listing jobs: %w", err)
+	}
+	in.Jobs = jobs.Items
+
+	cronjobs, err := client.BatchV1().CronJobs(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return in, fmt.Errorf("listing cronjobs: %w", err)
+	}
+	in.CronJobs = cronjobs.Items
+
 	return in, nil
 }
 

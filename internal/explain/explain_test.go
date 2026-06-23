@@ -127,6 +127,12 @@ func TestBuildInventoryPrompt_LeadsWithDegradedCluster(t *testing.T) {
 	if !strings.Contains(got, "DEGRADED") || !strings.Contains(got, "n2 NotReady") {
 		t.Errorf("prompt should lead with the degraded cluster:\n%s", got)
 	}
+	if strings.Contains(got, "need attention") {
+		t.Errorf("should not advertise a workloads section when there are none:\n%s", got)
+	}
+	if !strings.Contains(got, "1/3 nodes Ready") {
+		t.Errorf("prompt should include the exact node-count header:\n%s", got)
+	}
 }
 
 func TestResolveModel(t *testing.T) {

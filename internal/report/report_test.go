@@ -67,14 +67,18 @@ func TestPrintInventory_JSONObjectWithWorkloads(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	var got struct {
-		Workloads   []inventory.Workload `json:"workloads"`
-		Explanation string               `json:"explanation"`
+		Cluster     clusterhealth.ClusterHealth `json:"cluster"`
+		Workloads   []inventory.Workload        `json:"workloads"`
+		Explanation string                      `json:"explanation"`
 	}
 	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
 		t.Fatalf("not the workloads object: %v", err)
 	}
 	if len(got.Workloads) != 1 || got.Workloads[0].Name != "rancher" || got.Explanation != "" {
 		t.Errorf("workloads object mismatch: %+v", got)
+	}
+	if got.Cluster.Verdict != "" {
+		t.Errorf("expected zero-value cluster verdict, got %q", got.Cluster.Verdict)
 	}
 }
 

@@ -103,12 +103,14 @@ func buildInventoryPrompt(cluster clusterhealth.ClusterHealth, workloads []inven
 		}
 		b.WriteString("\n")
 	}
-	b.WriteString("These Kubernetes workloads need attention:\n\n")
-	for _, w := range workloads {
-		fmt.Fprintf(&b, "- %s/%s (%s): %d/%d ready, status %s, %d restarts\n",
-			w.Namespace, w.Name, w.Kind, w.Ready, w.Desired, w.Status, w.Restarts)
-		for _, f := range w.Findings {
-			fmt.Fprintf(&b, "    issue: %s — %s (%s)\n", f.Issue, f.Reason, f.Evidence)
+	if len(workloads) > 0 {
+		b.WriteString("These Kubernetes workloads need attention:\n\n")
+		for _, w := range workloads {
+			fmt.Fprintf(&b, "- %s/%s (%s): %d/%d ready, status %s, %d restarts\n",
+				w.Namespace, w.Name, w.Kind, w.Ready, w.Desired, w.Status, w.Restarts)
+			for _, f := range w.Findings {
+				fmt.Fprintf(&b, "    issue: %s — %s (%s)\n", f.Issue, f.Reason, f.Evidence)
+			}
 		}
 	}
 	b.WriteString("\nExplain what is going wrong and suggest concrete next steps.")

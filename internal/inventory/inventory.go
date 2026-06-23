@@ -17,30 +17,30 @@ import (
 
 // PodRow is one pod under a workload.
 type PodRow struct {
-	Name        string
-	Phase       string
-	Ready       string // "1/1"
-	Restarts    int
-	LastRestart string // RFC3339 UTC, "" if none
-	Node        string
-	IP          string
-	Age         string
-	Image       string
+	Name        string `json:"name"`
+	Phase       string `json:"phase"`
+	Ready       string `json:"ready"` // "1/1"
+	Restarts    int    `json:"restarts"`
+	LastRestart string `json:"lastRestart,omitempty"` // RFC3339 UTC, "" if none
+	Node        string `json:"node"`
+	IP          string `json:"ip"`
+	Age         string `json:"age"`
+	Image       string `json:"image"`
 }
 
 // Workload is one controller (or bare pod) and its aggregated health.
 type Workload struct {
-	Namespace   string
-	Name        string
-	Kind        string // Deployment | StatefulSet | DaemonSet | ReplicaSet | Pod
-	Desired     int
-	Ready       int
-	Status      string // Running | Degraded
-	Restarts    int
-	LastRestart string
-	Image       string
-	Pods        []PodRow
-	Findings    []diagnose.Finding
+	Namespace   string             `json:"namespace"`
+	Name        string             `json:"name"`
+	Kind        string             `json:"kind"` // Deployment | StatefulSet | DaemonSet | ReplicaSet | Pod
+	Desired     int                `json:"desired"`
+	Ready       int                `json:"ready"`
+	Status      string             `json:"status"` // Running | Degraded
+	Restarts    int                `json:"restarts"`
+	LastRestart string             `json:"lastRestart,omitempty"`
+	Image       string             `json:"image"`
+	Pods        []PodRow           `json:"pods"`
+	Findings    []diagnose.Finding `json:"findings,omitempty"`
 }
 
 // Flagged reports whether the workload needs attention: it has a detector

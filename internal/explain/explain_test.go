@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/imantaba/kubeagent/internal/diagnose"
+	"github.com/imantaba/kubeagent/internal/inventory"
 )
 
 // fakeSummarizer stands in for the Anthropic-backed summarizer so tests never
@@ -88,6 +89,52 @@ func TestExplain_ErrorsOnEmptySummary(t *testing.T) {
 	}
 	if !f.called {
 		t.Error("expected the summarizer to be called when findings are present")
+	}
+}
+
+func TestNotable_SelectsFlaggedAndHighRestarts(t *testing.T) {
+	ws := []inventory.Workload{
+		{Name: "healthy", Ready: 3, Desired: 3, Restarts: 0},
+		{Name: "degraded", Ready: 1, Desired: 2},
+		{Name: "restarted", Ready: 3, Desired: 3, Restarts: 64},
+		{Name: "withfinding", Ready: 1, Desired: 1, Findings: []diagnose.Finding{{Pod: "a/b", Issue: "OOMKilled"}}},
+		{Name: "quiet", Ready: 1, Desired: 1, Restarts: 2},
+	}
+	got := Notable(ws)
+	names := map[string]bool{}
+	for _, w := range got {
+		names[w.Name] = true
+	}
+	if names["healthy"] || names["quiet"] {
+		t.Errorf("healthy/quiet should not be notable: %v", names)
+	}
+	if !names["degraded"] || !names["restarted"] || !names["withfinding"] {
+		t.Errorf("expected degraded, restarted, withfinding; got %v", names)
+	}
+}
+
+func TestExplainInventory_SkipsWhenNothingNotable(t *testing.T) {
+	f := &fakeSummarizer{reply: "should not be used"}
+	c := &Client{s: f}
+	got, err := c.ExplainInventory(context.Background(), []inventory.Workload{{Name: "ok", Ready: 1, Desired: 1}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "" || f.called {
+		t.Errorf("expected no call and empty result; got %q called=%v", got, f.called)
+	}
+}
+
+func TestExplainInventory_SummarizesNotable(t *testing.T) {
+	f := &fakeSummarizer{reply: "  coredns is degraded.  "}
+	c := &Client{s: f}
+	ws := []inventory.Workload{{Namespace: "kube-system", Name: "coredns", Kind: "Deployment", Ready: 1, Desired: 2}}
+	got, err := c.ExplainInventory(context.Background(), ws)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "coredns is degraded." || !f.called {
+		t.Errorf("got %q called=%v", got, f.called)
 	}
 }
 

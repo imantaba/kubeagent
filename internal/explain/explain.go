@@ -11,6 +11,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 
 	"github.com/imantaba/kubeagent/internal/diagnose"
+	"github.com/imantaba/kubeagent/internal/inventory"
 )
 
 const systemPrompt = `You are a Kubernetes SRE. You are given the findings of a
@@ -76,6 +77,56 @@ func buildPrompt(findings []diagnose.Finding) string {
 	b.WriteString("A read-only scan found these Kubernetes pod issues:\n\n")
 	for _, f := range findings {
 		fmt.Fprintf(&b, "- pod %s: %s\n    reason: %s\n    evidence: %s\n", f.Pod, f.Issue, f.Reason, f.Evidence)
+	}
+	b.WriteString("\nExplain what is going wrong and suggest concrete next steps.")
+	return b.String()
+}
+
+// notableRestartThreshold: a healthy workload with at least this many total
+// restarts is still worth explaining.
+const notableRestartThreshold = 5
+
+// Notable selects the workloads worth sending to the model: those flagged
+// (finding or not fully ready) or with a high restart count.
+func Notable(workloads []inventory.Workload) []inventory.Workload {
+	var out []inventory.Workload
+	for _, w := range workloads {
+		if w.Flagged() || w.Restarts >= notableRestartThreshold {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// ExplainInventory summarizes the notable workloads in plain English. With
+// nothing notable it returns "" and makes no API call.
+func (c *Client) ExplainInventory(ctx context.Context, workloads []inventory.Workload) (string, error) {
+	notable := Notable(workloads)
+	if len(notable) == 0 {
+		return "", nil
+	}
+	out, err := c.s.summarize(ctx, buildInventoryPrompt(notable))
+	if err != nil {
+		return "", fmt.Errorf("explaining workloads: %w", err)
+	}
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return "", fmt.Errorf("explaining workloads: model returned no text")
+	}
+	return out, nil
+}
+
+// buildInventoryPrompt renders the notable workloads into a compact prompt.
+// Only structured fields are sent — never raw pod specs or secrets.
+func buildInventoryPrompt(workloads []inventory.Workload) string {
+	var b strings.Builder
+	b.WriteString("A read-only scan summarized these Kubernetes workloads needing attention:\n\n")
+	for _, w := range workloads {
+		fmt.Fprintf(&b, "- %s/%s (%s): %d/%d ready, status %s, %d restarts\n",
+			w.Namespace, w.Name, w.Kind, w.Ready, w.Desired, w.Status, w.Restarts)
+		for _, f := range w.Findings {
+			fmt.Fprintf(&b, "    issue: %s — %s (%s)\n", f.Issue, f.Reason, f.Evidence)
+		}
 	}
 	b.WriteString("\nExplain what is going wrong and suggest concrete next steps.")
 	return b.String()

@@ -54,6 +54,9 @@ func TestNodeHealth(t *testing.T) {
 	}
 
 	ready, issues = nodeHealth(node("n4", true, nil, true))
+	if !ready {
+		t.Error("cordoned node should still be Ready")
+	}
 	if len(issues) != 1 || issues[0] != "SchedulingDisabled" {
 		t.Errorf("expected [SchedulingDisabled], got %v", issues)
 	}

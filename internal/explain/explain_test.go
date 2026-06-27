@@ -36,7 +36,7 @@ func TestExplainInventory_SkipsWhenEmptyAndHealthy(t *testing.T) {
 	}
 }
 
-func TestExplainInventory_SummarizesNotable(t *testing.T) {
+func TestExplainInventory_SummarizesFlaggedWorkload(t *testing.T) {
 	f := &fakeSummarizer{reply: "  coredns is degraded.  "}
 	c := &Client{s: f}
 	ws := []inventory.Workload{{Namespace: "kube-system", Name: "coredns", Kind: "Deployment", Ready: 1, Desired: 2}}

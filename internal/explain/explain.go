@@ -72,7 +72,7 @@ func (c *Client) ExplainInventory(ctx context.Context, cluster clusterhealth.Clu
 }
 
 // buildInventoryPrompt renders the cluster verdict (when degraded) and the
-// notable workloads. Only structured fields are sent — never raw pod specs or
+// given (pre-filtered) workloads. Only structured fields are sent — never raw pod specs or
 // secrets (node names in the cluster section are infrastructure identifiers).
 func buildInventoryPrompt(cluster clusterhealth.ClusterHealth, workloads []inventory.Workload) string {
 	var b strings.Builder

@@ -207,6 +207,25 @@ func TestPrintInventory_FooterHintListsHidden(t *testing.T) {
 	if !strings.Contains(out, "+5 CronJobs (--include-cron)") {
 		t.Errorf("missing cron hint:\n%s", out)
 	}
+	if !strings.Contains(out, "+3 restarted workloads (--include-restarts) · +5 CronJobs (--include-cron)") {
+		t.Errorf("footer parts should be joined by ' · ':\n%s", out)
+	}
+}
+
+func TestPrintInventory_FooterShownAndNoAllClearWhenDegraded(t *testing.T) {
+	var buf bytes.Buffer
+	ch := clusterhealth.ClusterHealth{Verdict: "Degraded", NodesTotal: 2, NodesReady: 1, NodeIssues: []string{"n2 NotReady"}}
+	res := inventory.Result{HiddenRestarts: 2}
+	if err := PrintInventory(ch, res, "", "text", &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "+2 restarted workloads (--include-restarts)") {
+		t.Errorf("footer should appear even when degraded:\n%s", out)
+	}
+	if strings.Contains(out, "No issues found") {
+		t.Errorf("must not claim all-clear when degraded:\n%s", out)
+	}
 }
 
 func TestPrintInventory_AllClearWhenHealthyAndEmpty(t *testing.T) {

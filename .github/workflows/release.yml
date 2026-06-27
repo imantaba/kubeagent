@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version tag, e.g. v1.2.3"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Resolve version
+        id: ver
+        run: echo "version=${{ github.event.inputs.version || github.ref_name }}" >> "$GITHUB_OUTPUT"
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build linux/amd64
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -ldflags "-X main.version=${VERSION}" -o kubeagent .
+
+      - name: Package + checksums
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          tar -czf "kubeagent_${VERSION}_linux_amd64.tar.gz" kubeagent README.md
+          sha256sum "kubeagent_${VERSION}_linux_amd64.tar.gz" > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.version }}
+          files: |
+            kubeagent_${{ steps.ver.outputs.version }}_linux_amd64.tar.gz
+            SHA256SUMS

@@ -53,31 +53,14 @@ func New(model string) *Client {
 	return &Client{s: anthropicSummarizer{client: anthropic.NewClient(), model: model}}
 }
 
-// notableRestartThreshold: a healthy workload with at least this many total
-// restarts is still worth explaining.
-const notableRestartThreshold = 5
-
-// Notable selects the workloads worth sending to the model: those flagged
-// (finding or not fully ready) or with a high restart count.
-func Notable(workloads []inventory.Workload) []inventory.Workload {
-	var out []inventory.Workload
-	for _, w := range workloads {
-		if w.Flagged() || w.Restarts >= notableRestartThreshold {
-			out = append(out, w)
-		}
-	}
-	return out
-}
-
-// ExplainInventory summarizes the cluster verdict (when degraded) and the
-// notable workloads. It skips the API call and returns "" when the cluster is
-// healthy and nothing is notable.
+// ExplainInventory summarizes the cluster verdict (when degraded) and the given
+// (already-prioritized) workloads. It skips the API call and returns "" when the
+// cluster is healthy and there are no workloads to explain.
 func (c *Client) ExplainInventory(ctx context.Context, cluster clusterhealth.ClusterHealth, workloads []inventory.Workload) (string, error) {
-	notable := Notable(workloads)
-	if cluster.Verdict != "Degraded" && len(notable) == 0 {
+	if cluster.Verdict != "Degraded" && len(workloads) == 0 {
 		return "", nil
 	}
-	out, err := c.s.summarize(ctx, buildInventoryPrompt(cluster, notable))
+	out, err := c.s.summarize(ctx, buildInventoryPrompt(cluster, workloads))
 	if err != nil {
 		return "", fmt.Errorf("explaining workloads: %w", err)
 	}

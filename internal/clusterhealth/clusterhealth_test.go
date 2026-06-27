@@ -92,6 +92,18 @@ func TestNamespaceScopeNote(t *testing.T) {
 	}
 }
 
+func TestAssess_SystemJobFailedOmitsCount(t *testing.T) {
+	nodes := []corev1.Node{node("a", true, nil, false)}
+	workloads := []inventory.Workload{{Namespace: "kube-system", Name: "migrate", Kind: "Job", Status: "Failed"}}
+	ch := Assess(nodes, workloads)
+	if ch.Verdict != "Degraded" {
+		t.Fatalf("verdict = %q, want Degraded", ch.Verdict)
+	}
+	if len(ch.SystemIssues) != 1 || ch.SystemIssues[0] != "kube-system/migrate Failed" {
+		t.Errorf("system issues = %v, want [kube-system/migrate Failed]", ch.SystemIssues)
+	}
+}
+
 func TestAssess_DegradedByNodeAndSystem(t *testing.T) {
 	nodes := []corev1.Node{
 		node("a", true, nil, false),

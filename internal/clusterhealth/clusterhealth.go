@@ -39,8 +39,13 @@ func Assess(nodes []corev1.Node, workloads []inventory.Workload) ClusterHealth {
 	}
 	for _, w := range workloads {
 		if w.Namespace == systemNamespace && w.Flagged() {
-			ch.SystemIssues = append(ch.SystemIssues,
-				fmt.Sprintf("%s/%s %d/%d %s", w.Namespace, w.Name, w.Ready, w.Desired, w.Status))
+			if w.Kind == "Job" || w.Kind == "CronJob" {
+				ch.SystemIssues = append(ch.SystemIssues,
+					fmt.Sprintf("%s/%s %s", w.Namespace, w.Name, w.Status))
+			} else {
+				ch.SystemIssues = append(ch.SystemIssues,
+					fmt.Sprintf("%s/%s %d/%d %s", w.Namespace, w.Name, w.Ready, w.Desired, w.Status))
+			}
 		}
 	}
 	if len(ch.NodeIssues) == 0 && len(ch.SystemIssues) == 0 {

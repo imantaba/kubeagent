@@ -12,8 +12,8 @@ import (
 	"github.com/imantaba/kubeagent/internal/inventory"
 )
 
-// CollectInventory lists pods and the Phase-B controller kinds (Deployments,
-// ReplicaSets, StatefulSets, DaemonSets) in the given namespace (or all
+// CollectInventory lists pods and the controller kinds (Deployments, ReplicaSets,
+// StatefulSets, DaemonSets, Jobs, CronJobs) in the given namespace (or all
 // namespaces when empty). Read-only: List calls only.
 func CollectInventory(ctx context.Context, client kubernetes.Interface, namespace string) (inventory.Inputs, error) {
 	var in inventory.Inputs

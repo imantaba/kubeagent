@@ -33,10 +33,10 @@ type PodRow struct {
 type Workload struct {
 	Namespace   string             `json:"namespace"`
 	Name        string             `json:"name"`
-	Kind        string             `json:"kind"` // Deployment | StatefulSet | DaemonSet | ReplicaSet | Pod
+	Kind        string             `json:"kind"` // Deployment | StatefulSet | DaemonSet | ReplicaSet | Job | CronJob | Pod
 	Desired     int                `json:"desired"`
 	Ready       int                `json:"ready"`
-	Status      string             `json:"status"` // Running | Degraded
+	Status      string             `json:"status"` // Running | Degraded | Scaled Down | Complete | Failed | Pending | Active(N) | Idle
 	Restarts    int                `json:"restarts"`
 	LastRestart string             `json:"lastRestart,omitempty"`
 	Image       string             `json:"image"`
@@ -153,7 +153,7 @@ func workloadStatus(ready, desired int) string {
 	return "Degraded"
 }
 
-// Inputs are the raw lists Assemble consumes (Phase B kinds only).
+// Inputs are the raw lists Assemble consumes.
 type Inputs struct {
 	Pods         []corev1.Pod
 	Deployments  []appsv1.Deployment

@@ -64,7 +64,15 @@ func printInventoryText(cluster clusterhealth.ClusterHealth, workloads []invento
 		if wl.Flagged() {
 			flag = "⚠ "
 		}
-		header := fmt.Sprintf("%s%s/%s  %s  %d/%d %s", flag, wl.Namespace, wl.Name, wl.Kind, wl.Ready, wl.Desired, wl.Status)
+		var header string
+		if wl.Kind == "Job" || wl.Kind == "CronJob" {
+			header = fmt.Sprintf("%s%s/%s  %s  %s", flag, wl.Namespace, wl.Name, wl.Kind, wl.Status)
+			if wl.Schedule != "" {
+				header += "  (" + wl.Schedule + ")"
+			}
+		} else {
+			header = fmt.Sprintf("%s%s/%s  %s  %d/%d %s", flag, wl.Namespace, wl.Name, wl.Kind, wl.Ready, wl.Desired, wl.Status)
+		}
 		if wl.Restarts > 0 {
 			header += fmt.Sprintf("  · %d restarts", wl.Restarts)
 			if wl.LastRestart != "" {
@@ -91,6 +99,11 @@ func printInventoryText(cluster clusterhealth.ClusterHealth, workloads []invento
 			}
 			if _, err := fmt.Fprintf(w, "    %s  %s  %s  restarts=%s  %s  %s  %s\n",
 				p.Name, p.Ready, p.Phase, restarts, p.Node, p.IP, p.Age); err != nil {
+				return err
+			}
+		}
+		if wl.PodsOmitted > 0 {
+			if _, err := fmt.Fprintf(w, "    +%d more pods\n", wl.PodsOmitted); err != nil {
 				return err
 			}
 		}

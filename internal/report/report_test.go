@@ -139,6 +139,43 @@ func TestPrintInventory_TextShowsScopeNote(t *testing.T) {
 	}
 }
 
+func TestPrintInventory_TextJobOmitsCountShowsStatus(t *testing.T) {
+	ws := []inventory.Workload{{
+		Namespace: "batch", Name: "migrate", Kind: "Job", Status: "Complete",
+		Pods: []inventory.PodRow{{Name: "migrate-x", Phase: "Succeeded", Ready: "0/1"}},
+	}}
+	var buf bytes.Buffer
+	if err := PrintInventory(clusterhealth.ClusterHealth{}, ws, "", "text", &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "batch/migrate") || !strings.Contains(out, "Job") || !strings.Contains(out, "Complete") {
+		t.Errorf("expected job header with status:\n%s", out)
+	}
+	if strings.Contains(out, "0/0") {
+		t.Errorf("job header should not show a 0/0 replica count:\n%s", out)
+	}
+}
+
+func TestPrintInventory_TextCronJobShowsScheduleAndOmitted(t *testing.T) {
+	ws := []inventory.Workload{{
+		Namespace: "batch", Name: "backup", Kind: "CronJob", Status: "Idle", Schedule: "0 2 * * *",
+		Pods:        []inventory.PodRow{{Name: "backup-1"}, {Name: "backup-2"}, {Name: "backup-3"}},
+		PodsOmitted: 5,
+	}}
+	var buf bytes.Buffer
+	if err := PrintInventory(clusterhealth.ClusterHealth{}, ws, "", "text", &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "0 2 * * *") {
+		t.Errorf("expected the cron schedule:\n%s", out)
+	}
+	if !strings.Contains(out, "+5 more pods") {
+		t.Errorf("expected the omitted-pods note:\n%s", out)
+	}
+}
+
 func TestPrintInventory_JSONIncludesCluster(t *testing.T) {
 	var buf bytes.Buffer
 	if err := PrintInventory(sampleCluster(), sampleWorkloads(), "", "json", &buf); err != nil {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
@@ -17,21 +18,21 @@ type inventoryReport struct {
 	Explanation string                      `json:"explanation,omitempty"`
 }
 
-// PrintInventory writes the cluster verdict and grouped workload inventory to w.
-func PrintInventory(cluster clusterhealth.ClusterHealth, workloads []inventory.Workload, explanation, format string, w io.Writer) error {
+// PrintInventory writes the cluster verdict and the prioritized workload set to w.
+func PrintInventory(cluster clusterhealth.ClusterHealth, result inventory.Result, explanation, format string, w io.Writer) error {
 	switch format {
 	case "json":
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
-		return enc.Encode(inventoryReport{Cluster: cluster, Workloads: workloads, Explanation: explanation})
+		return enc.Encode(inventoryReport{Cluster: cluster, Workloads: result.Workloads, Explanation: explanation})
 	case "text":
-		return printInventoryText(cluster, workloads, explanation, w)
+		return printInventoryText(cluster, result, explanation, w)
 	default:
 		return fmt.Errorf("unknown output format %q (want text or json)", format)
 	}
 }
 
-func printInventoryText(cluster clusterhealth.ClusterHealth, workloads []inventory.Workload, explanation string, w io.Writer) error {
+func printInventoryText(cluster clusterhealth.ClusterHealth, result inventory.Result, explanation string, w io.Writer) error {
 	if cluster.Verdict != "" {
 		if _, err := fmt.Fprintf(w, "Cluster: %s — %d/%d nodes Ready\n", cluster.Verdict, cluster.NodesReady, cluster.NodesTotal); err != nil {
 			return err
@@ -55,61 +56,92 @@ func printInventoryText(cluster clusterhealth.ClusterHealth, workloads []invento
 			return err
 		}
 	}
-	if len(workloads) == 0 {
-		_, err := fmt.Fprintln(w, "No workloads found.")
-		return err
+
+	if len(result.Workloads) == 0 {
+		if cluster.Verdict == "Healthy" {
+			if _, err := fmt.Fprintln(w, "No issues found. ✅"); err != nil {
+				return err
+			}
+		}
+	} else {
+		for _, wl := range result.Workloads {
+			if err := printWorkload(wl, w); err != nil {
+				return err
+			}
+		}
 	}
-	for _, wl := range workloads {
-		flag := "  "
-		if wl.Flagged() {
-			flag = "⚠ "
-		}
-		var header string
-		if wl.Kind == "Job" || wl.Kind == "CronJob" {
-			header = fmt.Sprintf("%s%s/%s  %s  %s", flag, wl.Namespace, wl.Name, wl.Kind, wl.Status)
-			if wl.Schedule != "" {
-				header += "  (" + wl.Schedule + ")"
-			}
-		} else {
-			header = fmt.Sprintf("%s%s/%s  %s  %d/%d %s", flag, wl.Namespace, wl.Name, wl.Kind, wl.Ready, wl.Desired, wl.Status)
-		}
-		if wl.Restarts > 0 {
-			header += fmt.Sprintf("  · %d restarts", wl.Restarts)
-			if wl.LastRestart != "" {
-				header += fmt.Sprintf(", last %s", inventory.HumanSince(wl.LastRestart, time.Now()))
-			}
-		}
-		if _, err := fmt.Fprintln(w, header); err != nil {
+
+	if hint := footerHint(result); hint != "" {
+		if _, err := fmt.Fprintln(w, hint); err != nil {
 			return err
 		}
-		if wl.Image != "" {
-			if _, err := fmt.Fprintf(w, "    image %s\n", wl.Image); err != nil {
-				return err
-			}
-		}
-		for _, f := range wl.Findings {
-			if _, err := fmt.Fprintf(w, "    ⚠ %s: %s\n", f.Issue, f.Reason); err != nil {
-				return err
-			}
-		}
-		for _, p := range wl.Pods {
-			restarts := fmt.Sprintf("%d", p.Restarts)
-			if p.LastRestart != "" {
-				restarts += " (" + inventory.HumanSince(p.LastRestart, time.Now()) + ")"
-			}
-			if _, err := fmt.Fprintf(w, "    %s  %s  %s  restarts=%s  %s  %s  %s\n",
-				p.Name, p.Ready, p.Phase, restarts, p.Node, p.IP, p.Age); err != nil {
-				return err
-			}
-		}
-		if wl.PodsOmitted > 0 {
-			if _, err := fmt.Fprintf(w, "    +%d more pods\n", wl.PodsOmitted); err != nil {
-				return err
-			}
-		}
 	}
+
 	if explanation != "" {
 		if _, err := fmt.Fprintf(w, "\n── Explanation ──\n%s\n", explanation); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// footerHint summarizes hidden categories, naming the flag that reveals each.
+func footerHint(result inventory.Result) string {
+	var parts []string
+	if result.HiddenRestarts > 0 {
+		parts = append(parts, fmt.Sprintf("+%d restarted workloads (--include-restarts)", result.HiddenRestarts))
+	}
+	if result.HiddenCron > 0 {
+		parts = append(parts, fmt.Sprintf("+%d CronJobs (--include-cron)", result.HiddenCron))
+	}
+	return strings.Join(parts, " · ")
+}
+
+func printWorkload(wl inventory.Workload, w io.Writer) error {
+	flag := "  "
+	if wl.Flagged() {
+		flag = "⚠ "
+	}
+	var header string
+	if wl.Kind == "Job" || wl.Kind == "CronJob" {
+		header = fmt.Sprintf("%s%s/%s  %s  %s", flag, wl.Namespace, wl.Name, wl.Kind, wl.Status)
+		if wl.Schedule != "" {
+			header += "  (" + wl.Schedule + ")"
+		}
+	} else {
+		header = fmt.Sprintf("%s%s/%s  %s  %d/%d %s", flag, wl.Namespace, wl.Name, wl.Kind, wl.Ready, wl.Desired, wl.Status)
+	}
+	if wl.Restarts > 0 {
+		header += fmt.Sprintf("  · %d restarts", wl.Restarts)
+		if wl.LastRestart != "" {
+			header += fmt.Sprintf(", last %s", inventory.HumanSince(wl.LastRestart, time.Now()))
+		}
+	}
+	if _, err := fmt.Fprintln(w, header); err != nil {
+		return err
+	}
+	if wl.Image != "" {
+		if _, err := fmt.Fprintf(w, "    image %s\n", wl.Image); err != nil {
+			return err
+		}
+	}
+	for _, f := range wl.Findings {
+		if _, err := fmt.Fprintf(w, "    ⚠ %s: %s\n", f.Issue, f.Reason); err != nil {
+			return err
+		}
+	}
+	for _, p := range wl.Pods {
+		restarts := fmt.Sprintf("%d", p.Restarts)
+		if p.LastRestart != "" {
+			restarts += " (" + inventory.HumanSince(p.LastRestart, time.Now()) + ")"
+		}
+		if _, err := fmt.Fprintf(w, "    %s  %s  %s  restarts=%s  %s  %s  %s\n",
+			p.Name, p.Ready, p.Phase, restarts, p.Node, p.IP, p.Age); err != nil {
+			return err
+		}
+	}
+	if wl.PodsOmitted > 0 {
+		if _, err := fmt.Fprintf(w, "    +%d more pods\n", wl.PodsOmitted); err != nil {
 			return err
 		}
 	}

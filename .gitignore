@@ -30,3 +30,6 @@ kubeconfig
 
 # Claude Code local session settings
 .claude/
+
+# Local Go-learning companion (kept on disk, not tracked)
+docs/go-concepts.md

@@ -66,6 +66,38 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 Run the tests with `go test ./...`.
 
+## Install
+
+Prebuilt **linux/amd64** binaries are attached to each
+[GitHub Release](https://github.com/imantaba/kubeagent/releases). Download, verify
+the checksum, and run:
+
+```bash
+VERSION=v1.2.3   # the release you want
+base="https://github.com/imantaba/kubeagent/releases/download/${VERSION}"
+curl -sSLO "${base}/kubeagent_${VERSION}_linux_amd64.tar.gz"
+curl -sSLO "${base}/SHA256SUMS"
+sha256sum -c SHA256SUMS
+tar xzf "kubeagent_${VERSION}_linux_amd64.tar.gz"
+./kubeagent version   # prints the build's version
+./kubeagent scan
+```
+
+### Cutting a release
+
+Push a version tag — or run the **Release** workflow manually from the Actions
+tab with a `version` input:
+
+```bash
+git tag v1.2.3
+git push origin v1.2.3
+```
+
+The release workflow runs the tests, builds
+`kubeagent_<version>_linux_amd64.tar.gz` + `SHA256SUMS`, and attaches them to the
+GitHub Release. Every push and PR is checked by the CI workflow (vet + test +
+build).
+
 ## Roadmap
 
 - **v1** — `kubeagent scan`: deterministic whole-cluster scan + diagnosis

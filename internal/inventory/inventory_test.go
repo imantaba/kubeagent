@@ -416,6 +416,17 @@ func TestAssemble_OrphanedCronJobPodFallsBackToJob(t *testing.T) {
 	}
 }
 
+func TestSortWorkloads_KindTiebreaker(t *testing.T) {
+	ws := []Workload{
+		{Namespace: "a", Name: "dup", Kind: "Job", Status: "Complete"},
+		{Namespace: "a", Name: "dup", Kind: "Deployment", Ready: 1, Desired: 1},
+	}
+	sortWorkloads(ws)
+	if ws[0].Kind != "Deployment" || ws[1].Kind != "Job" {
+		t.Errorf("expected Deployment before Job on name tie, got %s then %s", ws[0].Kind, ws[1].Kind)
+	}
+}
+
 func TestAssemble_AggregatesLastRestart(t *testing.T) {
 	p := readyPod("a", "p1", nil, "img")
 	p.Status.ContainerStatuses[0].LastTerminationState = corev1.ContainerState{

@@ -49,9 +49,12 @@ export ANTHROPIC_API_KEY=sk-ant-...
 ./kubeagent scan --explain --model claude-sonnet-4-6
 ```
 
-> `--explain` sends **only** the structured findings (pod name, issue, reason,
-> evidence) to the Claude API — never raw pod specs, environment variables, or
-> secrets. Without the flag, kubeagent makes no external calls.
+> `--explain` sends **only** a structured summary to the Claude API: the
+> cluster-health verdict (node counts, and the names of unhealthy nodes when
+> degraded) and, for the notable workloads, their namespace, name, kind,
+> ready/desired counts, status, restart count, and any detector issue. It never
+> sends raw pod specs, pod IPs, environment variables, or secrets. Without
+> `--explain`, kubeagent makes no external calls.
 >
 > Model precedence for `--explain`: the `--model` flag, then the
 > `KUBEAGENT_MODEL` environment variable, then the default `claude-opus-4-8`.

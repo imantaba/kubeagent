@@ -77,7 +77,7 @@ func Nodes(ctx context.Context, client kubernetes.Interface) ([]corev1.Node, err
 func FactsFrom(pods []corev1.Pod) []diagnose.PodFacts {
 	facts := make([]diagnose.PodFacts, 0, len(pods))
 	for i := range pods {
-		pod := pods[i] // copy so &pod is stable per iteration
+		pod := pods[i] // take this element's address for PodFacts
 		facts = append(facts, diagnose.PodFacts{Pod: &pod})
 	}
 	return facts

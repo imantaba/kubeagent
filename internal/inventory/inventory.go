@@ -335,6 +335,9 @@ func sortWorkloads(ws []Workload) {
 		if ws[i].Namespace != ws[j].Namespace {
 			return ws[i].Namespace < ws[j].Namespace
 		}
-		return ws[i].Name < ws[j].Name
+		if ws[i].Name != ws[j].Name {
+			return ws[i].Name < ws[j].Name
+		}
+		return ws[i].Kind < ws[j].Kind
 	})
 }

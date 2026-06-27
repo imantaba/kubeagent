@@ -16,6 +16,15 @@ import (
 	"github.com/imantaba/kubeagent/internal/report"
 )
 
+// version is the build version, overridden at release time via
+// -ldflags "-X main.version=<tag>". Local/dev builds report "dev".
+var version = "dev"
+
+// versionLine is the one-line string printed by `kubeagent version`.
+func versionLine() string {
+	return "kubeagent " + version
+}
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "kubeagent:", err)
@@ -24,8 +33,12 @@ func main() {
 }
 
 func run(args []string) error {
+	if len(args) > 0 && args[0] == "version" {
+		fmt.Fprintln(os.Stdout, versionLine())
+		return nil
+	}
 	if len(args) == 0 || args[0] != "scan" {
-		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--model name] [--include-cron] [--include-restarts]")
+		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--model name] [--include-cron] [--include-restarts] | kubeagent version")
 	}
 
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)

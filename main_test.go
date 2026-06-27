@@ -61,3 +61,16 @@ func TestRun_IncludeFlagsAreRecognized(t *testing.T) {
 		t.Fatalf("expected ANTHROPIC_API_KEY error (proves the flags parsed), got: %v", err)
 	}
 }
+
+func TestVersionLine(t *testing.T) {
+	// In tests the binary isn't ldflags-stamped, so version is the "dev" default.
+	if got := versionLine(); got != "kubeagent dev" {
+		t.Errorf("versionLine() = %q, want %q", got, "kubeagent dev")
+	}
+}
+
+func TestRun_Version(t *testing.T) {
+	if err := run([]string{"version"}); err != nil {
+		t.Errorf("run([version]) returned error: %v", err)
+	}
+}

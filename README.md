@@ -29,11 +29,16 @@ deterministic core still works offline with no API key.
 ```bash
 go build -o kubeagent .
 
-# scan the whole cluster — leads with a cluster-health verdict (nodes +
-# kube-system), then every workload (Deployments, StatefulSets, DaemonSets,
-# Jobs, CronJobs, bare pods) with replica/job health, restart history, and
-# any problems
+# scan: a prioritized problem report — cluster-health verdict (P1: nodes +
+# kube-system) first, then workload/pod failures (P2). Healthy, restart-only,
+# and CronJob workloads are hidden by default.
 ./kubeagent scan
+
+# also show workloads that are healthy now but have restarted
+./kubeagent scan --include-restarts
+
+# also show CronJobs
+./kubeagent scan --include-cron
 
 # pick a context and scope to one namespace, emit JSON
 ./kubeagent scan --context my-cluster -n my-namespace --output json

@@ -259,6 +259,9 @@ Exit codes: `0` = ran successfully (whether or not issues were found),
   DaemonSets, Jobs, CronJobs, bare pods) grouped with health, restart history,
   and integrated detector findings; `--explain` summarizes notable items;
   model selectable via `--model`/`KUBEAGENT_MODEL`.
+- **v3.1** — `scan` is a prioritized problem report: P1 cluster/node infra, then
+  P2 workload/pod failures; restart-only workloads behind `--include-restarts`
+  and CronJobs behind `--include-cron`; healthy-quiet workloads hidden.
 - **Later (learning extensions):** concurrent fact-collection with goroutines;
   more detectors (probe failures, `CreateContainerConfigError`); a `diagnose
   <pod>` command via Cobra.

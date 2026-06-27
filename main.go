@@ -25,7 +25,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 || args[0] != "scan" {
-		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--model name]")
+		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--model name] [--include-cron] [--include-restarts]")
 	}
 
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
@@ -34,6 +34,8 @@ func run(args []string) error {
 	output := fs.String("output", "text", "output format: text | json")
 	explainFlag := fs.Bool("explain", false, "summarize findings via one Claude API call (needs ANTHROPIC_API_KEY)")
 	model := fs.String("model", "", "Claude model for --explain (default: $KUBEAGENT_MODEL or claude-opus-4-8)")
+	includeCron := fs.Bool("include-cron", false, "include CronJobs in the report")
+	includeRestarts := fs.Bool("include-restarts", false, "include workloads that are healthy now but have restarted")
 	var namespace string
 	fs.StringVar(&namespace, "namespace", "", "namespace to scan (default: all namespaces)")
 	fs.StringVar(&namespace, "n", "", "namespace to scan (shorthand)")
@@ -76,15 +78,20 @@ func run(args []string) error {
 	health := clusterhealth.Assess(nodes, workloads)
 	health.ScopeNote = clusterhealth.NamespaceScopeNote(namespace)
 
+	result := inventory.Prioritize(workloads, inventory.Opts{
+		IncludeRestarts: *includeRestarts,
+		IncludeCron:     *includeCron,
+	})
+
 	var explanation string
 	if *explainFlag {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		explanation, err = explain.New(explain.ResolveModel(*model, os.Getenv("KUBEAGENT_MODEL"))).ExplainInventory(ctx, health, workloads)
+		explanation, err = explain.New(explain.ResolveModel(*model, os.Getenv("KUBEAGENT_MODEL"))).ExplainInventory(ctx, health, result.Workloads)
 		if err != nil {
 			return err
 		}
 	}
 
-	return report.PrintInventory(health, workloads, explanation, *output, os.Stdout)
+	return report.PrintInventory(health, result, explanation, *output, os.Stdout)
 }

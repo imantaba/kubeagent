@@ -440,3 +440,74 @@ func TestAssemble_AggregatesLastRestart(t *testing.T) {
 		t.Errorf("pod row LastRestart = %q", ws[0].Pods[0].LastRestart)
 	}
 }
+
+func TestPrioritize_DefaultShowsOnlyProblems(t *testing.T) {
+	in := []Workload{
+		{Namespace: "a", Name: "crash", Kind: "Deployment", Ready: 0, Desired: 1, Status: "Degraded"}, // problem
+		{Namespace: "a", Name: "healthy", Kind: "Deployment", Ready: 1, Desired: 1, Status: "Running"}, // hidden
+		{Namespace: "a", Name: "restarted", Kind: "Deployment", Ready: 1, Desired: 1, Status: "Running", Restarts: 9}, // hidden (restart-only)
+		{Namespace: "a", Name: "backup", Kind: "CronJob", Status: "Idle"}, // hidden (cron)
+	}
+	res := Prioritize(in, Opts{})
+	if len(res.Workloads) != 1 || res.Workloads[0].Name != "crash" {
+		t.Fatalf("expected only the problem, got %+v", res.Workloads)
+	}
+	if res.Workloads[0].Priority != 2 {
+		t.Errorf("problem priority = %d, want 2", res.Workloads[0].Priority)
+	}
+	if res.HiddenRestarts != 1 || res.HiddenCron != 1 {
+		t.Errorf("hidden counts = %d restarts / %d cron, want 1/1", res.HiddenRestarts, res.HiddenCron)
+	}
+}
+
+func TestPrioritize_IncludeRestartsAndCron(t *testing.T) {
+	in := []Workload{
+		{Namespace: "a", Name: "restarted", Kind: "Deployment", Ready: 1, Desired: 1, Status: "Running", Restarts: 9},
+		{Namespace: "a", Name: "backup", Kind: "CronJob", Status: "Idle"},
+		{Namespace: "a", Name: "healthy", Kind: "Deployment", Ready: 1, Desired: 1, Status: "Running"},
+	}
+	res := Prioritize(in, Opts{IncludeRestarts: true, IncludeCron: true})
+	// restart-only (3) and cron (4) shown; healthy-quiet still hidden.
+	if len(res.Workloads) != 2 {
+		t.Fatalf("expected 2 shown, got %+v", res.Workloads)
+	}
+	if res.Workloads[0].Name != "restarted" || res.Workloads[0].Priority != 3 {
+		t.Errorf("restart-only should sort first at priority 3, got %+v", res.Workloads[0])
+	}
+	if res.Workloads[1].Name != "backup" || res.Workloads[1].Priority != 4 {
+		t.Errorf("cron should be priority 4, got %+v", res.Workloads[1])
+	}
+	if res.HiddenRestarts != 0 || res.HiddenCron != 0 {
+		t.Errorf("nothing should be hidden when both flags on, got %d/%d", res.HiddenRestarts, res.HiddenCron)
+	}
+}
+
+func TestPrioritize_FailedCronGatedButFailedJobIsProblem(t *testing.T) {
+	in := []Workload{
+		{Namespace: "a", Name: "cj", Kind: "CronJob", Status: "Idle"},
+		{Namespace: "a", Name: "job", Kind: "Job", Status: "Failed"}, // Flagged() via Status=="Failed"
+	}
+	res := Prioritize(in, Opts{})
+	if len(res.Workloads) != 1 || res.Workloads[0].Name != "job" || res.Workloads[0].Priority != 2 {
+		t.Fatalf("failed standalone Job should be the only P2 shown, got %+v", res.Workloads)
+	}
+	if res.HiddenCron != 1 {
+		t.Errorf("the CronJob should be hidden, HiddenCron=%d", res.HiddenCron)
+	}
+}
+
+func TestPrioritize_SortsByPriorityThenNamespaceName(t *testing.T) {
+	in := []Workload{
+		{Namespace: "b", Name: "p2", Kind: "Deployment", Ready: 0, Desired: 1},
+		{Namespace: "a", Name: "p1", Kind: "Deployment", Ready: 0, Desired: 1},
+		{Namespace: "a", Name: "r", Kind: "Deployment", Ready: 1, Desired: 1, Status: "Running", Restarts: 1},
+	}
+	res := Prioritize(in, Opts{IncludeRestarts: true})
+	got := []string{res.Workloads[0].Name, res.Workloads[1].Name, res.Workloads[2].Name}
+	want := []string{"p1", "p2", "r"} // both problems (a/p1, b/p2) before the restart-only (a/r)
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("sort order = %v, want %v", got, want)
+		}
+	}
+}

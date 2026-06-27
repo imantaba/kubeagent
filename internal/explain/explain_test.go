@@ -24,31 +24,10 @@ func (f *fakeSummarizer) summarize(ctx context.Context, prompt string) (string, 
 	return f.reply, f.err
 }
 
-func TestNotable_SelectsFlaggedAndHighRestarts(t *testing.T) {
-	ws := []inventory.Workload{
-		{Name: "healthy", Ready: 3, Desired: 3, Restarts: 0},
-		{Name: "degraded", Ready: 1, Desired: 2},
-		{Name: "restarted", Ready: 3, Desired: 3, Restarts: 64},
-		{Name: "withfinding", Ready: 1, Desired: 1, Findings: []diagnose.Finding{{Pod: "a/b", Issue: "OOMKilled"}}},
-		{Name: "quiet", Ready: 1, Desired: 1, Restarts: 2},
-	}
-	got := Notable(ws)
-	names := map[string]bool{}
-	for _, w := range got {
-		names[w.Name] = true
-	}
-	if names["healthy"] || names["quiet"] {
-		t.Errorf("healthy/quiet should not be notable: %v", names)
-	}
-	if !names["degraded"] || !names["restarted"] || !names["withfinding"] {
-		t.Errorf("expected degraded, restarted, withfinding; got %v", names)
-	}
-}
-
-func TestExplainInventory_SkipsWhenNothingNotable(t *testing.T) {
+func TestExplainInventory_SkipsWhenEmptyAndHealthy(t *testing.T) {
 	f := &fakeSummarizer{reply: "should not be used"}
 	c := &Client{s: f}
-	got, err := c.ExplainInventory(context.Background(), clusterhealth.ClusterHealth{Verdict: "Healthy"}, []inventory.Workload{{Name: "ok", Ready: 1, Desired: 1}})
+	got, err := c.ExplainInventory(context.Background(), clusterhealth.ClusterHealth{Verdict: "Healthy"}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -57,7 +36,7 @@ func TestExplainInventory_SkipsWhenNothingNotable(t *testing.T) {
 	}
 }
 
-func TestExplainInventory_SummarizesNotable(t *testing.T) {
+func TestExplainInventory_SummarizesFlaggedWorkload(t *testing.T) {
 	f := &fakeSummarizer{reply: "  coredns is degraded.  "}
 	c := &Client{s: f}
 	ws := []inventory.Workload{{Namespace: "kube-system", Name: "coredns", Kind: "Deployment", Ready: 1, Desired: 2}}
@@ -108,11 +87,11 @@ func TestBuildInventoryPrompt_OnlyStructuredFields(t *testing.T) {
 	}
 }
 
-func TestExplainInventory_ExplainsDegradedClusterWithNoNotableWorkloads(t *testing.T) {
+func TestExplainInventory_ExplainsDegradedClusterWithNoWorkloads(t *testing.T) {
 	f := &fakeSummarizer{reply: "two nodes are NotReady"}
 	c := &Client{s: f}
 	ch := clusterhealth.ClusterHealth{Verdict: "Degraded", NodesTotal: 3, NodesReady: 1, NodeIssues: []string{"n2 NotReady", "n3 NotReady"}}
-	got, err := c.ExplainInventory(context.Background(), ch, []inventory.Workload{{Name: "ok", Ready: 1, Desired: 1}})
+	got, err := c.ExplainInventory(context.Background(), ch, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -132,6 +111,21 @@ func TestBuildInventoryPrompt_LeadsWithDegradedCluster(t *testing.T) {
 	}
 	if !strings.Contains(got, "1/3 nodes Ready") {
 		t.Errorf("prompt should include the exact node-count header:\n%s", got)
+	}
+}
+
+func TestExplainInventory_SummarizesGivenWorkloads(t *testing.T) {
+	// ExplainInventory summarizes exactly what it is given — the caller does the
+	// filtering, not explain. A healthy workload passed in is summarized.
+	f := &fakeSummarizer{reply: "all noted"}
+	c := &Client{s: f}
+	ws := []inventory.Workload{{Namespace: "a", Name: "web", Kind: "Deployment", Ready: 1, Desired: 1, Status: "Running"}}
+	got, err := c.ExplainInventory(context.Background(), clusterhealth.ClusterHealth{Verdict: "Healthy"}, ws)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "all noted" || !f.called {
+		t.Errorf("expected the given workload to be summarized; got %q called=%v", got, f.called)
 	}
 }
 

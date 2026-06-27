@@ -254,6 +254,11 @@ Exit codes: `0` = ran successfully (whether or not issues were found),
   produce a plain-English summary and suggested next steps. Only the structured
   findings are sent. Kept as a single, well-bounded call so the deterministic
   core stays usable offline and without an API key.
+- **v3 (shipped)** — `scan` is a complete cluster health report: a first-line
+  node + kube-system verdict, then every workload (Deployments, StatefulSets,
+  DaemonSets, Jobs, CronJobs, bare pods) grouped with health, restart history,
+  and integrated detector findings; `--explain` summarizes notable items;
+  model selectable via `--model`/`KUBEAGENT_MODEL`.
 - **Later (learning extensions):** concurrent fact-collection with goroutines;
   more detectors (probe failures, `CreateContainerConfigError`); a `diagnose
   <pod>` command via Cobra.

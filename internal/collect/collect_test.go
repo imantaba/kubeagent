@@ -4,53 +4,80 @@ import (
 	"context"
 	"testing"
 
+	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
-func TestCluster_ReturnsFactsForAllPods(t *testing.T) {
+func TestCollectInventory_ListsControllersAndPods(t *testing.T) {
 	client := fake.NewSimpleClientset(
 		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "p1"}},
-		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "b", Name: "p2"}},
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "d1"}},
+		&appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "rs1"}},
+		&appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "s1"}},
+		&appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "ds1"}},
 	)
-
-	facts, err := Cluster(context.Background(), client, "")
+	in, err := CollectInventory(context.Background(), client, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(facts) != 2 {
-		t.Fatalf("expected 2 pod facts, got %d", len(facts))
-	}
-	if facts[0].Pod == nil || facts[0].Pod.Name == "" {
-		t.Error("expected each fact to carry a non-empty Pod")
+	if len(in.Pods) != 1 || len(in.Deployments) != 1 || len(in.ReplicaSets) != 1 ||
+		len(in.StatefulSets) != 1 || len(in.DaemonSets) != 1 {
+		t.Errorf("expected one of each kind, got %+v", in)
 	}
 }
 
-func TestCluster_EmptyClusterReturnsNoFacts(t *testing.T) {
-	facts, err := Cluster(context.Background(), fake.NewSimpleClientset(), "")
+func TestCollectInventory_ScopesToNamespace(t *testing.T) {
+	client := fake.NewSimpleClientset(
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "d1"}},
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: "b", Name: "d2"}},
+	)
+	in, err := CollectInventory(context.Background(), client, "a")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(facts) != 0 {
-		t.Errorf("expected 0 facts, got %d", len(facts))
+	if len(in.Deployments) != 1 || in.Deployments[0].Namespace != "a" {
+		t.Errorf("expected only namespace a, got %+v", in.Deployments)
 	}
 }
 
-func TestCluster_ScopesToNamespace(t *testing.T) {
+func TestNodes_ListsAllNodes(t *testing.T) {
 	client := fake.NewSimpleClientset(
-		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "p1"}},
-		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "b", Name: "p2"}},
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"}},
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n2"}},
 	)
-
-	facts, err := Cluster(context.Background(), client, "a")
+	nodes, err := Nodes(context.Background(), client)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(facts) != 1 {
-		t.Fatalf("expected 1 pod fact in namespace a, got %d", len(facts))
+	if len(nodes) != 2 {
+		t.Fatalf("expected 2 nodes, got %d", len(nodes))
 	}
-	if facts[0].Pod.Namespace != "a" {
-		t.Errorf("got pod in namespace %q, want a", facts[0].Pod.Namespace)
+}
+
+func TestCollectInventory_ListsJobsAndCronJobs(t *testing.T) {
+	client := fake.NewSimpleClientset(
+		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Namespace: "batch", Name: "j1"}},
+		&batchv1.CronJob{ObjectMeta: metav1.ObjectMeta{Namespace: "batch", Name: "cj1"}},
+	)
+	in, err := CollectInventory(context.Background(), client, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(in.Jobs) != 1 || len(in.CronJobs) != 1 {
+		t.Errorf("expected 1 job and 1 cronjob, got %d/%d", len(in.Jobs), len(in.CronJobs))
+	}
+}
+
+func TestFactsFrom_WrapsEachPod(t *testing.T) {
+	pods := []corev1.Pod{
+		{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "p1"}},
+		{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "p2"}},
+	}
+	facts := FactsFrom(pods)
+	if len(facts) != 2 || facts[0].Pod == nil || facts[0].Pod.Name != "p1" {
+		t.Fatalf("expected 2 facts wrapping each pod, got %+v", facts)
 	}
 }

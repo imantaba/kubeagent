@@ -10,13 +10,28 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 
-	"github.com/imantaba/kubeagent/internal/diagnose"
+	"github.com/imantaba/kubeagent/internal/clusterhealth"
+	"github.com/imantaba/kubeagent/internal/inventory"
 )
 
 const systemPrompt = `You are a Kubernetes SRE. You are given the findings of a
 read-only cluster scan. Explain in plain English what is going wrong and suggest
 concrete next steps an operator can take. Be concise. Respond with only the
 explanation, no preamble.`
+
+// DefaultModel is used when neither --model nor KUBEAGENT_MODEL is set.
+const DefaultModel = "claude-opus-4-8"
+
+// ResolveModel picks the model by precedence: flag, then env, then DefaultModel.
+func ResolveModel(flagVal, envVal string) string {
+	if flagVal != "" {
+		return flagVal
+	}
+	if envVal != "" {
+		return envVal
+	}
+	return DefaultModel
+}
 
 // summarizer turns a prompt into a single plain-text completion. The
 // Anthropic-backed implementation lives in this package; tests use a fake.
@@ -29,36 +44,74 @@ type Client struct {
 	s summarizer
 }
 
-// New returns a Client backed by the Anthropic API. The SDK reads the
-// ANTHROPIC_API_KEY environment variable.
-func New() *Client {
-	return &Client{s: anthropicSummarizer{client: anthropic.NewClient()}}
+// New returns a Client backed by the Anthropic API, using the given model
+// (empty falls back to DefaultModel). The SDK reads ANTHROPIC_API_KEY.
+func New(model string) *Client {
+	if model == "" {
+		model = DefaultModel
+	}
+	return &Client{s: anthropicSummarizer{client: anthropic.NewClient(), model: model}}
 }
 
-// Explain summarizes findings in plain English. With no findings it returns
-// "" and makes no API call.
-func (c *Client) Explain(ctx context.Context, findings []diagnose.Finding) (string, error) {
-	if len(findings) == 0 {
+// notableRestartThreshold: a healthy workload with at least this many total
+// restarts is still worth explaining.
+const notableRestartThreshold = 5
+
+// Notable selects the workloads worth sending to the model: those flagged
+// (finding or not fully ready) or with a high restart count.
+func Notable(workloads []inventory.Workload) []inventory.Workload {
+	var out []inventory.Workload
+	for _, w := range workloads {
+		if w.Flagged() || w.Restarts >= notableRestartThreshold {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// ExplainInventory summarizes the cluster verdict (when degraded) and the
+// notable workloads. It skips the API call and returns "" when the cluster is
+// healthy and nothing is notable.
+func (c *Client) ExplainInventory(ctx context.Context, cluster clusterhealth.ClusterHealth, workloads []inventory.Workload) (string, error) {
+	notable := Notable(workloads)
+	if cluster.Verdict != "Degraded" && len(notable) == 0 {
 		return "", nil
 	}
-	out, err := c.s.summarize(ctx, buildPrompt(findings))
+	out, err := c.s.summarize(ctx, buildInventoryPrompt(cluster, notable))
 	if err != nil {
-		return "", fmt.Errorf("explaining findings: %w", err)
+		return "", fmt.Errorf("explaining workloads: %w", err)
 	}
 	out = strings.TrimSpace(out)
 	if out == "" {
-		return "", fmt.Errorf("explaining findings: model returned no text")
+		return "", fmt.Errorf("explaining workloads: model returned no text")
 	}
 	return out, nil
 }
 
-// buildPrompt renders the findings into a compact prompt. Only the structured
-// fields are sent — never raw pod specs or secrets.
-func buildPrompt(findings []diagnose.Finding) string {
+// buildInventoryPrompt renders the cluster verdict (when degraded) and the
+// notable workloads. Only structured fields are sent — never raw pod specs or
+// secrets (node names in the cluster section are infrastructure identifiers).
+func buildInventoryPrompt(cluster clusterhealth.ClusterHealth, workloads []inventory.Workload) string {
 	var b strings.Builder
-	b.WriteString("A read-only scan found these Kubernetes pod issues:\n\n")
-	for _, f := range findings {
-		fmt.Fprintf(&b, "- pod %s: %s\n    reason: %s\n    evidence: %s\n", f.Pod, f.Issue, f.Reason, f.Evidence)
+	if cluster.Verdict == "Degraded" {
+		fmt.Fprintf(&b, "Cluster health: DEGRADED — %d/%d nodes Ready.\n", cluster.NodesReady, cluster.NodesTotal)
+		for _, iss := range cluster.NodeIssues {
+			fmt.Fprintf(&b, "  node %s\n", iss)
+		}
+		for _, iss := range cluster.SystemIssues {
+			fmt.Fprintf(&b, "  system %s\n", iss)
+		}
+		b.WriteString("\n")
+	}
+	if len(workloads) > 0 {
+		b.WriteString("These Kubernetes workloads need attention:\n\n")
+		for _, w := range workloads {
+			fmt.Fprintf(&b, "- %s/%s (%s): %d/%d ready, status %s, %d restarts\n",
+				w.Namespace, w.Name, w.Kind, w.Ready, w.Desired, w.Status, w.Restarts)
+			for _, f := range w.Findings {
+				fmt.Fprintf(&b, "    issue: %s — %s (%s)\n", f.Issue, f.Reason, f.Evidence)
+			}
+		}
 	}
 	b.WriteString("\nExplain what is going wrong and suggest concrete next steps.")
 	return b.String()
@@ -67,11 +120,12 @@ func buildPrompt(findings []diagnose.Finding) string {
 // anthropicSummarizer is the real summarizer, backed by the Anthropic SDK.
 type anthropicSummarizer struct {
 	client anthropic.Client
+	model  string
 }
 
 func (a anthropicSummarizer) summarize(ctx context.Context, prompt string) (string, error) {
 	resp, err := a.client.Messages.New(ctx, anthropic.MessageNewParams{
-		Model:     anthropic.ModelClaudeOpus4_8,
+		Model:     anthropic.Model(a.model),
 		MaxTokens: 1024,
 		System:    []anthropic.TextBlockParam{{Text: systemPrompt}},
 		Messages: []anthropic.MessageParam{

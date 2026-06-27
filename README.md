@@ -29,7 +29,10 @@ deterministic core still works offline with no API key.
 ```bash
 go build -o kubeagent .
 
-# scan the whole cluster (uses $KUBECONFIG or ~/.kube/config, current-context)
+# scan the whole cluster — leads with a cluster-health verdict (nodes +
+# kube-system), then every workload (Deployments, StatefulSets, DaemonSets,
+# Jobs, CronJobs, bare pods) with replica/job health, restart history, and
+# any problems
 ./kubeagent scan
 
 # pick a context and scope to one namespace, emit JSON
@@ -41,11 +44,20 @@ go build -o kubeagent .
 # summarize the findings in plain English (needs ANTHROPIC_API_KEY)
 export ANTHROPIC_API_KEY=sk-ant-...
 ./kubeagent scan --explain
+
+# choose the model (default: claude-opus-4-8; or set KUBEAGENT_MODEL)
+./kubeagent scan --explain --model claude-sonnet-4-6
 ```
 
-> `--explain` sends **only** the structured findings (pod name, issue, reason,
-> evidence) to the Claude API — never raw pod specs, environment variables, or
-> secrets. Without the flag, kubeagent makes no external calls.
+> `--explain` sends **only** a structured summary to the Claude API: the
+> cluster-health verdict (node counts, and the names of unhealthy nodes when
+> degraded) and, for the notable workloads, their namespace, name, kind,
+> ready/desired counts, status, restart count, and any detector issue. It never
+> sends raw pod specs, pod IPs, environment variables, or secrets. Without
+> `--explain`, kubeagent makes no external calls.
+>
+> Model precedence for `--explain`: the `--model` flag, then the
+> `KUBEAGENT_MODEL` environment variable, then the default `claude-opus-4-8`.
 
 Run the tests with `go test ./...`.
 

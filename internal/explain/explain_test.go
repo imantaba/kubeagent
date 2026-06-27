@@ -6,7 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/diagnose"
+	"github.com/imantaba/kubeagent/internal/inventory"
 )
 
 // fakeSummarizer stands in for the Anthropic-backed summarizer so tests never
@@ -22,71 +24,131 @@ func (f *fakeSummarizer) summarize(ctx context.Context, prompt string) (string, 
 	return f.reply, f.err
 }
 
-func TestBuildPrompt_IncludesEveryFindingField(t *testing.T) {
-	findings := []diagnose.Finding{
-		{Pod: "default/web", Issue: "CrashLoopBackOff", Reason: "exits 1 on boot", Evidence: "restartCount=14"},
+func TestNotable_SelectsFlaggedAndHighRestarts(t *testing.T) {
+	ws := []inventory.Workload{
+		{Name: "healthy", Ready: 3, Desired: 3, Restarts: 0},
+		{Name: "degraded", Ready: 1, Desired: 2},
+		{Name: "restarted", Ready: 3, Desired: 3, Restarts: 64},
+		{Name: "withfinding", Ready: 1, Desired: 1, Findings: []diagnose.Finding{{Pod: "a/b", Issue: "OOMKilled"}}},
+		{Name: "quiet", Ready: 1, Desired: 1, Restarts: 2},
 	}
-	got := buildPrompt(findings)
-	for _, want := range []string{"default/web", "CrashLoopBackOff", "exits 1 on boot", "restartCount=14", "next steps"} {
+	got := Notable(ws)
+	names := map[string]bool{}
+	for _, w := range got {
+		names[w.Name] = true
+	}
+	if names["healthy"] || names["quiet"] {
+		t.Errorf("healthy/quiet should not be notable: %v", names)
+	}
+	if !names["degraded"] || !names["restarted"] || !names["withfinding"] {
+		t.Errorf("expected degraded, restarted, withfinding; got %v", names)
+	}
+}
+
+func TestExplainInventory_SkipsWhenNothingNotable(t *testing.T) {
+	f := &fakeSummarizer{reply: "should not be used"}
+	c := &Client{s: f}
+	got, err := c.ExplainInventory(context.Background(), clusterhealth.ClusterHealth{Verdict: "Healthy"}, []inventory.Workload{{Name: "ok", Ready: 1, Desired: 1}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "" || f.called {
+		t.Errorf("expected no call and empty result; got %q called=%v", got, f.called)
+	}
+}
+
+func TestExplainInventory_SummarizesNotable(t *testing.T) {
+	f := &fakeSummarizer{reply: "  coredns is degraded.  "}
+	c := &Client{s: f}
+	ws := []inventory.Workload{{Namespace: "kube-system", Name: "coredns", Kind: "Deployment", Ready: 1, Desired: 2}}
+	got, err := c.ExplainInventory(context.Background(), clusterhealth.ClusterHealth{Verdict: "Healthy"}, ws)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "coredns is degraded." || !f.called {
+		t.Errorf("got %q called=%v", got, f.called)
+	}
+}
+
+func TestExplainInventory_WrapsError(t *testing.T) {
+	f := &fakeSummarizer{err: errors.New("boom")}
+	c := &Client{s: f}
+	_, err := c.ExplainInventory(context.Background(), clusterhealth.ClusterHealth{Verdict: "Healthy"}, []inventory.Workload{{Name: "x", Ready: 1, Desired: 2}})
+	if err == nil || !strings.Contains(err.Error(), "explaining workloads") || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("expected wrapped error, got %v", err)
+	}
+}
+
+func TestExplainInventory_ErrorsOnEmptyText(t *testing.T) {
+	f := &fakeSummarizer{reply: "  \n"}
+	c := &Client{s: f}
+	_, err := c.ExplainInventory(context.Background(), clusterhealth.ClusterHealth{Verdict: "Healthy"}, []inventory.Workload{{Name: "x", Ready: 1, Desired: 2}})
+	if err == nil || !strings.Contains(err.Error(), "model returned no text") {
+		t.Fatalf("expected empty-text error, got %v", err)
+	}
+}
+
+func TestBuildInventoryPrompt_OnlyStructuredFields(t *testing.T) {
+	ws := []inventory.Workload{{
+		Namespace: "kube-system", Name: "coredns", Kind: "Deployment", Ready: 1, Desired: 2, Status: "Degraded", Restarts: 7,
+		Findings: []diagnose.Finding{{Pod: "kube-system/coredns-x", Issue: "CrashLoopBackOff", Reason: "boom", Evidence: "restartCount=7"}},
+		Pods:     []inventory.PodRow{{Name: "coredns-x", IP: "10.42.9.9", Node: "secret-node-name"}},
+	}}
+	got := buildInventoryPrompt(clusterhealth.ClusterHealth{}, ws)
+	for _, want := range []string{"kube-system", "coredns", "Deployment", "CrashLoopBackOff", "boom"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("prompt missing %q:\n%s", want, got)
 		}
 	}
+	// Egress guard: per-pod IPs / node names must NOT be sent to the model.
+	for _, leak := range []string{"10.42.9.9", "secret-node-name"} {
+		if strings.Contains(got, leak) {
+			t.Errorf("prompt leaked %q:\n%s", leak, got)
+		}
+	}
 }
 
-func TestExplain_SkipsCallWhenNoFindings(t *testing.T) {
-	f := &fakeSummarizer{reply: "should not be used"}
+func TestExplainInventory_ExplainsDegradedClusterWithNoNotableWorkloads(t *testing.T) {
+	f := &fakeSummarizer{reply: "two nodes are NotReady"}
 	c := &Client{s: f}
-	got, err := c.Explain(context.Background(), nil)
+	ch := clusterhealth.ClusterHealth{Verdict: "Degraded", NodesTotal: 3, NodesReady: 1, NodeIssues: []string{"n2 NotReady", "n3 NotReady"}}
+	got, err := c.ExplainInventory(context.Background(), ch, []inventory.Workload{{Name: "ok", Ready: 1, Desired: 1}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got != "" {
-		t.Errorf("expected empty explanation, got %q", got)
-	}
-	if f.called {
-		t.Error("summarizer should not be called when there are no findings")
+	if got != "two nodes are NotReady" || !f.called {
+		t.Errorf("expected the degraded cluster to be explained; got %q called=%v", got, f.called)
 	}
 }
 
-func TestExplain_ReturnsTrimmedSummary(t *testing.T) {
-	f := &fakeSummarizer{reply: "  Two pods are failing.  \n"}
-	c := &Client{s: f}
-	got, err := c.Explain(context.Background(), []diagnose.Finding{{Pod: "default/web", Issue: "X"}})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestBuildInventoryPrompt_LeadsWithDegradedCluster(t *testing.T) {
+	ch := clusterhealth.ClusterHealth{Verdict: "Degraded", NodesTotal: 3, NodesReady: 1, NodeIssues: []string{"n2 NotReady"}}
+	got := buildInventoryPrompt(ch, nil)
+	if !strings.Contains(got, "DEGRADED") || !strings.Contains(got, "n2 NotReady") {
+		t.Errorf("prompt should lead with the degraded cluster:\n%s", got)
 	}
-	if got != "Two pods are failing." {
-		t.Errorf("got %q, want the trimmed summary", got)
+	if strings.Contains(got, "need attention") {
+		t.Errorf("should not advertise a workloads section when there are none:\n%s", got)
 	}
-	if !f.called {
-		t.Error("expected the summarizer to be called")
-	}
-}
-
-func TestExplain_WrapsSummarizerError(t *testing.T) {
-	f := &fakeSummarizer{err: errors.New("boom")}
-	c := &Client{s: f}
-	_, err := c.Explain(context.Background(), []diagnose.Finding{{Pod: "default/web"}})
-	if err == nil {
-		t.Fatal("expected an error")
-	}
-	if !strings.Contains(err.Error(), "explaining findings") || !strings.Contains(err.Error(), "boom") {
-		t.Errorf("error not wrapped as expected: %v", err)
+	if !strings.Contains(got, "1/3 nodes Ready") {
+		t.Errorf("prompt should include the exact node-count header:\n%s", got)
 	}
 }
 
-func TestExplain_ErrorsOnEmptySummary(t *testing.T) {
-	f := &fakeSummarizer{reply: "   \n"}
-	c := &Client{s: f}
-	_, err := c.Explain(context.Background(), []diagnose.Finding{{Pod: "default/web"}})
-	if err == nil {
-		t.Fatal("expected an error when the model returns no text")
+func TestResolveModel(t *testing.T) {
+	cases := []struct {
+		name, flag, env, want string
+	}{
+		{"flag wins over env and default", "claude-opus-4-8", "claude-sonnet-4-6", "claude-opus-4-8"},
+		{"env used when flag empty", "", "claude-sonnet-4-6", "claude-sonnet-4-6"},
+		{"default when both empty", "", "", DefaultModel},
+		{"flag wins when env empty", "claude-haiku-4-5", "", "claude-haiku-4-5"},
 	}
-	if !strings.Contains(err.Error(), "explaining findings") {
-		t.Errorf("error not wrapped as expected: %v", err)
-	}
-	if !f.called {
-		t.Error("expected the summarizer to be called when findings are present")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ResolveModel(tc.flag, tc.env); got != tc.want {
+				t.Errorf("ResolveModel(%q, %q) = %q, want %q", tc.flag, tc.env, got, tc.want)
+			}
+		})
 	}
 }

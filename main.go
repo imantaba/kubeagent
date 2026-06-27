@@ -8,9 +8,11 @@ import (
 	"time"
 
 	"github.com/imantaba/kubeagent/internal/cluster"
+	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/collect"
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/explain"
+	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/report"
 )
 
@@ -23,7 +25,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 || args[0] != "scan" {
-		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain]")
+		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--model name]")
 	}
 
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
@@ -31,6 +33,7 @@ func run(args []string) error {
 	contextName := fs.String("context", "", "kubeconfig context to use (default: current-context)")
 	output := fs.String("output", "text", "output format: text | json")
 	explainFlag := fs.Bool("explain", false, "summarize findings via one Claude API call (needs ANTHROPIC_API_KEY)")
+	model := fs.String("model", "", "Claude model for --explain (default: $KUBEAGENT_MODEL or claude-opus-4-8)")
 	var namespace string
 	fs.StringVar(&namespace, "namespace", "", "namespace to scan (default: all namespaces)")
 	fs.StringVar(&namespace, "n", "", "namespace to scan (shorthand)")
@@ -51,7 +54,8 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	facts, err := collect.Cluster(context.Background(), client, namespace)
+
+	inputs, err := collect.CollectInventory(context.Background(), client, namespace)
 	if err != nil {
 		return err
 	}
@@ -62,17 +66,25 @@ func run(args []string) error {
 		diagnose.OOMKilledDetector{},
 		diagnose.PendingDetector{},
 	}
-	findings := diagnose.Run(detectors, facts)
+	findings := diagnose.Run(detectors, collect.FactsFrom(inputs.Pods))
+	workloads := inventory.Assemble(inputs, findings)
+
+	nodes, err := collect.Nodes(context.Background(), client)
+	if err != nil {
+		return err
+	}
+	health := clusterhealth.Assess(nodes, workloads)
+	health.ScopeNote = clusterhealth.NamespaceScopeNote(namespace)
 
 	var explanation string
 	if *explainFlag {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		explanation, err = explain.New().Explain(ctx, findings)
+		explanation, err = explain.New(explain.ResolveModel(*model, os.Getenv("KUBEAGENT_MODEL"))).ExplainInventory(ctx, health, workloads)
 		if err != nil {
 			return err
 		}
 	}
 
-	return report.Print(findings, explanation, *output, os.Stdout)
+	return report.PrintInventory(health, workloads, explanation, *output, os.Stdout)
 }

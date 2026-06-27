@@ -44,6 +44,7 @@ type Workload struct {
 	Findings    []diagnose.Finding `json:"findings,omitempty"`
 	PodsOmitted int                `json:"podsOmitted,omitempty"`
 	Schedule    string             `json:"schedule,omitempty"`
+	Priority    int                `json:"priority,omitempty"` // 2 problem | 3 restart-only | 4 cron (set by Prioritize)
 }
 
 // Flagged reports whether the workload needs attention.
@@ -340,4 +341,71 @@ func sortWorkloads(ws []Workload) {
 		}
 		return ws[i].Kind < ws[j].Kind
 	})
+}
+
+// Opts controls which lower-priority categories Prioritize includes.
+type Opts struct {
+	IncludeRestarts bool
+	IncludeCron     bool
+}
+
+// Result is the filtered, prioritized workloads plus counts of what was hidden
+// (for the report's footer hint).
+type Result struct {
+	Workloads      []Workload
+	HiddenRestarts int
+	HiddenCron     int
+}
+
+// Priority tiers (lower = more urgent).
+const (
+	priorityProblem = 2 // flagged non-cron workload
+	priorityRestart = 3 // healthy but restarted
+	priorityCron    = 4 // CronJob
+)
+
+// Prioritize filters the assembled workloads to what should be shown and tags
+// each with a Priority tier. Problems (flagged non-cron) are always kept;
+// restart-only and CronJobs are kept only when their opt-in flag is set;
+// healthy-quiet workloads are always dropped. The result is sorted by
+// (Priority, Namespace, Name, Kind).
+func Prioritize(workloads []Workload, opts Opts) Result {
+	var res Result
+	for _, w := range workloads {
+		switch {
+		case w.Kind == "CronJob":
+			if opts.IncludeCron {
+				w.Priority = priorityCron
+				res.Workloads = append(res.Workloads, w)
+			} else {
+				res.HiddenCron++
+			}
+		case w.Flagged():
+			w.Priority = priorityProblem
+			res.Workloads = append(res.Workloads, w)
+		case w.Restarts > 0:
+			if opts.IncludeRestarts {
+				w.Priority = priorityRestart
+				res.Workloads = append(res.Workloads, w)
+			} else {
+				res.HiddenRestarts++
+			}
+		default:
+			// healthy-quiet — always hidden
+		}
+	}
+	sort.Slice(res.Workloads, func(i, j int) bool {
+		a, b := res.Workloads[i], res.Workloads[j]
+		if a.Priority != b.Priority {
+			return a.Priority < b.Priority
+		}
+		if a.Namespace != b.Namespace {
+			return a.Namespace < b.Namespace
+		}
+		if a.Name != b.Name {
+			return a.Name < b.Name
+		}
+		return a.Kind < b.Kind
+	})
+	return res
 }

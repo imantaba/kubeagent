@@ -11,6 +11,10 @@
 *.out
 coverage.*
 
+# Release artifacts (produced by the release workflow / local dry-runs)
+*.tar.gz
+SHA256SUMS
+
 # Go workspace files
 go.work
 go.work.sum

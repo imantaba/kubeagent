@@ -98,6 +98,10 @@ The release workflow runs the tests, builds
 GitHub Release. Every push and PR is checked by the CI workflow (vet + test +
 build).
 
+> A manual dispatch creates the tag at the current commit of the branch it runs
+> on — make sure that branch is at the commit you mean to release before
+> dispatching. A pushed tag releases exactly that tagged commit.
+
 ## Roadmap
 
 - **v1** — `kubeagent scan`: deterministic whole-cluster scan + diagnosis

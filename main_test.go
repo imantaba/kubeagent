@@ -48,3 +48,16 @@ func TestRun_ModelFlagIsRecognized(t *testing.T) {
 		t.Fatalf("expected ANTHROPIC_API_KEY error (proves --model parsed), got: %v", err)
 	}
 }
+
+func TestRun_IncludeFlagsAreRecognized(t *testing.T) {
+	// --include-cron / --include-restarts must be known flags: with --explain and
+	// no key, the error is the fail-fast key error, not "flag not defined".
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	err := run([]string{"scan", "--explain", "--include-cron", "--include-restarts"})
+	if err == nil {
+		t.Fatal("expected the fail-fast API-key error")
+	}
+	if !strings.Contains(err.Error(), "ANTHROPIC_API_KEY") {
+		t.Fatalf("expected ANTHROPIC_API_KEY error (proves the flags parsed), got: %v", err)
+	}
+}

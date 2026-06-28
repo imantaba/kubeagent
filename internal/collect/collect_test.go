@@ -7,6 +7,8 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
@@ -119,5 +121,46 @@ func TestAllPods_ListsAcrossNamespaces(t *testing.T) {
 	}
 	if len(pods) != 2 {
 		t.Errorf("want 2 pods across namespaces, got %d", len(pods))
+	}
+}
+
+func TestStorageClasses_Lists(t *testing.T) {
+	client := fake.NewSimpleClientset(
+		&storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: "a"}, Provisioner: "p1"},
+		&storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: "b"}, Provisioner: "p2"},
+	)
+	scs, err := StorageClasses(context.Background(), client)
+	if err != nil {
+		t.Fatalf("StorageClasses: %v", err)
+	}
+	if len(scs) != 2 {
+		t.Errorf("want 2 storageclasses, got %d", len(scs))
+	}
+}
+
+func TestIngressClasses_Lists(t *testing.T) {
+	client := fake.NewSimpleClientset(
+		&networkingv1.IngressClass{ObjectMeta: metav1.ObjectMeta{Name: "traefik"}, Spec: networkingv1.IngressClassSpec{Controller: "traefik.io/ingress-controller"}},
+	)
+	ics, err := IngressClasses(context.Background(), client)
+	if err != nil {
+		t.Fatalf("IngressClasses: %v", err)
+	}
+	if len(ics) != 1 || ics[0].Spec.Controller != "traefik.io/ingress-controller" {
+		t.Errorf("unexpected ingressclasses: %+v", ics)
+	}
+}
+
+func TestSystemDaemonSets_OnlyKubeSystem(t *testing.T) {
+	client := fake.NewSimpleClientset(
+		&appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Namespace: "kube-system", Name: "cilium"}},
+		&appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Namespace: "other", Name: "fluentd"}},
+	)
+	dss, err := SystemDaemonSets(context.Background(), client)
+	if err != nil {
+		t.Fatalf("SystemDaemonSets: %v", err)
+	}
+	if len(dss) != 1 || dss[0].Name != "cilium" {
+		t.Errorf("want only kube-system/cilium, got %+v", dss)
 	}
 }

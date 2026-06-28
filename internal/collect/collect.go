@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -109,6 +112,34 @@ func NodeMetrics(ctx context.Context, client kubernetes.Interface) (map[string]c
 		return nil, false, err
 	}
 	return usage, len(usage) > 0, nil
+}
+
+// StorageClasses lists all StorageClasses (cluster-scoped, read-only).
+func StorageClasses(ctx context.Context, client kubernetes.Interface) ([]storagev1.StorageClass, error) {
+	scs, err := client.StorageV1().StorageClasses().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("listing storageclasses: %w", err)
+	}
+	return scs.Items, nil
+}
+
+// IngressClasses lists all IngressClasses (cluster-scoped, read-only).
+func IngressClasses(ctx context.Context, client kubernetes.Interface) ([]networkingv1.IngressClass, error) {
+	ics, err := client.NetworkingV1().IngressClasses().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("listing ingressclasses: %w", err)
+	}
+	return ics.Items, nil
+}
+
+// SystemDaemonSets lists DaemonSets in kube-system (read-only) — used to detect
+// the CNI regardless of the scan's namespace scope.
+func SystemDaemonSets(ctx context.Context, client kubernetes.Interface) ([]appsv1.DaemonSet, error) {
+	dss, err := client.AppsV1().DaemonSets("kube-system").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("listing kube-system daemonsets: %w", err)
+	}
+	return dss.Items, nil
 }
 
 // parseNodeMetrics decodes a metrics.k8s.io NodeMetricsList body into per-node

@@ -121,4 +121,3 @@ func TestAllPods_ListsAcrossNamespaces(t *testing.T) {
 		t.Errorf("want 2 pods across namespaces, got %d", len(pods))
 	}
 }
-

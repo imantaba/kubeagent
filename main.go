@@ -106,5 +106,5 @@ func run(args []string) error {
 		}
 	}
 
-	return report.PrintInventory(health, result, explanation, *output, os.Stdout)
+	return report.PrintInventory(health, result, nil, explanation, *output, os.Stdout)
 }

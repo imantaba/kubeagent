@@ -9,30 +9,32 @@ import (
 
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/resources"
 )
 
 // inventoryReport is the JSON shape for the workload inventory.
 type inventoryReport struct {
 	Cluster     clusterhealth.ClusterHealth `json:"cluster"`
 	Workloads   []inventory.Workload        `json:"workloads"`
+	Resources   *resources.Summary          `json:"resources,omitempty"`
 	Explanation string                      `json:"explanation,omitempty"`
 }
 
 // PrintInventory writes the cluster verdict and the prioritized workload set to w.
-func PrintInventory(cluster clusterhealth.ClusterHealth, result inventory.Result, explanation, format string, w io.Writer) error {
+func PrintInventory(cluster clusterhealth.ClusterHealth, result inventory.Result, summary *resources.Summary, explanation, format string, w io.Writer) error {
 	switch format {
 	case "json":
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
-		return enc.Encode(inventoryReport{Cluster: cluster, Workloads: result.Workloads, Explanation: explanation})
+		return enc.Encode(inventoryReport{Cluster: cluster, Workloads: result.Workloads, Resources: summary, Explanation: explanation})
 	case "text":
-		return printInventoryText(cluster, result, explanation, w)
+		return printInventoryText(cluster, result, summary, explanation, w)
 	default:
 		return fmt.Errorf("unknown output format %q (want text or json)", format)
 	}
 }
 
-func printInventoryText(cluster clusterhealth.ClusterHealth, result inventory.Result, explanation string, w io.Writer) error {
+func printInventoryText(cluster clusterhealth.ClusterHealth, result inventory.Result, summary *resources.Summary, explanation string, w io.Writer) error {
 	if cluster.Verdict != "" {
 		if _, err := fmt.Fprintf(w, "Cluster: %s — %d/%d nodes Ready\n", cluster.Verdict, cluster.NodesReady, cluster.NodesTotal); err != nil {
 			return err
@@ -55,6 +57,10 @@ func printInventoryText(cluster clusterhealth.ClusterHealth, result inventory.Re
 		if _, err := fmt.Fprintln(w); err != nil {
 			return err
 		}
+	}
+
+	if err := printResources(summary, w); err != nil {
+		return err
 	}
 
 	if len(result.Workloads) == 0 {
@@ -83,6 +89,42 @@ func printInventoryText(cluster clusterhealth.ClusterHealth, result inventory.Re
 		}
 	}
 	return nil
+}
+
+func printResources(s *resources.Summary, w io.Writer) error {
+	if s == nil {
+		return nil
+	}
+	if _, err := fmt.Fprintln(w, "Resources (cluster):"); err != nil {
+		return err
+	}
+	if err := printResLine(w, "CPU   ", s.CPU, "cores", s.MetricsAvailable); err != nil {
+		return err
+	}
+	if err := printResLine(w, "Memory", s.Memory, "", s.MetricsAvailable); err != nil {
+		return err
+	}
+	if !s.MetricsAvailable {
+		if _, err := fmt.Fprintln(w, "  (usage: metrics-server unavailable)"); err != nil {
+			return err
+		}
+	}
+	_, err := fmt.Fprintln(w)
+	return err
+}
+
+func printResLine(w io.Writer, label string, l resources.Line, unit string, metrics bool) error {
+	alloc := l.Allocatable
+	if unit != "" {
+		alloc += " " + unit
+	}
+	line := fmt.Sprintf("  %s  %s · req %s (%d%%) · lim %s (%d%%)",
+		label, alloc, l.Requests, l.RequestsPct, l.Limits, l.LimitsPct)
+	if metrics {
+		line += fmt.Sprintf(" · used %s (%d%%)", l.Usage, l.UsagePct)
+	}
+	_, err := fmt.Fprintln(w, line)
+	return err
 }
 
 // footerHint summarizes hidden categories, naming the flag that reveals each.
@@ -128,6 +170,13 @@ func printWorkload(wl inventory.Workload, w io.Writer) error {
 	for _, f := range wl.Findings {
 		if _, err := fmt.Fprintf(w, "    ⚠ %s: %s\n", f.Issue, f.Reason); err != nil {
 			return err
+		}
+		if f.Resources != nil {
+			r := f.Resources
+			if _, err := fmt.Fprintf(w, "      resources: memory req=%s limit=%s · cpu req=%s limit=%s\n",
+				r.MemRequest, r.MemLimit, r.CPURequest, r.CPULimit); err != nil {
+				return err
+			}
 		}
 	}
 	for _, p := range wl.Pods {

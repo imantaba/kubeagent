@@ -9,6 +9,7 @@ import (
 
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/platform"
 	"github.com/imantaba/kubeagent/internal/resources"
 )
 
@@ -17,24 +18,25 @@ type inventoryReport struct {
 	Cluster     clusterhealth.ClusterHealth `json:"cluster"`
 	Workloads   []inventory.Workload        `json:"workloads"`
 	Resources   *resources.Summary          `json:"resources,omitempty"`
+	Platform    *platform.Facts             `json:"platform,omitempty"`
 	Explanation string                      `json:"explanation,omitempty"`
 }
 
 // PrintInventory writes the cluster verdict and the prioritized workload set to w.
-func PrintInventory(cluster clusterhealth.ClusterHealth, result inventory.Result, summary *resources.Summary, explanation, format string, w io.Writer) error {
+func PrintInventory(cluster clusterhealth.ClusterHealth, result inventory.Result, summary *resources.Summary, facts *platform.Facts, explanation, format string, w io.Writer) error {
 	switch format {
 	case "json":
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
-		return enc.Encode(inventoryReport{Cluster: cluster, Workloads: result.Workloads, Resources: summary, Explanation: explanation})
+		return enc.Encode(inventoryReport{Cluster: cluster, Workloads: result.Workloads, Resources: summary, Platform: facts, Explanation: explanation})
 	case "text":
-		return printInventoryText(cluster, result, summary, explanation, w)
+		return printInventoryText(cluster, result, summary, facts, explanation, w)
 	default:
 		return fmt.Errorf("unknown output format %q (want text or json)", format)
 	}
 }
 
-func printInventoryText(cluster clusterhealth.ClusterHealth, result inventory.Result, summary *resources.Summary, explanation string, w io.Writer) error {
+func printInventoryText(cluster clusterhealth.ClusterHealth, result inventory.Result, summary *resources.Summary, facts *platform.Facts, explanation string, w io.Writer) error {
 	if cluster.Verdict != "" {
 		if _, err := fmt.Fprintf(w, "Cluster: %s — %d/%d nodes Ready\n", cluster.Verdict, cluster.NodesReady, cluster.NodesTotal); err != nil {
 			return err
@@ -52,6 +54,13 @@ func printInventoryText(cluster clusterhealth.ClusterHealth, result inventory.Re
 		if cluster.ScopeNote != "" {
 			if _, err := fmt.Fprintf(w, "  · %s\n", cluster.ScopeNote); err != nil {
 				return err
+			}
+		}
+		if facts != nil {
+			if line := facts.Line(); line != "" {
+				if _, err := fmt.Fprintf(w, "Platform: %s\n", line); err != nil {
+					return err
+				}
 			}
 		}
 		if _, err := fmt.Fprintln(w); err != nil {

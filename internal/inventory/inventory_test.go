@@ -233,6 +233,64 @@ func TestAssemble_BarePodBecomesItsOwnWorkload(t *testing.T) {
 	}
 }
 
+// terminalBarePod builds an owner-less pod that has run to completion in the
+// given terminal phase (its single container is terminated and not ready).
+func terminalBarePod(ns, name string, phase corev1.PodPhase, exitCode int32) corev1.Pod {
+	return corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name}, // no owner → bare pod
+		Spec: corev1.PodSpec{
+			RestartPolicy: corev1.RestartPolicyNever,
+			Containers:    []corev1.Container{{Name: "c", Image: "img"}},
+		},
+		Status: corev1.PodStatus{
+			Phase: phase,
+			ContainerStatuses: []corev1.ContainerStatus{{
+				Name: "c", Ready: false,
+				State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: exitCode}},
+			}},
+		},
+	}
+}
+
+func TestAssemble_CompletedBarePodIsComplete(t *testing.T) {
+	// A bare pod from `kubectl run` that ran once and exited 0 sits in
+	// Succeeded/Completed. It is finished, not a degraded long-running workload,
+	// so it must not be flagged (mirrors a completed Job).
+	in := Inputs{Pods: []corev1.Pod{terminalBarePod("cattle-monitoring-system", "amtool-q-8056", corev1.PodSucceeded, 0)}}
+	ws := Assemble(in, nil)
+	if len(ws) != 1 || ws[0].Kind != "Pod" || ws[0].Name != "amtool-q-8056" {
+		t.Fatalf("expected a bare-pod workload, got %+v", ws)
+	}
+	if ws[0].Status != "Complete" {
+		t.Errorf("status = %q, want Complete", ws[0].Status)
+	}
+	if ws[0].Flagged() {
+		t.Errorf("a completed bare pod must not be flagged; got %+v", ws[0])
+	}
+}
+
+func TestAssemble_FailedBarePodIsFailedAndFlagged(t *testing.T) {
+	in := Inputs{Pods: []corev1.Pod{terminalBarePod("batch", "oneshot-bad", corev1.PodFailed, 1)}}
+	ws := Assemble(in, nil)
+	if len(ws) != 1 || ws[0].Status != "Failed" {
+		t.Fatalf("want a Failed bare-pod workload, got %+v", ws)
+	}
+	if !ws[0].Flagged() {
+		t.Error("a failed bare pod should be flagged")
+	}
+}
+
+func TestAssemble_PendingBarePodStillFlagged(t *testing.T) {
+	// A non-terminal (Pending) bare pod is genuinely not running yet — it must
+	// keep the ready<desired Degraded behavior and stay flagged.
+	p := pod("default", "stuck", nil, 0, "img") // pod() builds a Running, not-ready pod
+	p.Status.Phase = corev1.PodPending
+	ws := Assemble(Inputs{Pods: []corev1.Pod{p}}, nil)
+	if len(ws) != 1 || ws[0].Status != "Degraded" || !ws[0].Flagged() {
+		t.Fatalf("a pending bare pod should stay Degraded and flagged, got %+v", ws)
+	}
+}
+
 func TestAssemble_StatefulSetSeeding(t *testing.T) {
 	in := Inputs{
 		StatefulSets: []appsv1.StatefulSet{{

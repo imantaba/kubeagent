@@ -154,6 +154,32 @@ func workloadStatus(ready, desired int) string {
 	return "Degraded"
 }
 
+// terminalPodStatus reports the finished status of a pod-derived workload (a bare
+// pod, or pods orphaned from a deleted controller) when every pod has reached a
+// terminal phase. Such pods are done, not missing — a one-shot pod that exited 0
+// is "Complete" and one that exited non-zero is "Failed", so a finished pod isn't
+// mistaken for a degraded long-running workload. It returns "" when any pod is
+// still live (Running/Pending/Unknown), leaving the ready/desired model to apply.
+func terminalPodStatus(pods []PodRow) string {
+	if len(pods) == 0 {
+		return ""
+	}
+	anyFailed := false
+	for _, p := range pods {
+		switch p.Phase {
+		case string(corev1.PodSucceeded):
+		case string(corev1.PodFailed):
+			anyFailed = true
+		default:
+			return "" // a live pod — not a finished workload
+		}
+	}
+	if anyFailed {
+		return "Failed"
+	}
+	return "Complete"
+}
+
 // Inputs are the raw lists Assemble consumes.
 type Inputs struct {
 	Pods         []corev1.Pod
@@ -314,6 +340,11 @@ func Assemble(in Inputs, findings []diagnose.Finding) []Workload {
 		if !controllerKeys[k] {
 			w.Desired = len(w.Pods)
 			w.Ready = derivedReady[k]
+			if s := terminalPodStatus(w.Pods); s != "" {
+				// Finished pods aren't "missing" — represent them like a
+				// completed Job (0/0) so ready<desired doesn't flag them.
+				w.Desired, w.Ready, w.Status = 0, 0, s
+			}
 		}
 		if (w.Kind == "Job" || w.Kind == "CronJob") && len(w.Pods) > jobPodCap {
 			w.PodsOmitted = len(w.Pods) - jobPodCap

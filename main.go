@@ -14,6 +14,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/explain"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/report"
+	"github.com/imantaba/kubeagent/internal/resources"
 )
 
 // version is the build version, overridden at release time via
@@ -91,6 +92,15 @@ func run(args []string) error {
 	health := clusterhealth.Assess(nodes, workloads)
 	health.ScopeNote = clusterhealth.NamespaceScopeNote(namespace)
 
+	usage, _, _ := collect.NodeMetrics(context.Background(), client) // best-effort; nil when no metrics-server
+	resourcePods := inputs.Pods
+	if namespace != "" {
+		if all, perr := collect.AllPods(context.Background(), client); perr == nil {
+			resourcePods = all
+		}
+	}
+	summary := resources.Summarize(nodes, resourcePods, usage)
+
 	result := inventory.Prioritize(workloads, inventory.Opts{
 		IncludeRestarts: *includeRestarts,
 		IncludeCron:     *includeCron,
@@ -100,11 +110,11 @@ func run(args []string) error {
 	if *explainFlag {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		explanation, err = explain.New(explain.ResolveModel(*model, os.Getenv("KUBEAGENT_MODEL"))).ExplainInventory(ctx, health, nil, result.Workloads)
+		explanation, err = explain.New(explain.ResolveModel(*model, os.Getenv("KUBEAGENT_MODEL"))).ExplainInventory(ctx, health, &summary, result.Workloads)
 		if err != nil {
 			return err
 		}
 	}
 
-	return report.PrintInventory(health, result, nil, explanation, *output, os.Stdout)
+	return report.PrintInventory(health, result, &summary, explanation, *output, os.Stdout)
 }

@@ -66,6 +66,16 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 Run the tests with `go test ./...`.
 
+### Resource context
+
+`scan` prints a compact cluster resource summary (CPU and memory: allocatable,
+reserved/requests, limits, and — when metrics-server is installed — live usage),
+and annotates each OOMKilled finding with the killed container's requests and
+limits. This context is also sent to `--explain` so the model can judge whether
+to raise a limit or scale out. Live usage is best-effort: without metrics-server
+the summary still shows allocatable/reserved/limits and notes usage as
+unavailable. Reading usage is read-only (a single GET on the metrics API).
+
 ## Install
 
 Prebuilt **linux/amd64** binaries are attached to each

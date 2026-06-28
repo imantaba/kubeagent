@@ -12,6 +12,7 @@ import (
 
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/platform"
 	"github.com/imantaba/kubeagent/internal/resources"
 )
 
@@ -57,11 +58,11 @@ func New(model string) *Client {
 // ExplainInventory summarizes the cluster verdict (when degraded) and the given
 // (already-prioritized) workloads. It skips the API call and returns "" when the
 // cluster is healthy and there are no workloads to explain.
-func (c *Client) ExplainInventory(ctx context.Context, cluster clusterhealth.ClusterHealth, summary *resources.Summary, workloads []inventory.Workload) (string, error) {
+func (c *Client) ExplainInventory(ctx context.Context, cluster clusterhealth.ClusterHealth, summary *resources.Summary, facts *platform.Facts, workloads []inventory.Workload) (string, error) {
 	if cluster.Verdict != "Degraded" && len(workloads) == 0 {
 		return "", nil
 	}
-	out, err := c.s.summarize(ctx, buildInventoryPrompt(cluster, summary, workloads))
+	out, err := c.s.summarize(ctx, buildInventoryPrompt(cluster, summary, facts, workloads))
 	if err != nil {
 		return "", fmt.Errorf("explaining workloads: %w", err)
 	}
@@ -75,7 +76,7 @@ func (c *Client) ExplainInventory(ctx context.Context, cluster clusterhealth.Clu
 // buildInventoryPrompt renders the cluster verdict (when degraded) and the
 // given (pre-filtered) workloads. Only structured fields are sent — never raw pod specs or
 // secrets (node names in the cluster section are infrastructure identifiers).
-func buildInventoryPrompt(cluster clusterhealth.ClusterHealth, summary *resources.Summary, workloads []inventory.Workload) string {
+func buildInventoryPrompt(cluster clusterhealth.ClusterHealth, summary *resources.Summary, facts *platform.Facts, workloads []inventory.Workload) string {
 	var b strings.Builder
 	if cluster.Verdict == "Degraded" {
 		fmt.Fprintf(&b, "Cluster health: DEGRADED — %d/%d nodes Ready.\n", cluster.NodesReady, cluster.NodesTotal)
@@ -86,6 +87,12 @@ func buildInventoryPrompt(cluster clusterhealth.ClusterHealth, summary *resource
 			fmt.Fprintf(&b, "  system %s\n", iss)
 		}
 		b.WriteString("\n")
+	}
+
+	if facts != nil {
+		if line := facts.Line(); line != "" {
+			fmt.Fprintf(&b, "Platform: %s\n\n", line)
+		}
 	}
 
 	if summary != nil {

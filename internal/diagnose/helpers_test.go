@@ -37,6 +37,14 @@ func podOOMKilled(namespace, name, container string, exitCode int32, viaLastTerm
 	}
 }
 
+// podOOMKilledWithResources is an OOMKilled pod whose spec declares the killed
+// container with the given requests/limits.
+func podOOMKilledWithResources(ns, name, container string, res corev1.ResourceRequirements) *corev1.Pod {
+	p := podOOMKilled(ns, name, container, 137, false)
+	p.Spec.Containers = []corev1.Container{{Name: container, Resources: res}}
+	return p
+}
+
 // podUnschedulable returns a Pending pod with a PodScheduled=False/Unschedulable condition.
 func podUnschedulable(namespace, name, message string) *corev1.Pod {
 	return &corev1.Pod{

@@ -47,6 +47,7 @@ func containerResources(pod *corev1.Pod, name string) *ContainerResources {
 	return nil
 }
 
+// quantityOrUnset returns the String() of the named resource in rl, or "unset" when absent.
 func quantityOrUnset(rl corev1.ResourceList, n corev1.ResourceName) string {
 	if q, ok := rl[n]; ok {
 		return q.String()

@@ -283,6 +283,18 @@ func TestPrintInventory_TextShowsResourceBlock(t *testing.T) {
 	}
 }
 
+func TestPrintInventory_ResourceBlockPrecedesWorkloads(t *testing.T) {
+	var buf bytes.Buffer
+	ch := clusterhealth.ClusterHealth{Verdict: "Healthy", NodesTotal: 1, NodesReady: 1}
+	if err := PrintInventory(ch, inventory.Result{Workloads: sampleWorkloads()}, sampleSummary(), "", "text", &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := buf.String()
+	if strings.Index(out, "Resources (cluster):") > strings.Index(out, "cattle-system/rancher") {
+		t.Errorf("resource block should print before the workload list:\n%s", out)
+	}
+}
+
 func TestPrintInventory_TextResourceBlockNoMetrics(t *testing.T) {
 	var buf bytes.Buffer
 	s := sampleSummary()

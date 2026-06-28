@@ -92,7 +92,10 @@ func run(args []string) error {
 	health := clusterhealth.Assess(nodes, workloads)
 	health.ScopeNote = clusterhealth.NamespaceScopeNote(namespace)
 
-	usage, _, _ := collect.NodeMetrics(context.Background(), client) // best-effort; nil when no metrics-server
+	usage, _, metricsErr := collect.NodeMetrics(context.Background(), client)
+	if metricsErr != nil {
+		fmt.Fprintf(os.Stderr, "kubeagent: warning: metrics unavailable: %v\n", metricsErr)
+	}
 	resourcePods := inputs.Pods
 	if namespace != "" {
 		if all, perr := collect.AllPods(context.Background(), client); perr == nil {

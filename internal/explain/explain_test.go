@@ -144,6 +144,21 @@ func TestBuildInventoryPrompt_IncludesClusterResources(t *testing.T) {
 	}
 }
 
+func TestBuildInventoryPrompt_OmitsUsageWhenMetricsUnavailable(t *testing.T) {
+	s := &resources.Summary{
+		MetricsAvailable: false,
+		CPU:              resources.Line{Allocatable: "8.0", Requests: "2.0", Limits: "4.0", RequestsPct: 25, LimitsPct: 50},
+		Memory:           resources.Line{Allocatable: "16Gi", Requests: "4Gi", Limits: "8Gi", RequestsPct: 25, LimitsPct: 50},
+	}
+	got := buildInventoryPrompt(clusterhealth.ClusterHealth{}, s, nil)
+	if !strings.Contains(got, "Cluster resources:") {
+		t.Fatalf("expected the resources section:\n%s", got)
+	}
+	if strings.Contains(got, "usage") {
+		t.Errorf("usage clause must be omitted when metrics unavailable:\n%s", got)
+	}
+}
+
 func TestBuildInventoryPrompt_IncludesOOMContainerResources(t *testing.T) {
 	ws := []inventory.Workload{{
 		Namespace: "cattle-system", Name: "rancher", Kind: "Deployment", Ready: 0, Desired: 1, Status: "Degraded",

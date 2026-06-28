@@ -12,6 +12,7 @@ import (
 
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/resources"
 )
 
 const systemPrompt = `You are a Kubernetes SRE. You are given the findings of a
@@ -56,11 +57,11 @@ func New(model string) *Client {
 // ExplainInventory summarizes the cluster verdict (when degraded) and the given
 // (already-prioritized) workloads. It skips the API call and returns "" when the
 // cluster is healthy and there are no workloads to explain.
-func (c *Client) ExplainInventory(ctx context.Context, cluster clusterhealth.ClusterHealth, workloads []inventory.Workload) (string, error) {
+func (c *Client) ExplainInventory(ctx context.Context, cluster clusterhealth.ClusterHealth, summary *resources.Summary, workloads []inventory.Workload) (string, error) {
 	if cluster.Verdict != "Degraded" && len(workloads) == 0 {
 		return "", nil
 	}
-	out, err := c.s.summarize(ctx, buildInventoryPrompt(cluster, workloads))
+	out, err := c.s.summarize(ctx, buildInventoryPrompt(cluster, summary, workloads))
 	if err != nil {
 		return "", fmt.Errorf("explaining workloads: %w", err)
 	}
@@ -74,7 +75,7 @@ func (c *Client) ExplainInventory(ctx context.Context, cluster clusterhealth.Clu
 // buildInventoryPrompt renders the cluster verdict (when degraded) and the
 // given (pre-filtered) workloads. Only structured fields are sent — never raw pod specs or
 // secrets (node names in the cluster section are infrastructure identifiers).
-func buildInventoryPrompt(cluster clusterhealth.ClusterHealth, workloads []inventory.Workload) string {
+func buildInventoryPrompt(cluster clusterhealth.ClusterHealth, summary *resources.Summary, workloads []inventory.Workload) string {
 	var b strings.Builder
 	if cluster.Verdict == "Degraded" {
 		fmt.Fprintf(&b, "Cluster health: DEGRADED — %d/%d nodes Ready.\n", cluster.NodesReady, cluster.NodesTotal)
@@ -86,6 +87,14 @@ func buildInventoryPrompt(cluster clusterhealth.ClusterHealth, workloads []inven
 		}
 		b.WriteString("\n")
 	}
+
+	if summary != nil {
+		b.WriteString("Cluster resources:\n")
+		writeResLine(&b, "CPU", summary.CPU, "cores", summary.MetricsAvailable)
+		writeResLine(&b, "Memory", summary.Memory, "", summary.MetricsAvailable)
+		b.WriteString("\n")
+	}
+
 	if len(workloads) > 0 {
 		b.WriteString("These Kubernetes workloads need attention:\n\n")
 		for _, w := range workloads {
@@ -93,11 +102,29 @@ func buildInventoryPrompt(cluster clusterhealth.ClusterHealth, workloads []inven
 				w.Namespace, w.Name, w.Kind, w.Ready, w.Desired, w.Status, w.Restarts)
 			for _, f := range w.Findings {
 				fmt.Fprintf(&b, "    issue: %s — %s (%s)\n", f.Issue, f.Reason, f.Evidence)
+				if f.Resources != nil {
+					r := f.Resources
+					fmt.Fprintf(&b, "      container resources: memory req=%s limit=%s, cpu req=%s limit=%s\n",
+						r.MemRequest, r.MemLimit, r.CPURequest, r.CPULimit)
+				}
 			}
 		}
 	}
 	b.WriteString("\nExplain what is going wrong and suggest concrete next steps.")
 	return b.String()
+}
+
+func writeResLine(b *strings.Builder, label string, l resources.Line, unit string, metrics bool) {
+	alloc := l.Allocatable
+	if unit != "" {
+		alloc += " " + unit
+	}
+	fmt.Fprintf(b, "  %s: allocatable %s, requests %s (%d%%), limits %s (%d%%)",
+		label, alloc, l.Requests, l.RequestsPct, l.Limits, l.LimitsPct)
+	if metrics {
+		fmt.Fprintf(b, ", usage %s (%d%%)", l.Usage, l.UsagePct)
+	}
+	b.WriteString("\n")
 }
 
 // anthropicSummarizer is the real summarizer, backed by the Anthropic SDK.

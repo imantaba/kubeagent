@@ -9,6 +9,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/resources"
 )
 
 // fakeSummarizer stands in for the Anthropic-backed summarizer so tests never
@@ -27,7 +28,7 @@ func (f *fakeSummarizer) summarize(ctx context.Context, prompt string) (string, 
 func TestExplainInventory_SkipsWhenEmptyAndHealthy(t *testing.T) {
 	f := &fakeSummarizer{reply: "should not be used"}
 	c := &Client{s: f}
-	got, err := c.ExplainInventory(context.Background(), clusterhealth.ClusterHealth{Verdict: "Healthy"}, nil)
+	got, err := c.ExplainInventory(context.Background(), clusterhealth.ClusterHealth{Verdict: "Healthy"}, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -40,7 +41,7 @@ func TestExplainInventory_SummarizesFlaggedWorkload(t *testing.T) {
 	f := &fakeSummarizer{reply: "  coredns is degraded.  "}
 	c := &Client{s: f}
 	ws := []inventory.Workload{{Namespace: "kube-system", Name: "coredns", Kind: "Deployment", Ready: 1, Desired: 2}}
-	got, err := c.ExplainInventory(context.Background(), clusterhealth.ClusterHealth{Verdict: "Healthy"}, ws)
+	got, err := c.ExplainInventory(context.Background(), clusterhealth.ClusterHealth{Verdict: "Healthy"}, nil, ws)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -52,7 +53,7 @@ func TestExplainInventory_SummarizesFlaggedWorkload(t *testing.T) {
 func TestExplainInventory_WrapsError(t *testing.T) {
 	f := &fakeSummarizer{err: errors.New("boom")}
 	c := &Client{s: f}
-	_, err := c.ExplainInventory(context.Background(), clusterhealth.ClusterHealth{Verdict: "Healthy"}, []inventory.Workload{{Name: "x", Ready: 1, Desired: 2}})
+	_, err := c.ExplainInventory(context.Background(), clusterhealth.ClusterHealth{Verdict: "Healthy"}, nil, []inventory.Workload{{Name: "x", Ready: 1, Desired: 2}})
 	if err == nil || !strings.Contains(err.Error(), "explaining workloads") || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("expected wrapped error, got %v", err)
 	}
@@ -61,7 +62,7 @@ func TestExplainInventory_WrapsError(t *testing.T) {
 func TestExplainInventory_ErrorsOnEmptyText(t *testing.T) {
 	f := &fakeSummarizer{reply: "  \n"}
 	c := &Client{s: f}
-	_, err := c.ExplainInventory(context.Background(), clusterhealth.ClusterHealth{Verdict: "Healthy"}, []inventory.Workload{{Name: "x", Ready: 1, Desired: 2}})
+	_, err := c.ExplainInventory(context.Background(), clusterhealth.ClusterHealth{Verdict: "Healthy"}, nil, []inventory.Workload{{Name: "x", Ready: 1, Desired: 2}})
 	if err == nil || !strings.Contains(err.Error(), "model returned no text") {
 		t.Fatalf("expected empty-text error, got %v", err)
 	}
@@ -73,7 +74,7 @@ func TestBuildInventoryPrompt_OnlyStructuredFields(t *testing.T) {
 		Findings: []diagnose.Finding{{Pod: "kube-system/coredns-x", Issue: "CrashLoopBackOff", Reason: "boom", Evidence: "restartCount=7"}},
 		Pods:     []inventory.PodRow{{Name: "coredns-x", IP: "10.42.9.9", Node: "secret-node-name"}},
 	}}
-	got := buildInventoryPrompt(clusterhealth.ClusterHealth{}, ws)
+	got := buildInventoryPrompt(clusterhealth.ClusterHealth{}, nil, ws)
 	for _, want := range []string{"kube-system", "coredns", "Deployment", "CrashLoopBackOff", "boom"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("prompt missing %q:\n%s", want, got)
@@ -91,7 +92,7 @@ func TestExplainInventory_ExplainsDegradedClusterWithNoWorkloads(t *testing.T) {
 	f := &fakeSummarizer{reply: "two nodes are NotReady"}
 	c := &Client{s: f}
 	ch := clusterhealth.ClusterHealth{Verdict: "Degraded", NodesTotal: 3, NodesReady: 1, NodeIssues: []string{"n2 NotReady", "n3 NotReady"}}
-	got, err := c.ExplainInventory(context.Background(), ch, nil)
+	got, err := c.ExplainInventory(context.Background(), ch, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -102,7 +103,7 @@ func TestExplainInventory_ExplainsDegradedClusterWithNoWorkloads(t *testing.T) {
 
 func TestBuildInventoryPrompt_LeadsWithDegradedCluster(t *testing.T) {
 	ch := clusterhealth.ClusterHealth{Verdict: "Degraded", NodesTotal: 3, NodesReady: 1, NodeIssues: []string{"n2 NotReady"}}
-	got := buildInventoryPrompt(ch, nil)
+	got := buildInventoryPrompt(ch, nil, nil)
 	if !strings.Contains(got, "DEGRADED") || !strings.Contains(got, "n2 NotReady") {
 		t.Errorf("prompt should lead with the degraded cluster:\n%s", got)
 	}
@@ -120,12 +121,40 @@ func TestExplainInventory_SummarizesGivenWorkloads(t *testing.T) {
 	f := &fakeSummarizer{reply: "all noted"}
 	c := &Client{s: f}
 	ws := []inventory.Workload{{Namespace: "a", Name: "web", Kind: "Deployment", Ready: 1, Desired: 1, Status: "Running"}}
-	got, err := c.ExplainInventory(context.Background(), clusterhealth.ClusterHealth{Verdict: "Healthy"}, ws)
+	got, err := c.ExplainInventory(context.Background(), clusterhealth.ClusterHealth{Verdict: "Healthy"}, nil, ws)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got != "all noted" || !f.called {
 		t.Errorf("expected the given workload to be summarized; got %q called=%v", got, f.called)
+	}
+}
+
+func TestBuildInventoryPrompt_IncludesClusterResources(t *testing.T) {
+	s := &resources.Summary{
+		MetricsAvailable: true,
+		CPU:              resources.Line{Allocatable: "8.0", Requests: "2.0", Limits: "4.0", Usage: "2.0", RequestsPct: 25, LimitsPct: 50, UsagePct: 25},
+		Memory:           resources.Line{Allocatable: "16Gi", Requests: "4Gi", Limits: "8Gi", Usage: "4Gi", RequestsPct: 25, LimitsPct: 50, UsagePct: 25},
+	}
+	got := buildInventoryPrompt(clusterhealth.ClusterHealth{}, s, nil)
+	for _, want := range []string{"Cluster resources:", "allocatable 8.0 cores", "requests 2.0 (25%)", "usage 2.0 (25%)", "allocatable 16Gi"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("prompt missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestBuildInventoryPrompt_IncludesOOMContainerResources(t *testing.T) {
+	ws := []inventory.Workload{{
+		Namespace: "cattle-system", Name: "rancher", Kind: "Deployment", Ready: 0, Desired: 1, Status: "Degraded",
+		Findings: []diagnose.Finding{{
+			Pod: "cattle-system/rancher-x", Issue: "OOMKilled", Reason: "killed", Evidence: "e",
+			Resources: &diagnose.ContainerResources{Container: "rancher", CPURequest: "500m", CPULimit: "3", MemRequest: "1Gi", MemLimit: "4Gi"},
+		}},
+	}}
+	got := buildInventoryPrompt(clusterhealth.ClusterHealth{}, nil, ws)
+	if !strings.Contains(got, "container resources: memory req=1Gi limit=4Gi, cpu req=500m limit=3") {
+		t.Errorf("prompt missing OOM container resources:\n%s", got)
 	}
 }
 

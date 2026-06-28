@@ -78,6 +78,9 @@ func TestSummarize_NoMetrics(t *testing.T) {
 	if s.CPU.Usage != "" || s.CPU.UsagePct != 0 {
 		t.Errorf("expected empty usage, got %+v", s.CPU)
 	}
+	if s.Memory.Usage != "" || s.Memory.UsagePct != 0 {
+		t.Errorf("expected empty memory usage, got %+v", s.Memory)
+	}
 	if s.CPU.Allocatable != "4.0" || s.CPU.RequestsPct != 25 {
 		t.Errorf("CPU = %+v", s.CPU)
 	}
@@ -85,7 +88,7 @@ func TestSummarize_NoMetrics(t *testing.T) {
 
 func TestSummarize_ZeroAllocatableNoDivByZero(t *testing.T) {
 	s := Summarize(nil, []corev1.Pod{podWith(corev1.PodRunning, "1", "1Gi", "1", "1Gi")}, nil)
-	if s.CPU.RequestsPct != 0 || s.Memory.RequestsPct != 0 {
+	if s.CPU.RequestsPct != 0 || s.CPU.LimitsPct != 0 || s.Memory.RequestsPct != 0 || s.Memory.LimitsPct != 0 {
 		t.Errorf("expected 0%% with no nodes, got cpu=%d mem=%d", s.CPU.RequestsPct, s.Memory.RequestsPct)
 	}
 }

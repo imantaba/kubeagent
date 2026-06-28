@@ -81,3 +81,44 @@ func TestFactsFrom_WrapsEachPod(t *testing.T) {
 		t.Fatalf("expected 2 facts wrapping each pod, got %+v", facts)
 	}
 }
+
+func TestParseNodeMetrics(t *testing.T) {
+	data := []byte(`{"items":[
+	  {"metadata":{"name":"n1"},"usage":{"cpu":"531m","memory":"27711Mi"}},
+	  {"metadata":{"name":"n2"},"usage":{"cpu":"1046m","memory":"21927Mi"}}
+	]}`)
+	got, err := parseNodeMetrics(data)
+	if err != nil {
+		t.Fatalf("parseNodeMetrics: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 nodes, got %d", len(got))
+	}
+	if cpu := got["n1"][corev1.ResourceCPU]; cpu.MilliValue() != 531 {
+		t.Errorf("n1 cpu = %d milli, want 531", cpu.MilliValue())
+	}
+	if mem := got["n2"][corev1.ResourceMemory]; mem.Value() != 21927*(1<<20) {
+		t.Errorf("n2 mem = %d bytes", mem.Value())
+	}
+}
+
+func TestParseNodeMetrics_Malformed(t *testing.T) {
+	if _, err := parseNodeMetrics([]byte("not json")); err == nil {
+		t.Error("expected error on malformed input")
+	}
+}
+
+func TestAllPods_ListsAcrossNamespaces(t *testing.T) {
+	client := fake.NewSimpleClientset(
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "p1"}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "b", Name: "p2"}},
+	)
+	pods, err := AllPods(context.Background(), client)
+	if err != nil {
+		t.Fatalf("AllPods: %v", err)
+	}
+	if len(pods) != 2 {
+		t.Errorf("want 2 pods across namespaces, got %d", len(pods))
+	}
+}
+

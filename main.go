@@ -13,6 +13,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/explain"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/platform"
 	"github.com/imantaba/kubeagent/internal/report"
 	"github.com/imantaba/kubeagent/internal/resources"
 )
@@ -104,6 +105,11 @@ func run(args []string) error {
 	}
 	summary := resources.Summarize(nodes, resourcePods, usage)
 
+	scs, _ := collect.StorageClasses(context.Background(), client)
+	ics, _ := collect.IngressClasses(context.Background(), client)
+	sysDS, _ := collect.SystemDaemonSets(context.Background(), client)
+	facts := platform.Detect(nodes, sysDS, scs, ics)
+
 	result := inventory.Prioritize(workloads, inventory.Opts{
 		IncludeRestarts: *includeRestarts,
 		IncludeCron:     *includeCron,
@@ -113,11 +119,11 @@ func run(args []string) error {
 	if *explainFlag {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		explanation, err = explain.New(explain.ResolveModel(*model, os.Getenv("KUBEAGENT_MODEL"))).ExplainInventory(ctx, health, &summary, nil, result.Workloads)
+		explanation, err = explain.New(explain.ResolveModel(*model, os.Getenv("KUBEAGENT_MODEL"))).ExplainInventory(ctx, health, &summary, &facts, result.Workloads)
 		if err != nil {
 			return err
 		}
 	}
 
-	return report.PrintInventory(health, result, &summary, nil, explanation, *output, os.Stdout)
+	return report.PrintInventory(health, result, &summary, &facts, explanation, *output, os.Stdout)
 }

@@ -76,6 +76,20 @@ to raise a limit or scale out. Live usage is best-effort: without metrics-server
 the summary still shows allocatable/reserved/limits and notes usage as
 unavailable. Reading usage is read-only (a single GET on the metrics API).
 
+### Platform facts
+
+`scan` prints a second line under the cluster verdict naming the detected stack —
+CNI, ingress, storage provisioner(s), Kubernetes version + distribution, container
+runtime, and cloud — for example:
+
+`Platform: Cilium CNI · Traefik ingress · Hetzner CSI (+NFS CSI) storage · Kubernetes v1.35 (RKE2) · containerd · Hetzner Cloud`
+
+Detection is best-effort and read-only (it lists StorageClasses, IngressClasses,
+and kube-system DaemonSets, and reads node info); an unrecognized fact is omitted.
+The same summary is included in the JSON output (`platform`) and sent to
+`--explain` so the model can give stack-aware advice. No instance identifiers
+(e.g. the raw `providerID`) are emitted — only the derived cloud name.
+
 ## Install
 
 Prebuilt **linux/amd64** binaries are attached to each

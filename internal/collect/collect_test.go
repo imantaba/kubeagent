@@ -234,3 +234,31 @@ func TestNetworkPolicies_NamespaceScoped(t *testing.T) {
 		t.Errorf("want only namespace a, got %+v", nps)
 	}
 }
+
+func TestConfigMaps_Lists(t *testing.T) {
+	client := fake.NewSimpleClientset(
+		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "c1"}},
+		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: "b", Name: "c2"}},
+	)
+	cms, err := ConfigMaps(context.Background(), client, "")
+	if err != nil {
+		t.Fatalf("ConfigMaps: %v", err)
+	}
+	if len(cms) != 2 {
+		t.Errorf("want 2 configmaps, got %d", len(cms))
+	}
+}
+
+func TestConfigMaps_NamespaceScoped(t *testing.T) {
+	client := fake.NewSimpleClientset(
+		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "c1"}},
+		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: "b", Name: "c2"}},
+	)
+	cms, err := ConfigMaps(context.Background(), client, "a")
+	if err != nil {
+		t.Fatalf("ConfigMaps: %v", err)
+	}
+	if len(cms) != 1 || cms[0].Namespace != "a" {
+		t.Errorf("want only namespace a, got %+v", cms)
+	}
+}

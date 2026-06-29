@@ -170,6 +170,15 @@ func NetworkPolicies(ctx context.Context, client kubernetes.Interface, namespace
 	return nps.Items, nil
 }
 
+// ConfigMaps lists ConfigMaps in the namespace (empty = all), read-only.
+func ConfigMaps(ctx context.Context, client kubernetes.Interface, namespace string) ([]corev1.ConfigMap, error) {
+	cms, err := client.CoreV1().ConfigMaps(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("listing configmaps: %w", err)
+	}
+	return cms.Items, nil
+}
+
 // parseNodeMetrics decodes a metrics.k8s.io NodeMetricsList body into per-node
 // resource quantities keyed by node name.
 func parseNodeMetrics(data []byte) (map[string]corev1.ResourceList, error) {

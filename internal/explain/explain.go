@@ -14,6 +14,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/platform"
 	"github.com/imantaba/kubeagent/internal/resources"
+	"github.com/imantaba/kubeagent/internal/svchealth"
 )
 
 const systemPrompt = `You are a Kubernetes SRE. You are given the findings of a
@@ -57,12 +58,12 @@ func New(model string) *Client {
 
 // ExplainInventory summarizes the cluster verdict (when degraded) and the given
 // (already-prioritized) workloads. It skips the API call and returns "" when the
-// cluster is healthy and there are no workloads to explain.
-func (c *Client) ExplainInventory(ctx context.Context, cluster clusterhealth.ClusterHealth, summary *resources.Summary, facts *platform.Facts, workloads []inventory.Workload) (string, error) {
-	if cluster.Verdict != "Degraded" && len(workloads) == 0 {
+// cluster is healthy and there are no workloads or service issues to explain.
+func (c *Client) ExplainInventory(ctx context.Context, cluster clusterhealth.ClusterHealth, summary *resources.Summary, facts *platform.Facts, serviceIssues []svchealth.Issue, workloads []inventory.Workload) (string, error) {
+	if cluster.Verdict != "Degraded" && len(workloads) == 0 && len(serviceIssues) == 0 {
 		return "", nil
 	}
-	out, err := c.s.summarize(ctx, buildInventoryPrompt(cluster, summary, facts, workloads))
+	out, err := c.s.summarize(ctx, buildInventoryPrompt(cluster, summary, facts, serviceIssues, workloads))
 	if err != nil {
 		return "", fmt.Errorf("explaining workloads: %w", err)
 	}
@@ -76,7 +77,7 @@ func (c *Client) ExplainInventory(ctx context.Context, cluster clusterhealth.Clu
 // buildInventoryPrompt renders the cluster verdict (when degraded) and the
 // given (pre-filtered) workloads. Only structured fields are sent — never raw pod specs or
 // secrets (node names in the cluster section are infrastructure identifiers).
-func buildInventoryPrompt(cluster clusterhealth.ClusterHealth, summary *resources.Summary, facts *platform.Facts, workloads []inventory.Workload) string {
+func buildInventoryPrompt(cluster clusterhealth.ClusterHealth, summary *resources.Summary, facts *platform.Facts, serviceIssues []svchealth.Issue, workloads []inventory.Workload) string {
 	var b strings.Builder
 	if cluster.Verdict == "Degraded" {
 		fmt.Fprintf(&b, "Cluster health: DEGRADED — %d/%d nodes Ready.\n", cluster.NodesReady, cluster.NodesTotal)
@@ -117,6 +118,14 @@ func buildInventoryPrompt(cluster clusterhealth.ClusterHealth, summary *resource
 			}
 		}
 	}
+	if len(serviceIssues) > 0 {
+		b.WriteString("Service issues:\n")
+		for _, is := range serviceIssues {
+			fmt.Fprintf(&b, "  - %s/%s (%s): %s\n", is.Namespace, is.Name, is.Type, is.Detail)
+		}
+		b.WriteString("\n")
+	}
+
 	b.WriteString("\nExplain what is going wrong and suggest concrete next steps.")
 	return b.String()
 }

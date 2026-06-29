@@ -11,6 +11,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/platform"
 	"github.com/imantaba/kubeagent/internal/resources"
+	"github.com/imantaba/kubeagent/internal/svchealth"
 )
 
 // fakeSummarizer stands in for the Anthropic-backed summarizer so tests never
@@ -29,7 +30,7 @@ func (f *fakeSummarizer) summarize(ctx context.Context, prompt string) (string, 
 func TestExplainInventory_SkipsWhenEmptyAndHealthy(t *testing.T) {
 	f := &fakeSummarizer{reply: "should not be used"}
 	c := &Client{s: f}
-	got, err := c.ExplainInventory(context.Background(), clusterhealth.ClusterHealth{Verdict: "Healthy"}, nil, nil, nil)
+	got, err := c.ExplainInventory(context.Background(), clusterhealth.ClusterHealth{Verdict: "Healthy"}, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -42,7 +43,7 @@ func TestExplainInventory_SummarizesFlaggedWorkload(t *testing.T) {
 	f := &fakeSummarizer{reply: "  coredns is degraded.  "}
 	c := &Client{s: f}
 	ws := []inventory.Workload{{Namespace: "kube-system", Name: "coredns", Kind: "Deployment", Ready: 1, Desired: 2}}
-	got, err := c.ExplainInventory(context.Background(), clusterhealth.ClusterHealth{Verdict: "Healthy"}, nil, nil, ws)
+	got, err := c.ExplainInventory(context.Background(), clusterhealth.ClusterHealth{Verdict: "Healthy"}, nil, nil, nil, ws)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -54,7 +55,7 @@ func TestExplainInventory_SummarizesFlaggedWorkload(t *testing.T) {
 func TestExplainInventory_WrapsError(t *testing.T) {
 	f := &fakeSummarizer{err: errors.New("boom")}
 	c := &Client{s: f}
-	_, err := c.ExplainInventory(context.Background(), clusterhealth.ClusterHealth{Verdict: "Healthy"}, nil, nil, []inventory.Workload{{Name: "x", Ready: 1, Desired: 2}})
+	_, err := c.ExplainInventory(context.Background(), clusterhealth.ClusterHealth{Verdict: "Healthy"}, nil, nil, nil, []inventory.Workload{{Name: "x", Ready: 1, Desired: 2}})
 	if err == nil || !strings.Contains(err.Error(), "explaining workloads") || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("expected wrapped error, got %v", err)
 	}
@@ -63,7 +64,7 @@ func TestExplainInventory_WrapsError(t *testing.T) {
 func TestExplainInventory_ErrorsOnEmptyText(t *testing.T) {
 	f := &fakeSummarizer{reply: "  \n"}
 	c := &Client{s: f}
-	_, err := c.ExplainInventory(context.Background(), clusterhealth.ClusterHealth{Verdict: "Healthy"}, nil, nil, []inventory.Workload{{Name: "x", Ready: 1, Desired: 2}})
+	_, err := c.ExplainInventory(context.Background(), clusterhealth.ClusterHealth{Verdict: "Healthy"}, nil, nil, nil, []inventory.Workload{{Name: "x", Ready: 1, Desired: 2}})
 	if err == nil || !strings.Contains(err.Error(), "model returned no text") {
 		t.Fatalf("expected empty-text error, got %v", err)
 	}
@@ -75,7 +76,7 @@ func TestBuildInventoryPrompt_OnlyStructuredFields(t *testing.T) {
 		Findings: []diagnose.Finding{{Pod: "kube-system/coredns-x", Issue: "CrashLoopBackOff", Reason: "boom", Evidence: "restartCount=7"}},
 		Pods:     []inventory.PodRow{{Name: "coredns-x", IP: "10.42.9.9", Node: "secret-node-name"}},
 	}}
-	got := buildInventoryPrompt(clusterhealth.ClusterHealth{}, nil, nil, ws)
+	got := buildInventoryPrompt(clusterhealth.ClusterHealth{}, nil, nil, nil, ws)
 	for _, want := range []string{"kube-system", "coredns", "Deployment", "CrashLoopBackOff", "boom"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("prompt missing %q:\n%s", want, got)
@@ -93,7 +94,7 @@ func TestExplainInventory_ExplainsDegradedClusterWithNoWorkloads(t *testing.T) {
 	f := &fakeSummarizer{reply: "two nodes are NotReady"}
 	c := &Client{s: f}
 	ch := clusterhealth.ClusterHealth{Verdict: "Degraded", NodesTotal: 3, NodesReady: 1, NodeIssues: []string{"n2 NotReady", "n3 NotReady"}}
-	got, err := c.ExplainInventory(context.Background(), ch, nil, nil, nil)
+	got, err := c.ExplainInventory(context.Background(), ch, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -104,7 +105,7 @@ func TestExplainInventory_ExplainsDegradedClusterWithNoWorkloads(t *testing.T) {
 
 func TestBuildInventoryPrompt_LeadsWithDegradedCluster(t *testing.T) {
 	ch := clusterhealth.ClusterHealth{Verdict: "Degraded", NodesTotal: 3, NodesReady: 1, NodeIssues: []string{"n2 NotReady"}}
-	got := buildInventoryPrompt(ch, nil, nil, nil)
+	got := buildInventoryPrompt(ch, nil, nil, nil, nil)
 	if !strings.Contains(got, "DEGRADED") || !strings.Contains(got, "n2 NotReady") {
 		t.Errorf("prompt should lead with the degraded cluster:\n%s", got)
 	}
@@ -122,7 +123,7 @@ func TestExplainInventory_SummarizesGivenWorkloads(t *testing.T) {
 	f := &fakeSummarizer{reply: "all noted"}
 	c := &Client{s: f}
 	ws := []inventory.Workload{{Namespace: "a", Name: "web", Kind: "Deployment", Ready: 1, Desired: 1, Status: "Running"}}
-	got, err := c.ExplainInventory(context.Background(), clusterhealth.ClusterHealth{Verdict: "Healthy"}, nil, nil, ws)
+	got, err := c.ExplainInventory(context.Background(), clusterhealth.ClusterHealth{Verdict: "Healthy"}, nil, nil, nil, ws)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -137,7 +138,7 @@ func TestBuildInventoryPrompt_IncludesClusterResources(t *testing.T) {
 		CPU:              resources.Line{Allocatable: "8.0", Requests: "2.0", Limits: "4.0", Usage: "2.0", RequestsPct: 25, LimitsPct: 50, UsagePct: 25},
 		Memory:           resources.Line{Allocatable: "16Gi", Requests: "4Gi", Limits: "8Gi", Usage: "4Gi", RequestsPct: 25, LimitsPct: 50, UsagePct: 25},
 	}
-	got := buildInventoryPrompt(clusterhealth.ClusterHealth{}, s, nil, nil)
+	got := buildInventoryPrompt(clusterhealth.ClusterHealth{}, s, nil, nil, nil)
 	for _, want := range []string{"Cluster resources:", "allocatable 8.0 cores", "requests 2.0 (25%)", "usage 2.0 (25%)", "allocatable 16Gi"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("prompt missing %q:\n%s", want, got)
@@ -151,7 +152,7 @@ func TestBuildInventoryPrompt_OmitsUsageWhenMetricsUnavailable(t *testing.T) {
 		CPU:              resources.Line{Allocatable: "8.0", Requests: "2.0", Limits: "4.0", RequestsPct: 25, LimitsPct: 50},
 		Memory:           resources.Line{Allocatable: "16Gi", Requests: "4Gi", Limits: "8Gi", RequestsPct: 25, LimitsPct: 50},
 	}
-	got := buildInventoryPrompt(clusterhealth.ClusterHealth{}, s, nil, nil)
+	got := buildInventoryPrompt(clusterhealth.ClusterHealth{}, s, nil, nil, nil)
 	if !strings.Contains(got, "Cluster resources:") {
 		t.Fatalf("expected the resources section:\n%s", got)
 	}
@@ -168,7 +169,7 @@ func TestBuildInventoryPrompt_IncludesOOMContainerResources(t *testing.T) {
 			Resources: &diagnose.ContainerResources{Container: "rancher", CPURequest: "500m", CPULimit: "3", MemRequest: "1Gi", MemLimit: "4Gi"},
 		}},
 	}}
-	got := buildInventoryPrompt(clusterhealth.ClusterHealth{}, nil, nil, ws)
+	got := buildInventoryPrompt(clusterhealth.ClusterHealth{}, nil, nil, nil, ws)
 	if !strings.Contains(got, "container resources: memory req=1Gi limit=4Gi, cpu req=500m limit=3") {
 		t.Errorf("prompt missing OOM container resources:\n%s", got)
 	}
@@ -176,16 +177,39 @@ func TestBuildInventoryPrompt_IncludesOOMContainerResources(t *testing.T) {
 
 func TestBuildInventoryPrompt_IncludesPlatform(t *testing.T) {
 	f := &platform.Facts{CNI: "Cilium", Ingress: "Traefik", KubeVersion: "v1.35", Distro: "RKE2", Runtime: "containerd", Cloud: "Hetzner Cloud"}
-	got := buildInventoryPrompt(clusterhealth.ClusterHealth{}, nil, f, nil)
+	got := buildInventoryPrompt(clusterhealth.ClusterHealth{}, nil, f, nil, nil)
 	if !strings.Contains(got, "Platform: Cilium CNI · Traefik ingress · Kubernetes v1.35 (RKE2) · containerd · Hetzner Cloud") {
 		t.Errorf("prompt missing platform line:\n%s", got)
 	}
 }
 
 func TestBuildInventoryPrompt_OmitsPlatformWhenNil(t *testing.T) {
-	got := buildInventoryPrompt(clusterhealth.ClusterHealth{Verdict: "Degraded", NodesTotal: 1, NodesReady: 0, NodeIssues: []string{"n1 NotReady"}}, nil, nil, nil)
+	got := buildInventoryPrompt(clusterhealth.ClusterHealth{Verdict: "Degraded", NodesTotal: 1, NodesReady: 0, NodeIssues: []string{"n1 NotReady"}}, nil, nil, nil, nil)
 	if strings.Contains(got, "Platform:") {
 		t.Errorf("no platform line expected when facts nil:\n%s", got)
+	}
+}
+
+func TestBuildInventoryPrompt_IncludesServiceIssues(t *testing.T) {
+	issues := []svchealth.Issue{
+		{Namespace: "default", Name: "web", Type: "ClusterIP", Problem: "NoEndpoints", Detail: "no ready endpoints"},
+	}
+	got := buildInventoryPrompt(clusterhealth.ClusterHealth{}, nil, nil, issues, nil)
+	if !strings.Contains(got, "Service issues:") || !strings.Contains(got, "default/web (ClusterIP): no ready endpoints") {
+		t.Errorf("prompt missing service issues:\n%s", got)
+	}
+}
+
+func TestExplainInventory_ExplainsWhenOnlyServiceIssues(t *testing.T) {
+	f := &fakeSummarizer{reply: "web has no endpoints"}
+	c := &Client{s: f}
+	issues := []svchealth.Issue{{Namespace: "default", Name: "web", Type: "ClusterIP", Problem: "NoEndpoints", Detail: "no ready endpoints"}}
+	got, err := c.ExplainInventory(context.Background(), clusterhealth.ClusterHealth{Verdict: "Healthy"}, nil, nil, issues, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "web has no endpoints" || !f.called {
+		t.Errorf("expected service-only issues to be explained; got %q called=%v", got, f.called)
 	}
 }
 

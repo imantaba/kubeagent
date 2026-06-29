@@ -33,7 +33,7 @@ func Annotate(workloads []inventory.Workload, podLabels map[string]map[string]st
 // selectingPolicies returns the sorted, de-duplicated names of NetworkPolicies in
 // the workload's namespace whose podSelector matches any of its pods.
 func selectingPolicies(w inventory.Workload, podLabels map[string]map[string]string, policies []networkingv1.NetworkPolicy) []string {
-	set := map[string]bool{}
+	set := map[string]struct{}{}
 	for _, p := range policies {
 		if p.Namespace != w.Namespace {
 			continue
@@ -44,7 +44,7 @@ func selectingPolicies(w inventory.Workload, podLabels map[string]map[string]str
 		}
 		for _, pr := range w.Pods {
 			if sel.Matches(labels.Set(podLabels[w.Namespace+"/"+pr.Name])) {
-				set[p.Name] = true
+				set[p.Name] = struct{}{}
 				break
 			}
 		}

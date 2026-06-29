@@ -219,11 +219,16 @@ func TestExplainInventory_ExplainsWhenOnlyServiceIssues(t *testing.T) {
 func TestBuildInventoryPrompt_IncludesNetworkPolicyHint(t *testing.T) {
 	ws := []inventory.Workload{{
 		Namespace: "default", Name: "api", Kind: "Deployment", Ready: 0, Desired: 2, Status: "Degraded",
-		NetworkPolicies: []string{"deny-all"},
+		NetworkPolicies: []string{"deny-all", "web-allow"},
+		Pods:            []inventory.PodRow{{Name: "api-1", IP: "10.42.9.9"}},
 	}}
 	got := buildInventoryPrompt(clusterhealth.ClusterHealth{}, nil, nil, nil, ws)
-	if !strings.Contains(got, "network policy: pods selected by deny-all (possible cause)") {
-		t.Errorf("prompt missing NP hint:\n%s", got)
+	if !strings.Contains(got, "network policy: pods selected by deny-all, web-allow (possible cause)") {
+		t.Errorf("prompt missing NP hint (comma-joined):\n%s", got)
+	}
+	// Egress guard: the NP hint path must not leak pod IPs.
+	if strings.Contains(got, "10.42.9.9") {
+		t.Errorf("pod IP leaked into prompt:\n%s", got)
 	}
 }
 

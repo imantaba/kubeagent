@@ -34,9 +34,9 @@ func Diagnose(err error) (string, bool) {
 	var unknownAuth x509.UnknownAuthorityError
 	var certInvalid x509.CertificateInvalidError
 	var hostnameErr x509.HostnameError
-	// Matched on "x509:"/"tls:" (not a bare "certificate") to avoid false positives on unrelated errors.
+	// Matched on "x509:"/"tls: " (not a bare "certificate") to avoid false positives on unrelated errors.
 	if errors.As(err, &unknownAuth) || errors.As(err, &certInvalid) || errors.As(err, &hostnameErr) ||
-		strings.Contains(msg, "x509:") || strings.Contains(msg, "tls:") {
+		strings.Contains(msg, "x509:") || strings.Contains(msg, "tls: ") {
 		return fmt.Sprintf("TLS/certificate problem reaching %s.\n"+
 			"The cluster certificates may be expired, or the CA/credentials in your kubeconfig are wrong.\n"+
 			"Check: control-plane certificate expiry and that your kubeconfig matches this cluster.", at), true
@@ -53,6 +53,7 @@ func Diagnose(err error) (string, bool) {
 	}
 
 	// Connection refused.
+	// capitalize: here the host phrase is the sentence subject (the other branches use it mid-sentence).
 	if errors.Is(err, syscall.ECONNREFUSED) || strings.Contains(msg, "connection refused") {
 		return fmt.Sprintf("%s refused the connection.\n"+
 			"The control plane may be down (the API server or etcd is not running).\n"+

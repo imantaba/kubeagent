@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Credential lint precision.** `--lint-secrets` no longer flags `*_FILE` env
+  vars (which hold a path to a secret file, not the secret itself) or values that
+  are dotted version numbers — removing two false-positive classes found in live
+  use. Real secret values in `*_FILE`-named vars are still flagged.
+
 ## [0.3.0] - 2026-06-29
 
 ### Added

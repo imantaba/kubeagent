@@ -99,6 +99,16 @@ tell provisioning from stuck). These appear in a "Service issues" section (text
 and JSON) and are sent to `--explain`. ExternalName and selectorless Services are
 skipped. Checks are read-only and honor the scan's `-n` scope.
 
+### NetworkPolicy hints
+
+When a workload is degraded with no detector finding (e.g. pods Running but never
+Ready), `scan` names the NetworkPolicies whose podSelector matches its pods —
+`⚠ NetworkPolicy: pods selected by deny-all — may be blocking traffic` — and sends
+the names to `--explain`. It is a hint, not a verdict: kubeagent does not analyze
+the policy rules or know what traffic the pod needs, so it points you at the
+policies to check. Read-only, namespace-scoped; only policy names are sent to the
+model. (Note: some CNIs, e.g. kindnet, do not enforce NetworkPolicies at all.)
+
 ## Install
 
 Prebuilt **linux/amd64** binaries are attached to each

@@ -13,6 +13,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/explain"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/netpolicy"
 	"github.com/imantaba/kubeagent/internal/platform"
 	"github.com/imantaba/kubeagent/internal/report"
 	"github.com/imantaba/kubeagent/internal/resources"
@@ -119,6 +120,13 @@ func run(args []string) error {
 		IncludeRestarts: *includeRestarts,
 		IncludeCron:     *includeCron,
 	})
+
+	nps, _ := collect.NetworkPolicies(context.Background(), client, namespace)
+	podLabels := make(map[string]map[string]string, len(inputs.Pods))
+	for _, p := range inputs.Pods {
+		podLabels[p.Namespace+"/"+p.Name] = p.Labels
+	}
+	netpolicy.Annotate(result.Workloads, podLabels, nps)
 
 	var explanation string
 	if *explainFlag {

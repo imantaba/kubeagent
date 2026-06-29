@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **NetworkPolicy awareness.** A degraded workload with no detector finding is
+  annotated with the NetworkPolicies selecting its pods (a root-cause hint), in
+  text, JSON, and `--explain`.
 - **Service / LoadBalancer health.** `scan` flags selector-based Services with no
   ready endpoints and LoadBalancer Services with no external address, in a new
   "Service issues" section (text + JSON) and in `--explain`.
@@ -20,8 +23,6 @@ Driven by the 2026-06-29 chaos / failure-injection tests
 workload/node/kube-system coverage and surfaced four blind spots. Each will ship
 as its own feature:
 
-- **NetworkPolicy awareness** — when a workload is degraded/not-Ready, note a
-  restrictive NetworkPolicy selecting its pods (root-cause hint, not just symptom).
 - **Connectivity / control-plane diagnostics** — turn an API-server connection
   failure into a clear, actionable message instead of a raw transport error.
 - **Secret / credential lint** — opt-in scan for obviously leaked or risky

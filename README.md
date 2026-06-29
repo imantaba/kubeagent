@@ -109,6 +109,15 @@ the policy rules or know what traffic the pod needs, so it points you at the
 policies to check. Read-only, namespace-scoped; only policy names are sent to the
 model. (Note: some CNIs, e.g. kindnet, do not enforce NetworkPolicies at all.)
 
+### Connectivity diagnostics
+
+When the API server can't be reached, `scan` prints an actionable diagnosis
+instead of a raw transport error — distinguishing a down control plane
+(connection refused/reset), a timeout, a TLS/expired-certificate problem,
+authentication/authorization (401/403), and DNS/wrong-host — followed by a
+`details:` line with the underlying error. This is classification only: kubeagent
+issues no extra calls and exits non-zero as before.
+
 ## Install
 
 Prebuilt **linux/amd64** binaries are attached to each

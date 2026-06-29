@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Connectivity diagnostics.** An unreachable or broken API server now yields an
+  actionable diagnosis (down / timeout / TLS-cert / auth / DNS) with a `details:`
+  line, instead of a raw transport error.
 - **NetworkPolicy awareness.** A degraded workload with no detector finding is
   annotated with the NetworkPolicies selecting its pods (a root-cause hint), in
   text, JSON, and `--explain`.
@@ -23,8 +26,6 @@ Driven by the 2026-06-29 chaos / failure-injection tests
 workload/node/kube-system coverage and surfaced four blind spots. Each will ship
 as its own feature:
 
-- **Connectivity / control-plane diagnostics** — turn an API-server connection
-  failure into a clear, actionable message instead of a raw transport error.
 - **Secret / credential lint** — opt-in scan for obviously leaked or risky
   credentials in Secrets / environment variables.
 

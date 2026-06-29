@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -72,5 +74,39 @@ func TestVersionLine(t *testing.T) {
 func TestRun_Version(t *testing.T) {
 	if err := run([]string{"version"}); err != nil {
 		t.Errorf("run([version]) returned error: %v", err)
+	}
+}
+
+func TestRun_DiagnosesUnreachableAPI(t *testing.T) {
+	dir := t.TempDir()
+	kc := filepath.Join(dir, "config")
+	// A kubeconfig pointing at a port nothing listens on → loopback connection
+	// refused (no external network). Exercises the connectivity diagnosis path.
+	cfg := `apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    server: https://127.0.0.1:1
+  name: dead
+contexts:
+- context:
+    cluster: dead
+    user: dead
+  name: dead
+current-context: dead
+users:
+- name: dead
+  user: {}
+`
+	if err := os.WriteFile(kc, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := run([]string{"scan", "--kubeconfig", kc})
+	if err == nil {
+		t.Fatal("expected an error for an unreachable API server")
+	}
+	out := err.Error()
+	if !strings.Contains(out, "refused") || !strings.Contains(out, "details:") {
+		t.Errorf("expected a connection-refused diagnosis with a details line, got: %v", out)
 	}
 }

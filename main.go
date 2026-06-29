@@ -10,6 +10,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/cluster"
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/collect"
+	"github.com/imantaba/kubeagent/internal/connectivity"
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/explain"
 	"github.com/imantaba/kubeagent/internal/inventory"
@@ -76,6 +77,9 @@ func run(args []string) error {
 
 	inputs, err := collect.CollectInventory(context.Background(), client, namespace)
 	if err != nil {
+		if diag, ok := connectivity.Diagnose(err); ok {
+			return fmt.Errorf("%s\ndetails: %w", diag, err)
+		}
 		return err
 	}
 

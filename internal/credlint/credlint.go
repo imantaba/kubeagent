@@ -23,7 +23,7 @@ type Finding struct {
 
 var (
 	awsKeyRe  = regexp.MustCompile(`AKIA[0-9A-Z]{16}`)
-	ghTokenRe = regexp.MustCompile(`ghp_[0-9A-Za-z]{34,36}|github_pat_[0-9A-Za-z_]{22,}`)
+	ghTokenRe = regexp.MustCompile(`ghp_[0-9A-Za-z]{36}|github_pat_[0-9A-Za-z_]{22,}`)
 	jwtRe     = regexp.MustCompile(`eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+`)
 	credName  = regexp.MustCompile(`(?i)(password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credential)`)
 	numericRe = regexp.MustCompile(`^[0-9]+$`)

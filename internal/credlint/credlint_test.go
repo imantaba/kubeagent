@@ -23,7 +23,7 @@ func TestScan_ConfigMapValuePatterns(t *testing.T) {
 	cms := []corev1.ConfigMap{cm("default", "cfg", map[string]string{
 		"aws":  "AKIAIOSFODNN7EXAMPLE",
 		"pem":  "-----BEGIN RSA PRIVATE KEY-----\nMIIE...\n-----END RSA PRIVATE KEY-----",
-		"gh":   "ghp_1234567890abcdefghijklmnopqrstuvwx",
+		"gh":   "ghp_0123456789abcdefghijklmnopqrstuvwxyz",
 		"jwt":  "eyJhbGciOi.eyJzdWIiOi.sIgnaTURE",
 		"note": "just a normal config value",
 	})}

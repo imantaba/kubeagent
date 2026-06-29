@@ -34,8 +34,9 @@ func Diagnose(err error) (string, bool) {
 	var unknownAuth x509.UnknownAuthorityError
 	var certInvalid x509.CertificateInvalidError
 	var hostnameErr x509.HostnameError
+	// Matched on "x509:"/"tls:" (not a bare "certificate") to avoid false positives on unrelated errors.
 	if errors.As(err, &unknownAuth) || errors.As(err, &certInvalid) || errors.As(err, &hostnameErr) ||
-		strings.Contains(msg, "x509:") || strings.Contains(msg, "certificate") {
+		strings.Contains(msg, "x509:") || strings.Contains(msg, "tls:") {
 		return fmt.Sprintf("TLS/certificate problem reaching %s.\n"+
 			"The cluster certificates may be expired, or the CA/credentials in your kubeconfig are wrong.\n"+
 			"Check: control-plane certificate expiry and that your kubeconfig matches this cluster.", at), true

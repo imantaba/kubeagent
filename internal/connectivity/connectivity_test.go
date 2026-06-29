@@ -83,6 +83,12 @@ func TestDiagnose_DNS(t *testing.T) {
 	}
 }
 
+func TestDiagnose_Nil(t *testing.T) {
+	if got, ok := Diagnose(nil); ok || got != "" {
+		t.Errorf("Diagnose(nil) = (%q, %v), want (\"\", false)", got, ok)
+	}
+}
+
 func TestDiagnose_Unrecognized(t *testing.T) {
 	if got, ok := Diagnose(errors.New("totally unrelated boom")); ok {
 		t.Errorf("expected no diagnosis for an unrelated error, got %q", got)

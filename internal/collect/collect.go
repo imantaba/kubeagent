@@ -161,6 +161,15 @@ func EndpointSlices(ctx context.Context, client kubernetes.Interface, namespace 
 	return slices.Items, nil
 }
 
+// NetworkPolicies lists NetworkPolicies in the namespace (empty = all), read-only.
+func NetworkPolicies(ctx context.Context, client kubernetes.Interface, namespace string) ([]networkingv1.NetworkPolicy, error) {
+	nps, err := client.NetworkingV1().NetworkPolicies(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("listing networkpolicies: %w", err)
+	}
+	return nps.Items, nil
+}
+
 // parseNodeMetrics decodes a metrics.k8s.io NodeMetricsList body into per-node
 // resource quantities keyed by node name.
 func parseNodeMetrics(data []byte) (map[string]corev1.ResourceList, error) {

@@ -206,3 +206,31 @@ func TestEndpointSlices_Lists(t *testing.T) {
 		t.Errorf("unexpected slices: %+v", slices)
 	}
 }
+
+func TestNetworkPolicies_Lists(t *testing.T) {
+	client := fake.NewSimpleClientset(
+		&networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "deny-all"}},
+		&networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Namespace: "b", Name: "allow-web"}},
+	)
+	nps, err := NetworkPolicies(context.Background(), client, "")
+	if err != nil {
+		t.Fatalf("NetworkPolicies: %v", err)
+	}
+	if len(nps) != 2 {
+		t.Errorf("want 2 network policies, got %d", len(nps))
+	}
+}
+
+func TestNetworkPolicies_NamespaceScoped(t *testing.T) {
+	client := fake.NewSimpleClientset(
+		&networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "deny-all"}},
+		&networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Namespace: "b", Name: "allow-web"}},
+	)
+	nps, err := NetworkPolicies(context.Background(), client, "a")
+	if err != nil {
+		t.Fatalf("NetworkPolicies: %v", err)
+	}
+	if len(nps) != 1 || nps[0].Namespace != "a" {
+		t.Errorf("want only namespace a, got %+v", nps)
+	}
+}

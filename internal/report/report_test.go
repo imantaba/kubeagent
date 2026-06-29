@@ -423,7 +423,7 @@ func TestPrintInventory_TextShowsServiceIssues(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
-	for _, want := range []string{"Service issues:", "default/web", "ClusterIP", "no ready endpoints", "default/api-lb", "LoadBalancer", "no external address"} {
+	for _, want := range []string{"Service issues:", "default/web", "ClusterIP", "no ready endpoints", "default/api-lb", "LoadBalancer", "no external address", "no external address · "} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q:\n%s", want, out)
 		}

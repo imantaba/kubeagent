@@ -31,20 +31,21 @@ type PodRow struct {
 
 // Workload is one controller (or bare pod) and its aggregated health.
 type Workload struct {
-	Namespace   string             `json:"namespace"`
-	Name        string             `json:"name"`
-	Kind        string             `json:"kind"` // Deployment | StatefulSet | DaemonSet | ReplicaSet | Job | CronJob | Pod
-	Desired     int                `json:"desired"`
-	Ready       int                `json:"ready"`
-	Status      string             `json:"status"` // Running | Degraded | Scaled Down | Complete | Failed | Pending | Active(N) | Idle
-	Restarts    int                `json:"restarts"`
-	LastRestart string             `json:"lastRestart,omitempty"`
-	Image       string             `json:"image"`
-	Pods        []PodRow           `json:"pods"`
-	Findings    []diagnose.Finding `json:"findings,omitempty"`
-	PodsOmitted int                `json:"podsOmitted,omitempty"`
-	Schedule    string             `json:"schedule,omitempty"`
-	Priority    int                `json:"priority,omitempty"` // 2 problem | 3 restart-only | 4 cron (set by Prioritize)
+	Namespace       string             `json:"namespace"`
+	Name            string             `json:"name"`
+	Kind            string             `json:"kind"` // Deployment | StatefulSet | DaemonSet | ReplicaSet | Job | CronJob | Pod
+	Desired         int                `json:"desired"`
+	Ready           int                `json:"ready"`
+	Status          string             `json:"status"` // Running | Degraded | Scaled Down | Complete | Failed | Pending | Active(N) | Idle
+	Restarts        int                `json:"restarts"`
+	LastRestart     string             `json:"lastRestart,omitempty"`
+	Image           string             `json:"image"`
+	Pods            []PodRow           `json:"pods"`
+	Findings        []diagnose.Finding `json:"findings,omitempty"`
+	PodsOmitted     int                `json:"podsOmitted,omitempty"`
+	Schedule        string             `json:"schedule,omitempty"`
+	Priority        int                `json:"priority,omitempty"`        // 2 problem | 3 restart-only | 4 cron (set by Prioritize)
+	NetworkPolicies []string           `json:"networkPolicies,omitempty"` // names of NPs selecting this workload's pods (hint; set by netpolicy.Annotate)
 }
 
 // Flagged reports whether the workload needs attention.

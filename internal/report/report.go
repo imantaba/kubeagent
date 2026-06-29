@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
+	"github.com/imantaba/kubeagent/internal/credlint"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/platform"
 	"github.com/imantaba/kubeagent/internal/resources"
@@ -16,29 +17,30 @@ import (
 
 // inventoryReport is the JSON shape for the workload inventory.
 type inventoryReport struct {
-	Cluster       clusterhealth.ClusterHealth `json:"cluster"`
-	Workloads     []inventory.Workload        `json:"workloads"`
-	Resources     *resources.Summary          `json:"resources,omitempty"`
-	Platform      *platform.Facts             `json:"platform,omitempty"`
-	ServiceIssues []svchealth.Issue           `json:"serviceIssues,omitempty"`
-	Explanation   string                      `json:"explanation,omitempty"`
+	Cluster            clusterhealth.ClusterHealth `json:"cluster"`
+	Workloads          []inventory.Workload        `json:"workloads"`
+	Resources          *resources.Summary          `json:"resources,omitempty"`
+	Platform           *platform.Facts             `json:"platform,omitempty"`
+	ServiceIssues      []svchealth.Issue           `json:"serviceIssues,omitempty"`
+	CredentialWarnings []credlint.Finding          `json:"credentialWarnings,omitempty"`
+	Explanation        string                      `json:"explanation,omitempty"`
 }
 
 // PrintInventory writes the cluster verdict and the prioritized workload set to w.
-func PrintInventory(cluster clusterhealth.ClusterHealth, result inventory.Result, summary *resources.Summary, facts *platform.Facts, serviceIssues []svchealth.Issue, explanation, format string, w io.Writer) error {
+func PrintInventory(cluster clusterhealth.ClusterHealth, result inventory.Result, summary *resources.Summary, facts *platform.Facts, serviceIssues []svchealth.Issue, credentialWarnings []credlint.Finding, explanation, format string, w io.Writer) error {
 	switch format {
 	case "json":
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
-		return enc.Encode(inventoryReport{Cluster: cluster, Workloads: result.Workloads, Resources: summary, Platform: facts, ServiceIssues: serviceIssues, Explanation: explanation})
+		return enc.Encode(inventoryReport{Cluster: cluster, Workloads: result.Workloads, Resources: summary, Platform: facts, ServiceIssues: serviceIssues, CredentialWarnings: credentialWarnings, Explanation: explanation})
 	case "text":
-		return printInventoryText(cluster, result, summary, facts, serviceIssues, explanation, w)
+		return printInventoryText(cluster, result, summary, facts, serviceIssues, credentialWarnings, explanation, w)
 	default:
 		return fmt.Errorf("unknown output format %q (want text or json)", format)
 	}
 }
 
-func printInventoryText(cluster clusterhealth.ClusterHealth, result inventory.Result, summary *resources.Summary, facts *platform.Facts, serviceIssues []svchealth.Issue, explanation string, w io.Writer) error {
+func printInventoryText(cluster clusterhealth.ClusterHealth, result inventory.Result, summary *resources.Summary, facts *platform.Facts, serviceIssues []svchealth.Issue, credentialWarnings []credlint.Finding, explanation string, w io.Writer) error {
 	if cluster.Verdict != "" {
 		if _, err := fmt.Fprintf(w, "Cluster: %s — %d/%d nodes Ready\n", cluster.Verdict, cluster.NodesReady, cluster.NodesTotal); err != nil {
 			return err
@@ -84,7 +86,11 @@ func printInventoryText(cluster clusterhealth.ClusterHealth, result inventory.Re
 		return err
 	}
 
-	if len(result.Workloads) == 0 && len(serviceIssues) == 0 && cluster.Verdict == "Healthy" {
+	if err := printCredentialWarnings(credentialWarnings, w); err != nil {
+		return err
+	}
+
+	if len(result.Workloads) == 0 && len(serviceIssues) == 0 && len(credentialWarnings) == 0 && cluster.Verdict == "Healthy" {
 		if _, err := fmt.Fprintln(w, "No issues found. ✅"); err != nil {
 			return err
 		}
@@ -165,6 +171,21 @@ func printServiceIssues(issues []svchealth.Issue, w io.Writer) error {
 			line += " · " + inventory.HumanSince(is.Since, time.Now())
 		}
 		if _, err := fmt.Fprintln(w, line); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func printCredentialWarnings(findings []credlint.Finding, w io.Writer) error {
+	if len(findings) == 0 {
+		return nil
+	}
+	if _, err := fmt.Fprintln(w, "Credential warnings (--lint-secrets):"); err != nil {
+		return err
+	}
+	for _, f := range findings {
+		if _, err := fmt.Fprintf(w, "  ⚠ %s/%s  %s[%s]  %s\n", f.Namespace, f.Name, f.Kind, f.Location, f.Pattern); err != nil {
 			return err
 		}
 	}

@@ -452,6 +452,18 @@ func TestPrintInventory_ServiceIssuesSuppressAllClear(t *testing.T) {
 	}
 }
 
+func TestPrintInventory_ServiceSectionFollowsWorkloads(t *testing.T) {
+	var buf bytes.Buffer
+	ch := clusterhealth.ClusterHealth{Verdict: "Healthy", NodesTotal: 1, NodesReady: 1}
+	if err := PrintInventory(ch, inventory.Result{Workloads: sampleWorkloads()}, nil, nil, sampleServiceIssues(), "", "text", &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := buf.String()
+	if strings.Index(out, "cattle-system/rancher") > strings.Index(out, "Service issues:") {
+		t.Errorf("workloads should precede the Service issues section:\n%s", out)
+	}
+}
+
 func TestPrintInventory_JSONIncludesServiceIssues(t *testing.T) {
 	var buf bytes.Buffer
 	ch := clusterhealth.ClusterHealth{Verdict: "Healthy", NodesTotal: 1, NodesReady: 1}

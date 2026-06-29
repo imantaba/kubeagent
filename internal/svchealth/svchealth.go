@@ -32,11 +32,14 @@ func Assess(services []corev1.Service, slices []discoveryv1.EndpointSlice) []Iss
 			continue
 		}
 		if s.Spec.Type == corev1.ServiceTypeLoadBalancer && len(s.Status.LoadBalancer.Ingress) == 0 {
-			out = append(out, Issue{
+			lb := Issue{
 				Namespace: s.Namespace, Name: s.Name, Type: string(s.Spec.Type),
 				Problem: "NoExternalAddress", Detail: "no external address",
-				Since: s.CreationTimestamp.Time.UTC().Format(time.RFC3339),
-			})
+			}
+			if !s.CreationTimestamp.IsZero() {
+				lb.Since = s.CreationTimestamp.Time.UTC().Format(time.RFC3339)
+			}
+			out = append(out, lb)
 		}
 		if len(s.Spec.Selector) == 0 {
 			continue

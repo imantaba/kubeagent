@@ -198,6 +198,9 @@ func TestBuildInventoryPrompt_IncludesServiceIssues(t *testing.T) {
 	if !strings.Contains(got, "Service issues:") || !strings.Contains(got, "default/web (ClusterIP): no ready endpoints") {
 		t.Errorf("prompt missing service issues:\n%s", got)
 	}
+	if strings.Contains(got, "NoEndpoints") {
+		t.Errorf("internal Problem code must not appear in the prompt:\n%s", got)
+	}
 }
 
 func TestExplainInventory_ExplainsWhenOnlyServiceIssues(t *testing.T) {

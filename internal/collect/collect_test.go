@@ -180,6 +180,20 @@ func TestServices_Lists(t *testing.T) {
 	}
 }
 
+func TestServices_NamespaceScoped(t *testing.T) {
+	client := fake.NewSimpleClientset(
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "s1"}},
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: "b", Name: "s2"}},
+	)
+	svcs, err := Services(context.Background(), client, "a")
+	if err != nil {
+		t.Fatalf("Services: %v", err)
+	}
+	if len(svcs) != 1 || svcs[0].Namespace != "a" {
+		t.Errorf("want only namespace a, got %+v", svcs)
+	}
+}
+
 func TestEndpointSlices_Lists(t *testing.T) {
 	client := fake.NewSimpleClientset(
 		&discoveryv1.EndpointSlice{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "s1-abc", Labels: map[string]string{discoveryv1.LabelServiceName: "s1"}}},

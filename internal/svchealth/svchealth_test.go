@@ -2,6 +2,7 @@ package svchealth
 
 import (
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
@@ -68,15 +69,16 @@ func TestAssess_ExternalNameAndSelectorlessSkipped(t *testing.T) {
 }
 
 func TestAssess_LoadBalancerNoAddress(t *testing.T) {
-	svcs := []corev1.Service{svc("prod", "api-lb", corev1.ServiceTypeLoadBalancer, map[string]string{"app": "api"}, 0)}
-	// has a ready endpoint, so the ONLY issue should be the missing LB address
+	s := svc("prod", "api-lb", corev1.ServiceTypeLoadBalancer, map[string]string{"app": "api"}, 0)
+	s.CreationTimestamp = metav1.NewTime(time.Date(2026, 6, 29, 0, 0, 0, 0, time.UTC))
+	svcs := []corev1.Service{s}
 	slices := []discoveryv1.EndpointSlice{slice("prod", "api-lb", boolp(true))}
 	got := Assess(svcs, slices)
 	if len(got) != 1 || got[0].Problem != "NoExternalAddress" || got[0].Detail != "no external address" {
 		t.Fatalf("want one NoExternalAddress issue, got %+v", got)
 	}
-	if got[0].Since == "" {
-		t.Errorf("NoExternalAddress issue should carry Since (creationTimestamp)")
+	if got[0].Since != "2026-06-29T00:00:00Z" {
+		t.Errorf("Since = %q, want 2026-06-29T00:00:00Z", got[0].Since)
 	}
 }
 

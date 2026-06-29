@@ -120,3 +120,39 @@ users:
 		t.Errorf("expected a connection-refused diagnosis with a details line, got: %v", out)
 	}
 }
+
+func TestRun_NoLintSecrets_NoCredentialSection(t *testing.T) {
+	// Without --lint-secrets, kubeagent must never surface a credential section.
+	// run() builds its own client from kubeconfig, so the only hermetic full path
+	// is the unreachable-API path (loopback refused); assert its output carries no
+	// credential wording. Combined with the report-layer "no section when empty"
+	// test, this guards the off-by-default guarantee without needing a live cluster.
+	dir := t.TempDir()
+	kc := filepath.Join(dir, "config")
+	cfg := `apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    server: https://127.0.0.1:1
+  name: dead
+contexts:
+- context:
+    cluster: dead
+    user: dead
+  name: dead
+current-context: dead
+users:
+- name: dead
+  user: {}
+`
+	if err := os.WriteFile(kc, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := run([]string{"scan", "--kubeconfig", kc})
+	if err == nil {
+		t.Fatal("expected an error for an unreachable API server")
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "credential") {
+		t.Errorf("no credential output expected without --lint-secrets, got: %v", err)
+	}
+}

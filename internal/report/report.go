@@ -11,32 +11,34 @@ import (
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/platform"
 	"github.com/imantaba/kubeagent/internal/resources"
+	"github.com/imantaba/kubeagent/internal/svchealth"
 )
 
 // inventoryReport is the JSON shape for the workload inventory.
 type inventoryReport struct {
-	Cluster     clusterhealth.ClusterHealth `json:"cluster"`
-	Workloads   []inventory.Workload        `json:"workloads"`
-	Resources   *resources.Summary          `json:"resources,omitempty"`
-	Platform    *platform.Facts             `json:"platform,omitempty"`
-	Explanation string                      `json:"explanation,omitempty"`
+	Cluster       clusterhealth.ClusterHealth `json:"cluster"`
+	Workloads     []inventory.Workload        `json:"workloads"`
+	Resources     *resources.Summary          `json:"resources,omitempty"`
+	Platform      *platform.Facts             `json:"platform,omitempty"`
+	ServiceIssues []svchealth.Issue           `json:"serviceIssues,omitempty"`
+	Explanation   string                      `json:"explanation,omitempty"`
 }
 
 // PrintInventory writes the cluster verdict and the prioritized workload set to w.
-func PrintInventory(cluster clusterhealth.ClusterHealth, result inventory.Result, summary *resources.Summary, facts *platform.Facts, explanation, format string, w io.Writer) error {
+func PrintInventory(cluster clusterhealth.ClusterHealth, result inventory.Result, summary *resources.Summary, facts *platform.Facts, serviceIssues []svchealth.Issue, explanation, format string, w io.Writer) error {
 	switch format {
 	case "json":
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
-		return enc.Encode(inventoryReport{Cluster: cluster, Workloads: result.Workloads, Resources: summary, Platform: facts, Explanation: explanation})
+		return enc.Encode(inventoryReport{Cluster: cluster, Workloads: result.Workloads, Resources: summary, Platform: facts, ServiceIssues: serviceIssues, Explanation: explanation})
 	case "text":
-		return printInventoryText(cluster, result, summary, facts, explanation, w)
+		return printInventoryText(cluster, result, summary, facts, serviceIssues, explanation, w)
 	default:
 		return fmt.Errorf("unknown output format %q (want text or json)", format)
 	}
 }
 
-func printInventoryText(cluster clusterhealth.ClusterHealth, result inventory.Result, summary *resources.Summary, facts *platform.Facts, explanation string, w io.Writer) error {
+func printInventoryText(cluster clusterhealth.ClusterHealth, result inventory.Result, summary *resources.Summary, facts *platform.Facts, serviceIssues []svchealth.Issue, explanation string, w io.Writer) error {
 	if cluster.Verdict != "" {
 		if _, err := fmt.Fprintf(w, "Cluster: %s — %d/%d nodes Ready\n", cluster.Verdict, cluster.NodesReady, cluster.NodesTotal); err != nil {
 			return err
@@ -72,17 +74,19 @@ func printInventoryText(cluster clusterhealth.ClusterHealth, result inventory.Re
 		return err
 	}
 
-	if len(result.Workloads) == 0 {
-		if cluster.Verdict == "Healthy" {
-			if _, err := fmt.Fprintln(w, "No issues found. ✅"); err != nil {
-				return err
-			}
+	for _, wl := range result.Workloads {
+		if err := printWorkload(wl, w); err != nil {
+			return err
 		}
-	} else {
-		for _, wl := range result.Workloads {
-			if err := printWorkload(wl, w); err != nil {
-				return err
-			}
+	}
+
+	if err := printServiceIssues(serviceIssues, w); err != nil {
+		return err
+	}
+
+	if len(result.Workloads) == 0 && len(serviceIssues) == 0 && cluster.Verdict == "Healthy" {
+		if _, err := fmt.Fprintln(w, "No issues found. ✅"); err != nil {
+			return err
 		}
 	}
 
@@ -146,6 +150,25 @@ func footerHint(result inventory.Result) string {
 		parts = append(parts, fmt.Sprintf("+%d CronJobs (--include-cron)", result.HiddenCron))
 	}
 	return strings.Join(parts, " · ")
+}
+
+func printServiceIssues(issues []svchealth.Issue, w io.Writer) error {
+	if len(issues) == 0 {
+		return nil
+	}
+	if _, err := fmt.Fprintln(w, "Service issues:"); err != nil {
+		return err
+	}
+	for _, is := range issues {
+		line := fmt.Sprintf("  ⚠ %s/%s  %s  %s", is.Namespace, is.Name, is.Type, is.Detail)
+		if is.Since != "" {
+			line += " · " + inventory.HumanSince(is.Since, time.Now())
+		}
+		if _, err := fmt.Fprintln(w, line); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func printWorkload(wl inventory.Workload, w io.Writer) error {

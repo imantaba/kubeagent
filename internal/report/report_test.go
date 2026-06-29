@@ -11,6 +11,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/platform"
 	"github.com/imantaba/kubeagent/internal/resources"
+	"github.com/imantaba/kubeagent/internal/svchealth"
 )
 
 func sampleWorkloads() []inventory.Workload {
@@ -34,7 +35,7 @@ func sampleCluster() clusterhealth.ClusterHealth {
 
 func TestPrintInventory_TextShowsWorkloadAndPods(t *testing.T) {
 	var buf bytes.Buffer
-	if err := PrintInventory(clusterhealth.ClusterHealth{}, inventory.Result{Workloads: sampleWorkloads()}, nil, nil, "", "text", &buf); err != nil {
+	if err := PrintInventory(clusterhealth.ClusterHealth{}, inventory.Result{Workloads: sampleWorkloads()}, nil, nil, nil, "", "text", &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -51,7 +52,7 @@ func TestPrintInventory_TextFlagsWorkloadWithFinding(t *testing.T) {
 		Findings: []diagnose.Finding{{Pod: "kube-system/coredns-x", Issue: "CrashLoopBackOff", Reason: "boom", Evidence: "e"}},
 	}}
 	var buf bytes.Buffer
-	if err := PrintInventory(clusterhealth.ClusterHealth{}, inventory.Result{Workloads: ws}, nil, nil, "", "text", &buf); err != nil {
+	if err := PrintInventory(clusterhealth.ClusterHealth{}, inventory.Result{Workloads: ws}, nil, nil, nil, "", "text", &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -65,7 +66,7 @@ func TestPrintInventory_TextFlagsWorkloadWithFinding(t *testing.T) {
 
 func TestPrintInventory_JSONObjectWithWorkloads(t *testing.T) {
 	var buf bytes.Buffer
-	if err := PrintInventory(clusterhealth.ClusterHealth{}, inventory.Result{Workloads: sampleWorkloads()}, nil, nil, "", "json", &buf); err != nil {
+	if err := PrintInventory(clusterhealth.ClusterHealth{}, inventory.Result{Workloads: sampleWorkloads()}, nil, nil, nil, "", "json", &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	var got struct {
@@ -86,7 +87,7 @@ func TestPrintInventory_JSONObjectWithWorkloads(t *testing.T) {
 
 func TestPrintInventory_JSONIncludesExplanation(t *testing.T) {
 	var buf bytes.Buffer
-	if err := PrintInventory(clusterhealth.ClusterHealth{}, inventory.Result{Workloads: sampleWorkloads()}, nil, nil, "rancher is fine", "json", &buf); err != nil {
+	if err := PrintInventory(clusterhealth.ClusterHealth{}, inventory.Result{Workloads: sampleWorkloads()}, nil, nil, nil, "rancher is fine", "json", &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), `"explanation": "rancher is fine"`) {
@@ -96,14 +97,14 @@ func TestPrintInventory_JSONIncludesExplanation(t *testing.T) {
 
 func TestPrintInventory_UnknownFormatErrors(t *testing.T) {
 	var buf bytes.Buffer
-	if err := PrintInventory(clusterhealth.ClusterHealth{}, inventory.Result{}, nil, nil, "", "xml", &buf); err == nil {
+	if err := PrintInventory(clusterhealth.ClusterHealth{}, inventory.Result{}, nil, nil, nil, "", "xml", &buf); err == nil {
 		t.Error("expected an error for unknown format")
 	}
 }
 
 func TestPrintInventory_TextLeadsWithClusterVerdict(t *testing.T) {
 	var buf bytes.Buffer
-	if err := PrintInventory(sampleCluster(), inventory.Result{Workloads: sampleWorkloads()}, nil, nil, "", "text", &buf); err != nil {
+	if err := PrintInventory(sampleCluster(), inventory.Result{Workloads: sampleWorkloads()}, nil, nil, nil, "", "text", &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -121,7 +122,7 @@ func TestPrintInventory_TextLeadsWithClusterVerdict(t *testing.T) {
 func TestPrintInventory_TextHealthyClusterSingleLine(t *testing.T) {
 	var buf bytes.Buffer
 	ch := clusterhealth.ClusterHealth{Verdict: "Healthy", NodesTotal: 3, NodesReady: 3}
-	if err := PrintInventory(ch, inventory.Result{Workloads: sampleWorkloads()}, nil, nil, "", "text", &buf); err != nil {
+	if err := PrintInventory(ch, inventory.Result{Workloads: sampleWorkloads()}, nil, nil, nil, "", "text", &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -133,7 +134,7 @@ func TestPrintInventory_TextHealthyClusterSingleLine(t *testing.T) {
 func TestPrintInventory_TextShowsScopeNote(t *testing.T) {
 	var buf bytes.Buffer
 	ch := clusterhealth.ClusterHealth{Verdict: "Healthy", NodesTotal: 3, NodesReady: 3, ScopeNote: "node health only — re-run without -n"}
-	if err := PrintInventory(ch, inventory.Result{Workloads: sampleWorkloads()}, nil, nil, "", "text", &buf); err != nil {
+	if err := PrintInventory(ch, inventory.Result{Workloads: sampleWorkloads()}, nil, nil, nil, "", "text", &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), "node health only") {
@@ -147,7 +148,7 @@ func TestPrintInventory_TextJobOmitsCountShowsStatus(t *testing.T) {
 		Pods: []inventory.PodRow{{Name: "migrate-x", Phase: "Succeeded", Ready: "0/1"}},
 	}}
 	var buf bytes.Buffer
-	if err := PrintInventory(clusterhealth.ClusterHealth{}, inventory.Result{Workloads: ws}, nil, nil, "", "text", &buf); err != nil {
+	if err := PrintInventory(clusterhealth.ClusterHealth{}, inventory.Result{Workloads: ws}, nil, nil, nil, "", "text", &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -166,7 +167,7 @@ func TestPrintInventory_TextCronJobShowsScheduleAndOmitted(t *testing.T) {
 		PodsOmitted: 5,
 	}}
 	var buf bytes.Buffer
-	if err := PrintInventory(clusterhealth.ClusterHealth{}, inventory.Result{Workloads: ws}, nil, nil, "", "text", &buf); err != nil {
+	if err := PrintInventory(clusterhealth.ClusterHealth{}, inventory.Result{Workloads: ws}, nil, nil, nil, "", "text", &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -180,7 +181,7 @@ func TestPrintInventory_TextCronJobShowsScheduleAndOmitted(t *testing.T) {
 
 func TestPrintInventory_JSONIncludesCluster(t *testing.T) {
 	var buf bytes.Buffer
-	if err := PrintInventory(sampleCluster(), inventory.Result{Workloads: sampleWorkloads()}, nil, nil, "", "json", &buf); err != nil {
+	if err := PrintInventory(sampleCluster(), inventory.Result{Workloads: sampleWorkloads()}, nil, nil, nil, "", "json", &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	var got struct {
@@ -199,7 +200,7 @@ func TestPrintInventory_FooterHintListsHidden(t *testing.T) {
 	var buf bytes.Buffer
 	res := inventory.Result{Workloads: nil, HiddenRestarts: 3, HiddenCron: 5}
 	ch := clusterhealth.ClusterHealth{Verdict: "Healthy", NodesTotal: 3, NodesReady: 3}
-	if err := PrintInventory(ch, res, nil, nil, "", "text", &buf); err != nil {
+	if err := PrintInventory(ch, res, nil, nil, nil, "", "text", &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -218,7 +219,7 @@ func TestPrintInventory_FooterShownAndNoAllClearWhenDegraded(t *testing.T) {
 	var buf bytes.Buffer
 	ch := clusterhealth.ClusterHealth{Verdict: "Degraded", NodesTotal: 2, NodesReady: 1, NodeIssues: []string{"n2 NotReady"}}
 	res := inventory.Result{HiddenRestarts: 2}
-	if err := PrintInventory(ch, res, nil, nil, "", "text", &buf); err != nil {
+	if err := PrintInventory(ch, res, nil, nil, nil, "", "text", &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -233,7 +234,7 @@ func TestPrintInventory_FooterShownAndNoAllClearWhenDegraded(t *testing.T) {
 func TestPrintInventory_AllClearWhenHealthyAndEmpty(t *testing.T) {
 	var buf bytes.Buffer
 	ch := clusterhealth.ClusterHealth{Verdict: "Healthy", NodesTotal: 2, NodesReady: 2}
-	if err := PrintInventory(ch, inventory.Result{}, nil, nil, "", "text", &buf); err != nil {
+	if err := PrintInventory(ch, inventory.Result{}, nil, nil, nil, "", "text", &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), "No issues found") {
@@ -244,7 +245,7 @@ func TestPrintInventory_AllClearWhenHealthyAndEmpty(t *testing.T) {
 func TestPrintInventory_NoAllClearWhenDegraded(t *testing.T) {
 	var buf bytes.Buffer
 	ch := clusterhealth.ClusterHealth{Verdict: "Degraded", NodesTotal: 2, NodesReady: 1, NodeIssues: []string{"n2 NotReady"}}
-	if err := PrintInventory(ch, inventory.Result{}, nil, nil, "", "text", &buf); err != nil {
+	if err := PrintInventory(ch, inventory.Result{}, nil, nil, nil, "", "text", &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if strings.Contains(buf.String(), "No issues found") {
@@ -254,7 +255,7 @@ func TestPrintInventory_NoAllClearWhenDegraded(t *testing.T) {
 
 func TestPrintInventory_NoFooterWhenNothingHidden(t *testing.T) {
 	var buf bytes.Buffer
-	if err := PrintInventory(clusterhealth.ClusterHealth{Verdict: "Healthy", NodesTotal: 1, NodesReady: 1}, inventory.Result{Workloads: sampleWorkloads()}, nil, nil, "", "text", &buf); err != nil {
+	if err := PrintInventory(clusterhealth.ClusterHealth{Verdict: "Healthy", NodesTotal: 1, NodesReady: 1}, inventory.Result{Workloads: sampleWorkloads()}, nil, nil, nil, "", "text", &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if strings.Contains(buf.String(), "--include-") {
@@ -273,7 +274,7 @@ func sampleSummary() *resources.Summary {
 func TestPrintInventory_TextShowsResourceBlock(t *testing.T) {
 	var buf bytes.Buffer
 	ch := clusterhealth.ClusterHealth{Verdict: "Healthy", NodesTotal: 1, NodesReady: 1}
-	if err := PrintInventory(ch, inventory.Result{}, sampleSummary(), nil, "", "text", &buf); err != nil {
+	if err := PrintInventory(ch, inventory.Result{}, sampleSummary(), nil, nil, "", "text", &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -287,7 +288,7 @@ func TestPrintInventory_TextShowsResourceBlock(t *testing.T) {
 func TestPrintInventory_ResourceBlockPrecedesWorkloads(t *testing.T) {
 	var buf bytes.Buffer
 	ch := clusterhealth.ClusterHealth{Verdict: "Healthy", NodesTotal: 1, NodesReady: 1}
-	if err := PrintInventory(ch, inventory.Result{Workloads: sampleWorkloads()}, sampleSummary(), nil, "", "text", &buf); err != nil {
+	if err := PrintInventory(ch, inventory.Result{Workloads: sampleWorkloads()}, sampleSummary(), nil, nil, "", "text", &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -301,7 +302,7 @@ func TestPrintInventory_TextResourceBlockNoMetrics(t *testing.T) {
 	s := sampleSummary()
 	s.MetricsAvailable = false
 	ch := clusterhealth.ClusterHealth{Verdict: "Healthy", NodesTotal: 1, NodesReady: 1}
-	if err := PrintInventory(ch, inventory.Result{}, s, nil, "", "text", &buf); err != nil {
+	if err := PrintInventory(ch, inventory.Result{}, s, nil, nil, "", "text", &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -322,7 +323,7 @@ func TestPrintInventory_TextOOMFindingShowsResources(t *testing.T) {
 		}},
 	}}
 	var buf bytes.Buffer
-	if err := PrintInventory(clusterhealth.ClusterHealth{}, inventory.Result{Workloads: ws}, nil, nil, "", "text", &buf); err != nil {
+	if err := PrintInventory(clusterhealth.ClusterHealth{}, inventory.Result{Workloads: ws}, nil, nil, nil, "", "text", &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -334,7 +335,7 @@ func TestPrintInventory_TextOOMFindingShowsResources(t *testing.T) {
 func TestPrintInventory_JSONIncludesResources(t *testing.T) {
 	var buf bytes.Buffer
 	ch := clusterhealth.ClusterHealth{Verdict: "Healthy", NodesTotal: 1, NodesReady: 1}
-	if err := PrintInventory(ch, inventory.Result{}, sampleSummary(), nil, "", "json", &buf); err != nil {
+	if err := PrintInventory(ch, inventory.Result{}, sampleSummary(), nil, nil, "", "json", &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	var got struct {
@@ -359,7 +360,7 @@ func sampleFacts() *platform.Facts {
 func TestPrintInventory_TextShowsPlatformLine(t *testing.T) {
 	var buf bytes.Buffer
 	ch := clusterhealth.ClusterHealth{Verdict: "Healthy", NodesTotal: 1, NodesReady: 1}
-	if err := PrintInventory(ch, inventory.Result{}, nil, sampleFacts(), "", "text", &buf); err != nil {
+	if err := PrintInventory(ch, inventory.Result{}, nil, sampleFacts(), nil, "", "text", &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -376,14 +377,14 @@ func TestPrintInventory_TextShowsPlatformLine(t *testing.T) {
 func TestPrintInventory_TextOmitsPlatformWhenNilOrEmpty(t *testing.T) {
 	var buf bytes.Buffer
 	ch := clusterhealth.ClusterHealth{Verdict: "Healthy", NodesTotal: 1, NodesReady: 1}
-	if err := PrintInventory(ch, inventory.Result{}, nil, nil, "", "text", &buf); err != nil {
+	if err := PrintInventory(ch, inventory.Result{}, nil, nil, nil, "", "text", &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if strings.Contains(buf.String(), "Platform:") {
 		t.Errorf("no platform line expected for nil facts:\n%s", buf.String())
 	}
 	var buf2 bytes.Buffer
-	if err := PrintInventory(ch, inventory.Result{}, nil, &platform.Facts{}, "", "text", &buf2); err != nil {
+	if err := PrintInventory(ch, inventory.Result{}, nil, &platform.Facts{}, nil, "", "text", &buf2); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if strings.Contains(buf2.String(), "Platform:") {
@@ -394,7 +395,7 @@ func TestPrintInventory_TextOmitsPlatformWhenNilOrEmpty(t *testing.T) {
 func TestPrintInventory_JSONIncludesPlatform(t *testing.T) {
 	var buf bytes.Buffer
 	ch := clusterhealth.ClusterHealth{Verdict: "Healthy", NodesTotal: 1, NodesReady: 1}
-	if err := PrintInventory(ch, inventory.Result{}, nil, sampleFacts(), "", "json", &buf); err != nil {
+	if err := PrintInventory(ch, inventory.Result{}, nil, sampleFacts(), nil, "", "json", &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	var got struct {
@@ -405,5 +406,65 @@ func TestPrintInventory_JSONIncludesPlatform(t *testing.T) {
 	}
 	if got.Platform == nil || got.Platform.CNI != "Cilium" || len(got.Platform.Storage) != 2 {
 		t.Errorf("platform missing/wrong in JSON: %+v", got.Platform)
+	}
+}
+
+func sampleServiceIssues() []svchealth.Issue {
+	return []svchealth.Issue{
+		{Namespace: "default", Name: "web", Type: "ClusterIP", Problem: "NoEndpoints", Detail: "no ready endpoints"},
+		{Namespace: "default", Name: "api-lb", Type: "LoadBalancer", Problem: "NoExternalAddress", Detail: "no external address", Since: "2026-06-29T00:00:00Z"},
+	}
+}
+
+func TestPrintInventory_TextShowsServiceIssues(t *testing.T) {
+	var buf bytes.Buffer
+	ch := clusterhealth.ClusterHealth{Verdict: "Healthy", NodesTotal: 1, NodesReady: 1}
+	if err := PrintInventory(ch, inventory.Result{}, nil, nil, sampleServiceIssues(), "", "text", &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{"Service issues:", "default/web", "ClusterIP", "no ready endpoints", "default/api-lb", "LoadBalancer", "no external address"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestPrintInventory_TextNoServiceSectionWhenEmpty(t *testing.T) {
+	var buf bytes.Buffer
+	ch := clusterhealth.ClusterHealth{Verdict: "Healthy", NodesTotal: 1, NodesReady: 1}
+	if err := PrintInventory(ch, inventory.Result{}, nil, nil, nil, "", "text", &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(buf.String(), "Service issues:") {
+		t.Errorf("no Service issues section expected when empty:\n%s", buf.String())
+	}
+}
+
+func TestPrintInventory_ServiceIssuesSuppressAllClear(t *testing.T) {
+	var buf bytes.Buffer
+	ch := clusterhealth.ClusterHealth{Verdict: "Healthy", NodesTotal: 1, NodesReady: 1}
+	if err := PrintInventory(ch, inventory.Result{}, nil, nil, sampleServiceIssues(), "", "text", &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(buf.String(), "No issues found") {
+		t.Errorf("all-clear must not print when there are service issues:\n%s", buf.String())
+	}
+}
+
+func TestPrintInventory_JSONIncludesServiceIssues(t *testing.T) {
+	var buf bytes.Buffer
+	ch := clusterhealth.ClusterHealth{Verdict: "Healthy", NodesTotal: 1, NodesReady: 1}
+	if err := PrintInventory(ch, inventory.Result{}, nil, nil, sampleServiceIssues(), "", "json", &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var got struct {
+		ServiceIssues []svchealth.Issue `json:"serviceIssues"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(got.ServiceIssues) != 2 || got.ServiceIssues[0].Name != "web" {
+		t.Errorf("serviceIssues missing/wrong in JSON: %+v", got.ServiceIssues)
 	}
 }

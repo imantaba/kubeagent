@@ -216,6 +216,17 @@ func TestExplainInventory_ExplainsWhenOnlyServiceIssues(t *testing.T) {
 	}
 }
 
+func TestBuildInventoryPrompt_IncludesNetworkPolicyHint(t *testing.T) {
+	ws := []inventory.Workload{{
+		Namespace: "default", Name: "api", Kind: "Deployment", Ready: 0, Desired: 2, Status: "Degraded",
+		NetworkPolicies: []string{"deny-all"},
+	}}
+	got := buildInventoryPrompt(clusterhealth.ClusterHealth{}, nil, nil, nil, ws)
+	if !strings.Contains(got, "network policy: pods selected by deny-all (possible cause)") {
+		t.Errorf("prompt missing NP hint:\n%s", got)
+	}
+}
+
 func TestResolveModel(t *testing.T) {
 	cases := []struct {
 		name, flag, env, want string

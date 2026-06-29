@@ -116,6 +116,9 @@ func buildInventoryPrompt(cluster clusterhealth.ClusterHealth, summary *resource
 						r.MemRequest, r.MemLimit, r.CPURequest, r.CPULimit)
 				}
 			}
+			if len(w.NetworkPolicies) > 0 {
+				fmt.Fprintf(&b, "    network policy: pods selected by %s (possible cause)\n", strings.Join(w.NetworkPolicies, ", "))
+			}
 		}
 	}
 	if len(serviceIssues) > 0 {

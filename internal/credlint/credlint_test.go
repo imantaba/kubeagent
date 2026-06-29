@@ -44,11 +44,14 @@ func TestScan_ConfigMapValuePatterns(t *testing.T) {
 
 func TestScan_CredentialLikeNameWithLiteral(t *testing.T) {
 	cms := []corev1.ConfigMap{cm("default", "cfg", map[string]string{
-		"DB_PASSWORD": "hunter2pass",
-		"TOKEN_TTL":   "3600",       // numeric → skipped
-		"DEBUG":       "true",       // boolean → skipped
-		"API_KEY":     "${API_KEY}", // reference → skipped
-		"MAX_CONNS":   "50",         // numeric → skipped
+		"DB_PASSWORD":   "hunter2pass",
+		"TOKEN_TTL":     "3600",       // numeric → skipped
+		"DEBUG":         "true",       // boolean → skipped
+		"API_KEY":       "${API_KEY}", // reference → skipped
+		"MAX_CONNS":     "50",         // numeric → skipped
+		"TOKEN_VERSION": "1.2",        // credential-named but decimal → skipped
+		"SECRET_REF":    "$(SECRET)",  // paren reference → skipped
+		"PLAIN_TOKEN":   "$PLAIN",     // bare $ reference → skipped
 	})}
 	got := Scan(cms, nil)
 	if len(got) != 1 || got[0].Location != "DB_PASSWORD" || got[0].Pattern != "credential-like name with a literal value" {
@@ -81,6 +84,20 @@ func TestScan_NeverRecordsTheValue(t *testing.T) {
 				t.Errorf("a finding field leaked a secret value: %+v", f)
 			}
 		}
+	}
+}
+
+func TestScan_InitContainerEnv(t *testing.T) {
+	p := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "job"},
+		Spec: corev1.PodSpec{InitContainers: []corev1.Container{{
+			Name: "setup",
+			Env:  []corev1.EnvVar{{Name: "AWS", Value: "AKIAIOSFODNN7EXAMPLE"}},
+		}}},
+	}
+	got := Scan(nil, []corev1.Pod{p})
+	if len(got) != 1 || got[0].Location != "setup/AWS" || got[0].Pattern != "AWS access key" {
+		t.Fatalf("want one init-container finding at setup/AWS, got %+v", got)
 	}
 }
 

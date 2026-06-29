@@ -26,7 +26,7 @@ var (
 	ghTokenRe = regexp.MustCompile(`ghp_[0-9A-Za-z]{36}|github_pat_[0-9A-Za-z_]{22,}`)
 	jwtRe     = regexp.MustCompile(`eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+`)
 	credName  = regexp.MustCompile(`(?i)(password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credential)`)
-	numericRe = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?$`)
+	numericRe = regexp.MustCompile(`^[0-9]+(\.[0-9]+)*$`)
 )
 
 // classify returns a pattern label and true when (name, value) looks like a
@@ -41,10 +41,17 @@ func classify(name, value string) (string, bool) {
 		return "GitHub token", true
 	case jwtRe.MatchString(value):
 		return "JWT", true
-	case credName.MatchString(name) && looksLikeLiteralSecret(value):
+	case credName.MatchString(name) && !isFileRef(name) && looksLikeLiteralSecret(value):
 		return "credential-like name with a literal value", true
 	}
 	return "", false
+}
+
+// isFileRef reports whether name follows the *_FILE convention, where the value
+// is a path to a file holding the secret (the secure pattern) rather than the
+// secret itself. The value patterns above still fire if a real secret is present.
+func isFileRef(name string) bool {
+	return strings.HasSuffix(strings.ToUpper(name), "_FILE")
 }
 
 // looksLikeLiteralSecret excludes empties, numbers, booleans, and shell/template

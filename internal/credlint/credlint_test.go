@@ -59,6 +59,36 @@ func TestScan_CredentialLikeNameWithLiteral(t *testing.T) {
 	}
 }
 
+func TestScan_FileRefNamesSkipped(t *testing.T) {
+	// A *_FILE env var holds a path to a secret file (the secure convention),
+	// not the secret itself, so the credential-name heuristic must not fire.
+	// But a real secret VALUE in a *_FILE-named var is still a leak — the value
+	// patterns win regardless of name.
+	pods := []corev1.Pod{podEnv("default", "app", "c", []corev1.EnvVar{
+		{Name: "DB_PASSWORD_FILE", Value: "/etc/secrets/db-password"}, // path → skipped
+		{Name: "KC_ADMIN_PASSWORD_FILE", Value: "/run/secrets/admin"}, // path → skipped
+		{Name: "AWS_SECRET_FILE", Value: "AKIAIOSFODNN7EXAMPLE"},      // real value → still flagged
+	})}
+	got := Scan(nil, pods)
+	if len(got) != 1 || got[0].Location != "c/AWS_SECRET_FILE" || got[0].Pattern != "AWS access key" {
+		t.Fatalf("want only the AWS-key finding at c/AWS_SECRET_FILE, got %+v", got)
+	}
+}
+
+func TestScan_VersionValuesSkipped(t *testing.T) {
+	// A credential-named key whose value is a dotted version (1.2.3) is config,
+	// not a secret — the numeric skip must catch multi-part versions, not just
+	// integers and single decimals.
+	cms := []corev1.ConfigMap{cm("default", "cfg", map[string]string{
+		"TOKEN_SCHEMA_VERSION": "1.2.3",   // three-part version → skipped
+		"SECRET_FORMAT":        "1.2.3.4", // four-part version → skipped
+	})}
+	got := Scan(cms, nil)
+	if len(got) != 0 {
+		t.Fatalf("want no findings for version-valued keys, got %+v", got)
+	}
+}
+
 func TestScan_PodEnvLiteralAndValueFromSkipped(t *testing.T) {
 	pods := []corev1.Pod{podEnv("default", "web", "app", []corev1.EnvVar{
 		{Name: "AWS_SECRET", Value: "AKIAIOSFODNN7EXAMPLE"},                                               // literal → flagged

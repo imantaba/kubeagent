@@ -34,6 +34,7 @@ type Facts struct {
 
 // cniByDaemonSet maps a known CNI DaemonSet name fragment to its product name,
 // in priority order (first match wins).
+// Matching is best-effort substring (e.g. "kube-flannel" matches "kube-flannel-ds"); an unrelated kube-system DaemonSet whose name contains a fragment (e.g. "canal") could false-positive.
 var cniByDaemonSet = []struct{ fragment, product string }{
 	{"cilium", "Cilium"},
 	{"calico-node", "Calico"},
@@ -99,6 +100,7 @@ func detectCNI(dss []appsv1.DaemonSet) string {
 	return ""
 }
 
+// detectIngress returns the first recognized controller (mapped to a friendly name); if none is recognized it falls back to the first non-empty raw controller string. Order follows the IngressClass list, which the API does not guarantee — best-effort for the normal single-controller case.
 func detectIngress(ics []networkingv1.IngressClass) string {
 	var firstRaw string
 	for _, c := range ics {
@@ -161,6 +163,7 @@ func parseKubeVersion(v string) (version, distro string) {
 		distro = "GKE"
 	}
 	base := v
+	// RKE2/k3s use a '+' build suffix (v1.35.4+rke2r1); EKS uses a '-' suffix (v1.29.4-eks-036c24b) with no '+', so Split(".")[1] (the minor) is still clean either way.
 	if i := strings.IndexByte(base, '+'); i >= 0 {
 		base = base[:i]
 	}

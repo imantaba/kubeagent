@@ -11,6 +11,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/collect"
 	"github.com/imantaba/kubeagent/internal/connectivity"
+	"github.com/imantaba/kubeagent/internal/credlint"
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/explain"
 	"github.com/imantaba/kubeagent/internal/inventory"
@@ -43,7 +44,7 @@ func run(args []string) error {
 		return nil
 	}
 	if len(args) == 0 || args[0] != "scan" {
-		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--model name] [--include-cron] [--include-restarts] | kubeagent version")
+		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--model name] [--include-cron] [--include-restarts] [--lint-secrets] | kubeagent version")
 	}
 
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
@@ -54,6 +55,7 @@ func run(args []string) error {
 	model := fs.String("model", "", "Claude model for --explain (default: $KUBEAGENT_MODEL or claude-opus-4-8)")
 	includeCron := fs.Bool("include-cron", false, "include CronJobs in the report")
 	includeRestarts := fs.Bool("include-restarts", false, "include workloads that are healthy now but have restarted")
+	lintSecrets := fs.Bool("lint-secrets", false, "scan ConfigMaps and pod env for credentials stored in the clear (never prints values)")
 	var namespace string
 	fs.StringVar(&namespace, "namespace", "", "namespace to scan (default: all namespaces)")
 	fs.StringVar(&namespace, "n", "", "namespace to scan (shorthand)")
@@ -142,5 +144,11 @@ func run(args []string) error {
 		}
 	}
 
-	return report.PrintInventory(health, result, &summary, &facts, serviceIssues, nil, explanation, *output, os.Stdout)
+	var credWarnings []credlint.Finding
+	if *lintSecrets {
+		cms, _ := collect.ConfigMaps(context.Background(), client, namespace)
+		credWarnings = credlint.Scan(cms, inputs.Pods)
+	}
+
+	return report.PrintInventory(health, result, &summary, &facts, serviceIssues, credWarnings, explanation, *output, os.Stdout)
 }

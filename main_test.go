@@ -77,6 +77,16 @@ func TestRun_Version(t *testing.T) {
 	}
 }
 
+func TestRun_LintSecretsFlagAccepted(t *testing.T) {
+	// --lint-secrets must be a defined flag: this fails on output-format
+	// validation (which happens before any cluster connection), proving the flag
+	// parsed rather than erroring with "flag provided but not defined".
+	err := run([]string{"scan", "--lint-secrets", "--output", "bogus"})
+	if err == nil || !strings.Contains(err.Error(), "unknown output format") {
+		t.Fatalf("expected the output-format error (flag accepted), got: %v", err)
+	}
+}
+
 func TestRun_DiagnosesUnreachableAPI(t *testing.T) {
 	dir := t.TempDir()
 	kc := filepath.Join(dir, "config")

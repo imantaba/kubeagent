@@ -118,6 +118,16 @@ authentication/authorization (401/403), and DNS/wrong-host — followed by a
 `details:` line with the underlying error. This is classification only: kubeagent
 issues no extra calls and exits non-zero as before.
 
+### Credential lint (opt-in)
+
+`scan --lint-secrets` flags credentials stored in the clear — values in ConfigMaps
+and pod env `value:` literals (where a `secretKeyRef` should have been used) that
+match a known pattern (AWS key, private key, GitHub token, JWT) or a
+credential-like key name with a literal value. It reports only the location and
+pattern — **never the value** — and these findings are **never sent to
+`--explain`**. Off by default (no ConfigMaps are read without the flag).
+Read-only and namespace-scoped.
+
 ## Install
 
 Prebuilt **linux/amd64** binaries are attached to each

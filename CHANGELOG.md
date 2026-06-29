@@ -18,16 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Service / LoadBalancer health.** `scan` flags selector-based Services with no
   ready endpoints and LoadBalancer Services with no external address, in a new
   "Service issues" section (text + JSON) and in `--explain`.
-
-### Planned
-
-Driven by the 2026-06-29 chaos / failure-injection tests
-(`docs/testing/2026-06-29-chaos-failure-tests.md`), which confirmed kubeagent's
-workload/node/kube-system coverage and surfaced four blind spots. Each will ship
-as its own feature:
-
-- **Secret / credential lint** — opt-in scan for obviously leaked or risky
-  credentials in Secrets / environment variables.
+- **Credential lint (opt-in).** `scan --lint-secrets` flags credentials stored in
+  the clear (ConfigMap values, pod env literals) by location and pattern — never
+  the value, and never sent to `--explain`.
 
 ## [0.2.0] - 2026-06-29
 

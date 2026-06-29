@@ -16,6 +16,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/platform"
 	"github.com/imantaba/kubeagent/internal/report"
 	"github.com/imantaba/kubeagent/internal/resources"
+	"github.com/imantaba/kubeagent/internal/svchealth"
 )
 
 // version is the build version, overridden at release time via
@@ -110,6 +111,10 @@ func run(args []string) error {
 	sysDS, _ := collect.SystemDaemonSets(context.Background(), client)
 	facts := platform.Detect(nodes, sysDS, scs, ics)
 
+	svcs, _ := collect.Services(context.Background(), client, namespace)
+	slices, _ := collect.EndpointSlices(context.Background(), client, namespace)
+	serviceIssues := svchealth.Assess(svcs, slices)
+
 	result := inventory.Prioritize(workloads, inventory.Opts{
 		IncludeRestarts: *includeRestarts,
 		IncludeCron:     *includeCron,
@@ -119,11 +124,11 @@ func run(args []string) error {
 	if *explainFlag {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		explanation, err = explain.New(explain.ResolveModel(*model, os.Getenv("KUBEAGENT_MODEL"))).ExplainInventory(ctx, health, &summary, &facts, nil, result.Workloads)
+		explanation, err = explain.New(explain.ResolveModel(*model, os.Getenv("KUBEAGENT_MODEL"))).ExplainInventory(ctx, health, &summary, &facts, serviceIssues, result.Workloads)
 		if err != nil {
 			return err
 		}
 	}
 
-	return report.PrintInventory(health, result, &summary, &facts, nil, explanation, *output, os.Stdout)
+	return report.PrintInventory(health, result, &summary, &facts, serviceIssues, explanation, *output, os.Stdout)
 }

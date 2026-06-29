@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Service / LoadBalancer health.** `scan` flags selector-based Services with no
+  ready endpoints and LoadBalancer Services with no external address, in a new
+  "Service issues" section (text + JSON) and in `--explain`.
+
 ### Planned
 
 Driven by the 2026-06-29 chaos / failure-injection tests
@@ -14,8 +20,6 @@ Driven by the 2026-06-29 chaos / failure-injection tests
 workload/node/kube-system coverage and surfaced four blind spots. Each will ship
 as its own feature:
 
-- **Service / LoadBalancer health** — flag Services with no Endpoints and
-  `LoadBalancer` Services stuck without an external address.
 - **NetworkPolicy awareness** — when a workload is degraded/not-Ready, note a
   restrictive NetworkPolicy selecting its pods (root-cause hint, not just symptom).
 - **Connectivity / control-plane diagnostics** — turn an API-server connection

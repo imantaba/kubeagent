@@ -90,6 +90,15 @@ The same summary is included in the JSON output (`platform`) and sent to
 `--explain` so the model can give stack-aware advice. No instance identifiers
 (e.g. the raw `providerID`) are emitted — only the derived cloud name.
 
+### Service health
+
+`scan` flags Service-level problems a pod scan misses: a selector-based Service
+routing to **zero ready endpoints** (selector typo, all backends down) and a
+**LoadBalancer Service with no external address** (showing its age so you can
+tell provisioning from stuck). These appear in a "Service issues" section (text
+and JSON) and are sent to `--explain`. ExternalName and selectorless Services are
+skipped. Checks are read-only and honor the scan's `-n` scope.
+
 ## Install
 
 Prebuilt **linux/amd64** binaries are attached to each

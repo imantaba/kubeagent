@@ -211,6 +211,11 @@ func printWorkload(wl inventory.Workload, w io.Writer) error {
 			}
 		}
 	}
+	if len(wl.NetworkPolicies) > 0 {
+		if _, err := fmt.Fprintf(w, "    ⚠ NetworkPolicy: pods selected by %s — may be blocking traffic\n", strings.Join(wl.NetworkPolicies, ", ")); err != nil {
+			return err
+		}
+	}
 	for _, p := range wl.Pods {
 		restarts := fmt.Sprintf("%d", p.Restarts)
 		if p.LastRestart != "" {

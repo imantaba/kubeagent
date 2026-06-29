@@ -480,3 +480,28 @@ func TestPrintInventory_JSONIncludesServiceIssues(t *testing.T) {
 		t.Errorf("serviceIssues missing/wrong in JSON: %+v", got.ServiceIssues)
 	}
 }
+
+func TestPrintInventory_TextShowsNetworkPolicyHint(t *testing.T) {
+	ws := []inventory.Workload{{
+		Namespace: "default", Name: "api", Kind: "Deployment", Desired: 2, Ready: 0, Status: "Degraded",
+		NetworkPolicies: []string{"deny-all", "web-allow"},
+		Pods:            []inventory.PodRow{{Name: "api-1", Phase: "Running", Ready: "0/1"}},
+	}}
+	var buf bytes.Buffer
+	if err := PrintInventory(clusterhealth.ClusterHealth{}, inventory.Result{Workloads: ws}, nil, nil, nil, "", "text", &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(buf.String(), "NetworkPolicy: pods selected by deny-all, web-allow") {
+		t.Errorf("expected NP hint line:\n%s", buf.String())
+	}
+}
+
+func TestPrintInventory_TextNoNetworkPolicyHintWhenEmpty(t *testing.T) {
+	var buf bytes.Buffer
+	if err := PrintInventory(clusterhealth.ClusterHealth{}, inventory.Result{Workloads: sampleWorkloads()}, nil, nil, nil, "", "text", &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(buf.String(), "NetworkPolicy:") {
+		t.Errorf("no NP hint expected when the workload has none:\n%s", buf.String())
+	}
+}

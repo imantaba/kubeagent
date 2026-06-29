@@ -7,6 +7,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -162,5 +163,32 @@ func TestSystemDaemonSets_OnlyKubeSystem(t *testing.T) {
 	}
 	if len(dss) != 1 || dss[0].Name != "cilium" {
 		t.Errorf("want only kube-system/cilium, got %+v", dss)
+	}
+}
+
+func TestServices_Lists(t *testing.T) {
+	client := fake.NewSimpleClientset(
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "s1"}},
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: "b", Name: "s2"}},
+	)
+	svcs, err := Services(context.Background(), client, "")
+	if err != nil {
+		t.Fatalf("Services: %v", err)
+	}
+	if len(svcs) != 2 {
+		t.Errorf("want 2 services, got %d", len(svcs))
+	}
+}
+
+func TestEndpointSlices_Lists(t *testing.T) {
+	client := fake.NewSimpleClientset(
+		&discoveryv1.EndpointSlice{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "s1-abc", Labels: map[string]string{discoveryv1.LabelServiceName: "s1"}}},
+	)
+	slices, err := EndpointSlices(context.Background(), client, "")
+	if err != nil {
+		t.Fatalf("EndpointSlices: %v", err)
+	}
+	if len(slices) != 1 || slices[0].Labels[discoveryv1.LabelServiceName] != "s1" {
+		t.Errorf("unexpected slices: %+v", slices)
 	}
 }

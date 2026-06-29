@@ -7,6 +7,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -140,6 +141,24 @@ func SystemDaemonSets(ctx context.Context, client kubernetes.Interface) ([]appsv
 		return nil, fmt.Errorf("listing kube-system daemonsets: %w", err)
 	}
 	return dss.Items, nil
+}
+
+// Services lists Services in the namespace (empty = all), read-only.
+func Services(ctx context.Context, client kubernetes.Interface, namespace string) ([]corev1.Service, error) {
+	svcs, err := client.CoreV1().Services(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("listing services: %w", err)
+	}
+	return svcs.Items, nil
+}
+
+// EndpointSlices lists EndpointSlices in the namespace (empty = all), read-only.
+func EndpointSlices(ctx context.Context, client kubernetes.Interface, namespace string) ([]discoveryv1.EndpointSlice, error) {
+	slices, err := client.DiscoveryV1().EndpointSlices(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("listing endpointslices: %w", err)
+	}
+	return slices.Items, nil
 }
 
 // parseNodeMetrics decodes a metrics.k8s.io NodeMetricsList body into per-node

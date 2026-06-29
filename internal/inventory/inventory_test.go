@@ -501,10 +501,10 @@ func TestAssemble_AggregatesLastRestart(t *testing.T) {
 
 func TestPrioritize_DefaultShowsOnlyProblems(t *testing.T) {
 	in := []Workload{
-		{Namespace: "a", Name: "crash", Kind: "Deployment", Ready: 0, Desired: 1, Status: "Degraded"}, // problem
-		{Namespace: "a", Name: "healthy", Kind: "Deployment", Ready: 1, Desired: 1, Status: "Running"}, // hidden
+		{Namespace: "a", Name: "crash", Kind: "Deployment", Ready: 0, Desired: 1, Status: "Degraded"},                 // problem
+		{Namespace: "a", Name: "healthy", Kind: "Deployment", Ready: 1, Desired: 1, Status: "Running"},                // hidden
 		{Namespace: "a", Name: "restarted", Kind: "Deployment", Ready: 1, Desired: 1, Status: "Running", Restarts: 9}, // hidden (restart-only)
-		{Namespace: "a", Name: "backup", Kind: "CronJob", Status: "Idle"}, // hidden (cron)
+		{Namespace: "a", Name: "backup", Kind: "CronJob", Status: "Idle"},                                             // hidden (cron)
 	}
 	res := Prioritize(in, Opts{})
 	if len(res.Workloads) != 1 || res.Workloads[0].Name != "crash" {

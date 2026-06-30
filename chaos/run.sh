@@ -180,8 +180,39 @@ scenario_10_credleak() {   # ConfigMap with a fake AWS key -> --lint-secrets
   kubectl --context "$CTX" delete ns chaos-cred --wait=true --timeout=120s >/dev/null 2>&1 || true
 }
 
+scenario_02_certs() {   # documented skip (can't force cert expiry on Kind)
+  log "scenario 2: expired certificates (skipped)"
+  printf 'Skipped on Kind: control-plane certificate expiry cannot be forced quickly or safely.\nkubeagent TLS / expired-certificate handling is covered by internal/connectivity unit tests\n(x509 UnknownAuthority / CertificateInvalid / Hostname errors, plus "x509:" / "certificate" / "tls: " substrings).\n' \
+    | record "2. Expired certificates" "skipped (documented; TLS branch unit-tested)"
+}
+
+scenario_07_oom() {   # deterministic memory-hog -> OOMKilled (see chaos/README.md re: LitmusChaos)
+  log "scenario 7: OOMKilled critical workload (memory-hog)"
+  kubectl --context "$CTX" create ns chaos-oom --dry-run=client -o yaml | kubectl --context "$CTX" apply -f - >/dev/null
+  kubectl --context "$CTX" -n chaos-oom apply -f - >/dev/null <<'OOM'
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: oom-target, labels: { app: oom-target } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: oom-target } }
+  template:
+    metadata: { labels: { app: oom-target } }
+    spec:
+      containers:
+        - name: hog
+          image: polinux/stress
+          resources: { requests: { memory: "32Mi" }, limits: { memory: "64Mi" } }
+          command: ["stress"]
+          args: ["--vm", "1", "--vm-bytes", "200M", "--vm-hang", "1"]  # touch >limit so the kernel OOM-kills it (reason OOMKilled, not malloc Error)
+OOM
+  sleep 35
+  { scan 2>&1 || true; } | record "7. OOMKilled critical workload (memory-hog, 64Mi limit)" "detected: OOMKilled + container requests/limits"
+  kubectl --context "$CTX" delete ns chaos-oom --wait=true --timeout=120s >/dev/null 2>&1 || true
+}
+
 run_scenarios() {
-  local all=(01_etcd 03_diskfull 04_networkpolicy 05_coredns 06_lb 08_nsdelete 09_rollout 10_credleak)
+  local all=(01_etcd 02_certs 03_diskfull 04_networkpolicy 05_coredns 06_lb 07_oom 08_nsdelete 09_rollout 10_credleak)
   for s in "${all[@]}"; do
     if [ -z "$ONLY" ] || [ "$ONLY" = "${s%%_*}" ]; then "scenario_$s"; fi
   done

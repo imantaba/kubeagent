@@ -1,0 +1,64 @@
+site_name: kubeagent
+site_description: Read-only Kubernetes troubleshooting, explained.
+site_url: https://k8sproject.top
+repo_url: https://github.com/imantaba/kubeagent
+repo_name: imantaba/kubeagent
+copyright: kubeagent — read-only Kubernetes troubleshooting
+
+theme:
+  name: material
+  logo: assets/logo.svg
+  favicon: assets/favicon.svg
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - content.code.copy
+    - search.suggest
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+extra_css:
+  - assets/extra.css
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+nav:
+  - Home: index.md
+  - Quickstart: quickstart.md
+  - Features:
+      - Failure diagnostics: features/diagnostics.md
+      - Resource context: features/resource-context.md
+      - Platform facts: features/platform-facts.md
+      - Service health: features/service-health.md
+      - NetworkPolicy hints: features/networkpolicy.md
+      - Connectivity diagnostics: features/connectivity.md
+      - Credential lint: features/credential-lint.md
+  - Install: install.md
+  - Roadmap: roadmap.md

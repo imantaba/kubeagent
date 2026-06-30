@@ -1,0 +1,4 @@
+/* Center the landing hero buttons row */
+.md-typeset .hero-cta { display: flex; flex-wrap: wrap; gap: .6rem; margin: 1.2rem 0 2rem; }
+/* Tighten the feature card icons */
+.md-typeset .grid.cards :is(.twemoji, svg) { height: 1.4rem; vertical-align: -0.2rem; }

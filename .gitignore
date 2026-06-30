@@ -40,3 +40,9 @@ docs/go-concepts.md
 
 # Testing / validation result docs (kept on disk, not tracked)
 docs/testing/
+
+# MkDocs site build output + local build venv + DNS token file
+/_site/
+website/site/
+website/.venv/
+*.cf_token

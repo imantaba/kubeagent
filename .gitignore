@@ -37,3 +37,6 @@ kubeconfig
 
 # Local Go-learning companion (kept on disk, not tracked)
 docs/go-concepts.md
+
+# Testing / validation result docs (kept on disk, not tracked)
+docs/testing/

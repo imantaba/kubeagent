@@ -274,3 +274,30 @@ func TestIssue_JSONOmitsEmptyExpectedAndBacking(t *testing.T) {
 		t.Errorf("expected issue JSON must carry expected/backing: %s", expected)
 	}
 }
+
+func TestAssess_LiveDaemonSetStaysPrimary(t *testing.T) {
+	svcs := []corev1.Service{svc("default", "web", corev1.ServiceTypeClusterIP, map[string]string{"app": "web"}, 0)}
+	backends := []Backend{backend("DaemonSet", "default", 3, false, map[string]string{"app": "web"})}
+	got := Assess(svcs, nil, backends)
+	if len(got) != 1 || got[0].Expected || got[0].Detail != "no ready endpoints" {
+		t.Fatalf("DaemonSet desired>0 must stay primary, got %+v", got)
+	}
+}
+
+func TestAssess_LiveStatefulSetStaysPrimary(t *testing.T) {
+	svcs := []corev1.Service{svc("default", "db", corev1.ServiceTypeClusterIP, map[string]string{"app": "db"}, 0)}
+	backends := []Backend{backend("StatefulSet", "default", 2, false, map[string]string{"app": "db"})}
+	got := Assess(svcs, nil, backends)
+	if len(got) != 1 || got[0].Expected || got[0].Detail != "no ready endpoints" {
+		t.Fatalf("StatefulSet desired>0 must stay primary, got %+v", got)
+	}
+}
+
+func TestAssess_BackendInDifferentNamespaceIgnored(t *testing.T) {
+	svcs := []corev1.Service{svc("default", "web", corev1.ServiceTypeClusterIP, map[string]string{"app": "web"}, 0)}
+	backends := []Backend{backend("CronJob", "ns-other", 0, true, map[string]string{"app": "web"})}
+	got := Assess(svcs, nil, backends)
+	if len(got) != 1 || got[0].Expected {
+		t.Fatalf("a backend in a different namespace must not classify the issue as expected, got %+v", got)
+	}
+}

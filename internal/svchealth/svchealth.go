@@ -168,13 +168,14 @@ func classifyBacking(svc corev1.Service, backends []Backend) (backing, detail st
 	return b.Kind, backingDetail(b), true
 }
 
+var backingOrder = map[string]int{"CronJob": 0, "Job": 1, "DaemonSet": 2, "Deployment": 3, "StatefulSet": 4}
+
 // pickBacking chooses a representative backend in precedence order
 // CronJob, Job, DaemonSet, Deployment, StatefulSet.
 func pickBacking(matches []Backend) Backend {
-	order := map[string]int{"CronJob": 0, "Job": 1, "DaemonSet": 2, "Deployment": 3, "StatefulSet": 4}
 	best := matches[0]
 	for _, b := range matches[1:] {
-		if order[b.Kind] < order[best.Kind] {
+		if backingOrder[b.Kind] < backingOrder[best.Kind] {
 			best = b
 		}
 	}

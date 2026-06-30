@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -111,4 +113,90 @@ func TestAssess_SortedByNamespaceName(t *testing.T) {
 	if len(got) != 2 || got[0].Namespace != "a" || got[1].Namespace != "b" {
 		t.Fatalf("want sorted by namespace, got %+v", got)
 	}
+}
+
+func int32p(i int32) *int32 { return &i }
+
+func TestSelectorMatches(t *testing.T) {
+	cases := []struct {
+		name        string
+		sel, labels map[string]string
+		want        bool
+	}{
+		{"subset", map[string]string{"app": "web"}, map[string]string{"app": "web", "tier": "fe"}, true},
+		{"missing key", map[string]string{"app": "web"}, map[string]string{"tier": "fe"}, false},
+		{"value mismatch", map[string]string{"app": "web"}, map[string]string{"app": "api"}, false},
+		{"empty selector", map[string]string{}, map[string]string{"app": "web"}, false},
+		{"nil labels", map[string]string{"app": "web"}, nil, false},
+	}
+	for _, c := range cases {
+		if got := selectorMatches(c.sel, c.labels); got != c.want {
+			t.Errorf("%s: selectorMatches = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestBackendsFrom(t *testing.T) {
+	deploys := []appsv1.Deployment{
+		{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "d1"},
+			Spec: appsv1.DeploymentSpec{Replicas: int32p(3),
+				Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "d"}}}}},
+		{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "d2"}, // nil replicas → 1
+			Spec: appsv1.DeploymentSpec{
+				Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "d2"}}}}},
+	}
+	sts := []appsv1.StatefulSet{
+		{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "s1"},
+			Spec: appsv1.StatefulSetSpec{Replicas: int32p(0),
+				Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "s"}}}}},
+	}
+	ds := []appsv1.DaemonSet{
+		{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "ds1"},
+			Spec:   appsv1.DaemonSetSpec{Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "ds"}}}},
+			Status: appsv1.DaemonSetStatus{DesiredNumberScheduled: 0}},
+	}
+	jobs := []batchv1.Job{
+		{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "j1"},
+			Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "j"}}}}},
+	}
+	cronjobs := []batchv1.CronJob{
+		{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "cj1"},
+			Spec: batchv1.CronJobSpec{JobTemplate: batchv1.JobTemplateSpec{
+				Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "cj"}}}}}}},
+	}
+
+	got := BackendsFrom(deploys, sts, ds, jobs, cronjobs)
+	if len(got) != 6 {
+		t.Fatalf("want 6 backends, got %d: %+v", len(got), got)
+	}
+	by := map[string]Backend{}
+	for _, b := range got {
+		by[b.Kind+"/"+b.Namespace+"/"+labelVal(b.TemplateLabels)] = b
+	}
+	if b := by["Deployment/a/d"]; b.Desired != 3 || b.Ephemeral {
+		t.Errorf("deploy d1: want Desired 3, not ephemeral, got %+v", b)
+	}
+	if b := by["Deployment/a/d2"]; b.Desired != 1 {
+		t.Errorf("deploy d2 nil replicas: want Desired 1, got %+v", b)
+	}
+	if b := by["StatefulSet/a/s"]; b.Desired != 0 || b.Ephemeral {
+		t.Errorf("sts: want Desired 0, not ephemeral, got %+v", b)
+	}
+	if b := by["DaemonSet/a/ds"]; b.Desired != 0 || b.Ephemeral {
+		t.Errorf("ds: want Desired 0 from status, not ephemeral, got %+v", b)
+	}
+	if b := by["Job/a/j"]; !b.Ephemeral {
+		t.Errorf("job: want Ephemeral true, got %+v", b)
+	}
+	if b := by["CronJob/a/cj"]; !b.Ephemeral {
+		t.Errorf("cronjob: want Ephemeral true, got %+v", b)
+	}
+}
+
+// labelVal returns the single label value (test helper for stable map keys).
+func labelVal(m map[string]string) string {
+	for _, v := range m {
+		return v
+	}
+	return ""
 }

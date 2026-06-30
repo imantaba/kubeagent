@@ -66,3 +66,12 @@ func TestPlan_SkipsNonDeployment(t *testing.T) {
 		t.Fatalf("non-Deployment -> no action, got %+v", got)
 	}
 }
+
+func TestPlan_ErrImagePullAlsoTriggers(t *testing.T) {
+	wls := []inventory.Workload{dep("shop", "web", "ErrImagePull")}
+	rss := []appsv1.ReplicaSet{rs("shop", "web-1", "web", "1"), rs("shop", "web-2", "web", "2")}
+	got := Plan(wls, rss)
+	if len(got) != 1 || got[0].Kind != "RolloutUndo" {
+		t.Fatalf("ErrImagePull should also propose RolloutUndo, got %+v", got)
+	}
+}

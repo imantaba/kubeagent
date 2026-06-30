@@ -28,7 +28,7 @@ jobs:
         with:
           python-version: '3.x'
       - run: pip install -r website/requirements.txt
-      - run: mkdocs build --strict -f website/mkdocs.yml -d ../_site
+      - run: mkdocs build --strict -f mkdocs.yml -d ../_site
         working-directory: website
       - uses: actions/upload-pages-artifact@v3
         with:

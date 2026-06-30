@@ -127,6 +127,11 @@ func TestApply_NoTargetWhenOnlyCurrentRevision(t *testing.T) {
 	if res.Applied || res.Err != nil {
 		t.Fatalf("expected a no-write skip, got %+v", res)
 	}
+	for _, act := range cli.Actions() {
+		if act.GetVerb() == "update" {
+			t.Fatalf("no-target path must not write; saw update verb")
+		}
+	}
 }
 
 func TestApply_RejectsUnknownKindAndProtectedNs(t *testing.T) {

@@ -164,6 +164,9 @@ func Apply(ctx context.Context, client kubernetes.Interface, a Action) Result {
 // one. nil if none.
 func pickTarget(dep *appsv1.Deployment, replicaSets []appsv1.ReplicaSet) *appsv1.ReplicaSet {
 	curRev := revFromAnnotations(dep.Annotations)
+	if curRev == 0 {
+		return nil // no current-revision annotation: can't safely identify a prior revision; skip
+	}
 	var best *appsv1.ReplicaSet
 	for i := range replicaSets {
 		rs := &replicaSets[i]
@@ -171,7 +174,7 @@ func pickTarget(dep *appsv1.Deployment, replicaSets []appsv1.ReplicaSet) *appsv1
 			continue
 		}
 		r := revFromAnnotations(rs.Annotations)
-		if curRev > 0 && r >= curRev {
+		if r >= curRev {
 			continue
 		}
 		if templatesEqual(rs.Spec.Template, dep.Spec.Template) {

@@ -54,8 +54,14 @@ The key is read from the environment only; it is never written to the report.
 | 9 | Faulty rollout | `kubectl set image` to a bad tag | ImagePullBackOff |
 | 10 | Credential leak | ConfigMap with a fake `AKIA…` value | `--lint-secrets` warning (location + pattern only) |
 
-Each scenario **injects → scans → reverts** so the next starts clean. Scenarios
-1, 2, and 8 deliberately demonstrate kubeagent's **boundaries** (an unreachable
+Each scenario **injects → scans → reverts** so the next starts clean. Scenario 1
+(stopping the control-plane) **runs last** in the suite even though it's listed
+first: etcd/apiserver flap for a while after a `docker stop`/`start`, so running
+it last keeps that recovery noise out of the other scenarios' scans. After a full
+run the cluster's control-plane may still be recovering — use `--recreate` for a
+fresh run, or `--teardown` to delete it.
+
+Scenarios 1, 2, and 8 deliberately demonstrate kubeagent's **boundaries** (an unreachable
 API returns a connectivity error, not a cluster report; cert expiry is out of
 scope on Kind; a stateless scan can't flag a deleted namespace) — the report
 labels these as boundaries, not failures.

@@ -60,9 +60,20 @@ explain_flag() { [ -n "${ANTHROPIC_API_KEY:-}" ] && echo "--explain" || true; }
 # scan [extra args...] — runs kubeagent scan against the chaos context.
 scan() { ./kubeagent scan --context "$CTX" "$@" $(explain_flag); }
 
-# record <title> <verdict> ; reads scan output from stdin.
+# record <title> <verdict> ; reads scan (and optional --explain) output from stdin.
+# Scan output is wrapped in a code fence; any --explain markdown (after the
+# "── Explanation ──" marker kubeagent prints) is emitted raw so its own code
+# fences render instead of breaking the outer fence.
 record() {
-  { printf '\n## %s\n\n_Verdict: %s_\n\n```text\n' "$1" "$2"; cat; printf '```\n'; } >> "$OUT"
+  {
+    printf '\n## %s\n\n_Verdict: %s_\n\n' "$1" "$2"
+    awk '
+      BEGIN { print "```text" }
+      /── Explanation ──/ { print "```"; print ""; seen=1; next }
+      { print }
+      END { if (!seen) print "```" }
+    '
+  } >> "$OUT"
 }
 
 teardown() { log "teardown"; kind delete cluster --name "$CLUSTER"; }
@@ -80,6 +91,11 @@ scenario_01_etcd() {   # control-plane / etcd down -> API unreachable
   { scan 2>&1 || true; } | record "1. etcd quorum loss (control-plane stopped)" "boundary: connectivity diagnosis expected"
   docker start "$c" >/dev/null
   kubectl --context "$CTX" wait --for=condition=Ready nodes --all --timeout=180s >/dev/null 2>&1 || true
+  # Wait for the abruptly-stopped control-plane static pods (etcd/apiserver/scheduler/
+  # controller-manager) to re-stabilize, so this scenario can't bleed crash-loop noise
+  # into the next one.
+  kubectl --context "$CTX" -n kube-system wait --for=condition=Ready pod -l tier=control-plane --timeout=180s >/dev/null 2>&1 || true
+  sleep 10
 }
 
 scenario_03_diskfull() {   # cordon stand-in for DiskPressure/SchedulingDisabled
@@ -212,7 +228,11 @@ OOM
 }
 
 run_scenarios() {
-  local all=(01_etcd 02_certs 03_diskfull 04_networkpolicy 05_coredns 06_lb 07_oom 08_nsdelete 09_rollout 10_credleak)
+  # 01_etcd runs LAST: stopping the control-plane is the most disruptive fault and
+  # etcd/apiserver flap for a while afterwards (and while the API is down even
+  # `kubectl wait` can't settle it). Running it last keeps that recovery noise from
+  # contaminating the other scenarios' scans.
+  local all=(02_certs 03_diskfull 04_networkpolicy 05_coredns 06_lb 07_oom 08_nsdelete 09_rollout 10_credleak 01_etcd)
   for s in "${all[@]}"; do
     if [ -z "$ONLY" ] || [ "$ONLY" = "${s%%_*}" ]; then "scenario_$s"; fi
   done

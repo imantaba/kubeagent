@@ -1,6 +1,8 @@
 package svchealth
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,7 +40,7 @@ func TestAssess_NoEndpoints(t *testing.T) {
 	svcs := []corev1.Service{svc("default", "web", corev1.ServiceTypeClusterIP, map[string]string{"app": "web"}, 0)}
 	// a slice exists but all endpoints not-ready
 	slices := []discoveryv1.EndpointSlice{slice("default", "web", boolp(false))}
-	got := Assess(svcs, slices)
+	got := Assess(svcs, slices, nil)
 	if len(got) != 1 || got[0].Problem != "NoEndpoints" || got[0].Type != "ClusterIP" || got[0].Detail != "no ready endpoints" {
 		t.Fatalf("want one NoEndpoints issue, got %+v", got)
 	}
@@ -47,7 +49,7 @@ func TestAssess_NoEndpoints(t *testing.T) {
 func TestAssess_HasReadyEndpoints_NoIssue(t *testing.T) {
 	svcs := []corev1.Service{svc("default", "web", corev1.ServiceTypeClusterIP, map[string]string{"app": "web"}, 0)}
 	slices := []discoveryv1.EndpointSlice{slice("default", "web", boolp(true), nil)} // one ready, one nil(=ready)
-	if got := Assess(svcs, slices); len(got) != 0 {
+	if got := Assess(svcs, slices, nil); len(got) != 0 {
 		t.Fatalf("ready endpoints should yield no issue, got %+v", got)
 	}
 }
@@ -55,7 +57,7 @@ func TestAssess_HasReadyEndpoints_NoIssue(t *testing.T) {
 func TestAssess_NilReadyCountsAsReady(t *testing.T) {
 	svcs := []corev1.Service{svc("default", "web", corev1.ServiceTypeClusterIP, map[string]string{"app": "web"}, 0)}
 	slices := []discoveryv1.EndpointSlice{slice("default", "web", nil)} // nil Ready => ready
-	if got := Assess(svcs, slices); len(got) != 0 {
+	if got := Assess(svcs, slices, nil); len(got) != 0 {
 		t.Fatalf("nil Ready should count as ready, got %+v", got)
 	}
 }
@@ -65,7 +67,7 @@ func TestAssess_ExternalNameAndSelectorlessSkipped(t *testing.T) {
 		svc("default", "ext", corev1.ServiceTypeExternalName, nil, 0),
 		svc("default", "manual", corev1.ServiceTypeClusterIP, nil, 0), // no selector
 	}
-	if got := Assess(svcs, nil); len(got) != 0 {
+	if got := Assess(svcs, nil, nil); len(got) != 0 {
 		t.Fatalf("ExternalName and selectorless services must be skipped, got %+v", got)
 	}
 }
@@ -75,7 +77,7 @@ func TestAssess_LoadBalancerNoAddress(t *testing.T) {
 	s.CreationTimestamp = metav1.NewTime(time.Date(2026, 6, 29, 0, 0, 0, 0, time.UTC))
 	svcs := []corev1.Service{s}
 	slices := []discoveryv1.EndpointSlice{slice("prod", "api-lb", boolp(true))}
-	got := Assess(svcs, slices)
+	got := Assess(svcs, slices, nil)
 	if len(got) != 1 || got[0].Problem != "NoExternalAddress" || got[0].Detail != "no external address" {
 		t.Fatalf("want one NoExternalAddress issue, got %+v", got)
 	}
@@ -87,14 +89,14 @@ func TestAssess_LoadBalancerNoAddress(t *testing.T) {
 func TestAssess_LoadBalancerWithAddress_NoIssue(t *testing.T) {
 	svcs := []corev1.Service{svc("prod", "api-lb", corev1.ServiceTypeLoadBalancer, map[string]string{"app": "api"}, 1)}
 	slices := []discoveryv1.EndpointSlice{slice("prod", "api-lb", boolp(true))}
-	if got := Assess(svcs, slices); len(got) != 0 {
+	if got := Assess(svcs, slices, nil); len(got) != 0 {
 		t.Fatalf("LB with an address and endpoints should have no issue, got %+v", got)
 	}
 }
 
 func TestAssess_LoadBalancerNoAddressAndNoEndpoints_TwoIssues(t *testing.T) {
 	svcs := []corev1.Service{svc("prod", "api-lb", corev1.ServiceTypeLoadBalancer, map[string]string{"app": "api"}, 0)}
-	got := Assess(svcs, nil) // no slices => no endpoints
+	got := Assess(svcs, nil, nil) // no slices => no endpoints
 	if len(got) != 2 {
 		t.Fatalf("want two issues (no address + no endpoints), got %+v", got)
 	}
@@ -109,7 +111,7 @@ func TestAssess_SortedByNamespaceName(t *testing.T) {
 		svc("b", "z", corev1.ServiceTypeClusterIP, map[string]string{"a": "b"}, 0),
 		svc("a", "y", corev1.ServiceTypeClusterIP, map[string]string{"a": "b"}, 0),
 	}
-	got := Assess(svcs, nil)
+	got := Assess(svcs, nil, nil)
 	if len(got) != 2 || got[0].Namespace != "a" || got[1].Namespace != "b" {
 		t.Fatalf("want sorted by namespace, got %+v", got)
 	}
@@ -199,4 +201,76 @@ func labelVal(m map[string]string) string {
 		return v
 	}
 	return ""
+}
+
+// backend is a terse Backend literal for classification tests.
+func backend(kind, ns string, desired int, ephemeral bool, labels map[string]string) Backend {
+	return Backend{Kind: kind, Namespace: ns, TemplateLabels: labels, Desired: desired, Ephemeral: ephemeral}
+}
+
+func TestAssess_ExpectedBackings(t *testing.T) {
+	sel := map[string]string{"app": "x"}
+	cases := []struct {
+		name        string
+		be          Backend
+		wantBacking string
+		wantDetail  string
+	}{
+		{"cronjob", backend("CronJob", "default", 0, true, map[string]string{"app": "x"}), "CronJob", "no ready endpoints (backs CronJob — expected between runs)"},
+		{"job", backend("Job", "default", 0, true, map[string]string{"app": "x"}), "Job", "no ready endpoints (backs Job — expected between runs)"},
+		{"daemonset 0", backend("DaemonSet", "default", 0, false, map[string]string{"app": "x"}), "DaemonSet", "no ready endpoints (backs DaemonSet — 0 desired)"},
+		{"deployment 0", backend("Deployment", "default", 0, false, map[string]string{"app": "x"}), "Deployment", "no ready endpoints (backs Deployment — scaled to 0)"},
+		{"statefulset 0", backend("StatefulSet", "default", 0, false, map[string]string{"app": "x"}), "StatefulSet", "no ready endpoints (backs StatefulSet — scaled to 0)"},
+	}
+	for _, c := range cases {
+		svcs := []corev1.Service{svc("default", "x", corev1.ServiceTypeClusterIP, sel, 0)}
+		got := Assess(svcs, nil, []Backend{c.be})
+		if len(got) != 1 {
+			t.Fatalf("%s: want 1 issue, got %+v", c.name, got)
+		}
+		if !got[0].Expected || got[0].Backing != c.wantBacking || got[0].Detail != c.wantDetail {
+			t.Errorf("%s: got Expected=%v Backing=%q Detail=%q", c.name, got[0].Expected, got[0].Backing, got[0].Detail)
+		}
+	}
+}
+
+func TestAssess_LiveDeploymentStaysPrimary(t *testing.T) {
+	svcs := []corev1.Service{svc("default", "web", corev1.ServiceTypeClusterIP, map[string]string{"app": "web"}, 0)}
+	backends := []Backend{backend("Deployment", "default", 3, false, map[string]string{"app": "web"})}
+	got := Assess(svcs, nil, backends)
+	if len(got) != 1 || got[0].Expected || got[0].Detail != "no ready endpoints" || got[0].Backing != "" {
+		t.Fatalf("a live (desired>0) Deployment with no endpoints must stay primary, got %+v", got)
+	}
+}
+
+func TestAssess_RealOutageWinsOverCoincidentalJob(t *testing.T) {
+	svcs := []corev1.Service{svc("default", "web", corev1.ServiceTypeClusterIP, map[string]string{"app": "web"}, 0)}
+	backends := []Backend{
+		backend("Deployment", "default", 3, false, map[string]string{"app": "web"}),
+		backend("CronJob", "default", 0, true, map[string]string{"app": "web"}),
+	}
+	got := Assess(svcs, nil, backends)
+	if len(got) != 1 || got[0].Expected {
+		t.Fatalf("a live Deployment match must keep the issue primary even if a job also matches, got %+v", got)
+	}
+}
+
+func TestAssess_NoMatchingBackendStaysPrimary(t *testing.T) {
+	svcs := []corev1.Service{svc("default", "web", corev1.ServiceTypeClusterIP, map[string]string{"app": "web"}, 0)}
+	backends := []Backend{backend("CronJob", "default", 0, true, map[string]string{"app": "other"})}
+	got := Assess(svcs, nil, backends)
+	if len(got) != 1 || got[0].Expected || got[0].Detail != "no ready endpoints" {
+		t.Fatalf("a non-matching backend must leave the issue primary, got %+v", got)
+	}
+}
+
+func TestIssue_JSONOmitsEmptyExpectedAndBacking(t *testing.T) {
+	primary, _ := json.Marshal(Issue{Namespace: "n", Name: "x", Type: "ClusterIP", Problem: "NoEndpoints", Detail: "no ready endpoints"})
+	if strings.Contains(string(primary), "expected") || strings.Contains(string(primary), "backing") {
+		t.Errorf("primary issue JSON must omit expected/backing: %s", primary)
+	}
+	expected, _ := json.Marshal(Issue{Namespace: "n", Name: "x", Problem: "NoEndpoints", Expected: true, Backing: "CronJob"})
+	if !strings.Contains(string(expected), `"expected":true`) || !strings.Contains(string(expected), `"backing":"CronJob"`) {
+		t.Errorf("expected issue JSON must carry expected/backing: %s", expected)
+	}
 }

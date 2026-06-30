@@ -18,16 +18,18 @@ import (
 type Issue struct {
 	Namespace string `json:"namespace"`
 	Name      string `json:"name"`
-	Type      string `json:"type"`            // ClusterIP | NodePort | LoadBalancer
-	Problem   string `json:"problem"`         // "NoEndpoints" | "NoExternalAddress"
-	Detail    string `json:"detail"`          // human one-liner
-	Since     string `json:"since,omitempty"` // RFC3339 service creationTimestamp (LB age)
+	Type      string `json:"type"`               // ClusterIP | NodePort | LoadBalancer
+	Problem   string `json:"problem"`            // "NoEndpoints" | "NoExternalAddress"
+	Detail    string `json:"detail"`             // human one-liner
+	Since     string `json:"since,omitempty"`    // RFC3339 service creationTimestamp (LB age)
+	Expected  bool   `json:"expected,omitempty"` // true for an expected (annotated) NoEndpoints issue
+	Backing   string `json:"backing,omitempty"`  // representative backing kind, when classified
 }
 
 // Assess flags Service problems. One Issue per (service, problem); a LoadBalancer
 // with no address AND no endpoints yields two. Result is sorted by
 // (Namespace, Name, Problem). ExternalName and selectorless Services are skipped.
-func Assess(services []corev1.Service, slices []discoveryv1.EndpointSlice) []Issue {
+func Assess(services []corev1.Service, slices []discoveryv1.EndpointSlice, backends []Backend) []Issue {
 	var out []Issue
 	for _, s := range services {
 		if s.Spec.Type == corev1.ServiceTypeExternalName {
@@ -47,10 +49,16 @@ func Assess(services []corev1.Service, slices []discoveryv1.EndpointSlice) []Iss
 			continue
 		}
 		if readyEndpoints(s, slices) == 0 {
-			out = append(out, Issue{
+			is := Issue{
 				Namespace: s.Namespace, Name: s.Name, Type: string(s.Spec.Type),
 				Problem: "NoEndpoints", Detail: "no ready endpoints",
-			})
+			}
+			if backing, detail, ok := classifyBacking(s, backends); ok {
+				is.Expected = true
+				is.Backing = backing
+				is.Detail = detail
+			}
+			out = append(out, is)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -134,4 +142,58 @@ func selectorMatches(selector, labels map[string]string) bool {
 		}
 	}
 	return true
+}
+
+// classifyBacking decides whether a Service's lack of endpoints is expected
+// because of the workload backing it. It returns ok=false (a primary issue)
+// when a live non-ephemeral controller (desired>0) backs the Service, or when
+// nothing matches. Otherwise it returns the representative backing kind and the
+// explanatory detail line.
+func classifyBacking(svc corev1.Service, backends []Backend) (backing, detail string, ok bool) {
+	var matches []Backend
+	for _, b := range backends {
+		if b.Namespace == svc.Namespace && selectorMatches(svc.Spec.Selector, b.TemplateLabels) {
+			matches = append(matches, b)
+		}
+	}
+	if len(matches) == 0 {
+		return "", "", false
+	}
+	for _, b := range matches {
+		if !b.Ephemeral && b.Desired > 0 {
+			return "", "", false // a live controller should have endpoints — real issue
+		}
+	}
+	b := pickBacking(matches)
+	return b.Kind, backingDetail(b), true
+}
+
+// pickBacking chooses a representative backend in precedence order
+// CronJob, Job, DaemonSet, Deployment, StatefulSet.
+func pickBacking(matches []Backend) Backend {
+	order := map[string]int{"CronJob": 0, "Job": 1, "DaemonSet": 2, "Deployment": 3, "StatefulSet": 4}
+	best := matches[0]
+	for _, b := range matches[1:] {
+		if order[b.Kind] < order[best.Kind] {
+			best = b
+		}
+	}
+	return best
+}
+
+// backingDetail is the human one-liner for an expected NoEndpoints issue.
+func backingDetail(b Backend) string {
+	switch b.Kind {
+	case "CronJob":
+		return "no ready endpoints (backs CronJob — expected between runs)"
+	case "Job":
+		return "no ready endpoints (backs Job — expected between runs)"
+	case "DaemonSet":
+		return "no ready endpoints (backs DaemonSet — 0 desired)"
+	case "Deployment":
+		return "no ready endpoints (backs Deployment — scaled to 0)"
+	case "StatefulSet":
+		return "no ready endpoints (backs StatefulSet — scaled to 0)"
+	}
+	return "no ready endpoints"
 }

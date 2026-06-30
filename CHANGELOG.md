@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-30
+
+No changes to the `kubeagent` binary since 0.4.0 — this release adds project
+infrastructure (a documentation site and a pre-release chaos-test harness).
+
+### Added
+
+- **Documentation website.** A MkDocs + Material site (landing page, quickstart,
+  per-feature docs, install, roadmap), published to GitHub Pages at
+  [k8sproject.top](https://k8sproject.top) via a `pages.yml` workflow.
+- **Pre-release chaos-test harness.** `chaos/run.sh` spins up a disposable Kind
+  cluster (Calico CNI), injects the 10 most common production outages, runs
+  `kubeagent scan` against each (adding `--explain` when `ANTHROPIC_API_KEY` is
+  set), and writes a results report — a manual gate before each release, wired
+  into the release checklist. See `chaos/README.md`.
+
 ## [0.4.0] - 2026-06-30
 
 ### Added

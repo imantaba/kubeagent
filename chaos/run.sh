@@ -93,7 +93,7 @@ scenario_03_diskfull() {   # cordon stand-in for DiskPressure/SchedulingDisabled
   sleep 12
   { scan 2>&1 || true; } | record "3. Disk full on control plane (node cordon + unschedulable pod)" "detected: SchedulingDisabled + Unschedulable"
   kubectl --context "$CTX" uncordon "$node" >/dev/null
-  kubectl --context "$CTX" delete ns chaos-diskfull --wait=false >/dev/null 2>&1 || true
+  kubectl --context "$CTX" delete ns chaos-diskfull --wait=true --timeout=120s >/dev/null 2>&1 || true
 }
 
 scenario_05_coredns() {   # bad Corefile -> CoreDNS CrashLoop
@@ -110,8 +110,78 @@ scenario_05_coredns() {   # bad Corefile -> CoreDNS CrashLoop
   kubectl --context "$CTX" -n kube-system rollout status deploy coredns --timeout=120s >/dev/null 2>&1 || true
 }
 
+scenario_04_networkpolicy() {   # Calico-enforced deny-all + a degraded (never-Ready) app
+  log "scenario 4: NetworkPolicy blocking traffic"
+  kubectl --context "$CTX" create ns chaos-np --dry-run=client -o yaml | kubectl --context "$CTX" apply -f - >/dev/null
+  kubectl --context "$CTX" -n chaos-np apply -f - >/dev/null <<'APP'
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: blocked, labels: { app: blocked } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: blocked } }
+  template:
+    metadata: { labels: { app: blocked } }
+    spec:
+      containers:
+        - name: app
+          image: nginx:1.27-alpine
+          readinessProbe: { exec: { command: ["false"] }, periodSeconds: 3 }
+APP
+  kubectl --context "$CTX" -n chaos-np apply -f - >/dev/null <<'NP'
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: deny-all }
+spec: { podSelector: {}, policyTypes: [Ingress, Egress] }
+NP
+  sleep 15
+  { scan 2>&1 || true; } | record "4. NetworkPolicy blocking traffic (Calico deny-all)" "detected: degraded workload + NetworkPolicy hint"
+  kubectl --context "$CTX" delete ns chaos-np --wait=true --timeout=120s >/dev/null 2>&1 || true
+}
+
+scenario_06_lb() {   # LoadBalancer Service with no provider -> pending (no external address)
+  log "scenario 6: cloud load balancer failure"
+  kubectl --context "$CTX" create ns chaos-lb --dry-run=client -o yaml | kubectl --context "$CTX" apply -f - >/dev/null
+  kubectl --context "$CTX" -n chaos-lb apply -f chaos/manifests/app.yaml >/dev/null
+  kubectl --context "$CTX" -n chaos-lb rollout status deploy web --timeout=90s >/dev/null 2>&1 || true
+  kubectl --context "$CTX" -n chaos-lb patch svc web -p '{"spec":{"type":"LoadBalancer"}}' >/dev/null
+  sleep 10
+  { scan 2>&1 || true; } | record "6. Cloud load balancer failure (LoadBalancer pending)" "detected: Service issues - no external address"
+  kubectl --context "$CTX" delete ns chaos-lb --wait=true --timeout=120s >/dev/null 2>&1 || true
+}
+
+scenario_08_nsdelete() {   # stateless blind spot
+  log "scenario 8: accidental namespace deletion"
+  kubectl --context "$CTX" create ns chaos-doomed --dry-run=client -o yaml | kubectl --context "$CTX" apply -f - >/dev/null
+  kubectl --context "$CTX" -n chaos-doomed apply -f chaos/manifests/app.yaml >/dev/null
+  kubectl --context "$CTX" -n chaos-doomed rollout status deploy web --timeout=90s >/dev/null 2>&1 || true
+  kubectl --context "$CTX" delete ns chaos-doomed --wait=true >/dev/null 2>&1 || true
+  { scan 2>&1 || true; } | record "8. Accidental namespace deletion" "boundary: stateless scanner reports no issues (no expected-state tracking)"
+}
+
+scenario_09_rollout() {   # bad image -> ImagePullBackOff
+  log "scenario 9: faulty rolling deployment"
+  kubectl --context "$CTX" create ns chaos-rollout --dry-run=client -o yaml | kubectl --context "$CTX" apply -f - >/dev/null
+  kubectl --context "$CTX" -n chaos-rollout apply -f chaos/manifests/app.yaml >/dev/null
+  kubectl --context "$CTX" -n chaos-rollout rollout status deploy web --timeout=90s >/dev/null 2>&1 || true
+  kubectl --context "$CTX" -n chaos-rollout set image deploy/web web=nginx:does-not-exist-9999 >/dev/null
+  sleep 18
+  { scan 2>&1 || true; } | record "9. Faulty rolling deployment (bad image)" "detected: ImagePullBackOff"
+  kubectl --context "$CTX" delete ns chaos-rollout --wait=true --timeout=120s >/dev/null 2>&1 || true
+}
+
+scenario_10_credleak() {   # ConfigMap with a fake AWS key -> --lint-secrets
+  log "scenario 10: security credential leak"
+  kubectl --context "$CTX" create ns chaos-cred --dry-run=client -o yaml | kubectl --context "$CTX" apply -f - >/dev/null
+  kubectl --context "$CTX" -n chaos-cred create cm app-config \
+    --from-literal=AWS_SECRET_ACCESS_KEY=AKIAIOSFODNN7EXAMPLE >/dev/null
+  sleep 3
+  { scan --lint-secrets 2>&1 || true; } | record "10. Security credential leak (--lint-secrets)" "detected: credential warning (location+pattern only)"
+  kubectl --context "$CTX" delete ns chaos-cred --wait=true --timeout=120s >/dev/null 2>&1 || true
+}
+
 run_scenarios() {
-  local all=(01_etcd 03_diskfull 05_coredns)
+  local all=(01_etcd 03_diskfull 04_networkpolicy 05_coredns 06_lb 08_nsdelete 09_rollout 10_credleak)
   for s in "${all[@]}"; do
     if [ -z "$ONLY" ] || [ "$ONLY" = "${s%%_*}" ]; then "scenario_$s"; fi
   done

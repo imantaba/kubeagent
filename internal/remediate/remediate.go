@@ -4,10 +4,16 @@
 package remediate
 
 import (
+	"context"
+	"fmt"
 	"sort"
 	"strconv"
 
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 
 	"github.com/imantaba/kubeagent/internal/inventory"
 )
@@ -102,4 +108,85 @@ func revFromAnnotations(anno map[string]string) int {
 		}
 	}
 	return 0
+}
+
+// Result records what Apply did, for the audit line.
+type Result struct {
+	Action  Action
+	Applied bool
+	Detail  string
+	Err     error
+}
+
+// Apply performs the action's single guarded write via client-go and reports it.
+func Apply(ctx context.Context, client kubernetes.Interface, a Action) Result {
+	res := Result{Action: a}
+	if a.Kind != "RolloutUndo" {
+		res.Err = fmt.Errorf("unknown action kind %q", a.Kind)
+		return res
+	}
+	if protectedNamespaces[a.Namespace] {
+		res.Err = fmt.Errorf("refusing to act in protected namespace %q", a.Namespace)
+		return res
+	}
+	dep, err := client.AppsV1().Deployments(a.Namespace).Get(ctx, a.Name, metav1.GetOptions{})
+	if err != nil {
+		res.Err = fmt.Errorf("get deployment: %w", err)
+		return res
+	}
+	rsList, err := client.AppsV1().ReplicaSets(a.Namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		res.Err = fmt.Errorf("list replicasets: %w", err)
+		return res
+	}
+	target := pickTarget(dep, rsList.Items)
+	if target == nil {
+		res.Detail = "no differing prior revision to roll back to (state changed); no write made"
+		return res
+	}
+	// Roll back: restore the target revision's pod template. The controller manages
+	// the pod-template-hash label, so drop it from the Deployment spec.
+	tpl := *target.Spec.Template.DeepCopy()
+	delete(tpl.Labels, "pod-template-hash")
+	dep.Spec.Template = tpl
+	if _, err := client.AppsV1().Deployments(a.Namespace).Update(ctx, dep, metav1.UpdateOptions{}); err != nil {
+		res.Err = fmt.Errorf("update deployment: %w", err)
+		return res
+	}
+	res.Applied = true
+	res.Detail = fmt.Sprintf("rolled back %s/%s to revision %d (pod template restored)",
+		a.Namespace, a.Name, revFromAnnotations(target.Annotations))
+	return res
+}
+
+// pickTarget returns the owned ReplicaSet with the highest revision strictly below
+// the Deployment's current revision whose pod template differs from the current
+// one. nil if none.
+func pickTarget(dep *appsv1.Deployment, replicaSets []appsv1.ReplicaSet) *appsv1.ReplicaSet {
+	curRev := revFromAnnotations(dep.Annotations)
+	var best *appsv1.ReplicaSet
+	for i := range replicaSets {
+		rs := &replicaSets[i]
+		if rs.Namespace != dep.Namespace || !ownedBy(*rs, dep.Name) {
+			continue
+		}
+		r := revFromAnnotations(rs.Annotations)
+		if curRev > 0 && r >= curRev {
+			continue
+		}
+		if templatesEqual(rs.Spec.Template, dep.Spec.Template) {
+			continue
+		}
+		if best == nil || r > revFromAnnotations(best.Annotations) {
+			best = rs
+		}
+	}
+	return best
+}
+
+func templatesEqual(a, b corev1.PodTemplateSpec) bool {
+	ac, bc := a.DeepCopy(), b.DeepCopy()
+	delete(ac.Labels, "pod-template-hash")
+	delete(bc.Labels, "pod-template-hash")
+	return apiequality.Semantic.DeepEqual(ac, bc)
 }

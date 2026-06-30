@@ -25,8 +25,11 @@ annotated so it does not read as a primary problem:
 
 | Backing workload | Annotation |
 |------------------|-----------|
-| CronJob or Job | `(backs CronJob — expected between runs)` |
-| DaemonSet / Deployment / StatefulSet scaled to 0 | `(backs Deployment — scaled to 0)` |
+| CronJob | `(backs CronJob — expected between runs)` |
+| Job | `(backs Job — expected between runs)` |
+| DaemonSet (desired 0) | `(backs DaemonSet — 0 desired)` |
+| Deployment (replicas 0) | `(backs Deployment — scaled to 0)` |
+| StatefulSet (replicas 0) | `(backs StatefulSet — scaled to 0)` |
 
 A Deployment or StatefulSet with a non-zero replica count and no ready
 endpoints **stays primary** — that is a real problem.

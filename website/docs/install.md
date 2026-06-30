@@ -29,5 +29,5 @@ If you have Go installed, you can build directly from the repository:
 go build -o kubeagent .
 ```
 
-Requires Go 1.22 or later. The resulting binary has no external runtime
+Requires Go 1.26 or later. The resulting binary has no external runtime
 dependencies.

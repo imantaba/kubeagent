@@ -13,7 +13,7 @@ Platform: Cilium CNI · Traefik ingress · Kubernetes v1.30 · containerd
 A fuller example with storage and cloud:
 
 ```text
-Platform: Cilium CNI · Traefik ingress · Longhorn storage · Kubernetes v1.30 (RKE2) · containerd · Hetzner Cloud
+Platform: Cilium CNI · Traefik ingress · Longhorn storage · Kubernetes v1.30 (RKE2) · containerd · AWS
 ```
 
 !!! note

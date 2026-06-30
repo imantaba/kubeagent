@@ -57,7 +57,7 @@ See [Credential lint](features/credential-lint.md) for details on what
 
 ```text
 Cluster: Healthy (3/3 nodes ready)
-Platform: Cilium CNI · Traefik ingress · Kubernetes v1.29 (RKE2) · containerd · Hetzner Cloud
+Platform: Cilium CNI · Traefik ingress · Kubernetes v1.29 (RKE2) · containerd · AWS
 
 Resources: CPU allocatable 12000m  reserved 2400m  limits 9600m
            Memory allocatable 24Gi  reserved 3Gi  limits 18Gi

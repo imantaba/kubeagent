@@ -2,6 +2,8 @@
 
 A Kubernetes troubleshooting agent, written in Go.
 
+📖 **Docs & site:** [k8sproject.top](https://k8sproject.top)
+
 `kubeagent` scans a Kubernetes cluster, finds unhealthy pods, and explains
 *why* they're failing — covering the most common pod failure modes:
 

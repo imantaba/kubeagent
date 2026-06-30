@@ -1,11 +1,17 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
+	"strings"
 	"time"
+
+	appsv1 "k8s.io/api/apps/v1"
+	"k8s.io/client-go/kubernetes"
 
 	"github.com/imantaba/kubeagent/internal/cluster"
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
@@ -17,6 +23,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/netpolicy"
 	"github.com/imantaba/kubeagent/internal/platform"
+	"github.com/imantaba/kubeagent/internal/remediate"
 	"github.com/imantaba/kubeagent/internal/report"
 	"github.com/imantaba/kubeagent/internal/resources"
 	"github.com/imantaba/kubeagent/internal/svchealth"
@@ -44,7 +51,7 @@ func run(args []string) error {
 		return nil
 	}
 	if len(args) == 0 || args[0] != "scan" {
-		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--model name] [--include-cron] [--include-restarts] [--lint-secrets] | kubeagent version")
+		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--model name] [--include-cron] [--include-restarts] [--lint-secrets] [--fix [--dry-run|--yes]] | kubeagent version")
 	}
 
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
@@ -56,6 +63,9 @@ func run(args []string) error {
 	includeCron := fs.Bool("include-cron", false, "include CronJobs in the report")
 	includeRestarts := fs.Bool("include-restarts", false, "include workloads that are healthy now but have restarted")
 	lintSecrets := fs.Bool("lint-secrets", false, "scan ConfigMaps and pod env for credentials stored in the clear (never prints values)")
+	fix := fs.Bool("fix", false, "propose and (after confirmation) apply safe, reversible remediations (opt-in writes)")
+	dryRun := fs.Bool("dry-run", false, "with --fix: print proposed remediations only; never prompt or write")
+	assumeYes := fs.Bool("yes", false, "with --fix: apply all proposed remediations without prompting")
 	var namespace string
 	fs.StringVar(&namespace, "namespace", "", "namespace to scan (default: all namespaces)")
 	fs.StringVar(&namespace, "n", "", "namespace to scan (shorthand)")
@@ -151,5 +161,48 @@ func run(args []string) error {
 		credWarnings = credlint.Scan(cms, inputs.Pods)
 	}
 
-	return report.PrintInventory(health, result, &summary, &facts, serviceIssues, credWarnings, explanation, *output, os.Stdout)
+	if err := report.PrintInventory(health, result, &summary, &facts, serviceIssues, credWarnings, explanation, *output, os.Stdout); err != nil {
+		return err
+	}
+	if *fix {
+		runFixes(context.Background(), client, result.Workloads, inputs.ReplicaSets, *dryRun, *assumeYes, os.Stdout, os.Stdin)
+	}
+	return nil
+}
+
+// runFixes proposes the planned remediations and, unless --dry-run, applies each
+// after a [y/N] confirmation (or unconditionally with --yes). Writes are guarded
+// inside remediate.Apply.
+func runFixes(ctx context.Context, client kubernetes.Interface, workloads []inventory.Workload, replicaSets []appsv1.ReplicaSet, dryRun, assumeYes bool, w io.Writer, in io.Reader) {
+	actions := remediate.Plan(workloads, replicaSets)
+	if len(actions) == 0 {
+		fmt.Fprintln(w, "\nNo automatic remediations available.")
+		return
+	}
+	reader := bufio.NewReader(in)
+	for _, a := range actions {
+		fmt.Fprintf(w, "\nProposed fix: %s/%s (Deployment) — %s\n  reason: %s\n  kubectl equivalent: %s\n",
+			a.Namespace, a.Name, a.Summary, a.Reason, a.KubectlEquivalent)
+		if dryRun {
+			fmt.Fprintln(w, "  (dry-run: not applied)")
+			continue
+		}
+		if !assumeYes {
+			fmt.Fprint(w, "  Apply? [y/N] ")
+			line, _ := reader.ReadString('\n')
+			if strings.ToLower(strings.TrimSpace(line)) != "y" {
+				fmt.Fprintln(w, "  skipped.")
+				continue
+			}
+		}
+		res := remediate.Apply(ctx, client, a)
+		switch {
+		case res.Err != nil:
+			fmt.Fprintf(w, "  ERROR: %v\n", res.Err)
+		case res.Applied:
+			fmt.Fprintf(w, "  applied: %s\n", res.Detail)
+		default:
+			fmt.Fprintf(w, "  skipped: %s\n", res.Detail)
+		}
+	}
 }

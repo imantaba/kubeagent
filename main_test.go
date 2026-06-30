@@ -1,10 +1,20 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
+
+	"github.com/imantaba/kubeagent/internal/diagnose"
+	"github.com/imantaba/kubeagent/internal/inventory"
 )
 
 func TestRun_NoArgsReturnsUsage(t *testing.T) {
@@ -154,5 +164,60 @@ users:
 	}
 	if strings.Contains(strings.ToLower(err.Error()), "credential") {
 		t.Errorf("no credential output expected without --lint-secrets, got: %v", err)
+	}
+}
+
+func TestRun_FixFlagsAccepted(t *testing.T) {
+	// --fix/--dry-run/--yes must be defined flags: this fails on output-format
+	// validation (before any cluster call), proving they parsed.
+	err := run([]string{"scan", "--fix", "--dry-run", "--yes", "--output", "bogus"})
+	if err == nil || !strings.Contains(err.Error(), "unknown output format") {
+		t.Fatalf("expected output-format error (flags accepted), got: %v", err)
+	}
+}
+
+func fixWorkload() []inventory.Workload {
+	return []inventory.Workload{{Namespace: "shop", Name: "web", Kind: "Deployment",
+		Findings: []diagnose.Finding{{Issue: "ImagePullBackOff"}}}}
+}
+func fixRS() []appsv1.ReplicaSet {
+	mk := func(name, rev, img string) appsv1.ReplicaSet {
+		r := appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: name,
+			Annotations:     map[string]string{"deployment.kubernetes.io/revision": rev},
+			OwnerReferences: []metav1.OwnerReference{{Kind: "Deployment", Name: "web"}}}}
+		r.Spec.Template = corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: img}}}}
+		return r
+	}
+	return []appsv1.ReplicaSet{mk("web-1", "1", "nginx:1.27"), mk("web-2", "2", "nginx:bad")}
+}
+
+func TestRunFixes_DryRunWritesNothing(t *testing.T) {
+	d := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web",
+		Annotations: map[string]string{"deployment.kubernetes.io/revision": "2"}}}
+	d.Spec.Template = corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "nginx:bad"}}}}
+	cli := fake.NewSimpleClientset(d)
+	var out bytes.Buffer
+	runFixes(context.Background(), cli, fixWorkload(), fixRS(), true /*dryRun*/, false, &out, strings.NewReader(""))
+	for _, a := range cli.Actions() {
+		if a.GetVerb() == "update" {
+			t.Fatalf("dry-run must not write; saw %s", a.GetVerb())
+		}
+	}
+	if !strings.Contains(out.String(), "dry-run") {
+		t.Errorf("expected a dry-run notice, got: %s", out.String())
+	}
+}
+
+func TestRunFixes_YesApplies(t *testing.T) {
+	d := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web",
+		Annotations: map[string]string{"deployment.kubernetes.io/revision": "2"}}}
+	d.Spec.Template = corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "nginx:bad"}}}}
+	rss := fixRS()
+	cli := fake.NewSimpleClientset(d, &rss[0], &rss[1])
+	var out bytes.Buffer
+	runFixes(context.Background(), cli, fixWorkload(), rss, false, true /*assumeYes*/, &out, strings.NewReader(""))
+	got, _ := cli.AppsV1().Deployments("shop").Get(context.Background(), "web", metav1.GetOptions{})
+	if got.Spec.Template.Spec.Containers[0].Image != "nginx:1.27" {
+		t.Errorf("expected rollback to nginx:1.27, got %q", got.Spec.Template.Spec.Containers[0].Image)
 	}
 }

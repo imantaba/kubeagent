@@ -14,7 +14,7 @@ A Kubernetes troubleshooting agent, written in Go.
 
 It talks to the cluster directly via the official Kubernetes Go client
 (`client-go`) — the same library `kubectl` and operators are built on — and
-operates **read-only**.
+operates **read-only by default** (an opt-in `--fix` flag can apply safe, reversible remediations — see below).
 
 ## Status
 
@@ -133,6 +133,25 @@ credential-like key name with a literal value. It reports only the location and
 pattern — **never the value** — and these findings are **never sent to
 `--explain`**. Off by default (no ConfigMaps are read without the flag).
 Read-only and namespace-scoped.
+
+### Remediation (--fix, opt-in)
+
+By default kubeagent only reads. `scan --fix` additionally proposes safe,
+reversible remediations for what it finds and applies each one **only after you
+confirm** (`Apply? [y/N]`, default No). Writes are guard-railed: a fixed allowlist
+of actions, never in protected namespaces (`kube-system`, `kube-public`,
+`kube-node-lease`), preconditions re-checked against live state, and the result
+re-verified. Nothing about remediations is sent to `--explain`.
+
+```bash
+./kubeagent scan --fix             # propose + confirm each fix
+./kubeagent scan --fix --dry-run   # show proposals only; never prompt or write
+./kubeagent scan --fix --yes       # apply all proposals without prompting
+```
+
+**v1 remediation:** `RolloutUndo` — when a Deployment's newest rollout can't pull
+its image (`ImagePullBackOff`/`ErrImagePull`) and a prior revision exists, roll it
+back to that revision (a single, reversible `Deployment` update via client-go).
 
 ## Install
 

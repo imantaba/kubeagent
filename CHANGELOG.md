@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`--fix` remediation (opt-in).** `scan --fix` proposes and, after a per-action
+  `[y/N]` confirmation, applies safe reversible remediations (`--dry-run` to
+  preview, `--yes` for non-interactive). v1 ships `RolloutUndo` (roll a Deployment
+  with a failed image rollout back to its previous revision). Guard-railed:
+  allowlist, protected namespaces, apply-time precondition re-check, re-verify;
+  never LLM-decided. This is the first feature that can write to the cluster;
+  default behavior remains read-only.
+
 ## [0.5.0] - 2026-06-30
 
 No changes to the `kubeagent` binary since 0.4.0 — this release adds project

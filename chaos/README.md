@@ -54,6 +54,20 @@ The key is read from the environment only; it is never written to the report.
 | 9 | Faulty rollout | `kubectl set image` to a bad tag | ImagePullBackOff |
 | 10 | Credential leak | ConfigMap with a fake `AKIA…` value | `--lint-secrets` warning (location + pattern only) |
 
+### Validating `--fix` (remediation)
+
+Scenario 9 (faulty rollout) is the acceptance test for `--fix`. After a run leaves
+it injected, roll it back and confirm recovery:
+
+```bash
+kubectl --context kind-kubeagent-chaos -n chaos-rollout set image deploy/web web=nginx:does-not-exist-9999
+./kubeagent scan --context kind-kubeagent-chaos --fix --yes
+kubectl --context kind-kubeagent-chaos -n chaos-rollout rollout status deploy/web
+```
+
+kubeagent should propose and apply a `RolloutUndo`, and the Deployment should
+return to a healthy image.
+
 Each scenario **injects → scans → reverts** so the next starts clean. Scenario 1
 (stopping the control-plane) **runs last** in the suite even though it's listed
 first: etcd/apiserver flap for a while after a `docker stop`/`start`, so running

@@ -25,8 +25,11 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
 
 ## Invariants (do not break)
 
-- **READ-ONLY.** Only `List`/`Get`-style calls. Never create, update, patch, or
-  delete cluster resources.
+- **READ-ONLY by default.** Only `List`/`Get`-style calls, EXCEPT the opt-in
+  `--fix` remediation flag, whose writes are guard-railed (fixed allowlist,
+  protected namespaces, per-action confirmation, re-verify) and never
+  LLM-decided. Without `--fix`, kubeagent never creates, updates, patches, or
+  deletes anything.
 - v1 uses the **standard-library `flag`** package only — no Cobra yet.
 - v1 is **sequential** — no goroutines. Concurrency is a documented later step.
 

@@ -153,6 +153,19 @@ tar xzf "kubeagent_${VERSION}_linux_amd64.tar.gz"
 
 ### Cutting a release
 
+**Pre-release chaos test.** On a machine with Docker, run the chaos suite on a
+disposable Kind cluster and review the report for detection regressions before
+tagging (see [chaos/README.md](chaos/README.md)):
+
+```bash
+./chaos/run.sh --recreate --teardown          # deterministic
+# or, to also exercise --explain:
+ANTHROPIC_API_KEY=sk-ant-... ./chaos/run.sh --recreate --teardown
+```
+
+Review the generated `docs/testing/*-chaos-results.md` (git-ignored): confirm
+each scenario's expected signal still appears, then proceed.
+
 Push a version tag — or run the **Release** workflow manually from the Actions
 tab with a `version` input:
 

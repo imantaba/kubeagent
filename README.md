@@ -97,7 +97,11 @@ routing to **zero ready endpoints** (selector typo, all backends down) and a
 **LoadBalancer Service with no external address** (showing its age so you can
 tell provisioning from stuck). These appear in a "Service issues" section (text
 and JSON) and are sent to `--explain`. ExternalName and selectorless Services are
-skipped. Checks are read-only and honor the scan's `-n` scope.
+skipped. A "no ready endpoints" issue whose backing workload expects no pods — a
+CronJob/Job, or a DaemonSet/Deployment/StatefulSet scaled to 0 — is annotated
+with that backing (e.g. `backs CronJob — expected between runs`) so it does not
+read as a primary problem; a Deployment/StatefulSet with replicas and no
+endpoints stays primary. Checks are read-only and honor the scan's `-n` scope.
 
 ### NetworkPolicy hints
 

@@ -120,7 +120,8 @@ func run(args []string) error {
 
 	svcs, _ := collect.Services(context.Background(), client, namespace)
 	slices, _ := collect.EndpointSlices(context.Background(), client, namespace)
-	serviceIssues := svchealth.Assess(svcs, slices, nil)
+	backends := svchealth.BackendsFrom(inputs.Deployments, inputs.StatefulSets, inputs.DaemonSets, inputs.Jobs, inputs.CronJobs)
+	serviceIssues := svchealth.Assess(svcs, slices, backends)
 
 	result := inventory.Prioritize(workloads, inventory.Opts{
 		IncludeRestarts: *includeRestarts,

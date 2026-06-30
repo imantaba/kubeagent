@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Service backing awareness.** A "no ready endpoints" Service issue is now
+  annotated with its backing workload when that workload expects no pods — a
+  CronJob/Job, or a DaemonSet/Deployment/StatefulSet scaled to 0 — so these stop
+  reading as primary problems (text + JSON `expected`/`backing`). A
+  Deployment/StatefulSet with replicas and no endpoints stays a primary issue.
+
 ### Fixed
 
 - **Credential lint precision.** `--lint-secrets` no longer flags `*_FILE` env

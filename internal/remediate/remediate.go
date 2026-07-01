@@ -29,7 +29,7 @@ var protectedNamespaces = map[string]bool{
 
 // Action is one proposed, allowlisted remediation. Never free-form; never LLM-decided.
 type Action struct {
-	Kind              string // "RolloutUndo" (the only kind in v1)
+	Kind              string // "RolloutUndo" | "Uncordon"
 	Namespace         string
 	Name              string // workload name (a Deployment in v1)
 	Target            string // display target, e.g. "shop/web (Deployment)" or "node/worker-1"

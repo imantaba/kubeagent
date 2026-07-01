@@ -158,8 +158,8 @@ func node(name string, unschedulable, noExecute bool) corev1.Node {
 
 func TestPlan_ProposesUncordon(t *testing.T) {
 	got := Plan(nil, nil, []corev1.Node{node("worker-1", true, false)})
-	if len(got) != 1 || got[0].Kind != "Uncordon" || got[0].Name != "worker-1" {
-		t.Fatalf("want one Uncordon for worker-1, got %+v", got)
+	if len(got) != 1 || got[0].Kind != "Uncordon" || got[0].Name != "worker-1" || got[0].Target != "node/worker-1" {
+		t.Fatalf("want one Uncordon for worker-1 with Target node/worker-1, got %+v", got)
 	}
 }
 

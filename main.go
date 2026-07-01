@@ -174,7 +174,7 @@ func run(args []string) error {
 // after a [y/N] confirmation (or unconditionally with --yes). Writes are guarded
 // inside remediate.Apply.
 func runFixes(ctx context.Context, client kubernetes.Interface, workloads []inventory.Workload, replicaSets []appsv1.ReplicaSet, dryRun, assumeYes bool, w io.Writer, in io.Reader) {
-	actions := remediate.Plan(workloads, replicaSets)
+	actions := remediate.Plan(workloads, replicaSets, nil)
 	if len(actions) == 0 {
 		fmt.Fprintln(w, "\nNo automatic remediations available.")
 		return

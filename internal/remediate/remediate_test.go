@@ -32,7 +32,7 @@ func rs(ns, name, owner, revision string) appsv1.ReplicaSet {
 func TestPlan_ProposesRolloutUndo(t *testing.T) {
 	wls := []inventory.Workload{dep("shop", "web", "ImagePullBackOff")}
 	rss := []appsv1.ReplicaSet{rs("shop", "web-1", "web", "1"), rs("shop", "web-2", "web", "2")}
-	got := Plan(wls, rss)
+	got := Plan(wls, rss, nil)
 	if len(got) != 1 || got[0].Kind != "RolloutUndo" || got[0].Namespace != "shop" || got[0].Name != "web" {
 		t.Fatalf("want one RolloutUndo for shop/web, got %+v", got)
 	}
@@ -41,7 +41,7 @@ func TestPlan_ProposesRolloutUndo(t *testing.T) {
 func TestPlan_SkipsWithoutImagePullFinding(t *testing.T) {
 	wls := []inventory.Workload{dep("shop", "web", "")}
 	rss := []appsv1.ReplicaSet{rs("shop", "web-1", "web", "1"), rs("shop", "web-2", "web", "2")}
-	if got := Plan(wls, rss); len(got) != 0 {
+	if got := Plan(wls, rss, nil); len(got) != 0 {
 		t.Fatalf("no finding -> no action, got %+v", got)
 	}
 }
@@ -49,7 +49,7 @@ func TestPlan_SkipsWithoutImagePullFinding(t *testing.T) {
 func TestPlan_SkipsWithoutPriorRevision(t *testing.T) {
 	wls := []inventory.Workload{dep("shop", "web", "ImagePullBackOff")}
 	rss := []appsv1.ReplicaSet{rs("shop", "web-1", "web", "1")} // only one revision
-	if got := Plan(wls, rss); len(got) != 0 {
+	if got := Plan(wls, rss, nil); len(got) != 0 {
 		t.Fatalf("no prior revision -> no action, got %+v", got)
 	}
 }
@@ -57,7 +57,7 @@ func TestPlan_SkipsWithoutPriorRevision(t *testing.T) {
 func TestPlan_SkipsProtectedNamespace(t *testing.T) {
 	wls := []inventory.Workload{dep("kube-system", "web", "ImagePullBackOff")}
 	rss := []appsv1.ReplicaSet{rs("kube-system", "web-1", "web", "1"), rs("kube-system", "web-2", "web", "2")}
-	if got := Plan(wls, rss); len(got) != 0 {
+	if got := Plan(wls, rss, nil); len(got) != 0 {
 		t.Fatalf("protected namespace -> no action, got %+v", got)
 	}
 }
@@ -65,7 +65,7 @@ func TestPlan_SkipsProtectedNamespace(t *testing.T) {
 func TestPlan_SkipsNonDeployment(t *testing.T) {
 	w := inventory.Workload{Namespace: "shop", Name: "ss", Kind: "StatefulSet",
 		Findings: []diagnose.Finding{{Issue: "ImagePullBackOff"}}}
-	if got := Plan([]inventory.Workload{w}, nil); len(got) != 0 {
+	if got := Plan([]inventory.Workload{w}, nil, nil); len(got) != 0 {
 		t.Fatalf("non-Deployment -> no action, got %+v", got)
 	}
 }
@@ -73,7 +73,7 @@ func TestPlan_SkipsNonDeployment(t *testing.T) {
 func TestPlan_ErrImagePullAlsoTriggers(t *testing.T) {
 	wls := []inventory.Workload{dep("shop", "web", "ErrImagePull")}
 	rss := []appsv1.ReplicaSet{rs("shop", "web-1", "web", "1"), rs("shop", "web-2", "web", "2")}
-	got := Plan(wls, rss)
+	got := Plan(wls, rss, nil)
 	if len(got) != 1 || got[0].Kind != "RolloutUndo" {
 		t.Fatalf("ErrImagePull should also propose RolloutUndo, got %+v", got)
 	}
@@ -141,5 +141,49 @@ func TestApply_RejectsUnknownKindAndProtectedNs(t *testing.T) {
 	}
 	if res := Apply(context.Background(), cli, Action{Kind: "RolloutUndo", Namespace: "kube-system", Name: "x"}); res.Err == nil {
 		t.Error("protected namespace must error")
+	}
+}
+
+func node(name string, unschedulable, noExecute bool) corev1.Node {
+	n := corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: name}}
+	n.Spec.Unschedulable = unschedulable
+	if unschedulable { // the auto NoSchedule cordon taint is always present; must be ignored
+		n.Spec.Taints = append(n.Spec.Taints, corev1.Taint{Key: "node.kubernetes.io/unschedulable", Effect: corev1.TaintEffectNoSchedule})
+	}
+	if noExecute {
+		n.Spec.Taints = append(n.Spec.Taints, corev1.Taint{Key: "node.kubernetes.io/not-ready", Effect: corev1.TaintEffectNoExecute})
+	}
+	return n
+}
+
+func TestPlan_ProposesUncordon(t *testing.T) {
+	got := Plan(nil, nil, []corev1.Node{node("worker-1", true, false)})
+	if len(got) != 1 || got[0].Kind != "Uncordon" || got[0].Name != "worker-1" {
+		t.Fatalf("want one Uncordon for worker-1, got %+v", got)
+	}
+}
+
+func TestPlan_SkipsSchedulableNode(t *testing.T) {
+	if got := Plan(nil, nil, []corev1.Node{node("worker-1", false, false)}); len(got) != 0 {
+		t.Fatalf("schedulable node -> no action, got %+v", got)
+	}
+}
+
+func TestPlan_SkipsNoExecuteTaintedNode(t *testing.T) {
+	if got := Plan(nil, nil, []corev1.Node{node("worker-1", true, true)}); len(got) != 0 {
+		t.Fatalf("NoExecute-tainted cordoned node -> no action, got %+v", got)
+	}
+}
+
+func TestPlan_EmitsBothRolloutUndoAndUncordon(t *testing.T) {
+	wls := []inventory.Workload{dep("shop", "web", "ImagePullBackOff")}
+	rss := []appsv1.ReplicaSet{rs("shop", "web-1", "web", "1"), rs("shop", "web-2", "web", "2")}
+	got := Plan(wls, rss, []corev1.Node{node("worker-1", true, false)})
+	kinds := map[string]bool{}
+	for _, a := range got {
+		kinds[a.Kind] = true
+	}
+	if len(got) != 2 || !kinds["RolloutUndo"] || !kinds["Uncordon"] {
+		t.Fatalf("want both RolloutUndo and Uncordon, got %+v", got)
 	}
 }

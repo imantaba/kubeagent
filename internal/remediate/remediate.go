@@ -32,6 +32,7 @@ type Action struct {
 	Kind              string // "RolloutUndo" (the only kind in v1)
 	Namespace         string
 	Name              string // workload name (a Deployment in v1)
+	Target            string // display target, e.g. "shop/web (Deployment)" or "node/worker-1"
 	Summary           string // one-line human description
 	Reason            string // why it's proposed
 	KubectlEquivalent string // shown for audit only; NOT how it executes
@@ -39,7 +40,7 @@ type Action struct {
 
 // Plan returns the safe, allowlisted, precondition-satisfied remediations for the
 // diagnosed workloads. Pure: reads only, mutates nothing.
-func Plan(workloads []inventory.Workload, replicaSets []appsv1.ReplicaSet) []Action {
+func Plan(workloads []inventory.Workload, replicaSets []appsv1.ReplicaSet, nodes []corev1.Node) []Action {
 	var actions []Action
 	for _, w := range workloads {
 		if w.Kind != "Deployment" || protectedNamespaces[w.Namespace] {
@@ -56,12 +57,37 @@ func Plan(workloads []inventory.Workload, replicaSets []appsv1.ReplicaSet) []Act
 			Kind:              "RolloutUndo",
 			Namespace:         w.Namespace,
 			Name:              w.Name,
+			Target:            w.Namespace + "/" + w.Name + " (Deployment)",
 			Summary:           "roll back to the previous revision",
 			Reason:            "newest rollout cannot pull its image; a prior revision (" + prev + ") exists",
 			KubectlEquivalent: "kubectl -n " + w.Namespace + " rollout undo deployment/" + w.Name,
 		})
 	}
+	for _, n := range nodes {
+		if !n.Spec.Unschedulable || hasNoExecuteTaint(n) {
+			continue
+		}
+		actions = append(actions, Action{
+			Kind:              "Uncordon",
+			Name:              n.Name,
+			Target:            "node/" + n.Name,
+			Summary:           "uncordon the node (make it schedulable)",
+			Reason:            "node is cordoned (SchedulingDisabled)",
+			KubectlEquivalent: "kubectl uncordon node/" + n.Name,
+		})
+	}
 	return actions
+}
+
+// hasNoExecuteTaint reports whether the node carries any NoExecute taint (an active
+// drain / NotReady / pressure) — a signal not to fight by uncordoning.
+func hasNoExecuteTaint(n corev1.Node) bool {
+	for _, t := range n.Spec.Taints {
+		if t.Effect == corev1.TaintEffectNoExecute {
+			return true
+		}
+	}
+	return false
 }
 
 func hasImagePullFinding(w inventory.Workload) bool {

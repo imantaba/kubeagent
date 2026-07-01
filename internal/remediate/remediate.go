@@ -73,7 +73,7 @@ func Plan(workloads []inventory.Workload, replicaSets []appsv1.ReplicaSet, nodes
 			Target:            "node/" + n.Name,
 			Summary:           "uncordon the node (make it schedulable)",
 			Reason:            "node is cordoned (SchedulingDisabled)",
-			KubectlEquivalent: "kubectl uncordon node/" + n.Name,
+			KubectlEquivalent: "kubectl uncordon " + n.Name,
 		})
 	}
 	return actions

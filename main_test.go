@@ -222,6 +222,22 @@ func TestRunFixes_YesApplies(t *testing.T) {
 	}
 }
 
+func TestRunFixes_DryRunUncordonWritesNothing(t *testing.T) {
+	n := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1"}}
+	n.Spec.Unschedulable = true
+	cli := fake.NewSimpleClientset(n)
+	var out bytes.Buffer
+	runFixes(context.Background(), cli, nil, nil, []corev1.Node{*n}, true /*dryRun*/, false, &out, strings.NewReader(""))
+	for _, a := range cli.Actions() {
+		if a.GetVerb() == "update" {
+			t.Fatalf("dry-run must not write a node; saw update")
+		}
+	}
+	if !strings.Contains(out.String(), "dry-run") {
+		t.Errorf("expected a dry-run notice, got: %s", out.String())
+	}
+}
+
 func TestRunFixes_UncordonYesApplies(t *testing.T) {
 	n := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1"}}
 	n.Spec.Unschedulable = true

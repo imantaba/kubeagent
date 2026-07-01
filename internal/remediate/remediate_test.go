@@ -187,3 +187,47 @@ func TestPlan_EmitsBothRolloutUndoAndUncordon(t *testing.T) {
 		t.Fatalf("want both RolloutUndo and Uncordon, got %+v", got)
 	}
 }
+
+func TestApply_Uncordon(t *testing.T) {
+	n := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1"}}
+	n.Spec.Unschedulable = true
+	cli := fake.NewSimpleClientset(n)
+	res := Apply(context.Background(), cli, Action{Kind: "Uncordon", Name: "worker-1"})
+	if !res.Applied || res.Err != nil {
+		t.Fatalf("expected applied, got %+v", res)
+	}
+	out, _ := cli.CoreV1().Nodes().Get(context.Background(), "worker-1", metav1.GetOptions{})
+	if out.Spec.Unschedulable {
+		t.Errorf("node should be schedulable after uncordon")
+	}
+}
+
+func TestApply_UncordonSkipsWhenAlreadySchedulable(t *testing.T) {
+	n := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1"}} // already schedulable
+	cli := fake.NewSimpleClientset(n)
+	res := Apply(context.Background(), cli, Action{Kind: "Uncordon", Name: "worker-1"})
+	if res.Applied || res.Err != nil {
+		t.Fatalf("expected no-write skip, got %+v", res)
+	}
+	for _, act := range cli.Actions() {
+		if act.GetVerb() == "update" {
+			t.Fatalf("must not write when already schedulable; saw update")
+		}
+	}
+}
+
+func TestApply_UncordonSkipsWhenNoExecuteTainted(t *testing.T) {
+	n := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1"}}
+	n.Spec.Unschedulable = true
+	n.Spec.Taints = []corev1.Taint{{Key: "node.kubernetes.io/not-ready", Effect: corev1.TaintEffectNoExecute}}
+	cli := fake.NewSimpleClientset(n)
+	res := Apply(context.Background(), cli, Action{Kind: "Uncordon", Name: "worker-1"})
+	if res.Applied || res.Err != nil {
+		t.Fatalf("expected no-write skip for NoExecute-tainted node, got %+v", res)
+	}
+	for _, act := range cli.Actions() {
+		if act.GetVerb() == "update" {
+			t.Fatalf("must not write a NoExecute-tainted node; saw update")
+		}
+	}
+}

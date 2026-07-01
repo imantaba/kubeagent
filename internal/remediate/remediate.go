@@ -144,13 +144,20 @@ type Result struct {
 	Err     error
 }
 
-// Apply performs the action's single guarded write via client-go and reports it.
+// Apply performs an allowlisted remediation's single guarded write via client-go.
 func Apply(ctx context.Context, client kubernetes.Interface, a Action) Result {
-	res := Result{Action: a}
-	if a.Kind != "RolloutUndo" {
-		res.Err = fmt.Errorf("unknown action kind %q", a.Kind)
-		return res
+	switch a.Kind {
+	case "RolloutUndo":
+		return applyRolloutUndo(ctx, client, a)
+	case "Uncordon":
+		return applyUncordon(ctx, client, a)
+	default:
+		return Result{Action: a, Err: fmt.Errorf("unknown action kind %q", a.Kind)}
 	}
+}
+
+func applyRolloutUndo(ctx context.Context, client kubernetes.Interface, a Action) Result {
+	res := Result{Action: a}
 	if protectedNamespaces[a.Namespace] {
 		res.Err = fmt.Errorf("refusing to act in protected namespace %q", a.Namespace)
 		return res
@@ -170,8 +177,6 @@ func Apply(ctx context.Context, client kubernetes.Interface, a Action) Result {
 		res.Detail = "no differing prior revision to roll back to (state changed); no write made"
 		return res
 	}
-	// Roll back: restore the target revision's pod template. The controller manages
-	// the pod-template-hash label, so drop it from the Deployment spec.
 	tpl := *target.Spec.Template.DeepCopy()
 	delete(tpl.Labels, "pod-template-hash")
 	dep.Spec.Template = tpl
@@ -182,6 +187,28 @@ func Apply(ctx context.Context, client kubernetes.Interface, a Action) Result {
 	res.Applied = true
 	res.Detail = fmt.Sprintf("rolled back %s/%s to revision %d (pod template restored)",
 		a.Namespace, a.Name, revFromAnnotations(target.Annotations))
+	return res
+}
+
+func applyUncordon(ctx context.Context, client kubernetes.Interface, a Action) Result {
+	res := Result{Action: a}
+	n, err := client.CoreV1().Nodes().Get(ctx, a.Name, metav1.GetOptions{})
+	if err != nil {
+		res.Err = fmt.Errorf("get node: %w", err)
+		return res
+	}
+	// apply-time precondition: still cordoned and still no NoExecute taint
+	if !n.Spec.Unschedulable || hasNoExecuteTaint(*n) {
+		res.Detail = "node is no longer a safe uncordon target (already schedulable or NoExecute-tainted); no write made"
+		return res
+	}
+	n.Spec.Unschedulable = false
+	if _, err := client.CoreV1().Nodes().Update(ctx, n, metav1.UpdateOptions{}); err != nil {
+		res.Err = fmt.Errorf("update node: %w", err)
+		return res
+	}
+	res.Applied = true
+	res.Detail = "uncordoned node " + a.Name
 	return res
 }
 

@@ -26,6 +26,10 @@
   clear in ConfigMaps and pod env literals; reports location and pattern only,
   never the value, and never sends findings to `--explain` — see
   [Credential lint](features/credential-lint.md)
+- **Remediation (`--fix`)** — opt-in, guard-railed writes that apply safe,
+  reversible fixes (`RolloutUndo`, `Uncordon`) after a per-action confirmation;
+  deterministic and never model-decided, with a fixed allowlist and protected
+  namespaces — see [Remediation](features/remediation.md)
 
 !!! info "Version history"
     [GitHub Releases](https://github.com/imantaba/kubeagent/releases) and the

@@ -60,5 +60,6 @@ nav:
       - NetworkPolicy hints: features/networkpolicy.md
       - Connectivity diagnostics: features/connectivity.md
       - Credential lint: features/credential-lint.md
+      - Remediation (--fix): features/remediation.md
   - Install: install.md
   - Roadmap: roadmap.md

@@ -10,7 +10,7 @@ hide:
 
 kubeagent scans a cluster, finds unhealthy pods, and explains *why* they're
 failing — talking to the cluster through the official Kubernetes Go client
-(`client-go`), strictly read-only.
+(`client-go`), read-only by default, with opt-in guard-railed remediation.
 
 <div class="hero-cta" markdown>
 [Get started](quickstart.md){ .md-button .md-button--primary }
@@ -39,6 +39,7 @@ failing — talking to the cluster through the official Kubernetes Go client
 - :material-key-alert-outline: __Credential lint__ — opt-in scan for secrets stored in the clear
 - :material-chart-box-outline: __Resource context__ — cluster CPU/memory plus per-OOMKill limits
 - :material-layers-outline: __Platform facts__ — CNI, ingress, storage, distro, runtime, cloud
+- :material-wrench-outline: __Remediation__ — opt-in `--fix` applies safe, reversible fixes after you confirm
 
 </div>
 

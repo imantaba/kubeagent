@@ -33,6 +33,13 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
 - v1 uses the **standard-library `flag`** package only — no Cobra yet.
 - v1 is **sequential** — no goroutines. Concurrency is a documented later step.
 
+## Commit conventions
+
+- **Do NOT add a `Co-Authored-By: Claude` trailer** (or any Claude / Claude Code
+  attribution) to commits. This overrides the default Claude Code behavior of
+  appending a co-author trailer. Every commit is authored solely by the human;
+  no AI assistant should appear as a contributor to this repository.
+
 ## Testing style
 
 - Detectors are pure functions: unit-test with **fake pods** (`helpers_test.go`),

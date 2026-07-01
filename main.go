@@ -11,6 +11,7 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/imantaba/kubeagent/internal/cluster"
@@ -165,7 +166,7 @@ func run(args []string) error {
 		return err
 	}
 	if *fix {
-		runFixes(context.Background(), client, result.Workloads, inputs.ReplicaSets, *dryRun, *assumeYes, os.Stdout, os.Stdin)
+		runFixes(context.Background(), client, result.Workloads, inputs.ReplicaSets, nodes, *dryRun, *assumeYes, os.Stdout, os.Stdin)
 	}
 	return nil
 }
@@ -173,16 +174,16 @@ func run(args []string) error {
 // runFixes proposes the planned remediations and, unless --dry-run, applies each
 // after a [y/N] confirmation (or unconditionally with --yes). Writes are guarded
 // inside remediate.Apply.
-func runFixes(ctx context.Context, client kubernetes.Interface, workloads []inventory.Workload, replicaSets []appsv1.ReplicaSet, dryRun, assumeYes bool, w io.Writer, in io.Reader) {
-	actions := remediate.Plan(workloads, replicaSets, nil)
+func runFixes(ctx context.Context, client kubernetes.Interface, workloads []inventory.Workload, replicaSets []appsv1.ReplicaSet, nodes []corev1.Node, dryRun, assumeYes bool, w io.Writer, in io.Reader) {
+	actions := remediate.Plan(workloads, replicaSets, nodes)
 	if len(actions) == 0 {
 		fmt.Fprintln(w, "\nNo automatic remediations available.")
 		return
 	}
 	reader := bufio.NewReader(in)
 	for _, a := range actions {
-		fmt.Fprintf(w, "\nProposed fix: %s/%s (Deployment) — %s\n  reason: %s\n  kubectl equivalent: %s\n",
-			a.Namespace, a.Name, a.Summary, a.Reason, a.KubectlEquivalent)
+		fmt.Fprintf(w, "\nProposed fix: %s — %s\n  reason: %s\n  kubectl equivalent: %s\n",
+			a.Target, a.Summary, a.Reason, a.KubectlEquivalent)
 		if dryRun {
 			fmt.Fprintln(w, "  (dry-run: not applied)")
 			continue

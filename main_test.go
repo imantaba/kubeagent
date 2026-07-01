@@ -197,7 +197,7 @@ func TestRunFixes_DryRunWritesNothing(t *testing.T) {
 	d.Spec.Template = corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "nginx:bad"}}}}
 	cli := fake.NewSimpleClientset(d)
 	var out bytes.Buffer
-	runFixes(context.Background(), cli, fixWorkload(), fixRS(), true /*dryRun*/, false, &out, strings.NewReader(""))
+	runFixes(context.Background(), cli, fixWorkload(), fixRS(), nil, true /*dryRun*/, false, &out, strings.NewReader(""))
 	for _, a := range cli.Actions() {
 		if a.GetVerb() == "update" {
 			t.Fatalf("dry-run must not write; saw %s", a.GetVerb())
@@ -215,9 +215,24 @@ func TestRunFixes_YesApplies(t *testing.T) {
 	rss := fixRS()
 	cli := fake.NewSimpleClientset(d, &rss[0], &rss[1])
 	var out bytes.Buffer
-	runFixes(context.Background(), cli, fixWorkload(), rss, false, true /*assumeYes*/, &out, strings.NewReader(""))
+	runFixes(context.Background(), cli, fixWorkload(), rss, nil, false, true /*assumeYes*/, &out, strings.NewReader(""))
 	got, _ := cli.AppsV1().Deployments("shop").Get(context.Background(), "web", metav1.GetOptions{})
 	if got.Spec.Template.Spec.Containers[0].Image != "nginx:1.27" {
 		t.Errorf("expected rollback to nginx:1.27, got %q", got.Spec.Template.Spec.Containers[0].Image)
+	}
+}
+
+func TestRunFixes_UncordonYesApplies(t *testing.T) {
+	n := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1"}}
+	n.Spec.Unschedulable = true
+	cli := fake.NewSimpleClientset(n)
+	var out bytes.Buffer
+	runFixes(context.Background(), cli, nil, nil, []corev1.Node{*n}, false, true, &out, strings.NewReader(""))
+	got, _ := cli.CoreV1().Nodes().Get(context.Background(), "worker-1", metav1.GetOptions{})
+	if got.Spec.Unschedulable {
+		t.Errorf("expected node uncordoned by --yes")
+	}
+	if !strings.Contains(out.String(), "node/worker-1") {
+		t.Errorf("expected the node target in output, got: %s", out.String())
 	}
 }

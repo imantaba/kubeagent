@@ -109,7 +109,7 @@ func TestBuildInventoryPrompt_LeadsWithDegradedCluster(t *testing.T) {
 	if !strings.Contains(got, "DEGRADED") || !strings.Contains(got, "n2 NotReady") {
 		t.Errorf("prompt should lead with the degraded cluster:\n%s", got)
 	}
-	if strings.Contains(got, "need attention") {
+	if strings.Contains(got, "Workload problems") {
 		t.Errorf("should not advertise a workloads section when there are none:\n%s", got)
 	}
 	if !strings.Contains(got, "1/3 nodes Ready") {
@@ -229,6 +229,26 @@ func TestBuildInventoryPrompt_IncludesNetworkPolicyHint(t *testing.T) {
 	// Egress guard: the NP hint path must not leak pod IPs.
 	if strings.Contains(got, "10.42.9.9") {
 		t.Errorf("pod IP leaked into prompt:\n%s", got)
+	}
+}
+
+func TestSystemPrompt_HasStructureAndGuardrail(t *testing.T) {
+	for _, want := range []string{"Root cause", "Check", "Fix", "P1", "P2", "ONLY the facts", "do not invent"} {
+		if !strings.Contains(systemPrompt, want) {
+			t.Errorf("systemPrompt missing %q", want)
+		}
+	}
+}
+
+func TestBuildInventoryPrompt_LabelsPriority(t *testing.T) {
+	ch := clusterhealth.ClusterHealth{Verdict: "Degraded", NodesTotal: 2, NodesReady: 1, NodeIssues: []string{"n2 NotReady"}}
+	ws := []inventory.Workload{{Namespace: "shop", Name: "web", Kind: "Deployment", Ready: 0, Desired: 1, Status: "Degraded"}}
+	got := buildInventoryPrompt(ch, nil, nil, nil, ws)
+	if !strings.Contains(got, "(P1)") {
+		t.Errorf("degraded cluster block should be labeled P1:\n%s", got)
+	}
+	if !strings.Contains(got, "Workload problems (P2):") {
+		t.Errorf("workload block should be labeled P2:\n%s", got)
 	}
 }
 

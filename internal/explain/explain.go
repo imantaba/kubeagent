@@ -17,10 +17,22 @@ import (
 	"github.com/imantaba/kubeagent/internal/svchealth"
 )
 
-const systemPrompt = `You are a Kubernetes SRE. You are given the findings of a
-read-only cluster scan. Explain in plain English what is going wrong and suggest
-concrete next steps an operator can take. Be concise. Respond with only the
-explanation, no preamble.`
+const systemPrompt = `You are a senior Kubernetes SRE reviewing a read-only cluster scan. Explain what
+is wrong and exactly how to fix it, using ONLY the facts provided — do not invent
+causes, resources, or values that are not given.
+
+Address issues in priority order: cluster / kube-system problems (P1) before
+workload problems (P2). For EACH issue use this structure:
+
+**<namespace/name> — <the issue>**
+- Root cause: one line, from the facts. If the facts are ambiguous, name the most
+  likely cause AND what to check — never present a guess as certain.
+- Check: 1–3 read-only commands to confirm (kubectl get/describe/logs).
+- Fix: the exact command(s) or concrete change to resolve it.
+
+Be tight — no preamble, no restating the input, no generic advice. If a finding
+is expected (e.g. a scaled-to-zero workload), say it needs no action. Prefer
+"likely"/"check" over false certainty.`
 
 // DefaultModel is used when neither --model nor KUBEAGENT_MODEL is set.
 const DefaultModel = "claude-opus-4-8"
@@ -80,7 +92,7 @@ func (c *Client) ExplainInventory(ctx context.Context, cluster clusterhealth.Clu
 func buildInventoryPrompt(cluster clusterhealth.ClusterHealth, summary *resources.Summary, facts *platform.Facts, serviceIssues []svchealth.Issue, workloads []inventory.Workload) string {
 	var b strings.Builder
 	if cluster.Verdict == "Degraded" {
-		fmt.Fprintf(&b, "Cluster health: DEGRADED — %d/%d nodes Ready.\n", cluster.NodesReady, cluster.NodesTotal)
+		fmt.Fprintf(&b, "Cluster health (P1): DEGRADED — %d/%d nodes Ready.\n", cluster.NodesReady, cluster.NodesTotal)
 		for _, iss := range cluster.NodeIssues {
 			fmt.Fprintf(&b, "  node %s\n", iss)
 		}
@@ -104,7 +116,7 @@ func buildInventoryPrompt(cluster clusterhealth.ClusterHealth, summary *resource
 	}
 
 	if len(workloads) > 0 {
-		b.WriteString("These Kubernetes workloads need attention:\n\n")
+		b.WriteString("Workload problems (P2):\n\n")
 		for _, w := range workloads {
 			fmt.Fprintf(&b, "- %s/%s (%s): %d/%d ready, status %s, %d restarts\n",
 				w.Namespace, w.Name, w.Kind, w.Ready, w.Desired, w.Status, w.Restarts)
@@ -129,7 +141,7 @@ func buildInventoryPrompt(cluster clusterhealth.ClusterHealth, summary *resource
 		b.WriteString("\n")
 	}
 
-	b.WriteString("\nExplain what is going wrong and suggest concrete next steps.")
+	b.WriteString("\nExplain each problem and its fix using the required structure.")
 	return b.String()
 }
 
@@ -155,7 +167,7 @@ type anthropicSummarizer struct {
 func (a anthropicSummarizer) summarize(ctx context.Context, prompt string) (string, error) {
 	resp, err := a.client.Messages.New(ctx, anthropic.MessageNewParams{
 		Model:     anthropic.Model(a.model),
-		MaxTokens: 1024,
+		MaxTokens: 2048,
 		System:    []anthropic.TextBlockParam{{Text: systemPrompt}},
 		Messages: []anthropic.MessageParam{
 			anthropic.NewUserMessage(anthropic.NewTextBlock(prompt)),

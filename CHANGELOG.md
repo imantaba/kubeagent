@@ -14,6 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   schedulable again after a per-action confirmation. Same rails as `RolloutUndo`
   (allowlist, apply-time precondition re-check, single write, never LLM-decided).
 
+### Changed
+
+- **Sharper `--explain`.** The `--explain` prompt now instructs a consistent,
+  scannable structure (per issue: root cause → checks → fix; cluster/kube-system
+  problems before workloads) and is grounded strictly in the scan's facts (told
+  not to invent causes), reducing misattributed root causes. Still opt-in,
+  read-only, structured-facts-only, and independent of `--fix`.
+
 ## [0.6.0] - 2026-07-01
 
 ### Added

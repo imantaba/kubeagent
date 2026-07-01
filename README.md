@@ -63,6 +63,10 @@ export ANTHROPIC_API_KEY=sk-ant-...
 > sends raw pod specs, pod IPs, environment variables, or secrets. Without
 > `--explain`, kubeagent makes no external calls.
 >
+> The explanation is structured — per issue, a root cause, read-only checks, and an
+> exact fix, with cluster/kube-system problems (P1) before workloads (P2) — and is
+> grounded strictly in the scan's facts (the model is told not to invent causes).
+>
 > Model precedence for `--explain`: the `--model` flag, then the
 > `KUBEAGENT_MODEL` environment variable, then the default `claude-opus-4-8`.
 

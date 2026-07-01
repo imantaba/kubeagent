@@ -55,6 +55,18 @@ install_calico() {
   kubectl --context "$CTX" wait --for=condition=Ready nodes --all --timeout=600s
 }
 
+# wait_system_ready blocks until the core system Deployments are Available, so the
+# baseline scan sees a settled cluster. On a freshly-created cluster CoreDNS,
+# calico-kube-controllers, and local-path-provisioner can still be Pending for a
+# while after the nodes go Ready — scanning too early makes the baseline read
+# Degraded (a harness timing artifact, not a real finding).
+wait_system_ready() {
+  log "wait for system workloads to settle (CoreDNS, Calico controllers, local-path)"
+  kubectl --context "$CTX" -n kube-system rollout status deploy/coredns --timeout=300s
+  kubectl --context "$CTX" -n kube-system rollout status deploy/calico-kube-controllers --timeout=300s
+  kubectl --context "$CTX" -n local-path-storage rollout status deploy/local-path-provisioner --timeout=300s
+}
+
 # Append --explain ONLY when a key is present in the environment (never logged).
 explain_flag() { [ -n "${ANTHROPIC_API_KEY:-}" ] && echo "--explain" || true; }
 # scan [extra args...] — runs kubeagent scan against the chaos context.
@@ -256,6 +268,8 @@ main() {
   # Capture the pristine CoreDNS Corefile TEXT now (cluster is healthy) so scenario 5
   # can restore a known-good config via a clean merge-patch (apply of a get-dump is unreliable).
   kubectl --context "$CTX" -n kube-system get cm coredns -o jsonpath='{.data.Corefile}' > "$COREDNS_BACKUP" 2>/dev/null || true
+
+  wait_system_ready
 
   log "baseline healthy scan"
   { scan 2>&1 || true; } | record "Baseline (healthy cluster)" "baseline"

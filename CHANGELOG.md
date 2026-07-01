@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`--fix` remediation: `Uncordon`.** A second guard-railed action — an
+  accidentally-cordoned node (`SchedulingDisabled`, no `NoExecute` taint) is made
+  schedulable again after a per-action confirmation. Same rails as `RolloutUndo`
+  (allowlist, apply-time precondition re-check, single write, never LLM-decided).
+
 ## [0.6.0] - 2026-07-01
 
 ### Added

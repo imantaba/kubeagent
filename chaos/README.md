@@ -68,6 +68,14 @@ kubectl --context kind-kubeagent-chaos -n chaos-rollout rollout status deploy/we
 kubeagent should propose and apply a `RolloutUndo`, and the Deployment should
 return to a healthy image.
 
+Scenario 3 (node cordon) is the acceptance test for `Uncordon`:
+
+```bash
+kubectl --context kind-kubeagent-chaos cordon kubeagent-chaos-worker
+./kubeagent scan --context kind-kubeagent-chaos --fix --yes
+kubectl --context kind-kubeagent-chaos get node kubeagent-chaos-worker   # SchedulingDisabled should be gone
+```
+
 Each scenario **injects → scans → reverts** so the next starts clean. Scenario 1
 (stopping the control-plane) **runs last** in the suite even though it's listed
 first: etcd/apiserver flap for a while after a `docker stop`/`start`, so running

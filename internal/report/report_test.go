@@ -550,6 +550,24 @@ func TestPrintInventory_CredentialWarningsSuppressAllClear(t *testing.T) {
 	}
 }
 
+func TestPrintInventory_TextShowsRolloutChange(t *testing.T) {
+	wl := inventory.Workload{Namespace: "shop", Name: "web", Kind: "Deployment", Desired: 1, Ready: 0, Status: "Degraded",
+		Findings: []diagnose.Finding{{Issue: "ImagePullBackOff", Reason: "bad image"}},
+		Rollout:  &inventory.RolloutChange{Revision: "6", Since: "4d ago", OldImage: "nginx:1.27", NewImage: "nginx:bad"}}
+	var buf bytes.Buffer
+	result := inventory.Result{Workloads: []inventory.Workload{wl}}
+	if err := PrintInventory(clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1}, result, nil, nil, nil, nil, "", "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "changed: rollout to revision 6, 4d ago") {
+		t.Errorf("missing rollout-change line:\n%s", out)
+	}
+	if !strings.Contains(out, "image nginx:1.27 → nginx:bad") {
+		t.Errorf("missing image delta:\n%s", out)
+	}
+}
+
 func TestPrintInventory_JSONIncludesCredentialWarnings(t *testing.T) {
 	var buf bytes.Buffer
 	ch := clusterhealth.ClusterHealth{Verdict: "Healthy", NodesTotal: 1, NodesReady: 1}

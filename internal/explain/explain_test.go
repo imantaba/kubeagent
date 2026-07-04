@@ -252,6 +252,19 @@ func TestBuildInventoryPrompt_LabelsPriority(t *testing.T) {
 	}
 }
 
+func TestBuildInventoryPrompt_IncludesRolloutChange(t *testing.T) {
+	ch := clusterhealth.ClusterHealth{Verdict: "Healthy", NodesTotal: 1, NodesReady: 1}
+	ws := []inventory.Workload{{Namespace: "shop", Name: "web", Kind: "Deployment", Ready: 0, Desired: 1, Status: "Degraded",
+		Rollout: &inventory.RolloutChange{Revision: "6", Since: "4d ago", OldImage: "nginx:1.27", NewImage: "nginx:bad"}}}
+	got := buildInventoryPrompt(ch, nil, nil, nil, ws)
+	if !strings.Contains(got, "recent change: rolled out to revision 6 4d ago") {
+		t.Errorf("prompt missing rollout change:\n%s", got)
+	}
+	if !strings.Contains(got, "image nginx:1.27 → nginx:bad") {
+		t.Errorf("prompt missing image delta:\n%s", got)
+	}
+}
+
 func TestResolveModel(t *testing.T) {
 	cases := []struct {
 		name, flag, env, want string

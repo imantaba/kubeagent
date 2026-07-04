@@ -178,6 +178,7 @@ func TestRun_FixFlagsAccepted(t *testing.T) {
 
 func fixWorkload() []inventory.Workload {
 	return []inventory.Workload{{Namespace: "shop", Name: "web", Kind: "Deployment",
+		Desired: 1, Ready: 0, // degraded, so RolloutUndo is proposed under the Ready < Desired gate
 		Findings: []diagnose.Finding{{Issue: "ImagePullBackOff"}}}}
 }
 func fixRS() []appsv1.ReplicaSet {

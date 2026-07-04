@@ -15,8 +15,12 @@ Only these actions are ever planned or applied — nothing outside the allowlist
 
 | Action | Proposed when | What it does | `kubectl` equivalent |
 |--------|---------------|--------------|----------------------|
-| `RolloutUndo` | a Deployment's newest rollout cannot pull its image and a prior revision exists | rolls the Deployment back to its previous revision | `kubectl -n <ns> rollout undo deployment/<name>` |
+| `RolloutUndo` | a Deployment is **degraded** (Ready < Desired) because its newest rollout cannot pull its image, and a prior revision exists | rolls the Deployment back to its previous revision | `kubectl -n <ns> rollout undo deployment/<name>` |
 | `Uncordon` | a node is cordoned (`SchedulingDisabled`) with no `NoExecute` taint | makes the node schedulable again | `kubectl uncordon <node>` |
+
+A rollout that is stuck on `ImagePullBackOff` but whose previous revision is still
+serving (`Ready == Desired`) is **not** rolled back — the app is not down, so the
+image is left for you to fix forward.
 
 An accidental cordon is uncordoned; a deliberate drain (which carries a
 `NoExecute` taint) is left alone.

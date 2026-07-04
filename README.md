@@ -155,9 +155,11 @@ re-verified. Nothing about remediations is sent to `--explain`.
 
 **Remediations:**
 
-- **`RolloutUndo`** — when a Deployment's newest rollout can't pull its image
+- **`RolloutUndo`** — when a Deployment is **degraded** (fewer ready replicas than
+  desired) because its newest rollout can't pull its image
   (`ImagePullBackOff`/`ErrImagePull`) and a prior revision exists, roll it back to
-  that revision (a single, reversible `Deployment` update via client-go).
+  that revision (a single, reversible `Deployment` update via client-go). A rollout
+  that is stuck but still serving on its previous revision is left alone.
 - **`Uncordon`** — when a node is cordoned (`SchedulingDisabled`) and has no
   `NoExecute` taint (i.e. it's accidentally cordoned, not being drained), make it
   schedulable again (a single `Node` update; reversible with `kubectl cordon`).

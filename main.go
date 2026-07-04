@@ -27,6 +27,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/remediate"
 	"github.com/imantaba/kubeagent/internal/report"
 	"github.com/imantaba/kubeagent/internal/resources"
+	"github.com/imantaba/kubeagent/internal/rollout"
 	"github.com/imantaba/kubeagent/internal/svchealth"
 )
 
@@ -145,6 +146,7 @@ func run(args []string) error {
 		podLabels[p.Namespace+"/"+p.Name] = p.Labels
 	}
 	netpolicy.Annotate(result.Workloads, podLabels, nps)
+	rollout.Annotate(result.Workloads, inputs.ReplicaSets, time.Now())
 
 	var explanation string
 	if *explainFlag {

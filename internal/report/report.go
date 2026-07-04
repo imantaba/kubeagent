@@ -237,6 +237,15 @@ func printWorkload(wl inventory.Workload, w io.Writer) error {
 			return err
 		}
 	}
+	if wl.Rollout != nil {
+		line := fmt.Sprintf("    ↳ changed: rollout to revision %s, %s", wl.Rollout.Revision, wl.Rollout.Since)
+		if wl.Rollout.NewImage != "" {
+			line += fmt.Sprintf(" · image %s → %s", wl.Rollout.OldImage, wl.Rollout.NewImage)
+		}
+		if _, err := fmt.Fprintln(w, line); err != nil {
+			return err
+		}
+	}
 	for _, p := range wl.Pods {
 		restarts := fmt.Sprintf("%d", p.Restarts)
 		if p.LastRestart != "" {

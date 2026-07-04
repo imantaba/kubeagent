@@ -46,6 +46,17 @@ type Workload struct {
 	Schedule        string             `json:"schedule,omitempty"`
 	Priority        int                `json:"priority,omitempty"`        // 2 problem | 3 restart-only | 4 cron (set by Prioritize)
 	NetworkPolicies []string           `json:"networkPolicies,omitempty"` // names of NPs selecting this workload's pods (hint; set by netpolicy.Annotate)
+	Rollout         *RolloutChange     `json:"rollout,omitempty"`         // recent-rollout correlation (hint; set by rollout.Annotate)
+}
+
+// RolloutChange is a recent-rollout correlation for a flagged Deployment: what
+// changed (revision, image) and when. Set by rollout.Annotate; nil when there is
+// no recent rollout to report.
+type RolloutChange struct {
+	Revision string `json:"revision"`
+	Since    string `json:"since"`
+	OldImage string `json:"oldImage,omitempty"`
+	NewImage string `json:"newImage,omitempty"`
 }
 
 // Flagged reports whether the workload needs attention.

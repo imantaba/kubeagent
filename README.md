@@ -119,6 +119,14 @@ the policy rules or know what traffic the pod needs, so it points you at the
 policies to check. Read-only, namespace-scoped; only policy names are sent to the
 model. (Note: some CNIs, e.g. kindnet, do not enforce NetworkPolicies at all.)
 
+### What changed
+
+For a flagged Deployment, kubeagent also correlates the problem with its most
+recent rollout when that rollout is recent — showing the revision, its age, and
+the image change (`↳ changed: rollout to revision 6, 4d ago · image A → B`) so
+you can see *what changed* at a glance. It is deterministic and never claims the
+rollout caused the failure.
+
 ### Connectivity diagnostics
 
 When the API server can't be reached, `scan` prints an actionable diagnosis

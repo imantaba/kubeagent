@@ -57,3 +57,19 @@ P2 — Workload issues
   production  worker             Deployment  0/3     OOMKilled           12
   production  batch-processor    Job         0/1     Pending             0
 ```
+
+## What changed
+
+When a Deployment is flagged and its most recent rollout is recent (within 7
+days), kubeagent adds a `changed:` line with the revision, its age, and the
+first-container image delta:
+
+```text
+⚠ shop/web  Deployment  0/1 Degraded
+    ⚠ ImagePullBackOff: Bad image reference or registry authentication
+    ↳ changed: rollout to revision 6, 4d ago · image nginx:1.27 → nginx:bad
+```
+
+It reuses the ReplicaSet history already collected (read-only), states only what
+changed and when, and never claims the rollout caused the problem — that
+connection is left to you (or `--explain`).

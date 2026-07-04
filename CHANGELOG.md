@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **"What changed" rollout awareness.** A flagged Deployment now shows its most
+  recent rollout when it is recent (within 7 days) — the revision, its age, and
+  the image delta (`↳ changed: rollout to revision 6, 4d ago · image A → B`) — in
+  text, JSON (`rollout`), and `--explain`. Deterministic and read-only (reuses
+  the ReplicaSets already collected); factual, with no causal claim.
+
 ### Changed
 
 - **`--fix` `RolloutUndo` is more conservative.** A Deployment rollback is now

@@ -14,7 +14,8 @@ import (
 )
 
 func dep(ns, name string, issue string) inventory.Workload {
-	w := inventory.Workload{Namespace: ns, Name: name, Kind: "Deployment"}
+	// Ready 0 < Desired 1 => degraded, so a RolloutUndo is warranted.
+	w := inventory.Workload{Namespace: ns, Name: name, Kind: "Deployment", Desired: 1, Ready: 0}
 	if issue != "" {
 		w.Findings = []diagnose.Finding{{Pod: ns + "/" + name + "-x", Issue: issue}}
 	}
@@ -76,6 +77,15 @@ func TestPlan_ErrImagePullAlsoTriggers(t *testing.T) {
 	got := Plan(wls, rss, nil)
 	if len(got) != 1 || got[0].Kind != "RolloutUndo" {
 		t.Fatalf("ErrImagePull should also propose RolloutUndo, got %+v", got)
+	}
+}
+
+func TestPlan_SkipsAvailableDeployment(t *testing.T) {
+	w := dep("shop", "web", "ImagePullBackOff")
+	w.Ready, w.Desired = 1, 1 // previous revision still serving — not degraded
+	rss := []appsv1.ReplicaSet{rs("shop", "web-1", "web", "1"), rs("shop", "web-2", "web", "2")}
+	if got := Plan([]inventory.Workload{w}, rss, nil); len(got) != 0 {
+		t.Fatalf("available deployment (Ready==Desired) -> no rollback, got %+v", got)
 	}
 }
 

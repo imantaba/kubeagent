@@ -49,6 +49,9 @@ func Plan(workloads []inventory.Workload, replicaSets []appsv1.ReplicaSet, nodes
 		if !hasImagePullFinding(w) {
 			continue
 		}
+		if w.Ready >= w.Desired {
+			continue // still meeting its replica target (e.g. previous revision serving) — not an outage
+		}
 		prev := previousRevision(w.Namespace, w.Name, replicaSets)
 		if prev == "" {
 			continue

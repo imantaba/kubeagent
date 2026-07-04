@@ -60,12 +60,18 @@ Scenario 9 (faulty rollout) is the acceptance test for `--fix`. After a run leav
 it injected, roll it back and confirm recovery:
 
 ```bash
+# Force a degraded rollout: no surge + allow an old pod down, so the failing new
+# pod replaces a serving one (Ready < Desired) — which is what --fix now requires
+# before proposing a rollback.
+kubectl --context kind-kubeagent-chaos -n chaos-rollout patch deploy/web \
+  -p '{"spec":{"strategy":{"rollingUpdate":{"maxSurge":0,"maxUnavailable":1}}}}'
 kubectl --context kind-kubeagent-chaos -n chaos-rollout set image deploy/web web=nginx:does-not-exist-9999
 ./kubeagent scan --context kind-kubeagent-chaos --fix --yes
 kubectl --context kind-kubeagent-chaos -n chaos-rollout rollout status deploy/web
 ```
 
-kubeagent should propose and apply a `RolloutUndo`, and the Deployment should
+kubeagent should propose and apply a `RolloutUndo` (the Deployment is degraded —
+the new pod can't pull and replaced a serving one), and the Deployment should
 return to a healthy image.
 
 Scenario 3 (node cordon) is the acceptance test for `Uncordon`:

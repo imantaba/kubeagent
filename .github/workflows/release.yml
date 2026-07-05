@@ -50,3 +50,21 @@ jobs:
           files: |
             kubeagent_${{ steps.ver.outputs.version }}_linux_amd64.tar.gz
             SHA256SUMS
+
+      # Container image for the watch daemon (deploy/deployment.yaml pulls this).
+      # Skipped when the Docker Hub secrets are not configured, so the release
+      # still succeeds without them. Requires repo secrets:
+      #   DOCKERHUB_USERNAME (imantaba) and DOCKERHUB_TOKEN (a Read/Write access token).
+      - name: Log in to Docker Hub
+        if: ${{ secrets.DOCKERHUB_TOKEN != '' }}
+        run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+      - name: Build + push image
+        if: ${{ secrets.DOCKERHUB_TOKEN != '' }}
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          docker build -t "imantaba/kubeagent:${VERSION}" --build-arg VERSION="${VERSION}" .
+          docker tag "imantaba/kubeagent:${VERSION}" imantaba/kubeagent:latest
+          docker push "imantaba/kubeagent:${VERSION}"
+          docker push imantaba/kubeagent:latest

@@ -12,18 +12,18 @@ in-cluster. The daemon is **strictly read-only** (RBAC grants only `get`/`list`/
 kubectl create namespace kubeagent
 ```
 
-### 2. Build and push your image
+### 2. The image
 
-The manifests reference `ghcr.io/imantaba/kubeagent:latest` as a placeholder.
-Replace it with your own published image before applying:
+The manifests use the official image
+[`imantaba/kubeagent`](https://hub.docker.com/r/imantaba/kubeagent) on Docker
+Hub (distroless, non-root), pinned to a release version — no build step needed.
+
+To build and use your own instead:
 
 ```bash
-# build your image (the release tarball is a binary; wrapping it in a container
-# image is the operator's step)
-docker build -t ghcr.io/<your-org>/kubeagent:latest .
-docker push ghcr.io/<your-org>/kubeagent:latest
-
-# update the image reference in deploy/deployment.yaml, then apply:
+docker build -t <your-registry>/kubeagent:v0.9.0 --build-arg VERSION=v0.9.0 .
+docker push <your-registry>/kubeagent:v0.9.0
+# then update the image reference in deploy/deployment.yaml
 ```
 
 ### 3. Apply all manifests

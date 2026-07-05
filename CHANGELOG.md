@@ -5,6 +5,18 @@ All notable changes to kubeagent are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Daemon watch mode (`kubeagent watch`).** Run kubeagent in-cluster as a
+  strictly read-only daemon: it watches the cluster via informers, re-runs the
+  deterministic diagnosis on change (debounced) plus a heartbeat, and exposes the
+  result as structured logs and hand-rolled Prometheus `/metrics` (with `/healthz`
+  and `/readyz`). No cluster writes, no LLM calls, no new dependency. Read-only
+  RBAC and Deployment manifests are in `deploy/`. (Multi-cluster, Kubernetes
+  Events, `--explain`, and autonomous remediation are planned for later phases.)
+
 ## [0.8.0] - 2026-07-04
 
 ### Added

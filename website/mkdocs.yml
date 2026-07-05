@@ -61,5 +61,6 @@ nav:
       - Connectivity diagnostics: features/connectivity.md
       - Credential lint: features/credential-lint.md
       - Remediation (--fix): features/remediation.md
+      - Watch mode (daemon): features/watch-mode.md
   - Install: install.md
   - Roadmap: roadmap.md

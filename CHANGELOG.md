@@ -5,7 +5,7 @@ All notable changes to kubeagent are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.9.0] - 2026-07-05
 
 ### Added
 
@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `/readyz`). No cluster writes, no LLM calls, no new dependency. Read-only
   RBAC and Deployment manifests are in `deploy/`. (Multi-cluster, Kubernetes
   Events, `--explain`, and autonomous remediation are planned for later phases.)
+- **Dockerfile.** A multi-stage build producing a small distroless, non-root
+  image for running the daemon in-cluster (used by `deploy/deployment.yaml`).
 
 ## [0.8.0] - 2026-07-04
 
@@ -157,6 +159,7 @@ infrastructure (a documentation site and a pre-release chaos-test harness).
 - CI (vet/test/build on push & PR) and a release workflow publishing a
   linux/amd64 tarball + `SHA256SUMS` to a GitHub Release.
 
+[0.9.0]: https://github.com/imantaba/kubeagent/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/imantaba/kubeagent/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/imantaba/kubeagent/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/imantaba/kubeagent/compare/v0.5.0...v0.6.0

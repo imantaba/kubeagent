@@ -40,6 +40,7 @@ failing — talking to the cluster through the official Kubernetes Go client
 - :material-chart-box-outline: __Resource context__ — cluster CPU/memory plus per-OOMKill limits
 - :material-layers-outline: __Platform facts__ — CNI, ingress, storage, distro, runtime, cloud
 - :material-wrench-outline: __Remediation__ — opt-in `--fix` applies safe, reversible fixes after you confirm
+- :material-radar: __Watch mode__ — run it in-cluster as a read-only daemon exposing Prometheus metrics
 
 </div>
 

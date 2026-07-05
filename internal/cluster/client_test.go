@@ -87,3 +87,13 @@ func TestNewClient_EmptyContextUsesCurrent(t *testing.T) {
 		t.Errorf("expected success using current-context, got %v", err)
 	}
 }
+
+// Outside a pod (no service-account env), NewInClusterOrKubeconfig must fall back
+// to the kubeconfig path — here, a bogus path yields a load error, proving it took
+// the kubeconfig branch rather than the in-cluster one.
+func TestNewInClusterOrKubeconfig_FallsBackToKubeconfig(t *testing.T) {
+	os.Unsetenv("KUBERNETES_SERVICE_HOST")
+	if _, err := NewInClusterOrKubeconfig("/no/such/kubeconfig", ""); err == nil {
+		t.Fatal("expected a kubeconfig load error in the fallback path, got nil")
+	}
+}

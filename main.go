@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -25,6 +27,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/report"
 	"github.com/imantaba/kubeagent/internal/resources"
 	"github.com/imantaba/kubeagent/internal/scan"
+	"github.com/imantaba/kubeagent/internal/watch"
 )
 
 // version is the build version, overridden at release time via
@@ -48,8 +51,11 @@ func run(args []string) error {
 		fmt.Fprintln(os.Stdout, versionLine())
 		return nil
 	}
+	if len(args) > 0 && args[0] == "watch" {
+		return runWatch(args[1:])
+	}
 	if len(args) == 0 || args[0] != "scan" {
-		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--model name] [--include-cron] [--include-restarts] [--lint-secrets] [--fix [--dry-run|--yes]] | kubeagent version")
+		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--model name] [--include-cron] [--include-restarts] [--lint-secrets] [--fix [--dry-run|--yes]] | kubeagent watch [--kubeconfig path] [--context name] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] | kubeagent version")
 	}
 
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
@@ -141,6 +147,57 @@ func run(args []string) error {
 		runFixes(context.Background(), client, result.Workloads, res.Inputs.ReplicaSets, nodes, *dryRun, *assumeYes, os.Stdout, os.Stdin)
 	}
 	return nil
+}
+
+func runWatch(args []string) error {
+	fs := flag.NewFlagSet("watch", flag.ContinueOnError)
+	kubeconfig := fs.String("kubeconfig", "", "path to kubeconfig for local dev (ignored in-cluster)")
+	contextName := fs.String("context", "", "kubeconfig context for local dev")
+	metricsAddr := fs.String("metrics-addr", envOr("KUBEAGENT_METRICS_ADDR", ":8080"), "address for /metrics, /healthz, /readyz")
+	heartbeat := fs.Duration("heartbeat", envDur("KUBEAGENT_HEARTBEAT", 60*time.Second), "safety-net full re-evaluation interval")
+	debounce := fs.Duration("debounce", envDur("KUBEAGENT_DEBOUNCE", 2*time.Second), "coalescing window for change events")
+	includeCron := fs.Bool("include-cron", false, "include CronJobs in the evaluation")
+	includeRestarts := fs.Bool("include-restarts", false, "include workloads that are healthy now but have restarted")
+	var namespace string
+	fs.StringVar(&namespace, "namespace", envOr("KUBEAGENT_NAMESPACE", ""), "namespace to watch (default: all)")
+	fs.StringVar(&namespace, "n", envOr("KUBEAGENT_NAMESPACE", ""), "namespace to watch (shorthand)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	client, err := cluster.NewInClusterOrKubeconfig(*kubeconfig, *contextName)
+	if err != nil {
+		return err
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return watch.Run(ctx, client, watch.Config{
+		Namespace:       namespace,
+		MetricsAddr:     *metricsAddr,
+		Heartbeat:       *heartbeat,
+		Debounce:        *debounce,
+		IncludeCron:     *includeCron,
+		IncludeRestarts: *includeRestarts,
+	})
+}
+
+// envOr returns the env var value if set, else def.
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
+// envDur parses a duration env var, falling back to def on empty/invalid.
+func envDur(key string, def time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
+	}
+	return def
 }
 
 // runFixes proposes the planned remediations and, unless --dry-run, applies each

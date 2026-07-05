@@ -15,6 +15,10 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      # Secrets are not readable in step-level `if:` — surface presence via env.
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -56,11 +60,11 @@ jobs:
       # still succeeds without them. Requires repo secrets:
       #   DOCKERHUB_USERNAME (imantaba) and DOCKERHUB_TOKEN (a Read/Write access token).
       - name: Log in to Docker Hub
-        if: ${{ secrets.DOCKERHUB_TOKEN != '' }}
-        run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+        if: ${{ env.DOCKERHUB_TOKEN != '' }}
+        run: echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
 
       - name: Build + push image
-        if: ${{ secrets.DOCKERHUB_TOKEN != '' }}
+        if: ${{ env.DOCKERHUB_TOKEN != '' }}
         env:
           VERSION: ${{ steps.ver.outputs.version }}
         run: |

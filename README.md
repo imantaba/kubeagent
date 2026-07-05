@@ -172,6 +172,36 @@ re-verified. Nothing about remediations is sent to `--explain`.
   `NoExecute` taint (i.e. it's accidentally cordoned, not being drained), make it
   schedulable again (a single `Node` update; reversible with `kubectl cordon`).
 
+### Watch mode (daemon)
+
+`kubeagent watch` runs kubeagent in-cluster as a continuously running,
+**strictly read-only** daemon. It opens an informer against the cluster (using
+the in-cluster service account, or `--kubeconfig` as fallback), re-runs the
+deterministic diagnosis whenever the watch stream signals a change (debounced),
+and also re-runs on a periodic heartbeat — emitting findings as structured log
+lines and exposing them as Prometheus metrics.
+
+```bash
+./kubeagent watch                        # in-cluster defaults
+./kubeagent watch --metrics-addr :9090   # metrics/health port (default :8080)
+./kubeagent watch --heartbeat 60s        # re-scan interval (default 60s)
+./kubeagent watch --debounce 5s          # change-flood cooldown (default 2s)
+./kubeagent watch -n my-namespace        # scope to one namespace
+```
+
+Endpoints exposed on `--metrics-addr`:
+
+| Path | Description |
+| ---- | ----------- |
+| `/metrics` | Prometheus metrics (unhealthy pod/node counts, scan duration, etc.) |
+| `/healthz` | Liveness probe — returns 200 when the daemon is running |
+| `/readyz` | Readiness probe — returns 200 after the first scan completes |
+
+The daemon makes **no cluster writes**, makes **no LLM/Anthropic calls**, and
+adds **no new dependencies** (informers are part of `client-go`; metrics are
+hand-rolled, no Prometheus library needed). RBAC (`get`/`list`/`watch` only) and
+a Deployment manifest are in [`deploy/`](deploy/).
+
 ## Install
 
 Prebuilt **linux/amd64** binaries are attached to each

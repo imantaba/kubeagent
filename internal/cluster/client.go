@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -34,6 +35,18 @@ func NewClient(kubeconfigPath, contextName string) (*kubernetes.Clientset, error
 		return nil, fmt.Errorf("creating clientset: %w", err)
 	}
 	return clientset, nil
+}
+
+// NewInClusterOrKubeconfig builds a clientset from the in-cluster service-account
+// when running inside a pod; otherwise it falls back to NewClient(kubeconfig,
+// context) for local development.
+func NewInClusterOrKubeconfig(kubeconfigPath, contextName string) (*kubernetes.Clientset, error) {
+	if cfg, err := rest.InClusterConfig(); err == nil {
+		return kubernetes.NewForConfig(cfg)
+	} else if err != rest.ErrNotInCluster {
+		return nil, fmt.Errorf("loading in-cluster config: %w", err)
+	}
+	return NewClient(kubeconfigPath, contextName)
 }
 
 func resolveKubeconfig(explicit string) (string, error) {

@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubeagent
+  namespace: kubeagent
+  labels: { app: kubeagent }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: kubeagent }
+  template:
+    metadata:
+      labels: { app: kubeagent }
+    spec:
+      serviceAccountName: kubeagent
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+      containers:
+        - name: kubeagent
+          image: ghcr.io/imantaba/kubeagent:latest # replace with your published image
+          args: ["watch", "--metrics-addr=:8080"]
+          ports:
+            - name: metrics
+              containerPort: 8080
+          readinessProbe:
+            httpGet: { path: /readyz, port: metrics }
+            initialDelaySeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: metrics }
+            initialDelaySeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 250m, memory: 256Mi }

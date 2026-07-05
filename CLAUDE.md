@@ -31,7 +31,10 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   LLM-decided. Without `--fix`, kubeagent never creates, updates, patches, or
   deletes anything.
 - v1 uses the **standard-library `flag`** package only — no Cobra yet.
-- v1 is **sequential** — no goroutines. Concurrency is a documented later step.
+- v1 CLI (`scan`) is **sequential** — no goroutines. The `watch` daemon
+  (`internal/watch`) is the documented exception: it runs informers, a heartbeat
+  ticker, and an HTTP server concurrently. It remains **strictly read-only**
+  (get/list/watch only; no writes, no LLM).
 
 ## Commit conventions
 

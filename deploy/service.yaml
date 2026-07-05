@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubeagent-metrics
+  namespace: kubeagent
+  labels: { app: kubeagent }
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8080"
+    prometheus.io/path: "/metrics"
+spec:
+  selector: { app: kubeagent }
+  ports:
+    - name: metrics
+      port: 8080
+      targetPort: metrics

@@ -30,6 +30,10 @@
   reversible fixes (`RolloutUndo`, `Uncordon`) after a per-action confirmation;
   deterministic and never model-decided, with a fixed allowlist and protected
   namespaces — see [Remediation](features/remediation.md)
+- **Daemon watch mode** — `kubeagent watch` runs in-cluster (read-only) and
+  exposes continuous cluster-health diagnosis as Prometheus metrics + structured
+  logs; see `deploy/`. First phase of a daemon roadmap (multi-cluster, on-incident
+  `--explain`, and guarded autonomous remediation to follow).
 
 !!! info "Version history"
     [GitHub Releases](https://github.com/imantaba/kubeagent/releases) and the

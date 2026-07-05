@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -15,20 +17,17 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/imantaba/kubeagent/internal/cluster"
-	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/collect"
 	"github.com/imantaba/kubeagent/internal/connectivity"
 	"github.com/imantaba/kubeagent/internal/credlint"
-	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/explain"
 	"github.com/imantaba/kubeagent/internal/inventory"
-	"github.com/imantaba/kubeagent/internal/netpolicy"
 	"github.com/imantaba/kubeagent/internal/platform"
 	"github.com/imantaba/kubeagent/internal/remediate"
 	"github.com/imantaba/kubeagent/internal/report"
 	"github.com/imantaba/kubeagent/internal/resources"
-	"github.com/imantaba/kubeagent/internal/rollout"
-	"github.com/imantaba/kubeagent/internal/svchealth"
+	"github.com/imantaba/kubeagent/internal/scan"
+	"github.com/imantaba/kubeagent/internal/watch"
 )
 
 // version is the build version, overridden at release time via
@@ -52,8 +51,11 @@ func run(args []string) error {
 		fmt.Fprintln(os.Stdout, versionLine())
 		return nil
 	}
+	if len(args) > 0 && args[0] == "watch" {
+		return runWatch(args[1:])
+	}
 	if len(args) == 0 || args[0] != "scan" {
-		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--model name] [--include-cron] [--include-restarts] [--lint-secrets] [--fix [--dry-run|--yes]] | kubeagent version")
+		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--model name] [--include-cron] [--include-restarts] [--lint-secrets] [--fix [--dry-run|--yes]] | kubeagent watch [--kubeconfig path] [--context name] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] | kubeagent version")
 	}
 
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
@@ -89,35 +91,27 @@ func run(args []string) error {
 		return err
 	}
 
-	inputs, err := collect.CollectInventory(context.Background(), client, namespace)
+	res, err := scan.Evaluate(context.Background(), client, scan.Options{
+		Namespace:       namespace,
+		IncludeCron:     *includeCron,
+		IncludeRestarts: *includeRestarts,
+	})
 	if err != nil {
 		if diag, ok := connectivity.Diagnose(err); ok {
 			return fmt.Errorf("%s\ndetails: %w", diag, err)
 		}
 		return err
 	}
-
-	detectors := []diagnose.Detector{
-		diagnose.CrashLoopDetector{},
-		diagnose.ImagePullDetector{},
-		diagnose.OOMKilledDetector{},
-		diagnose.PendingDetector{},
-	}
-	findings := diagnose.Run(detectors, collect.FactsFrom(inputs.Pods))
-	workloads := inventory.Assemble(inputs, findings)
-
-	nodes, err := collect.Nodes(context.Background(), client)
-	if err != nil {
-		return err
-	}
-	health := clusterhealth.Assess(nodes, workloads)
-	health.ScopeNote = clusterhealth.NamespaceScopeNote(namespace)
+	health := res.Health
+	result := res.Inventory
+	serviceIssues := res.ServiceIssues
+	nodes := res.Nodes
 
 	usage, _, metricsErr := collect.NodeMetrics(context.Background(), client)
 	if metricsErr != nil {
 		fmt.Fprintf(os.Stderr, "kubeagent: warning: metrics unavailable: %v\n", metricsErr)
 	}
-	resourcePods := inputs.Pods
+	resourcePods := res.Inputs.Pods
 	if namespace != "" {
 		if all, perr := collect.AllPods(context.Background(), client); perr == nil {
 			resourcePods = all
@@ -129,24 +123,6 @@ func run(args []string) error {
 	ics, _ := collect.IngressClasses(context.Background(), client)
 	sysDS, _ := collect.SystemDaemonSets(context.Background(), client)
 	facts := platform.Detect(nodes, sysDS, scs, ics)
-
-	svcs, _ := collect.Services(context.Background(), client, namespace)
-	slices, _ := collect.EndpointSlices(context.Background(), client, namespace)
-	backends := svchealth.BackendsFrom(inputs.Deployments, inputs.StatefulSets, inputs.DaemonSets, inputs.Jobs, inputs.CronJobs)
-	serviceIssues := svchealth.Assess(svcs, slices, backends)
-
-	result := inventory.Prioritize(workloads, inventory.Opts{
-		IncludeRestarts: *includeRestarts,
-		IncludeCron:     *includeCron,
-	})
-
-	nps, _ := collect.NetworkPolicies(context.Background(), client, namespace)
-	podLabels := make(map[string]map[string]string, len(inputs.Pods))
-	for _, p := range inputs.Pods {
-		podLabels[p.Namespace+"/"+p.Name] = p.Labels
-	}
-	netpolicy.Annotate(result.Workloads, podLabels, nps)
-	rollout.Annotate(result.Workloads, inputs.ReplicaSets, time.Now())
 
 	var explanation string
 	if *explainFlag {
@@ -161,16 +137,67 @@ func run(args []string) error {
 	var credWarnings []credlint.Finding
 	if *lintSecrets {
 		cms, _ := collect.ConfigMaps(context.Background(), client, namespace)
-		credWarnings = credlint.Scan(cms, inputs.Pods)
+		credWarnings = credlint.Scan(cms, res.Inputs.Pods)
 	}
 
 	if err := report.PrintInventory(health, result, &summary, &facts, serviceIssues, credWarnings, explanation, *output, os.Stdout); err != nil {
 		return err
 	}
 	if *fix {
-		runFixes(context.Background(), client, result.Workloads, inputs.ReplicaSets, nodes, *dryRun, *assumeYes, os.Stdout, os.Stdin)
+		runFixes(context.Background(), client, result.Workloads, res.Inputs.ReplicaSets, nodes, *dryRun, *assumeYes, os.Stdout, os.Stdin)
 	}
 	return nil
+}
+
+func runWatch(args []string) error {
+	fs := flag.NewFlagSet("watch", flag.ContinueOnError)
+	kubeconfig := fs.String("kubeconfig", "", "path to kubeconfig for local dev (ignored in-cluster)")
+	contextName := fs.String("context", "", "kubeconfig context for local dev")
+	metricsAddr := fs.String("metrics-addr", envOr("KUBEAGENT_METRICS_ADDR", ":8080"), "address for /metrics, /healthz, /readyz")
+	heartbeat := fs.Duration("heartbeat", envDur("KUBEAGENT_HEARTBEAT", 60*time.Second), "safety-net full re-evaluation interval")
+	debounce := fs.Duration("debounce", envDur("KUBEAGENT_DEBOUNCE", 2*time.Second), "coalescing window for change events")
+	includeCron := fs.Bool("include-cron", false, "include CronJobs in the evaluation")
+	includeRestarts := fs.Bool("include-restarts", false, "include workloads that are healthy now but have restarted")
+	var namespace string
+	fs.StringVar(&namespace, "namespace", envOr("KUBEAGENT_NAMESPACE", ""), "namespace to watch (default: all)")
+	fs.StringVar(&namespace, "n", envOr("KUBEAGENT_NAMESPACE", ""), "namespace to watch (shorthand)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	client, err := cluster.NewInClusterOrKubeconfig(*kubeconfig, *contextName)
+	if err != nil {
+		return err
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return watch.Run(ctx, client, watch.Config{
+		Namespace:       namespace,
+		MetricsAddr:     *metricsAddr,
+		Heartbeat:       *heartbeat,
+		Debounce:        *debounce,
+		IncludeCron:     *includeCron,
+		IncludeRestarts: *includeRestarts,
+	})
+}
+
+// envOr returns the env var value if set, else def.
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
+// envDur parses a duration env var, falling back to def on empty/invalid.
+func envDur(key string, def time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
+	}
+	return def
 }
 
 // runFixes proposes the planned remediations and, unless --dry-run, applies each

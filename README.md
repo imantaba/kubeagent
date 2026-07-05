@@ -184,7 +184,7 @@ lines and exposing them as Prometheus metrics.
 ```bash
 ./kubeagent watch                        # in-cluster defaults
 ./kubeagent watch --metrics-addr :9090   # metrics/health port (default :8080)
-./kubeagent watch --heartbeat 60s        # re-scan interval (default 30s)
+./kubeagent watch --heartbeat 60s        # re-scan interval (default 60s)
 ./kubeagent watch --debounce 5s          # change-flood cooldown (default 2s)
 ./kubeagent watch -n my-namespace        # scope to one namespace
 ```

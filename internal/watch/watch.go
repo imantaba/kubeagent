@@ -73,7 +73,16 @@ func Run(ctx context.Context, client kubernetes.Interface, cfg Config) error {
 		}
 	}
 	factory.Start(ctx.Done())
-	factory.WaitForCacheSync(ctx.Done())
+	if synced := factory.WaitForCacheSync(ctx.Done()); func() bool {
+		for _, ok := range synced {
+			if !ok {
+				return true
+			}
+		}
+		return false
+	}() {
+		log.Printf("kubeagent: warning: informer caches did not fully sync (context cancelled?)")
+	}
 	log.Printf("kubeagent: watching cluster (namespace=%q, heartbeat=%s); metrics on %s", scopeLabel(cfg.Namespace), cfg.Heartbeat, cfg.MetricsAddr)
 
 	opts := scan.Options{Namespace: cfg.Namespace, IncludeCron: cfg.IncludeCron, IncludeRestarts: cfg.IncludeRestarts}
@@ -93,6 +102,7 @@ func Run(ctx context.Context, client kubernetes.Interface, cfg Config) error {
 	defer heartbeat.Stop()
 	debounce := time.NewTimer(cfg.Debounce)
 	debounce.Stop()
+	defer debounce.Stop()
 	pending := false
 	for {
 		select {

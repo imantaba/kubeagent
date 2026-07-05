@@ -15,20 +15,16 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/imantaba/kubeagent/internal/cluster"
-	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/collect"
 	"github.com/imantaba/kubeagent/internal/connectivity"
 	"github.com/imantaba/kubeagent/internal/credlint"
-	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/explain"
 	"github.com/imantaba/kubeagent/internal/inventory"
-	"github.com/imantaba/kubeagent/internal/netpolicy"
 	"github.com/imantaba/kubeagent/internal/platform"
 	"github.com/imantaba/kubeagent/internal/remediate"
 	"github.com/imantaba/kubeagent/internal/report"
 	"github.com/imantaba/kubeagent/internal/resources"
-	"github.com/imantaba/kubeagent/internal/rollout"
-	"github.com/imantaba/kubeagent/internal/svchealth"
+	"github.com/imantaba/kubeagent/internal/scan"
 )
 
 // version is the build version, overridden at release time via
@@ -89,35 +85,27 @@ func run(args []string) error {
 		return err
 	}
 
-	inputs, err := collect.CollectInventory(context.Background(), client, namespace)
+	res, err := scan.Evaluate(context.Background(), client, scan.Options{
+		Namespace:       namespace,
+		IncludeCron:     *includeCron,
+		IncludeRestarts: *includeRestarts,
+	})
 	if err != nil {
 		if diag, ok := connectivity.Diagnose(err); ok {
 			return fmt.Errorf("%s\ndetails: %w", diag, err)
 		}
 		return err
 	}
-
-	detectors := []diagnose.Detector{
-		diagnose.CrashLoopDetector{},
-		diagnose.ImagePullDetector{},
-		diagnose.OOMKilledDetector{},
-		diagnose.PendingDetector{},
-	}
-	findings := diagnose.Run(detectors, collect.FactsFrom(inputs.Pods))
-	workloads := inventory.Assemble(inputs, findings)
-
-	nodes, err := collect.Nodes(context.Background(), client)
-	if err != nil {
-		return err
-	}
-	health := clusterhealth.Assess(nodes, workloads)
-	health.ScopeNote = clusterhealth.NamespaceScopeNote(namespace)
+	health := res.Health
+	result := res.Inventory
+	serviceIssues := res.ServiceIssues
+	nodes := res.Nodes
 
 	usage, _, metricsErr := collect.NodeMetrics(context.Background(), client)
 	if metricsErr != nil {
 		fmt.Fprintf(os.Stderr, "kubeagent: warning: metrics unavailable: %v\n", metricsErr)
 	}
-	resourcePods := inputs.Pods
+	resourcePods := res.Inputs.Pods
 	if namespace != "" {
 		if all, perr := collect.AllPods(context.Background(), client); perr == nil {
 			resourcePods = all
@@ -129,24 +117,6 @@ func run(args []string) error {
 	ics, _ := collect.IngressClasses(context.Background(), client)
 	sysDS, _ := collect.SystemDaemonSets(context.Background(), client)
 	facts := platform.Detect(nodes, sysDS, scs, ics)
-
-	svcs, _ := collect.Services(context.Background(), client, namespace)
-	slices, _ := collect.EndpointSlices(context.Background(), client, namespace)
-	backends := svchealth.BackendsFrom(inputs.Deployments, inputs.StatefulSets, inputs.DaemonSets, inputs.Jobs, inputs.CronJobs)
-	serviceIssues := svchealth.Assess(svcs, slices, backends)
-
-	result := inventory.Prioritize(workloads, inventory.Opts{
-		IncludeRestarts: *includeRestarts,
-		IncludeCron:     *includeCron,
-	})
-
-	nps, _ := collect.NetworkPolicies(context.Background(), client, namespace)
-	podLabels := make(map[string]map[string]string, len(inputs.Pods))
-	for _, p := range inputs.Pods {
-		podLabels[p.Namespace+"/"+p.Name] = p.Labels
-	}
-	netpolicy.Annotate(result.Workloads, podLabels, nps)
-	rollout.Annotate(result.Workloads, inputs.ReplicaSets, time.Now())
 
 	var explanation string
 	if *explainFlag {
@@ -161,14 +131,14 @@ func run(args []string) error {
 	var credWarnings []credlint.Finding
 	if *lintSecrets {
 		cms, _ := collect.ConfigMaps(context.Background(), client, namespace)
-		credWarnings = credlint.Scan(cms, inputs.Pods)
+		credWarnings = credlint.Scan(cms, res.Inputs.Pods)
 	}
 
 	if err := report.PrintInventory(health, result, &summary, &facts, serviceIssues, credWarnings, explanation, *output, os.Stdout); err != nil {
 		return err
 	}
 	if *fix {
-		runFixes(context.Background(), client, result.Workloads, inputs.ReplicaSets, nodes, *dryRun, *assumeYes, os.Stdout, os.Stdin)
+		runFixes(context.Background(), client, result.Workloads, res.Inputs.ReplicaSets, nodes, *dryRun, *assumeYes, os.Stdout, os.Stdin)
 	}
 	return nil
 }

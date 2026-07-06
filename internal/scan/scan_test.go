@@ -54,4 +54,41 @@ func TestEvaluate_FlagsCrashLoopingWorkload(t *testing.T) {
 	}
 }
 
+func TestEvaluate_FlagsVolumeAttachError(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "db-0"},
+		Status: corev1.PodStatus{
+			Phase:      corev1.PodPending,
+			Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionFalse}},
+			ContainerStatuses: []corev1.ContainerStatus{{Name: "db",
+				State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ContainerCreating"}}}},
+		},
+	}
+	ev := &corev1.Event{
+		ObjectMeta:     metav1.ObjectMeta{Namespace: "shop", Name: "db-0.ev"},
+		Reason:         "FailedAttachVolume",
+		Type:           "Warning",
+		Message:        `Multi-Attach error for volume "pvc-9"`,
+		InvolvedObject: corev1.ObjectReference{Kind: "Pod", Namespace: "shop", Name: "db-0"},
+	}
+	cli := fake.NewSimpleClientset(node, pod, ev)
+	res, err := Evaluate(context.Background(), cli, Options{Namespace: "shop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, w := range res.Inventory.Workloads {
+		for _, f := range w.Findings {
+			if f.Issue == "VolumeAttachError" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected a VolumeAttachError finding, got %+v", res.Inventory.Workloads)
+	}
+}
+
 func p32(i int32) *int32 { return &i }

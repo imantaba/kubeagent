@@ -11,6 +11,9 @@ A Kubernetes troubleshooting agent, written in Go.
 - **ImagePullBackOff / ErrImagePull** — bad image or registry auth
 - **OOMKilled** — container hit its memory limit
 - **Pending / Unschedulable** — no node can place the pod
+- **VolumeAttachError** — a pod stuck at container creation because a volume
+  cannot be attached (`FailedAttachVolume`), most often a **Multi-Attach** error
+  (a ReadWriteOnce volume still attached to another node).
 
 It talks to the cluster directly via the official Kubernetes Go client
 (`client-go`) — the same library `kubectl` and operators are built on — and
@@ -19,8 +22,8 @@ operates **read-only by default** (an opt-in `--fix` flag can apply safe, revers
 ## Status
 
 ✅ **v1 shipped** — `kubeagent scan` performs a read-only, whole-cluster scan and
-reports CrashLoopBackOff, ImagePullBackOff/ErrImagePull, OOMKilled, and
-Pending/Unschedulable pods, in text or JSON.
+reports CrashLoopBackOff, ImagePullBackOff/ErrImagePull, OOMKilled,
+Pending/Unschedulable, and VolumeAttachError (Multi-Attach) pods, in text or JSON.
 
 ✅ **v2 shipped** — an optional `--explain` flag makes a single Claude API call
 (via the official Go SDK) to summarize findings in plain English. The

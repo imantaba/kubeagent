@@ -51,8 +51,10 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 		diagnose.ImagePullDetector{},
 		diagnose.OOMKilledDetector{},
 		diagnose.PendingDetector{},
+		diagnose.VolumeAttachDetector{},
 	}
-	findings := diagnose.Run(detectors, collect.FactsFrom(inputs.Pods))
+	attachEvents, _ := collect.VolumeAttachEvents(ctx, client, opts.Namespace)
+	findings := diagnose.Run(detectors, collect.FactsFrom(inputs.Pods, attachEvents))
 	workloads := inventory.Assemble(inputs, findings)
 
 	nodes, err := collect.Nodes(ctx, client)

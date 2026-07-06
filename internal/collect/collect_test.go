@@ -79,9 +79,27 @@ func TestFactsFrom_WrapsEachPod(t *testing.T) {
 		{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "p1"}},
 		{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "p2"}},
 	}
-	facts := FactsFrom(pods)
+	facts := FactsFrom(pods, nil)
 	if len(facts) != 2 || facts[0].Pod == nil || facts[0].Pod.Name != "p1" {
 		t.Fatalf("expected 2 facts wrapping each pod, got %+v", facts)
+	}
+}
+
+func TestFactsFrom_CorrelatesEvents(t *testing.T) {
+	pods := []corev1.Pod{
+		{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "p1"}},
+		{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "p2"}},
+	}
+	events := []corev1.Event{
+		{Reason: "FailedAttachVolume", InvolvedObject: corev1.ObjectReference{Kind: "Pod", Namespace: "a", Name: "p1"}},
+		{Reason: "FailedAttachVolume", InvolvedObject: corev1.ObjectReference{Kind: "Node", Name: "n1"}}, // non-pod -> ignored
+	}
+	facts := FactsFrom(pods, events)
+	if len(facts[0].Events) != 1 {
+		t.Errorf("p1 should have 1 correlated event, got %d", len(facts[0].Events))
+	}
+	if len(facts[1].Events) != 0 {
+		t.Errorf("p2 should have no events, got %d", len(facts[1].Events))
 	}
 }
 

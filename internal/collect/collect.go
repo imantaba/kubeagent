@@ -79,12 +79,32 @@ func Nodes(ctx context.Context, client kubernetes.Interface) ([]corev1.Node, err
 	return nodes.Items, nil
 }
 
-// FactsFrom wraps each pod in a diagnose.PodFacts for the detectors.
-func FactsFrom(pods []corev1.Pod) []diagnose.PodFacts {
+// VolumeAttachEvents lists FailedAttachVolume Warning events in the namespace
+// (empty = all), read-only. Attach failures are rare, so this field-selected
+// List is cheap.
+func VolumeAttachEvents(ctx context.Context, client kubernetes.Interface, namespace string) ([]corev1.Event, error) {
+	events, err := client.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{FieldSelector: "reason=FailedAttachVolume"})
+	if err != nil {
+		return nil, fmt.Errorf("listing volume-attach events: %w", err)
+	}
+	return events.Items, nil
+}
+
+// FactsFrom wraps each pod in a diagnose.PodFacts, attaching any of the given
+// events that reference that pod (by InvolvedObject). Pods with no matching
+// events get an empty slice, so status-only detectors are unaffected.
+func FactsFrom(pods []corev1.Pod, events []corev1.Event) []diagnose.PodFacts {
+	byPod := make(map[string][]corev1.Event)
+	for _, e := range events {
+		if e.InvolvedObject.Kind == "Pod" {
+			key := e.InvolvedObject.Namespace + "/" + e.InvolvedObject.Name
+			byPod[key] = append(byPod[key], e)
+		}
+	}
 	facts := make([]diagnose.PodFacts, 0, len(pods))
 	for i := range pods {
 		pod := pods[i] // take this element's address for PodFacts
-		facts = append(facts, diagnose.PodFacts{Pod: &pod})
+		facts = append(facts, diagnose.PodFacts{Pod: &pod, Events: byPod[pod.Namespace+"/"+pod.Name]})
 	}
 	return facts
 }

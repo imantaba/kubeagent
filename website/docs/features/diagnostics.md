@@ -36,6 +36,13 @@ No node can place the pod. This covers insufficient CPU or memory, a missing
 taint toleration, an unsatisfied node affinity, or no nodes at all.
 `kubeagent` reports the scheduler message from the pod's events.
 
+### VolumeAttachError
+
+A pod stuck at container creation because a volume cannot be attached.
+`kubeagent` reads the pod's `FailedAttachVolume` Warning events and names the
+**Multi-Attach** case specifically (a ReadWriteOnce volume still attached to
+another node). Read-only: events are fetched with a single field-selected List.
+
 ## Status
 
 `kubeagent scan` performs a read-only, whole-cluster scan and reports

@@ -11,6 +11,9 @@ A Kubernetes troubleshooting agent, written in Go.
 - **ImagePullBackOff / ErrImagePull** — bad image or registry auth
 - **OOMKilled** — container hit its memory limit
 - **Pending / Unschedulable** — no node can place the pod
+- **VolumeAttachError** — a pod stuck at container creation because a volume
+  cannot be attached (`FailedAttachVolume`), most often a **Multi-Attach** error
+  (a ReadWriteOnce volume still attached to another node).
 
 It talks to the cluster directly via the official Kubernetes Go client
 (`client-go`) — the same library `kubectl` and operators are built on — and

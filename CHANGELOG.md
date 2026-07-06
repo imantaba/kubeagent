@@ -5,6 +5,17 @@ All notable changes to kubeagent are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Volume-attach detection.** A new `VolumeAttachError` finding flags a pod stuck
+  at container creation because a volume cannot be attached (`FailedAttachVolume`
+  Warning event) — most often a **Multi-Attach** error (a ReadWriteOnce volume
+  still attached to another node). Detected by reading the pod's events (one cheap
+  field-selected List; the watch daemon needs no events informer). Read-only; the
+  daemon's RBAC gains `events` read.
+
 ## [0.9.0] - 2026-07-05
 
 ### Added

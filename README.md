@@ -22,8 +22,8 @@ operates **read-only by default** (an opt-in `--fix` flag can apply safe, revers
 ## Status
 
 ✅ **v1 shipped** — `kubeagent scan` performs a read-only, whole-cluster scan and
-reports CrashLoopBackOff, ImagePullBackOff/ErrImagePull, OOMKilled, and
-Pending/Unschedulable pods, in text or JSON.
+reports CrashLoopBackOff, ImagePullBackOff/ErrImagePull, OOMKilled,
+Pending/Unschedulable, and VolumeAttachError (Multi-Attach) pods, in text or JSON.
 
 ✅ **v2 shipped** — an optional `--explain` flag makes a single Claude API call
 (via the official Go SDK) to summarize findings in plain English. The

@@ -46,8 +46,8 @@ another node). Read-only: events are fetched with a single field-selected List.
 ## Status
 
 `kubeagent scan` performs a read-only, whole-cluster scan and reports
-CrashLoopBackOff, ImagePullBackOff/ErrImagePull, OOMKilled, and
-Pending/Unschedulable pods, in text or JSON.
+CrashLoopBackOff, ImagePullBackOff/ErrImagePull, OOMKilled,
+Pending/Unschedulable, and VolumeAttachError (Multi-Attach) pods, in text or JSON.
 
 The optional `--explain` flag makes a single Claude API call to summarize
 findings in plain English. The deterministic core still works offline with no

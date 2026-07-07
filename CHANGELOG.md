@@ -5,6 +5,16 @@ All notable changes to kubeagent are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Helm chart.** The in-cluster watch daemon is now packaged as a Helm chart
+  under `deploy/helm/kubeagent/`, alongside the raw manifests. It renders the
+  identical read-only RBAC (`get`/`list`/`watch` only), deployment, and metrics
+  Service, with image, replicas, watch cadence, metrics port, RBAC/ServiceAccount
+  creation, resources, security context, and scheduling exposed as values.
+
 ## [0.11.0] - 2026-07-07
 
 ### Added

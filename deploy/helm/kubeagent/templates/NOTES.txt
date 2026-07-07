@@ -1,0 +1,13 @@
+kubeagent watch daemon is installed (release {{ .Release.Name }}, namespace {{ .Release.Namespace }}).
+
+It is STRICTLY READ-ONLY (get/list/watch only) and makes no external calls.
+
+Check it:
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "kubeagent.fullname" . }}
+  kubectl -n {{ .Release.Namespace }} logs -l app.kubernetes.io/instance={{ .Release.Name }}
+
+Scrape metrics:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "kubeagent.fullname" . }}-metrics {{ .Values.metricsPort }}:{{ .Values.metricsPort }}
+  curl localhost:{{ .Values.metricsPort }}/metrics
+
+The metrics Service carries prometheus.io/scrape annotations for auto-discovery.

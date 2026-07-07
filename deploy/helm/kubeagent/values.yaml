@@ -1,0 +1,61 @@
+# Default values for the kubeagent watch daemon.
+
+image:
+  repository: imantaba/kubeagent
+  # tag defaults to the chart's appVersion when empty.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# Single replica is enough: the daemon is read-only and side-effect-free.
+replicaCount: 1
+
+watch:
+  # Namespace to watch. Empty = all namespaces (needs the cluster-scoped RBAC below).
+  namespace: ""
+  # Safety-net full re-evaluation interval (informers drive real-time detection).
+  heartbeat: 60s
+  # Coalescing window for change events.
+  debounce: 2s
+
+metricsPort: 8080
+
+serviceAccount:
+  create: true
+  # If empty, a name is derived from the release.
+  name: ""
+
+rbac:
+  # Create the read-only ClusterRole + binding (get/list/watch only). Required
+  # for the daemon to watch the cluster.
+  create: true
+
+service:
+  type: ClusterIP
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8080"
+    prometheus.io/path: "/metrics"
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 250m
+    memory: 256Mi
+
+# Hardened by default: non-root, read-only root FS, all caps dropped.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}

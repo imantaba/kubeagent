@@ -1,0 +1,17 @@
+apiVersion: v2
+name: kubeagent
+description: Read-only, in-cluster Kubernetes troubleshooting daemon (kubeagent watch) — continuous diagnosis exposed as Prometheus metrics and structured logs.
+type: application
+version: 0.1.0
+appVersion: "v0.11.0"
+home: https://k8sproject.top
+sources:
+  - https://github.com/imantaba/kubeagent
+keywords:
+  - kubernetes
+  - troubleshooting
+  - diagnostics
+  - prometheus
+  - read-only
+maintainers:
+  - name: imantaba

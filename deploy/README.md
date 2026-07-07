@@ -55,6 +55,40 @@ Prometheus will auto-discover the metrics endpoint via the
 `prometheus.io/scrape: "true"` annotation on the Service (if your cluster runs
 a standard Prometheus stack).
 
+## Helm chart
+
+The same daemon is packaged as a Helm chart under [`helm/kubeagent/`](helm/kubeagent/).
+It renders the identical read-only RBAC, deployment, and metrics Service, with the
+common knobs exposed as values.
+
+```bash
+helm install kubeagent deploy/helm/kubeagent \
+  --namespace kubeagent --create-namespace
+```
+
+Useful overrides:
+
+```bash
+# pin a different image tag (defaults to the chart's appVersion)
+helm install kubeagent deploy/helm/kubeagent -n kubeagent --create-namespace \
+  --set image.tag=v0.11.0
+
+# scope the daemon to a single namespace, tune scan cadence
+helm install kubeagent deploy/helm/kubeagent -n kubeagent --create-namespace \
+  --set watch.namespace=payments \
+  --set watch.heartbeat=30s
+```
+
+See [`helm/kubeagent/values.yaml`](helm/kubeagent/values.yaml) for the full list
+of values (image, replicas, watch cadence, metrics port, RBAC/ServiceAccount
+creation, resources, security context, scheduling).
+
+Uninstall:
+
+```bash
+helm uninstall kubeagent -n kubeagent
+```
+
 ## Security notes
 
 - The daemon runs as UID 65532 (non-root) with a read-only root filesystem and

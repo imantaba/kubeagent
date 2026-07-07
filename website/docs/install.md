@@ -55,6 +55,29 @@ specific version, set the image tag in `deploy/deployment.yaml` (e.g.
 `imantaba/kubeagent:v0.11.0`); to build your own image, see
 [`deploy/README.md`](https://github.com/imantaba/kubeagent/blob/main/deploy/README.md).
 
+### With Helm
+
+The same daemon is packaged as a Helm chart under
+[`deploy/helm/kubeagent/`](https://github.com/imantaba/kubeagent/tree/main/deploy/helm/kubeagent).
+It renders the identical read-only RBAC, deployment, and metrics Service:
+
+```bash
+git clone https://github.com/imantaba/kubeagent
+helm install kubeagent kubeagent/deploy/helm/kubeagent \
+  --namespace kubeagent --create-namespace
+```
+
+Common overrides via `--set` (see the chart's `values.yaml` for the full list):
+
+```bash
+# pin an image tag (defaults to the chart appVersion)
+--set image.tag=v0.11.0
+# scope the daemon to one namespace, tune scan cadence
+--set watch.namespace=payments --set watch.heartbeat=30s
+```
+
+Uninstall with `helm uninstall kubeagent -n kubeagent`.
+
 ## Build from source
 
 If you have Go installed, you can build directly from the repository:

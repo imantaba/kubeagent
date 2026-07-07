@@ -34,6 +34,10 @@
   exposes continuous cluster-health diagnosis as Prometheus metrics + structured
   logs; see `deploy/`. First phase of a daemon roadmap (multi-cluster, on-incident
   `--explain`, and guarded autonomous remediation to follow).
+- **Volume-attach & restart-loop detection** — `VolumeAttachError` flags a pod
+  stuck because a volume can't attach (Multi-Attach); `RestartLoop` flags a
+  currently-Running container that keeps erroring and restarting — the flapping
+  case `CrashLoopBackOff` misses. See [Failure diagnostics](features/diagnostics.md).
 
 !!! info "Version history"
     [GitHub Releases](https://github.com/imantaba/kubeagent/releases) and the

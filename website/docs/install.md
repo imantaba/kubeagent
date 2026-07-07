@@ -21,6 +21,40 @@ tar xzf "kubeagent_${VERSION}_linux_amd64.tar.gz"
     `VERSION` above — on the
     [Releases page](https://github.com/imantaba/kubeagent/releases).
 
+## Run on Kubernetes (daemon)
+
+To run kubeagent **in-cluster** as the read-only [watch daemon](features/watch-mode.md)
+— continuously diagnosing the cluster and exposing Prometheus metrics — apply the
+manifests in [`deploy/`](https://github.com/imantaba/kubeagent/tree/main/deploy).
+They use the official image
+[`imantaba/kubeagent`](https://hub.docker.com/r/imantaba/kubeagent) on Docker Hub.
+
+```bash
+# clone the repo (or download the deploy/ manifests) and apply them
+git clone https://github.com/imantaba/kubeagent
+kubectl create namespace kubeagent
+kubectl apply -f kubeagent/deploy/
+kubectl -n kubeagent rollout status deploy/kubeagent
+```
+
+This creates, in the `kubeagent` namespace:
+
+- a **read-only** `ClusterRole` (only `get`/`list`/`watch`), `ServiceAccount`, and binding,
+- a single-replica `Deployment` running `kubeagent watch` (distroless, non-root, read-only root FS), and
+- a `ClusterIP` `Service` exposing `/metrics` (annotated `prometheus.io/scrape: "true"`).
+
+Scrape it, or take a quick look:
+
+```bash
+kubectl -n kubeagent port-forward svc/kubeagent-metrics 8080:8080
+curl localhost:8080/metrics
+```
+
+The daemon is **strictly read-only** and makes **no external calls**. To pin a
+specific version, set the image tag in `deploy/deployment.yaml` (e.g.
+`imantaba/kubeagent:v0.11.0`); to build your own image, see
+[`deploy/README.md`](https://github.com/imantaba/kubeagent/blob/main/deploy/README.md).
+
 ## Build from source
 
 If you have Go installed, you can build directly from the repository:

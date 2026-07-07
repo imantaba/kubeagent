@@ -52,6 +52,7 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 		diagnose.OOMKilledDetector{},
 		diagnose.PendingDetector{},
 		diagnose.VolumeAttachDetector{},
+		diagnose.RestartLoopDetector{Now: time.Now()},
 	}
 	attachEvents, _ := collect.VolumeAttachEvents(ctx, client, opts.Namespace)
 	findings := diagnose.Run(detectors, collect.FactsFrom(inputs.Pods, attachEvents))

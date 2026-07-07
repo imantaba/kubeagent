@@ -3,6 +3,7 @@ package scan
 import (
 	"context"
 	"testing"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -88,6 +89,42 @@ func TestEvaluate_FlagsVolumeAttachError(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected a VolumeAttachError finding, got %+v", res.Inventory.Workloads)
+	}
+}
+
+func TestEvaluate_FlagsRestartLoop(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}}
+	now := time.Now()
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "flapper"},
+		Status: corev1.PodStatus{
+			Phase:      corev1.PodRunning,
+			Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}},
+			ContainerStatuses: []corev1.ContainerStatus{{
+				Name: "app", RestartCount: 4,
+				State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: metav1.NewTime(now.Add(-20 * time.Second))}},
+				LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+					ExitCode: 1, Reason: "Error", FinishedAt: metav1.NewTime(now.Add(-25 * time.Second)),
+				}},
+			}},
+		},
+	}
+	cli := fake.NewSimpleClientset(node, pod)
+	res, err := Evaluate(context.Background(), cli, Options{Namespace: "shop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, w := range res.Inventory.Workloads {
+		for _, f := range w.Findings {
+			if f.Issue == "RestartLoop" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected a RestartLoop finding, got %+v", res.Inventory.Workloads)
 	}
 }
 

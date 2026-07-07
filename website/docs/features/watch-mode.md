@@ -32,7 +32,7 @@ The daemon serves Prometheus text on `--metrics-addr` (default `:8080`):
 | `kubeagent_cluster_healthy` | 1 if the cluster verdict is Healthy, else 0 |
 | `kubeagent_nodes_ready` / `kubeagent_nodes_total` | node readiness |
 | `kubeagent_workloads_flagged` | workloads currently needing attention |
-| `kubeagent_findings{issue="..."}` | current findings by type (e.g. `CrashLoopBackOff`, `ImagePullBackOff`, `OOMKilled`, `VolumeAttachError`) |
+| `kubeagent_findings{issue="..."}` | current findings by type (e.g. `CrashLoopBackOff`, `ImagePullBackOff`, `OOMKilled`, `VolumeAttachError`, `RestartLoop`) |
 | `kubeagent_service_issues` | Service issues (no ready endpoints, LB pending) |
 | `kubeagent_last_scan_timestamp_seconds` / `kubeagent_scan_duration_seconds` | evaluation freshness and cost |
 | `kubeagent_scans_total` / `kubeagent_scan_errors_total` | evaluation counters |

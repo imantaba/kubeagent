@@ -5,6 +5,17 @@ All notable changes to kubeagent are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Restart-loop detection.** A new `RestartLoop` finding flags a container that
+  keeps exiting with a non-OOM error and restarting (`RestartCount ≥ 3`, current
+  run younger than 10 min) even though it is currently `Running` — a flapping pod
+  the point-in-time detectors (`CrashLoopBackOff`/`OOMKilled`) miss. Durable
+  (reads `RestartCount` + `lastState.Terminated`), so it appears in the scan,
+  `--explain`, and `kubeagent_findings{issue="RestartLoop"}`. Read-only.
+
 ## [0.10.0] - 2026-07-06
 
 ### Added

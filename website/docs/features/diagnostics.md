@@ -43,11 +43,20 @@ A pod stuck at container creation because a volume cannot be attached.
 **Multi-Attach** case specifically (a ReadWriteOnce volume still attached to
 another node). Read-only: events are fetched with a single field-selected List.
 
+### RestartLoop
+
+A container that keeps exiting with a non-OOM error and restarting (≥ 3
+restarts, current run younger than 10 min) even though it is currently
+`Running`. This is the flapping case that `CrashLoopBackOff` misses — that
+condition only fires while the container is in a `Waiting` / back-off state.
+`kubeagent` reads `RestartCount` and `lastState.Terminated` from the pod
+status. Read-only.
+
 ## Status
 
 `kubeagent scan` performs a read-only, whole-cluster scan and reports
 CrashLoopBackOff, ImagePullBackOff/ErrImagePull, OOMKilled,
-Pending/Unschedulable, and VolumeAttachError (Multi-Attach) pods, in text or JSON.
+Pending/Unschedulable, VolumeAttachError (Multi-Attach), and RestartLoop pods, in text or JSON.
 
 The optional `--explain` flag makes a single Claude API call to summarize
 findings in plain English. The deterministic core still works offline with no

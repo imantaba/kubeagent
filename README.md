@@ -14,6 +14,9 @@ A Kubernetes troubleshooting agent, written in Go.
 - **VolumeAttachError** — a pod stuck at container creation because a volume
   cannot be attached (`FailedAttachVolume`), most often a **Multi-Attach** error
   (a ReadWriteOnce volume still attached to another node).
+- **RestartLoop** — a container that keeps exiting with a non-OOM error and
+  restarting (≥ 3 restarts, still flapping) even though it is currently Running —
+  the case `CrashLoopBackOff` misses.
 
 It talks to the cluster directly via the official Kubernetes Go client
 (`client-go`) — the same library `kubectl` and operators are built on — and
@@ -23,7 +26,7 @@ operates **read-only by default** (an opt-in `--fix` flag can apply safe, revers
 
 ✅ **v1 shipped** — `kubeagent scan` performs a read-only, whole-cluster scan and
 reports CrashLoopBackOff, ImagePullBackOff/ErrImagePull, OOMKilled,
-Pending/Unschedulable, and VolumeAttachError (Multi-Attach) pods, in text or JSON.
+Pending/Unschedulable, VolumeAttachError (Multi-Attach), and RestartLoop pods, in text or JSON.
 
 ✅ **v2 shipped** — an optional `--explain` flag makes a single Claude API call
 (via the official Go SDK) to summarize findings in plain English. The

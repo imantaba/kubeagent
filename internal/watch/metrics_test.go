@@ -11,12 +11,14 @@ import (
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/nodereserve"
 	"github.com/imantaba/kubeagent/internal/scan"
 )
 
 func sampleResult() *scan.Result {
 	return &scan.Result{
-		Health: clusterhealth.ClusterHealth{Verdict: "Degraded", NodesReady: 2, NodesTotal: 3},
+		Health:      clusterhealth.ClusterHealth{Verdict: "Degraded", NodesReady: 2, NodesTotal: 3},
+		NodeReserve: nodereserve.Report{WarnCount: 1},
 		Inventory: inventory.Result{Workloads: []inventory.Workload{
 			{Namespace: "shop", Name: "web", Kind: "Deployment", Ready: 0, Desired: 1,
 				Findings: []diagnose.Finding{{Issue: "CrashLoopBackOff"}}},
@@ -34,6 +36,7 @@ func TestMetrics_RenderReflectsResult(t *testing.T) {
 		"kubeagent_nodes_total 3",
 		"kubeagent_workloads_flagged 1",
 		`kubeagent_findings{issue="CrashLoopBackOff"} 1`,
+		"kubeagent_nodes_without_reservations 1",
 		"kubeagent_scans_total 1",
 	} {
 		if !strings.Contains(out, want) {

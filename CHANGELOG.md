@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Node reservation check.** `scan` now reports each node's aggregate kubelet
+  reservation (`Capacity − Allocatable`, i.e. kube-reserved + system-reserved +
+  eviction-hard combined) and warns when a node reserves **no memory** —
+  a kubelet that can be OOM'd under pressure. Shown as a "Node reservations"
+  section (text + JSON `nodeReserve`) and, in the watch daemon, as the gauge
+  `kubeagent_nodes_without_reservations`. Read-only; no new RBAC. Advisory only
+  (does not change the cluster verdict).
+
 - **Helm chart.** The in-cluster watch daemon is now packaged as a Helm chart
   under `deploy/helm/kubeagent/`, alongside the raw manifests. It renders the
   identical read-only RBAC (`get`/`list`/`watch` only), deployment, and metrics

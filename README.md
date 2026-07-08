@@ -17,6 +17,9 @@ A Kubernetes troubleshooting agent, written in Go.
 - **RestartLoop** — a container that keeps exiting with a non-OOM error and
   restarting (≥ 3 restarts, still flapping) even though it is currently Running —
   the case `CrashLoopBackOff` misses.
+- **Node reservation check** — warns when a node's kubelet reserves no memory
+  (allocatable == capacity), meaning OS or kubelet memory pressure can destabilise
+  the node. Advisory and read-only; no new RBAC.
 
 It talks to the cluster directly via the official Kubernetes Go client
 (`client-go`) — the same library `kubectl` and operators are built on — and

@@ -52,6 +52,18 @@ condition only fires while the container is in a `Waiting` / back-off state.
 `kubeagent` reads `RestartCount` and `lastState.Terminated` from the pod
 status. Read-only.
 
+### Node reservations
+
+`scan` shows each node's aggregate kubelet resource reservation, computed as
+`Capacity − Allocatable` (the combined effect of `system-reserved`,
+`kube-reserved`, and `eviction-hard`). A node is flagged with a **WARNING** when
+it reserves no memory (allocatable memory equals capacity) — a kubelet
+configuration that lets OS or kubelet memory pressure destabilise the node. CPU
+reservation is shown but not warned, since many clusters intentionally leave it
+unset. The check reads only the Node objects already listed during a scan, so it
+needs no extra permissions, and it is advisory: it never changes the cluster
+verdict.
+
 ## Status
 
 `kubeagent scan` performs a read-only, whole-cluster scan and reports

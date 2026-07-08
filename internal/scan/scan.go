@@ -16,6 +16,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/netpolicy"
+	"github.com/imantaba/kubeagent/internal/nodereserve"
 	"github.com/imantaba/kubeagent/internal/rollout"
 	"github.com/imantaba/kubeagent/internal/svchealth"
 )
@@ -33,6 +34,7 @@ type Options struct {
 type Result struct {
 	Inputs        inventory.Inputs
 	Nodes         []corev1.Node
+	NodeReserve   nodereserve.Report
 	Health        clusterhealth.ClusterHealth
 	Inventory     inventory.Result
 	ServiceIssues []svchealth.Issue
@@ -83,5 +85,5 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	netpolicy.Annotate(result.Workloads, podLabels, nps)
 	rollout.Annotate(result.Workloads, inputs.ReplicaSets, time.Now())
 
-	return Result{Inputs: inputs, Nodes: nodes, Health: health, Inventory: result, ServiceIssues: serviceIssues}, nil
+	return Result{Inputs: inputs, Nodes: nodes, NodeReserve: nodereserve.Assess(nodes), Health: health, Inventory: result, ServiceIssues: serviceIssues}, nil
 }

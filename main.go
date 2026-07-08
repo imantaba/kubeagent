@@ -140,7 +140,7 @@ func run(args []string) error {
 		credWarnings = credlint.Scan(cms, res.Inputs.Pods)
 	}
 
-	if err := report.PrintInventory(health, result, &summary, &facts, serviceIssues, credWarnings, explanation, *output, os.Stdout); err != nil {
+	if err := report.PrintInventory(health, result, &summary, &facts, serviceIssues, credWarnings, &res.NodeReserve, explanation, *output, os.Stdout); err != nil {
 		return err
 	}
 	if *fix {

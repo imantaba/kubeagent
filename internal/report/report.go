@@ -30,42 +30,67 @@ type inventoryReport struct {
 	Explanation        string                      `json:"explanation,omitempty"`
 }
 
+// Input carries everything the report renders. Bundled into a struct because the
+// positional parameter list had grown unwieldy.
+type Input struct {
+	Cluster            clusterhealth.ClusterHealth
+	Result             inventory.Result
+	Resources          *resources.Summary
+	Platform           *platform.Facts
+	ServiceIssues      []svchealth.Issue
+	CredentialWarnings []credlint.Finding
+	NodeReserve        *nodereserve.Report
+	PVCReclaim         *pvcreclaim.Report
+	PVCReclaimFull     bool // --pvc-reclaim: expand the PVC list (text only)
+	Explanation        string
+}
+
 // PrintInventory writes the cluster verdict and the prioritized workload set to w.
-func PrintInventory(cluster clusterhealth.ClusterHealth, result inventory.Result, summary *resources.Summary, facts *platform.Facts, serviceIssues []svchealth.Issue, credentialWarnings []credlint.Finding, nodeReserve *nodereserve.Report, pvcReclaim *pvcreclaim.Report, explanation, format string, w io.Writer) error {
+func PrintInventory(in Input, format string, w io.Writer) error {
 	switch format {
 	case "json":
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
-		return enc.Encode(inventoryReport{Cluster: cluster, Workloads: result.Workloads, Resources: summary, Platform: facts, ServiceIssues: serviceIssues, CredentialWarnings: credentialWarnings, NodeReserve: nodeReserve, PVCReclaim: pvcReclaim, Explanation: explanation})
+		return enc.Encode(inventoryReport{
+			Cluster:            in.Cluster,
+			Workloads:          in.Result.Workloads,
+			Resources:          in.Resources,
+			Platform:           in.Platform,
+			ServiceIssues:      in.ServiceIssues,
+			CredentialWarnings: in.CredentialWarnings,
+			NodeReserve:        in.NodeReserve,
+			PVCReclaim:         in.PVCReclaim,
+			Explanation:        in.Explanation,
+		})
 	case "text":
-		return printInventoryText(cluster, result, summary, facts, serviceIssues, credentialWarnings, nodeReserve, pvcReclaim, explanation, w)
+		return printInventoryText(in, w)
 	default:
 		return fmt.Errorf("unknown output format %q (want text or json)", format)
 	}
 }
 
-func printInventoryText(cluster clusterhealth.ClusterHealth, result inventory.Result, summary *resources.Summary, facts *platform.Facts, serviceIssues []svchealth.Issue, credentialWarnings []credlint.Finding, nodeReserve *nodereserve.Report, pvcReclaim *pvcreclaim.Report, explanation string, w io.Writer) error {
-	if cluster.Verdict != "" {
-		if _, err := fmt.Fprintf(w, "Cluster: %s — %d/%d nodes Ready\n", cluster.Verdict, cluster.NodesReady, cluster.NodesTotal); err != nil {
+func printInventoryText(in Input, w io.Writer) error {
+	if in.Cluster.Verdict != "" {
+		if _, err := fmt.Fprintf(w, "Cluster: %s — %d/%d nodes Ready\n", in.Cluster.Verdict, in.Cluster.NodesReady, in.Cluster.NodesTotal); err != nil {
 			return err
 		}
-		for _, iss := range cluster.NodeIssues {
+		for _, iss := range in.Cluster.NodeIssues {
 			if _, err := fmt.Fprintf(w, "  ⚠ node %s\n", iss); err != nil {
 				return err
 			}
 		}
-		for _, iss := range cluster.SystemIssues {
+		for _, iss := range in.Cluster.SystemIssues {
 			if _, err := fmt.Fprintf(w, "  ⚠ system %s\n", iss); err != nil {
 				return err
 			}
 		}
-		if cluster.ScopeNote != "" {
-			if _, err := fmt.Fprintf(w, "  · %s\n", cluster.ScopeNote); err != nil {
+		if in.Cluster.ScopeNote != "" {
+			if _, err := fmt.Fprintf(w, "  · %s\n", in.Cluster.ScopeNote); err != nil {
 				return err
 			}
 		}
-		if facts != nil {
-			if line := facts.Line(); line != "" {
+		if in.Platform != nil {
+			if line := in.Platform.Line(); line != "" {
 				if _, err := fmt.Fprintf(w, "Platform: %s\n", line); err != nil {
 					return err
 				}
@@ -76,46 +101,46 @@ func printInventoryText(cluster clusterhealth.ClusterHealth, result inventory.Re
 		}
 	}
 
-	if err := printResources(summary, w); err != nil {
+	if err := printResources(in.Resources, w); err != nil {
 		return err
 	}
 
-	if err := printNodeReservations(nodeReserve, w); err != nil {
+	if err := printNodeReservations(in.NodeReserve, w); err != nil {
 		return err
 	}
 
-	if err := printPVCReclaim(pvcReclaim, w); err != nil {
+	if err := printPVCReclaim(in.PVCReclaim, w); err != nil {
 		return err
 	}
 
-	for _, wl := range result.Workloads {
+	for _, wl := range in.Result.Workloads {
 		if err := printWorkload(wl, w); err != nil {
 			return err
 		}
 	}
 
-	if err := printServiceIssues(serviceIssues, w); err != nil {
+	if err := printServiceIssues(in.ServiceIssues, w); err != nil {
 		return err
 	}
 
-	if err := printCredentialWarnings(credentialWarnings, w); err != nil {
+	if err := printCredentialWarnings(in.CredentialWarnings, w); err != nil {
 		return err
 	}
 
-	if len(result.Workloads) == 0 && len(serviceIssues) == 0 && len(credentialWarnings) == 0 && cluster.Verdict == "Healthy" {
+	if len(in.Result.Workloads) == 0 && len(in.ServiceIssues) == 0 && len(in.CredentialWarnings) == 0 && in.Cluster.Verdict == "Healthy" {
 		if _, err := fmt.Fprintln(w, "No issues found. ✅"); err != nil {
 			return err
 		}
 	}
 
-	if hint := footerHint(result); hint != "" {
+	if hint := footerHint(in.Result); hint != "" {
 		if _, err := fmt.Fprintln(w, hint); err != nil {
 			return err
 		}
 	}
 
-	if explanation != "" {
-		if _, err := fmt.Fprintf(w, "\n── Explanation ──\n%s\n", explanation); err != nil {
+	if in.Explanation != "" {
+		if _, err := fmt.Fprintf(w, "\n── Explanation ──\n%s\n", in.Explanation); err != nil {
 			return err
 		}
 	}

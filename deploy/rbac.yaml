@@ -10,7 +10,7 @@ metadata:
   name: kubeagent-readonly
 rules:
   - apiGroups: [""]
-    resources: [pods, nodes, services, configmaps, events]
+    resources: [pods, nodes, services, configmaps, events, persistentvolumeclaims, persistentvolumes]
     verbs: [get, list, watch]
   - apiGroups: ["apps"]
     resources: [deployments, replicasets, statefulsets, daemonsets]

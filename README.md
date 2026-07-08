@@ -20,6 +20,9 @@ A Kubernetes troubleshooting agent, written in Go.
 - **Node reservation check** — warns when a node's kubelet reserves no memory
   (allocatable == capacity), meaning OS or kubelet memory pressure can destabilise
   the node. Advisory and read-only; no new RBAC.
+- **PVC reclaim-policy check** — lists Bound PVCs whose PV reclaims with Delete
+  (the data-loss-prone default for dynamic provisioners). Advisory and read-only;
+  adds PVC + PV read RBAC.
 
 It talks to the cluster directly via the official Kubernetes Go client
 (`client-go`) — the same library `kubectl` and operators are built on — and

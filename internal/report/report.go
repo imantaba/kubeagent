@@ -12,6 +12,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/nodereserve"
 	"github.com/imantaba/kubeagent/internal/platform"
+	"github.com/imantaba/kubeagent/internal/pvcreclaim"
 	"github.com/imantaba/kubeagent/internal/resources"
 	"github.com/imantaba/kubeagent/internal/svchealth"
 )
@@ -25,24 +26,25 @@ type inventoryReport struct {
 	ServiceIssues      []svchealth.Issue           `json:"serviceIssues,omitempty"`
 	CredentialWarnings []credlint.Finding          `json:"credentialWarnings,omitempty"`
 	NodeReserve        *nodereserve.Report         `json:"nodeReserve,omitempty"`
+	PVCReclaim         *pvcreclaim.Report          `json:"pvcReclaim,omitempty"`
 	Explanation        string                      `json:"explanation,omitempty"`
 }
 
 // PrintInventory writes the cluster verdict and the prioritized workload set to w.
-func PrintInventory(cluster clusterhealth.ClusterHealth, result inventory.Result, summary *resources.Summary, facts *platform.Facts, serviceIssues []svchealth.Issue, credentialWarnings []credlint.Finding, nodeReserve *nodereserve.Report, explanation, format string, w io.Writer) error {
+func PrintInventory(cluster clusterhealth.ClusterHealth, result inventory.Result, summary *resources.Summary, facts *platform.Facts, serviceIssues []svchealth.Issue, credentialWarnings []credlint.Finding, nodeReserve *nodereserve.Report, pvcReclaim *pvcreclaim.Report, explanation, format string, w io.Writer) error {
 	switch format {
 	case "json":
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
-		return enc.Encode(inventoryReport{Cluster: cluster, Workloads: result.Workloads, Resources: summary, Platform: facts, ServiceIssues: serviceIssues, CredentialWarnings: credentialWarnings, NodeReserve: nodeReserve, Explanation: explanation})
+		return enc.Encode(inventoryReport{Cluster: cluster, Workloads: result.Workloads, Resources: summary, Platform: facts, ServiceIssues: serviceIssues, CredentialWarnings: credentialWarnings, NodeReserve: nodeReserve, PVCReclaim: pvcReclaim, Explanation: explanation})
 	case "text":
-		return printInventoryText(cluster, result, summary, facts, serviceIssues, credentialWarnings, nodeReserve, explanation, w)
+		return printInventoryText(cluster, result, summary, facts, serviceIssues, credentialWarnings, nodeReserve, pvcReclaim, explanation, w)
 	default:
 		return fmt.Errorf("unknown output format %q (want text or json)", format)
 	}
 }
 
-func printInventoryText(cluster clusterhealth.ClusterHealth, result inventory.Result, summary *resources.Summary, facts *platform.Facts, serviceIssues []svchealth.Issue, credentialWarnings []credlint.Finding, nodeReserve *nodereserve.Report, explanation string, w io.Writer) error {
+func printInventoryText(cluster clusterhealth.ClusterHealth, result inventory.Result, summary *resources.Summary, facts *platform.Facts, serviceIssues []svchealth.Issue, credentialWarnings []credlint.Finding, nodeReserve *nodereserve.Report, pvcReclaim *pvcreclaim.Report, explanation string, w io.Writer) error {
 	if cluster.Verdict != "" {
 		if _, err := fmt.Fprintf(w, "Cluster: %s — %d/%d nodes Ready\n", cluster.Verdict, cluster.NodesReady, cluster.NodesTotal); err != nil {
 			return err
@@ -79,6 +81,10 @@ func printInventoryText(cluster clusterhealth.ClusterHealth, result inventory.Re
 	}
 
 	if err := printNodeReservations(nodeReserve, w); err != nil {
+		return err
+	}
+
+	if err := printPVCReclaim(pvcReclaim, w); err != nil {
 		return err
 	}
 
@@ -172,6 +178,31 @@ func printNodeReservations(rep *nodereserve.Report, w io.Writer) error {
 			role = " " + n.Role
 		}
 		if _, err := fmt.Fprintf(w, "  %s%s  cpu=%s mem=%s  %s\n", n.Name, role, n.CPUReserved, n.MemReserved, status); err != nil {
+			return err
+		}
+	}
+	_, err := fmt.Fprintln(w)
+	return err
+}
+
+// printPVCReclaim lists PVCs whose bound PV reclaims with Delete. Nothing is
+// printed when the report is nil or empty.
+func printPVCReclaim(rep *pvcreclaim.Report, w io.Writer) error {
+	if rep == nil || len(rep.PVCs) == 0 {
+		return nil
+	}
+	if _, err := fmt.Fprintln(w, "PVCs with reclaim policy Delete:"); err != nil {
+		return err
+	}
+	for _, p := range rep.PVCs {
+		line := fmt.Sprintf("  ⚠ %s/%s  pv %s", p.Namespace, p.Name, p.PV)
+		if p.StorageClass != "" {
+			line += "  class " + p.StorageClass
+		}
+		if p.Capacity != "" {
+			line += "  " + p.Capacity
+		}
+		if _, err := fmt.Fprintln(w, line); err != nil {
 			return err
 		}
 	}

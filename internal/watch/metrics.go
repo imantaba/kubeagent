@@ -21,7 +21,8 @@ type metrics struct {
 	healthy       float64
 	nodesReady     int
 	nodesTotal     int
-	nodesNoReserve int
+	nodesNoReserve     int
+	pvcsReclaimDelete  int
 	flagged       int
 	serviceIssues int
 	findings      map[string]int
@@ -53,6 +54,7 @@ func (m *metrics) update(res *scan.Result, dur time.Duration, now time.Time, err
 	m.nodesReady = res.Health.NodesReady
 	m.nodesTotal = res.Health.NodesTotal
 	m.nodesNoReserve = res.NodeReserve.WarnCount
+	m.pvcsReclaimDelete = res.PVCReclaim.Count
 	m.serviceIssues = len(res.ServiceIssues)
 	flagged := 0
 	findings := map[string]int{}
@@ -89,6 +91,7 @@ func (m *metrics) render() string {
 	gauge("kubeagent_nodes_ready", "Number of Ready nodes", float64(m.nodesReady))
 	gauge("kubeagent_nodes_total", "Total number of nodes", float64(m.nodesTotal))
 	gauge("kubeagent_nodes_without_reservations", "Nodes whose kubelet reserves no memory (allocatable == capacity)", float64(m.nodesNoReserve))
+	gauge("kubeagent_pvcs_reclaim_delete", "PVCs whose bound PV has reclaimPolicy Delete", float64(m.pvcsReclaimDelete))
 	gauge("kubeagent_workloads_flagged", "Number of workloads currently flagged", float64(m.flagged))
 	gauge("kubeagent_service_issues", "Number of Service issues", float64(m.serviceIssues))
 	fmt.Fprintf(&b, "# HELP kubeagent_findings Current findings by issue type\n# TYPE kubeagent_findings gauge\n")

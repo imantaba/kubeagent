@@ -64,6 +64,17 @@ unset. The check reads only the Node objects already listed during a scan, so it
 needs no extra permissions, and it is advisory: it never changes the cluster
 verdict.
 
+### PVC reclaim policy
+
+`scan` lists Bound PersistentVolumeClaims whose bound PersistentVolume has
+`reclaimPolicy: Delete`. For those volumes, deleting the PVC (or the PV) tells
+the provisioner to destroy the underlying storage — so the section is a
+data-loss audit: which claims are *not* protected by `Retain`. The reclaim
+policy is read from the bound PV (the authoritative value), so only Bound PVCs
+appear. `Delete` is the common default for dynamic provisioners, so the list can
+be long; it is informational and never changes the cluster verdict. Reading PVCs
+and PVs needs only `get`/`list`/`watch`.
+
 ## Status
 
 `kubeagent scan` performs a read-only, whole-cluster scan and reports

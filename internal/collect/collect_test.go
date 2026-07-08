@@ -280,3 +280,24 @@ func TestConfigMaps_NamespaceScoped(t *testing.T) {
 		t.Errorf("want only namespace a, got %+v", cms)
 	}
 }
+
+func TestPersistentVolumeClaimsAndVolumes_List(t *testing.T) {
+	client := fake.NewSimpleClientset(
+		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "data-0"}},
+		&corev1.PersistentVolume{ObjectMeta: metav1.ObjectMeta{Name: "pv-a"}},
+	)
+	pvcs, err := PersistentVolumeClaims(context.Background(), client, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pvcs) != 1 || pvcs[0].Name != "data-0" {
+		t.Errorf("want 1 pvc data-0, got %+v", pvcs)
+	}
+	pvs, err := PersistentVolumes(context.Background(), client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pvs) != 1 || pvs[0].Name != "pv-a" {
+		t.Errorf("want 1 pv pv-a, got %+v", pvs)
+	}
+}

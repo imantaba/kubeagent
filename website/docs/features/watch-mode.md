@@ -35,6 +35,7 @@ The daemon serves Prometheus text on `--metrics-addr` (default `:8080`):
 | `kubeagent_findings{issue="..."}` | current findings by type (e.g. `CrashLoopBackOff`, `ImagePullBackOff`, `OOMKilled`, `VolumeAttachError`, `RestartLoop`) |
 | `kubeagent_service_issues` | Service issues (no ready endpoints, LB pending) |
 | `kubeagent_nodes_without_reservations` | Number of nodes whose kubelet reserves no memory (allocatable == capacity) |
+| `kubeagent_pvcs_reclaim_delete` | Number of PVCs whose bound PV has reclaimPolicy Delete |
 | `kubeagent_last_scan_timestamp_seconds` / `kubeagent_scan_duration_seconds` | evaluation freshness and cost |
 | `kubeagent_scans_total` / `kubeagent_scan_errors_total` | evaluation counters |
 

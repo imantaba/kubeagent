@@ -17,6 +17,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/netpolicy"
 	"github.com/imantaba/kubeagent/internal/nodereserve"
+	"github.com/imantaba/kubeagent/internal/pvcreclaim"
 	"github.com/imantaba/kubeagent/internal/rollout"
 	"github.com/imantaba/kubeagent/internal/svchealth"
 )
@@ -35,6 +36,7 @@ type Result struct {
 	Inputs        inventory.Inputs
 	Nodes         []corev1.Node
 	NodeReserve   nodereserve.Report
+	PVCReclaim    pvcreclaim.Report
 	Health        clusterhealth.ClusterHealth
 	Inventory     inventory.Result
 	ServiceIssues []svchealth.Issue
@@ -72,6 +74,10 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	backends := svchealth.BackendsFrom(inputs.Deployments, inputs.StatefulSets, inputs.DaemonSets, inputs.Jobs, inputs.CronJobs)
 	serviceIssues := svchealth.Assess(svcs, slices, backends)
 
+	pvcs, _ := collect.PersistentVolumeClaims(ctx, client, opts.Namespace)
+	pvs, _ := collect.PersistentVolumes(ctx, client)
+	pvcReclaim := pvcreclaim.Assess(pvcs, pvs)
+
 	result := inventory.Prioritize(workloads, inventory.Opts{
 		IncludeRestarts: opts.IncludeRestarts,
 		IncludeCron:     opts.IncludeCron,
@@ -85,5 +91,5 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	netpolicy.Annotate(result.Workloads, podLabels, nps)
 	rollout.Annotate(result.Workloads, inputs.ReplicaSets, time.Now())
 
-	return Result{Inputs: inputs, Nodes: nodes, NodeReserve: nodereserve.Assess(nodes), Health: health, Inventory: result, ServiceIssues: serviceIssues}, nil
+	return Result{Inputs: inputs, Nodes: nodes, NodeReserve: nodereserve.Assess(nodes), PVCReclaim: pvcReclaim, Health: health, Inventory: result, ServiceIssues: serviceIssues}, nil
 }

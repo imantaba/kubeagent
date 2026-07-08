@@ -5,6 +5,18 @@ All notable changes to kubeagent are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **PVC reclaim-policy check.** `scan` now lists Bound PersistentVolumeClaims
+  whose bound PersistentVolume has `reclaimPolicy: Delete` — the data-loss-prone
+  case where deleting the PVC or PV destroys the underlying storage. Shown as a
+  "PVCs with reclaim policy Delete" section (text + JSON `pvcReclaim`) and, in
+  the watch daemon, as the gauge `kubeagent_pvcs_reclaim_delete`. Reads PVCs and
+  their bound PVs (two new read-only RBAC grants); advisory only (does not change
+  the cluster verdict).
+
 ## [0.12.0] - 2026-07-08
 
 ### Added

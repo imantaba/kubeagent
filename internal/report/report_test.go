@@ -373,7 +373,7 @@ func TestPrintInventory_TextShowsPlatformLine(t *testing.T) {
 	if !strings.Contains(out, want) {
 		t.Errorf("missing platform line %q:\n%s", want, out)
 	}
-	// Platform must appear under the verdict (before any workloads / resources).
+	// Platform is reference material — it renders in the CONTEXT zone, after the verdict.
 	if strings.Index(out, "Platform:") < strings.Index(out, "Cluster: Healthy") {
 		t.Errorf("platform line should follow the cluster verdict:\n%s", out)
 	}

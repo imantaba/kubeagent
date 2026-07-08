@@ -612,14 +612,14 @@ func TestPrintInventory_TextShowsNodeReservations(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "Node reservations:") {
-		t.Errorf("missing section header in:\n%s", out)
+	// Warning node named in NOTES zone.
+	notes := strings.Index(out, "NOTES")
+	if notes < 0 || !strings.Contains(out, "reserve no memory") || !strings.Contains(out, "w1") {
+		t.Errorf("expected NOTES warning naming w1 in:\n%s", out)
 	}
-	if !strings.Contains(out, "w1") || !strings.Contains(out, "WARNING") {
-		t.Errorf("missing warning row in:\n%s", out)
-	}
-	if !strings.Contains(out, "w2") || !strings.Contains(out, "cpu=200m mem=800Mi") {
-		t.Errorf("missing ok row in:\n%s", out)
+	// CONTEXT shows collapsed line with ok/total counts.
+	if !strings.Contains(out, "1/2 reserve memory OK") {
+		t.Errorf("missing collapsed reservations line in:\n%s", out)
 	}
 }
 
@@ -654,13 +654,11 @@ func TestPrintInventory_TextShowsPVCReclaim(t *testing.T) {
 		},
 	}
 	ch := clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1}
-	if err := PrintInventory(Input{Cluster: ch, PVCReclaim: rep}, "text", &buf); err != nil {
+	// Use PVCReclaimFull to get per-PVC rows.
+	if err := PrintInventory(Input{Cluster: ch, PVCReclaim: rep, PVCReclaimFull: true}, "text", &buf); err != nil {
 		t.Fatal(err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "PVCs with reclaim policy Delete:") {
-		t.Errorf("missing section header in:\n%s", out)
-	}
 	if !strings.Contains(out, "shop/data-0") || !strings.Contains(out, "pv pvc-abc123") {
 		t.Errorf("missing pvc row in:\n%s", out)
 	}
@@ -678,8 +676,9 @@ func TestPrintInventory_TextNoPVCReclaimSectionWhenEmpty(t *testing.T) {
 	if err := PrintInventory(Input{Cluster: ch, PVCReclaim: rep}, "text", &buf); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(buf.String(), "PVCs with reclaim policy Delete:") {
-		t.Errorf("section must be omitted for empty report, got:\n%s", buf.String())
+	out := buf.String()
+	if strings.Contains(out, "PVC") || strings.Contains(out, "--pvc-reclaim") {
+		t.Errorf("section must be omitted for empty report, got:\n%s", out)
 	}
 }
 
@@ -745,6 +744,80 @@ func TestPrintInventory_ZoneOrderAndGlyphs(t *testing.T) {
 	}
 	if !strings.Contains(out, "✗ ") {
 		t.Errorf("expected ✗ glyph for a problem in:\n%s", out)
+	}
+}
+
+func TestPrintInventory_NodeReservationsCollapseWhenAllOK(t *testing.T) {
+	var buf bytes.Buffer
+	rep := &nodereserve.Report{WarnCount: 0, Nodes: []nodereserve.NodeReservation{
+		{Name: "n1", CPUReserved: "300m", MemReserved: "1Gi"},
+		{Name: "n2", CPUReserved: "300m", MemReserved: "1Gi"},
+	}}
+	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 2, NodesTotal: 2}, NodeReserve: rep}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "n1") || strings.Contains(out, "n2") {
+		t.Errorf("all-OK reservations must collapse (no per-node lines):\n%s", out)
+	}
+	if !strings.Contains(out, "reservations OK") {
+		t.Errorf("missing collapsed reservations line:\n%s", out)
+	}
+}
+
+func TestPrintInventory_NodeReservationsWarningIsNote(t *testing.T) {
+	var buf bytes.Buffer
+	rep := &nodereserve.Report{WarnCount: 1, Nodes: []nodereserve.NodeReservation{
+		{Name: "bad", CPUReserved: "0", MemReserved: "0", Warning: true},
+		{Name: "ok", CPUReserved: "300m", MemReserved: "1Gi"},
+	}}
+	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 2, NodesTotal: 2}, NodeReserve: rep}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	notes := strings.Index(out, "NOTES")
+	if notes < 0 || !strings.Contains(out, "reserve no memory") || !strings.Contains(out, "bad") {
+		t.Errorf("expected a NOTES warning naming the bad node:\n%s", out)
+	}
+}
+
+func TestPrintInventory_PVCReclaimSummaryByDefault(t *testing.T) {
+	var buf bytes.Buffer
+	rep := &pvcreclaim.Report{Count: 3, PVCs: []pvcreclaim.PVCReclaim{
+		{Namespace: "a", Name: "p1", PV: "pv1", StorageClass: "fast", Capacity: "1Gi"},
+		{Namespace: "a", Name: "p2", PV: "pv2", StorageClass: "fast", Capacity: "1Gi"},
+		{Namespace: "b", Name: "p3", PV: "pv3", StorageClass: "slow", Capacity: "1Gi"},
+	}}
+	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1}, PVCReclaim: rep}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "3 PVCs on Delete reclaim") || !strings.Contains(out, "fast ×2") || !strings.Contains(out, "slow ×1") {
+		t.Errorf("missing grouped PVC summary:\n%s", out)
+	}
+	if !strings.Contains(out, "[--pvc-reclaim]") {
+		t.Errorf("missing --pvc-reclaim hint:\n%s", out)
+	}
+	if strings.Contains(out, "pv1") {
+		t.Errorf("summary must not list individual PV rows:\n%s", out)
+	}
+}
+
+func TestPrintInventory_PVCReclaimFullWhenFlagged(t *testing.T) {
+	var buf bytes.Buffer
+	rep := &pvcreclaim.Report{Count: 1, PVCs: []pvcreclaim.PVCReclaim{
+		{Namespace: "a", Name: "p1", PV: "pv1", StorageClass: "fast", Capacity: "1Gi"},
+	}}
+	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1}, PVCReclaim: rep, PVCReclaimFull: true}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "a/p1") || !strings.Contains(out, "pv pv1") {
+		t.Errorf("full list expected under --pvc-reclaim:\n%s", out)
 	}
 }
 

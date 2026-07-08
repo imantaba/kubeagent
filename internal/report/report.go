@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
 
@@ -196,7 +197,16 @@ func plural(n int, one, many string) string {
 // the hidden-counts footer.
 func printNotes(in Input, expected []svchealth.Issue, w io.Writer) error {
 	var b strings.Builder
-	if err := printPVCReclaim(in.PVCReclaim, &b); err != nil {
+	if n := in.NodeReserve; n != nil && n.WarnCount > 0 {
+		var names []string
+		for _, r := range n.Nodes {
+			if r.Warning {
+				names = append(names, r.Name)
+			}
+		}
+		fmt.Fprintf(&b, "  • %d %s reserve no memory: %s\n", n.WarnCount, plural(n.WarnCount, "node", "nodes"), strings.Join(names, ", "))
+	}
+	if err := printPVCReclaim(in.PVCReclaim, in.PVCReclaimFull, &b); err != nil {
 		return err
 	}
 	if err := printServiceIssues(expected, "  •", &b); err != nil {
@@ -221,8 +231,14 @@ func printNotes(in Input, expected []svchealth.Issue, w io.Writer) error {
 // printContext renders reference material: nodes/reservations, resources, platform.
 func printContext(in Input, w io.Writer) error {
 	var b strings.Builder
-	if err := printNodeReservations(in.NodeReserve, &b); err != nil {
-		return err
+	if n := in.NodeReserve; n != nil && len(n.Nodes) > 0 {
+		total := len(n.Nodes)
+		ok := total - n.WarnCount
+		line := fmt.Sprintf("Nodes  %d/%d reserve memory OK", ok, total)
+		if n.WarnCount == 0 {
+			line = fmt.Sprintf("Nodes  %d nodes · kubelet reservations OK", total)
+		}
+		fmt.Fprintln(&b, line)
 	}
 	if err := printResources(in.Resources, &b); err != nil {
 		return err
@@ -278,56 +294,57 @@ func printResLine(w io.Writer, label string, l resources.Line, unit string, metr
 	return err
 }
 
-// printNodeReservations lists each node's observed kubelet reservation and
-// flags nodes that reserve no memory. Nothing is printed when the report is
-// nil or empty.
-func printNodeReservations(rep *nodereserve.Report, w io.Writer) error {
-	if rep == nil || len(rep.Nodes) == 0 {
-		return nil
-	}
-	if _, err := fmt.Fprintln(w, "Node reservations:"); err != nil {
-		return err
-	}
-	for _, n := range rep.Nodes {
-		status := "OK"
-		if n.Warning {
-			status = "⚠ WARNING: kubelet reserves no memory"
-		}
-		role := ""
-		if n.Role != "" {
-			role = " " + n.Role
-		}
-		if _, err := fmt.Fprintf(w, "  %s%s  cpu=%s mem=%s  %s\n", n.Name, role, n.CPUReserved, n.MemReserved, status); err != nil {
-			return err
-		}
-	}
-	_, err := fmt.Fprintln(w)
-	return err
-}
-
-// printPVCReclaim lists PVCs whose bound PV reclaims with Delete. Nothing is
-// printed when the report is nil or empty.
-func printPVCReclaim(rep *pvcreclaim.Report, w io.Writer) error {
+// printPVCReclaim renders the Delete-reclaim PVCs: a grouped one-line summary by
+// default, or the full per-PVC rows when full is true. Nothing prints when empty.
+func printPVCReclaim(rep *pvcreclaim.Report, full bool, w io.Writer) error {
 	if rep == nil || len(rep.PVCs) == 0 {
 		return nil
 	}
-	if _, err := fmt.Fprintln(w, "PVCs with reclaim policy Delete:"); err != nil {
-		return err
+	if full {
+		for _, p := range rep.PVCs {
+			line := fmt.Sprintf("  • %s/%s  pv %s", p.Namespace, p.Name, p.PV)
+			if p.StorageClass != "" {
+				line += "  class " + p.StorageClass
+			}
+			if p.Capacity != "" {
+				line += "  " + p.Capacity
+			}
+			if _, err := fmt.Fprintln(w, line); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
-	for _, p := range rep.PVCs {
-		line := fmt.Sprintf("  ⚠ %s/%s  pv %s", p.Namespace, p.Name, p.PV)
-		if p.StorageClass != "" {
-			line += "  class " + p.StorageClass
-		}
-		if p.Capacity != "" {
-			line += "  " + p.Capacity
-		}
-		if _, err := fmt.Fprintln(w, line); err != nil {
-			return err
-		}
-	}
-	_, err := fmt.Fprintln(w)
+	_, err := fmt.Fprintf(w, "  • %d %s on Delete reclaim policy — %s   [--pvc-reclaim]\n",
+		len(rep.PVCs), plural(len(rep.PVCs), "PVC", "PVCs"), groupByClass(rep.PVCs))
 	return err
+}
+
+// groupByClass builds "classA ×N, classB ×M" ordered by count desc, then name.
+func groupByClass(pvcs []pvcreclaim.PVCReclaim) string {
+	counts := map[string]int{}
+	var order []string
+	for _, p := range pvcs {
+		c := p.StorageClass
+		if c == "" {
+			c = "(no class)"
+		}
+		if _, seen := counts[c]; !seen {
+			order = append(order, c)
+		}
+		counts[c]++
+	}
+	sort.SliceStable(order, func(i, j int) bool {
+		if counts[order[i]] != counts[order[j]] {
+			return counts[order[i]] > counts[order[j]]
+		}
+		return order[i] < order[j]
+	})
+	parts := make([]string, 0, len(order))
+	for _, c := range order {
+		parts = append(parts, fmt.Sprintf("%s ×%d", c, counts[c]))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // footerHint summarizes hidden categories, naming the flag that reveals each.

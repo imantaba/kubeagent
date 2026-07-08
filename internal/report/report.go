@@ -70,71 +70,43 @@ func PrintInventory(in Input, format string, w io.Writer) error {
 }
 
 func printInventoryText(in Input, w io.Writer) error {
-	if in.Cluster.Verdict != "" {
-		if _, err := fmt.Fprintf(w, "Cluster: %s — %d/%d nodes Ready\n", in.Cluster.Verdict, in.Cluster.NodesReady, in.Cluster.NodesTotal); err != nil {
+	real, expected := splitServiceIssues(in.ServiceIssues)
+
+	if err := printHeader(in, real, w); err != nil {
+		return err
+	}
+
+	hasAttention := len(in.Result.Workloads) > 0 || len(real) > 0 || len(in.CredentialWarnings) > 0
+	if hasAttention {
+		if _, err := fmt.Fprintln(w, "NEEDS ATTENTION"); err != nil {
 			return err
 		}
-		for _, iss := range in.Cluster.NodeIssues {
-			if _, err := fmt.Fprintf(w, "  ⚠ node %s\n", iss); err != nil {
+		for _, wl := range in.Result.Workloads {
+			if err := printWorkload(wl, w); err != nil {
 				return err
 			}
 		}
-		for _, iss := range in.Cluster.SystemIssues {
-			if _, err := fmt.Fprintf(w, "  ⚠ system %s\n", iss); err != nil {
-				return err
-			}
+		if err := printServiceIssues(real, "  ✗", w); err != nil {
+			return err
 		}
-		if in.Cluster.ScopeNote != "" {
-			if _, err := fmt.Fprintf(w, "  · %s\n", in.Cluster.ScopeNote); err != nil {
-				return err
-			}
-		}
-		if in.Platform != nil {
-			if line := in.Platform.Line(); line != "" {
-				if _, err := fmt.Fprintf(w, "Platform: %s\n", line); err != nil {
-					return err
-				}
-			}
+		if err := printCredentialWarnings(in.CredentialWarnings, w); err != nil {
+			return err
 		}
 		if _, err := fmt.Fprintln(w); err != nil {
 			return err
 		}
 	}
 
-	if err := printResources(in.Resources, w); err != nil {
+	if err := printNotes(in, expected, w); err != nil {
 		return err
 	}
 
-	if err := printNodeReservations(in.NodeReserve, w); err != nil {
+	if err := printContext(in, w); err != nil {
 		return err
 	}
 
-	if err := printPVCReclaim(in.PVCReclaim, w); err != nil {
-		return err
-	}
-
-	for _, wl := range in.Result.Workloads {
-		if err := printWorkload(wl, w); err != nil {
-			return err
-		}
-	}
-
-	if err := printServiceIssues(in.ServiceIssues, w); err != nil {
-		return err
-	}
-
-	if err := printCredentialWarnings(in.CredentialWarnings, w); err != nil {
-		return err
-	}
-
-	if len(in.Result.Workloads) == 0 && len(in.ServiceIssues) == 0 && len(in.CredentialWarnings) == 0 && in.Cluster.Verdict == "Healthy" {
+	if !hasAttention && in.Cluster.Verdict == "Healthy" {
 		if _, err := fmt.Fprintln(w, "No issues found. ✅"); err != nil {
-			return err
-		}
-	}
-
-	if hint := footerHint(in.Result); hint != "" {
-		if _, err := fmt.Fprintln(w, hint); err != nil {
 			return err
 		}
 	}
@@ -145,6 +117,129 @@ func printInventoryText(in Input, w io.Writer) error {
 		}
 	}
 	return nil
+}
+
+// splitServiceIssues separates real problems from expected-empty (annotated) ones.
+func splitServiceIssues(issues []svchealth.Issue) (real, expected []svchealth.Issue) {
+	for _, is := range issues {
+		if is.Expected {
+			expected = append(expected, is)
+		} else {
+			real = append(real, is)
+		}
+	}
+	return real, expected
+}
+
+// printHeader prints the cluster verdict line and, when anything is flagged, a
+// workload-scoped attention line.
+func printHeader(in Input, real []svchealth.Issue, w io.Writer) error {
+	c := in.Cluster
+	if c.Verdict == "" {
+		return nil
+	}
+	if _, err := fmt.Fprintf(w, "Cluster: %s — %d/%d nodes Ready\n", c.Verdict, c.NodesReady, c.NodesTotal); err != nil {
+		return err
+	}
+	for _, iss := range c.NodeIssues {
+		if _, err := fmt.Fprintf(w, "  ✗ node %s\n", iss); err != nil {
+			return err
+		}
+	}
+	for _, iss := range c.SystemIssues {
+		if _, err := fmt.Fprintf(w, "  ✗ system %s\n", iss); err != nil {
+			return err
+		}
+	}
+	if c.ScopeNote != "" {
+		if _, err := fmt.Fprintf(w, "  · %s\n", c.ScopeNote); err != nil {
+			return err
+		}
+	}
+	if line := attentionLine(in, real); line != "" {
+		if _, err := fmt.Fprintf(w, "  Needs attention: %s\n", line); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintln(w); err != nil {
+		return err
+	}
+	return nil
+}
+
+// attentionLine summarizes flagged workloads and real service issues.
+func attentionLine(in Input, real []svchealth.Issue) string {
+	failing := 0
+	for _, wl := range in.Result.Workloads {
+		if wl.Flagged() {
+			failing++
+		}
+	}
+	var parts []string
+	if failing > 0 {
+		parts = append(parts, fmt.Sprintf("%d %s failing", failing, plural(failing, "workload", "workloads")))
+	}
+	if len(real) > 0 {
+		parts = append(parts, fmt.Sprintf("%d %s without endpoints", len(real), plural(len(real), "service", "services")))
+	}
+	return strings.Join(parts, " · ")
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
+// printNotes renders advisory content: expected-empty services, PVC reclaim, and
+// the hidden-counts footer.
+func printNotes(in Input, expected []svchealth.Issue, w io.Writer) error {
+	var b strings.Builder
+	if err := printPVCReclaim(in.PVCReclaim, &b); err != nil {
+		return err
+	}
+	if err := printServiceIssues(expected, "  •", &b); err != nil {
+		return err
+	}
+	if hint := footerHint(in.Result); hint != "" {
+		fmt.Fprintf(&b, "  • %s\n", hint)
+	}
+	if b.Len() == 0 {
+		return nil
+	}
+	if _, err := fmt.Fprintln(w, "NOTES"); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, b.String()); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintln(w)
+	return err
+}
+
+// printContext renders reference material: nodes/reservations, resources, platform.
+func printContext(in Input, w io.Writer) error {
+	var b strings.Builder
+	if err := printNodeReservations(in.NodeReserve, &b); err != nil {
+		return err
+	}
+	if err := printResources(in.Resources, &b); err != nil {
+		return err
+	}
+	if in.Platform != nil {
+		if line := in.Platform.Line(); line != "" {
+			fmt.Fprintf(&b, "Platform: %s\n", line)
+		}
+	}
+	if b.Len() == 0 {
+		return nil
+	}
+	if _, err := fmt.Fprintln(w, "CONTEXT"); err != nil {
+		return err
+	}
+	_, err := io.WriteString(w, b.String())
+	return err
 }
 
 func printResources(s *resources.Summary, w io.Writer) error {
@@ -247,15 +342,9 @@ func footerHint(result inventory.Result) string {
 	return strings.Join(parts, " · ")
 }
 
-func printServiceIssues(issues []svchealth.Issue, w io.Writer) error {
-	if len(issues) == 0 {
-		return nil
-	}
-	if _, err := fmt.Fprintln(w, "Service issues:"); err != nil {
-		return err
-	}
+func printServiceIssues(issues []svchealth.Issue, glyph string, w io.Writer) error {
 	for _, is := range issues {
-		line := fmt.Sprintf("  ⚠ %s/%s  %s  %s", is.Namespace, is.Name, is.Type, is.Detail)
+		line := fmt.Sprintf("%s %s/%s  %s  %s", glyph, is.Namespace, is.Name, is.Type, is.Detail)
 		if is.Since != "" {
 			line += " · " + inventory.HumanSince(is.Since, time.Now())
 		}
@@ -267,14 +356,8 @@ func printServiceIssues(issues []svchealth.Issue, w io.Writer) error {
 }
 
 func printCredentialWarnings(findings []credlint.Finding, w io.Writer) error {
-	if len(findings) == 0 {
-		return nil
-	}
-	if _, err := fmt.Fprintln(w, "Credential warnings (--lint-secrets):"); err != nil {
-		return err
-	}
 	for _, f := range findings {
-		if _, err := fmt.Fprintf(w, "  ⚠ %s/%s  %s[%s]  %s\n", f.Namespace, f.Name, f.Kind, f.Location, f.Pattern); err != nil {
+		if _, err := fmt.Fprintf(w, "  ✗ %s/%s  %s[%s]  %s\n", f.Namespace, f.Name, f.Kind, f.Location, f.Pattern); err != nil {
 			return err
 		}
 	}
@@ -284,7 +367,7 @@ func printCredentialWarnings(findings []credlint.Finding, w io.Writer) error {
 func printWorkload(wl inventory.Workload, w io.Writer) error {
 	flag := "  "
 	if wl.Flagged() {
-		flag = "⚠ "
+		flag = "✗ "
 	}
 	var header string
 	if wl.Kind == "Job" || wl.Kind == "CronJob" {

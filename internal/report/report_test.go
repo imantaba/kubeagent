@@ -289,15 +289,16 @@ func TestPrintInventory_TextShowsResourceBlock(t *testing.T) {
 	}
 }
 
-func TestPrintInventory_ResourceBlockPrecedesWorkloads(t *testing.T) {
+func TestPrintInventory_ResourceBlockFollowsWorkloads(t *testing.T) {
 	var buf bytes.Buffer
 	ch := clusterhealth.ClusterHealth{Verdict: "Healthy", NodesTotal: 1, NodesReady: 1}
 	if err := PrintInventory(Input{Cluster: ch, Result: inventory.Result{Workloads: sampleWorkloads()}, Resources: sampleSummary()}, "text", &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
-	if strings.Index(out, "Resources (cluster):") > strings.Index(out, "cattle-system/rancher") {
-		t.Errorf("resource block should print before the workload list:\n%s", out)
+	// Resources now render in CONTEXT, which comes after NEEDS ATTENTION (workloads).
+	if strings.Index(out, "Resources (cluster):") < strings.Index(out, "cattle-system/rancher") {
+		t.Errorf("resource block should print after the workload list (CONTEXT zone):\n%s", out)
 	}
 }
 
@@ -427,10 +428,14 @@ func TestPrintInventory_TextShowsServiceIssues(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
-	for _, want := range []string{"Service issues:", "default/web", "ClusterIP", "no ready endpoints", "default/api-lb", "LoadBalancer", "no external address", "no external address · "} {
+	// Service issues now render under NEEDS ATTENTION with ✗ glyph; no "Service issues:" header.
+	for _, want := range []string{"NEEDS ATTENTION", "default/web", "ClusterIP", "no ready endpoints", "default/api-lb", "LoadBalancer", "no external address", "no external address · "} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "Service issues:") {
+		t.Errorf("old Service issues: header must be absent:\n%s", out)
 	}
 }
 
@@ -456,15 +461,16 @@ func TestPrintInventory_ServiceIssuesSuppressAllClear(t *testing.T) {
 	}
 }
 
-func TestPrintInventory_ServiceSectionFollowsWorkloads(t *testing.T) {
+func TestPrintInventory_ServiceLinesFollowWorkloads(t *testing.T) {
 	var buf bytes.Buffer
 	ch := clusterhealth.ClusterHealth{Verdict: "Healthy", NodesTotal: 1, NodesReady: 1}
 	if err := PrintInventory(Input{Cluster: ch, Result: inventory.Result{Workloads: sampleWorkloads()}, ServiceIssues: sampleServiceIssues()}, "text", &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
-	if strings.Index(out, "cattle-system/rancher") > strings.Index(out, "Service issues:") {
-		t.Errorf("workloads should precede the Service issues section:\n%s", out)
+	// Both workloads and real service issues are in NEEDS ATTENTION; workloads print first.
+	if strings.Index(out, "cattle-system/rancher") > strings.Index(out, "default/web") {
+		t.Errorf("workloads should precede the service issue lines:\n%s", out)
 	}
 }
 
@@ -524,10 +530,14 @@ func TestPrintInventory_TextShowsCredentialWarnings(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
-	for _, want := range []string{"Credential warnings (--lint-secrets):", "default/app-config", "ConfigMap[DB_PASSWORD]", "default/web", "Pod[app/AWS_SECRET]", "AWS access key"} {
+	// Credential warnings now render under NEEDS ATTENTION with ✗ glyph; no standalone header.
+	for _, want := range []string{"NEEDS ATTENTION", "default/app-config", "ConfigMap[DB_PASSWORD]", "default/web", "Pod[app/AWS_SECRET]", "AWS access key"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "Credential warnings (--lint-secrets):") {
+		t.Errorf("old Credential warnings header must be absent:\n%s", out)
 	}
 }
 
@@ -670,6 +680,71 @@ func TestPrintInventory_TextNoPVCReclaimSectionWhenEmpty(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), "PVCs with reclaim policy Delete:") {
 		t.Errorf("section must be omitted for empty report, got:\n%s", buf.String())
+	}
+}
+
+func TestPrintInventory_HeaderAttentionLine(t *testing.T) {
+	var buf bytes.Buffer
+	ws := sampleWorkloads()
+	ws[0].Findings = []diagnose.Finding{{Issue: "ImagePullBackOff", Reason: "bad ref"}}
+	svc := []svchealth.Issue{
+		{Namespace: "a", Name: "svc1", Type: "ClusterIP", Detail: "no ready endpoints"}, // real
+		{Namespace: "b", Name: "svc2", Type: "ClusterIP", Detail: "scaled to 0", Expected: true},
+	}
+	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 3, NodesTotal: 3}, Result: inventory.Result{Workloads: ws}, ServiceIssues: svc}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "Needs attention:") {
+		t.Errorf("missing attention line in:\n%s", out)
+	}
+	if !strings.Contains(out, "1 workload failing") {
+		t.Errorf("missing workload count in:\n%s", out)
+	}
+	if !strings.Contains(out, "1 service without endpoints") {
+		t.Errorf("missing real-service count in:\n%s", out)
+	}
+}
+
+func TestPrintInventory_ZoneOrderAndGlyphs(t *testing.T) {
+	var buf bytes.Buffer
+	ws := sampleWorkloads()
+	ws[0].Findings = []diagnose.Finding{{Issue: "ImagePullBackOff", Reason: "bad ref"}}
+	svc := []svchealth.Issue{
+		{Namespace: "a", Name: "real", Type: "ClusterIP", Detail: "no ready endpoints"},
+		{Namespace: "b", Name: "expected", Type: "ClusterIP", Detail: "scaled to 0", Expected: true},
+	}
+	in := Input{
+		Cluster:       clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 3, NodesTotal: 3},
+		Result:        inventory.Result{Workloads: ws},
+		Resources:     sampleSummary(),
+		Platform:      sampleFacts(),
+		ServiceIssues: svc,
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	na := strings.Index(out, "NEEDS ATTENTION")
+	notes := strings.Index(out, "NOTES")
+	ctx := strings.Index(out, "CONTEXT")
+	if !(na >= 0 && notes > na && ctx > notes) {
+		t.Fatalf("zones out of order: NEEDS ATTENTION=%d NOTES=%d CONTEXT=%d\n%s", na, notes, ctx, out)
+	}
+	// real service under NEEDS ATTENTION (before NOTES), expected under NOTES.
+	if i := strings.Index(out, "a/real"); !(i > na && i < notes) {
+		t.Errorf("real service not in NEEDS ATTENTION zone:\n%s", out)
+	}
+	if i := strings.Index(out, "b/expected"); !(i > notes && i < ctx) {
+		t.Errorf("expected service not in NOTES zone:\n%s", out)
+	}
+	// resources + platform live in CONTEXT.
+	if i := strings.Index(out, "Resources (cluster):"); i < ctx {
+		t.Errorf("resources not in CONTEXT zone:\n%s", out)
+	}
+	if !strings.Contains(out, "✗ ") {
+		t.Errorf("expected ✗ glyph for a problem in:\n%s", out)
 	}
 }
 

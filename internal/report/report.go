@@ -10,6 +10,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/credlint"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/nodereserve"
 	"github.com/imantaba/kubeagent/internal/platform"
 	"github.com/imantaba/kubeagent/internal/resources"
 	"github.com/imantaba/kubeagent/internal/svchealth"
@@ -23,24 +24,25 @@ type inventoryReport struct {
 	Platform           *platform.Facts             `json:"platform,omitempty"`
 	ServiceIssues      []svchealth.Issue           `json:"serviceIssues,omitempty"`
 	CredentialWarnings []credlint.Finding          `json:"credentialWarnings,omitempty"`
+	NodeReserve        *nodereserve.Report         `json:"nodeReserve,omitempty"`
 	Explanation        string                      `json:"explanation,omitempty"`
 }
 
 // PrintInventory writes the cluster verdict and the prioritized workload set to w.
-func PrintInventory(cluster clusterhealth.ClusterHealth, result inventory.Result, summary *resources.Summary, facts *platform.Facts, serviceIssues []svchealth.Issue, credentialWarnings []credlint.Finding, explanation, format string, w io.Writer) error {
+func PrintInventory(cluster clusterhealth.ClusterHealth, result inventory.Result, summary *resources.Summary, facts *platform.Facts, serviceIssues []svchealth.Issue, credentialWarnings []credlint.Finding, nodeReserve *nodereserve.Report, explanation, format string, w io.Writer) error {
 	switch format {
 	case "json":
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
-		return enc.Encode(inventoryReport{Cluster: cluster, Workloads: result.Workloads, Resources: summary, Platform: facts, ServiceIssues: serviceIssues, CredentialWarnings: credentialWarnings, Explanation: explanation})
+		return enc.Encode(inventoryReport{Cluster: cluster, Workloads: result.Workloads, Resources: summary, Platform: facts, ServiceIssues: serviceIssues, CredentialWarnings: credentialWarnings, NodeReserve: nodeReserve, Explanation: explanation})
 	case "text":
-		return printInventoryText(cluster, result, summary, facts, serviceIssues, credentialWarnings, explanation, w)
+		return printInventoryText(cluster, result, summary, facts, serviceIssues, credentialWarnings, nodeReserve, explanation, w)
 	default:
 		return fmt.Errorf("unknown output format %q (want text or json)", format)
 	}
 }
 
-func printInventoryText(cluster clusterhealth.ClusterHealth, result inventory.Result, summary *resources.Summary, facts *platform.Facts, serviceIssues []svchealth.Issue, credentialWarnings []credlint.Finding, explanation string, w io.Writer) error {
+func printInventoryText(cluster clusterhealth.ClusterHealth, result inventory.Result, summary *resources.Summary, facts *platform.Facts, serviceIssues []svchealth.Issue, credentialWarnings []credlint.Finding, nodeReserve *nodereserve.Report, explanation string, w io.Writer) error {
 	if cluster.Verdict != "" {
 		if _, err := fmt.Fprintf(w, "Cluster: %s — %d/%d nodes Ready\n", cluster.Verdict, cluster.NodesReady, cluster.NodesTotal); err != nil {
 			return err
@@ -73,6 +75,10 @@ func printInventoryText(cluster clusterhealth.ClusterHealth, result inventory.Re
 	}
 
 	if err := printResources(summary, w); err != nil {
+		return err
+	}
+
+	if err := printNodeReservations(nodeReserve, w); err != nil {
 		return err
 	}
 
@@ -143,6 +149,33 @@ func printResLine(w io.Writer, label string, l resources.Line, unit string, metr
 		line += fmt.Sprintf(" · used %s (%d%%)", l.Usage, l.UsagePct)
 	}
 	_, err := fmt.Fprintln(w, line)
+	return err
+}
+
+// printNodeReservations lists each node's observed kubelet reservation and
+// flags nodes that reserve no memory. Nothing is printed when the report is
+// nil or empty.
+func printNodeReservations(rep *nodereserve.Report, w io.Writer) error {
+	if rep == nil || len(rep.Nodes) == 0 {
+		return nil
+	}
+	if _, err := fmt.Fprintln(w, "Node reservations:"); err != nil {
+		return err
+	}
+	for _, n := range rep.Nodes {
+		status := "OK"
+		if n.Warning {
+			status = "⚠ WARNING: kubelet reserves no memory"
+		}
+		role := ""
+		if n.Role != "" {
+			role = " " + n.Role
+		}
+		if _, err := fmt.Fprintf(w, "  %s%s  cpu=%s mem=%s  %s\n", n.Name, role, n.CPUReserved, n.MemReserved, status); err != nil {
+			return err
+		}
+	}
+	_, err := fmt.Fprintln(w)
 	return err
 }
 

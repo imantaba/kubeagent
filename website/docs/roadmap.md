@@ -38,6 +38,15 @@
   stuck because a volume can't attach (Multi-Attach); `RestartLoop` flags a
   currently-Running container that keeps erroring and restarting — the flapping
   case `CrashLoopBackOff` misses. See [Failure diagnostics](features/diagnostics.md).
+- **Node & storage safety checks** — a node reservation check warns when a
+  node's kubelet reserves no memory (`allocatable == capacity`), and a PVC
+  reclaim-policy check lists Bound PersistentVolumeClaims whose bound PV reclaims
+  with `Delete` (data-loss-prone). Both are read-only and advisory, and appear in
+  the daemon as `kubeagent_nodes_without_reservations` and
+  `kubeagent_pvcs_reclaim_delete`. See [Failure diagnostics](features/diagnostics.md).
+- **Helm chart** — the read-only watch daemon is packaged as a Helm chart under
+  [`deploy/helm/kubeagent/`](https://github.com/imantaba/kubeagent/tree/main/deploy/helm/kubeagent),
+  alongside the raw manifests — see [Install](install.md#with-helm).
 
 !!! info "Version history"
     [GitHub Releases](https://github.com/imantaba/kubeagent/releases) and the

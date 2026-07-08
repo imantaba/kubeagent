@@ -144,6 +144,25 @@ func StorageClasses(ctx context.Context, client kubernetes.Interface) ([]storage
 	return scs.Items, nil
 }
 
+// PersistentVolumeClaims lists PVCs in the namespace (all namespaces when
+// empty), read-only.
+func PersistentVolumeClaims(ctx context.Context, client kubernetes.Interface, namespace string) ([]corev1.PersistentVolumeClaim, error) {
+	pvcs, err := client.CoreV1().PersistentVolumeClaims(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("listing persistentvolumeclaims: %w", err)
+	}
+	return pvcs.Items, nil
+}
+
+// PersistentVolumes lists all PVs (cluster-scoped, read-only).
+func PersistentVolumes(ctx context.Context, client kubernetes.Interface) ([]corev1.PersistentVolume, error) {
+	pvs, err := client.CoreV1().PersistentVolumes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("listing persistentvolumes: %w", err)
+	}
+	return pvs.Items, nil
+}
+
 // IngressClasses lists all IngressClasses (cluster-scoped, read-only).
 func IngressClasses(ctx context.Context, client kubernetes.Interface) ([]networkingv1.IngressClass, error) {
 	ics, err := client.NetworkingV1().IngressClasses().List(ctx, metav1.ListOptions{})

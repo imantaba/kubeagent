@@ -67,6 +67,7 @@ func run(args []string) error {
 	includeCron := fs.Bool("include-cron", false, "include CronJobs in the report")
 	includeRestarts := fs.Bool("include-restarts", false, "include workloads that are healthy now but have restarted")
 	lintSecrets := fs.Bool("lint-secrets", false, "scan ConfigMaps and pod env for credentials stored in the clear (never prints values)")
+	pvcReclaimFull := fs.Bool("pvc-reclaim", false, "list every PVC on a Delete reclaim policy (default: a grouped summary)")
 	fix := fs.Bool("fix", false, "propose and (after confirmation) apply safe, reversible remediations (opt-in writes)")
 	dryRun := fs.Bool("dry-run", false, "with --fix: print proposed remediations only; never prompt or write")
 	assumeYes := fs.Bool("yes", false, "with --fix: apply all proposed remediations without prompting")
@@ -140,7 +141,18 @@ func run(args []string) error {
 		credWarnings = credlint.Scan(cms, res.Inputs.Pods)
 	}
 
-	if err := report.PrintInventory(health, result, &summary, &facts, serviceIssues, credWarnings, &res.NodeReserve, &res.PVCReclaim, explanation, *output, os.Stdout); err != nil {
+	if err := report.PrintInventory(report.Input{
+		Cluster:            health,
+		Result:             result,
+		Resources:          &summary,
+		Platform:           &facts,
+		ServiceIssues:      serviceIssues,
+		CredentialWarnings: credWarnings,
+		NodeReserve:        &res.NodeReserve,
+		PVCReclaim:         &res.PVCReclaim,
+		PVCReclaimFull:     *pvcReclaimFull,
+		Explanation:        explanation,
+	}, *output, os.Stdout); err != nil {
 		return err
 	}
 	if *fix {

@@ -75,6 +75,25 @@ appear. `Delete` is the common default for dynamic provisioners, so the list can
 be long; it is informational and never changes the cluster verdict. Reading PVCs
 and PVs needs only `get`/`list`/`watch`.
 
+### Output layout
+
+`scan --output text` groups findings by how urgently they need action:
+
+- **NEEDS ATTENTION** — failing workloads, Services with no ready endpoints, and
+  credential warnings.
+- **NOTES** — advisories that rarely need immediate action: PersistentVolumeClaims
+  on a `Delete` reclaim policy (a grouped summary; pass `--pvc-reclaim` for the
+  full list), Services that are intentionally empty (scaled to zero or a CronJob
+  between runs), and counts of workloads hidden behind `--include-restarts` /
+  `--include-cron`.
+- **CONTEXT** — reference data: node readiness and kubelet reservations (collapsed
+  to one line when all nodes are fine), the cluster resource summary, and platform
+  facts.
+
+A "Needs attention" line under the cluster verdict summarizes how many workloads
+are failing and how many Services have no endpoints. `--output json` is
+unaffected and always contains the full detail.
+
 ## Status
 
 `kubeagent scan` performs a read-only, whole-cluster scan and reports

@@ -5,6 +5,19 @@ All notable changes to kubeagent are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Redesigned `scan` text output.** The human-readable output is now organized
+  by severity into **NEEDS ATTENTION** (failing workloads, dead Services,
+  credential warnings), **NOTES** (advisories — Delete-policy PVCs, expected-empty
+  Services, hidden-workload counts), and **CONTEXT** (nodes/reservations,
+  resources, platform), with a workload-scoped "Needs attention" line under the
+  cluster verdict. All-OK node reservations collapse to one line, and
+  Delete-policy PVCs show as a grouped summary — pass `--pvc-reclaim` for the full
+  per-PVC list. `--output json` is unchanged, and `--fix` behavior is unchanged.
+
 ## [0.13.0] - 2026-07-08
 
 ### Added

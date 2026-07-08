@@ -658,6 +658,20 @@ func TestPrintInventory_TextShowsPVCReclaim(t *testing.T) {
 	}
 }
 
+func TestPrintInventory_TextNoPVCReclaimSectionWhenEmpty(t *testing.T) {
+	var buf bytes.Buffer
+	// Non-nil but empty report — the production path from main.go passes
+	// &res.PVCReclaim, so the empty-slice branch must skip the section.
+	rep := &pvcreclaim.Report{}
+	ch := clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1}
+	if err := PrintInventory(ch, inventory.Result{}, nil, nil, nil, nil, nil, rep, "", "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf.String(), "PVCs with reclaim policy Delete:") {
+		t.Errorf("section must be omitted for empty report, got:\n%s", buf.String())
+	}
+}
+
 func TestPrintInventory_JSONIncludesPVCReclaim(t *testing.T) {
 	var buf bytes.Buffer
 	rep := &pvcreclaim.Report{Count: 1, PVCs: []pvcreclaim.PVCReclaim{

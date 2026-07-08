@@ -35,6 +35,9 @@ kubeconfig
 # Claude Code local session settings
 .claude/
 
+# Personal, untracked Claude memory
+CLAUDE.local.md
+
 # Local Go-learning companion (kept on disk, not tracked)
 docs/go-concepts.md
 

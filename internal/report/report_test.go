@@ -62,8 +62,8 @@ func TestPrintInventory_TextFlagsWorkloadWithFinding(t *testing.T) {
 	if !strings.Contains(out, "CrashLoopBackOff") || !strings.Contains(out, "Degraded") {
 		t.Errorf("expected the finding + Degraded to show:\n%s", out)
 	}
-	if !strings.Contains(out, "⚠") {
-		t.Errorf("expected the ⚠ flag symbol on a flagged workload:\n%s", out)
+	if !strings.Contains(out, "✗ kube-system/coredns") {
+		t.Errorf("expected the ✗ flag on the flagged workload header:\n%s", out)
 	}
 }
 

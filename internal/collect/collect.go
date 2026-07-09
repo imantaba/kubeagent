@@ -15,6 +15,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/imantaba/kubeagent/internal/diagnose"
+	"github.com/imantaba/kubeagent/internal/diskusage"
 	"github.com/imantaba/kubeagent/internal/inventory"
 )
 
@@ -216,6 +217,58 @@ func ConfigMaps(ctx context.Context, client kubernetes.Interface, namespace stri
 		return nil, fmt.Errorf("listing configmaps: %w", err)
 	}
 	return cms.Items, nil
+}
+
+// NodeStats fetches one node's kubelet /stats/summary through the nodes/proxy
+// subresource (read-only). A forbidden or unreachable node yields
+// (zero, false, nil) so a scan still succeeds without it. Requires the
+// nodes/proxy grant (opt-in; see deploy/rbac-diskusage.yaml).
+func NodeStats(ctx context.Context, client kubernetes.Interface, node string) (diskusage.NodeSummary, bool, error) {
+	data, err := client.CoreV1().RESTClient().Get().
+		AbsPath(fmt.Sprintf("/api/v1/nodes/%s/proxy/stats/summary", node)).DoRaw(ctx)
+	if err != nil {
+		return diskusage.NodeSummary{}, false, nil // forbidden/unreachable — non-fatal
+	}
+	return parseNodeSummary(node, data)
+}
+
+// parseNodeSummary decodes the kubelet Summary JSON we consume: the node root
+// filesystem and each pod volume that carries a pvcRef.
+func parseNodeSummary(node string, data []byte) (diskusage.NodeSummary, bool, error) {
+	var raw struct {
+		Node struct {
+			Fs struct {
+				UsedBytes     int64 `json:"usedBytes"`
+				CapacityBytes int64 `json:"capacityBytes"`
+			} `json:"fs"`
+		} `json:"node"`
+		Pods []struct {
+			Volume []struct {
+				UsedBytes     int64 `json:"usedBytes"`
+				CapacityBytes int64 `json:"capacityBytes"`
+				PVCRef        *struct {
+					Name      string `json:"name"`
+					Namespace string `json:"namespace"`
+				} `json:"pvcRef"`
+			} `json:"volume"`
+		} `json:"pods"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return diskusage.NodeSummary{}, false, err
+	}
+	out := diskusage.NodeSummary{Node: node, FSUsed: raw.Node.Fs.UsedBytes, FSCap: raw.Node.Fs.CapacityBytes}
+	for _, p := range raw.Pods {
+		for _, v := range p.Volume {
+			if v.PVCRef == nil {
+				continue
+			}
+			out.Volumes = append(out.Volumes, diskusage.PVCVolume{
+				Namespace: v.PVCRef.Namespace, Name: v.PVCRef.Name,
+				Used: v.UsedBytes, Cap: v.CapacityBytes,
+			})
+		}
+	}
+	return out, true, nil
 }
 
 // parseNodeMetrics decodes a metrics.k8s.io NodeMetricsList body into per-node

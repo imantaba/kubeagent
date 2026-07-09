@@ -281,6 +281,41 @@ func TestConfigMaps_NamespaceScoped(t *testing.T) {
 	}
 }
 
+func TestParseNodeSummary_NodeFSAndPVCVolumes(t *testing.T) {
+	data := []byte(`{
+	  "node": {"fs": {"usedBytes": 170000000000, "capacityBytes": 200000000000}},
+	  "pods": [
+	    {"volume": [
+	      {"usedBytes": 46000000000, "capacityBytes": 50000000000, "pvcRef": {"name": "data", "namespace": "shop"}},
+	      {"usedBytes": 10, "capacityBytes": 20}
+	    ]},
+	    {"volume": [
+	      {"usedBytes": 5, "capacityBytes": 10, "pvcRef": {"name": "cache", "namespace": "shop"}}
+	    ]}
+	  ]
+	}`)
+	s, ok, err := parseNodeSummary("n1", data)
+	if err != nil || !ok {
+		t.Fatalf("parse failed: ok=%v err=%v", ok, err)
+	}
+	if s.Node != "n1" || s.FSUsed != 170000000000 || s.FSCap != 200000000000 {
+		t.Errorf("wrong node fs: %+v", s)
+	}
+	// Only volumes with a pvcRef are kept.
+	if len(s.Volumes) != 2 {
+		t.Fatalf("want 2 pvc volumes, got %d (%+v)", len(s.Volumes), s.Volumes)
+	}
+	if s.Volumes[0].Namespace != "shop" || s.Volumes[0].Name != "data" || s.Volumes[0].Cap != 50000000000 {
+		t.Errorf("wrong first volume: %+v", s.Volumes[0])
+	}
+}
+
+func TestParseNodeSummary_BadJSON(t *testing.T) {
+	if _, ok, err := parseNodeSummary("n1", []byte("not json")); ok || err == nil {
+		t.Errorf("want (false, err) on bad json, got ok=%v err=%v", ok, err)
+	}
+}
+
 func TestPersistentVolumeClaimsAndVolumes_List(t *testing.T) {
 	client := fake.NewSimpleClientset(
 		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "data-0"}},

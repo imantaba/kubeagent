@@ -2,8 +2,8 @@ apiVersion: v2
 name: kubeagent
 description: Read-only, in-cluster Kubernetes troubleshooting daemon (kubeagent watch) — continuous diagnosis exposed as Prometheus metrics and structured logs.
 type: application
-version: 0.4.0
-appVersion: "v0.14.0"
+version: 0.5.0
+appVersion: "v0.15.0"
 home: https://k8sproject.top
 sources:
   - https://github.com/imantaba/kubeagent

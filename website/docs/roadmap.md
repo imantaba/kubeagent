@@ -47,6 +47,13 @@
 - **Helm chart** — the read-only watch daemon is packaged as a Helm chart under
   [`deploy/helm/kubeagent/`](https://github.com/imantaba/kubeagent/tree/main/deploy/helm/kubeagent),
   alongside the raw manifests — see [Install](install.md#with-helm).
+- **Disk-usage check (opt-in)** — `scan --disk-usage` reads each node's kubelet
+  `/stats/summary` (via `nodes/proxy`) and flags node filesystems and PVCs at or
+  over `--disk-threshold` (default `0.80`) — an early warning before the
+  kubelet's `DiskPressure` eviction signal. Off by default (needs a `nodes/proxy`
+  add-on); the daemon exposes `kubeagent_node_fs_usage_ratio` and
+  `kubeagent_volumes_over_disk_threshold`. See
+  [Failure diagnostics](features/diagnostics.md).
 
 !!! info "Version history"
     [GitHub Releases](https://github.com/imantaba/kubeagent/releases) and the

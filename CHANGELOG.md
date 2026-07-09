@@ -5,6 +5,21 @@ All notable changes to kubeagent are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Disk-usage check (opt-in).** `scan --disk-usage` reads each node's kubelet
+  `/stats/summary` (via the `nodes/proxy` subresource) and flags node
+  filesystems and PVCs at or over a threshold (`--disk-threshold`, default
+  `0.80`) in the NEEDS ATTENTION section and JSON `diskUsage` — an early warning
+  before the kubelet's `DiskPressure` eviction signal. Off by default (adds no
+  RBAC); enable the daemon with `KUBEAGENT_DISK_USAGE=true` and the
+  `nodes/proxy` add-on (`deploy/rbac-diskusage.yaml` or Helm
+  `diskUsage.enabled=true`), which also exposes `kubeagent_node_fs_usage_ratio`
+  and `kubeagent_volumes_over_disk_threshold`. Read-only; advisory (does not
+  change the cluster verdict).
+
 ## [0.14.0] - 2026-07-08
 
 ### Changed

@@ -75,6 +75,19 @@ appear. `Delete` is the common default for dynamic provisioners, so the list can
 be long; it is informational and never changes the cluster verdict. Reading PVCs
 and PVs needs only `get`/`list`/`watch`.
 
+### Disk usage (opt-in)
+
+`scan --disk-usage` reads each node's kubelet `/stats/summary` and warns when a
+node's root filesystem or a PersistentVolumeClaim is at or over
+`--disk-threshold` (default `0.80`) — an early warning that fires before the
+kubelet's `DiskPressure` eviction signal. Over-threshold volumes appear in
+**NEEDS ATTENTION**; the full detail is in JSON `diskUsage`.
+
+It is **off by default**: it needs the `nodes/proxy` subresource (a broader grant
+than kubeagent's usual `get`/`list`/`watch`), so you opt in explicitly with the
+flag and, in-cluster, with the `nodes/proxy` RBAC add-on. It never changes the
+cluster verdict.
+
 ### Output layout
 
 `scan --output text` groups findings by how urgently they need action:

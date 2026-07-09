@@ -89,6 +89,15 @@ Uninstall:
 helm uninstall kubeagent -n kubeagent
 ```
 
+## Disk usage (opt-in)
+
+Applying `deploy/rbac-diskusage.yaml` (or setting Helm `diskUsage.enabled=true`)
+grants the `nodes/proxy` `get` subresource and sets `KUBEAGENT_DISK_USAGE=true`
+in the daemon environment. Without this add-on, kubeagent stays strictly
+`get`/`list`/`watch` and makes no kubelet proxy calls. When enabled, the daemon
+also exposes `kubeagent_node_fs_usage_ratio{node}` and
+`kubeagent_volumes_over_disk_threshold` as Prometheus gauges.
+
 ## Security notes
 
 - The daemon runs as UID 65532 (non-root) with a read-only root filesystem and

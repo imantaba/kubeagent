@@ -14,6 +14,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/collect"
 	"github.com/imantaba/kubeagent/internal/diagnose"
+	"github.com/imantaba/kubeagent/internal/diskusage"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/netpolicy"
 	"github.com/imantaba/kubeagent/internal/nodereserve"
@@ -27,6 +28,8 @@ type Options struct {
 	Namespace       string
 	IncludeCron     bool
 	IncludeRestarts bool
+	DiskUsage       bool
+	DiskThreshold   float64
 }
 
 // Result is the structured health picture. Inputs and Nodes are exposed so the
@@ -37,6 +40,7 @@ type Result struct {
 	Nodes         []corev1.Node
 	NodeReserve   nodereserve.Report
 	PVCReclaim    pvcreclaim.Report
+	DiskUsage     diskusage.Report
 	Health        clusterhealth.ClusterHealth
 	Inventory     inventory.Result
 	ServiceIssues []svchealth.Issue
@@ -91,5 +95,16 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	netpolicy.Annotate(result.Workloads, podLabels, nps)
 	rollout.Annotate(result.Workloads, inputs.ReplicaSets, time.Now())
 
-	return Result{Inputs: inputs, Nodes: nodes, NodeReserve: nodereserve.Assess(nodes), PVCReclaim: pvcReclaim, Health: health, Inventory: result, ServiceIssues: serviceIssues}, nil
+	var diskReport diskusage.Report
+	if opts.DiskUsage {
+		var summaries []diskusage.NodeSummary
+		for _, n := range nodes {
+			if s, ok, _ := collect.NodeStats(ctx, client, n.Name); ok {
+				summaries = append(summaries, s)
+			}
+		}
+		diskReport = diskusage.Assess(summaries, opts.DiskThreshold)
+	}
+
+	return Result{Inputs: inputs, Nodes: nodes, NodeReserve: nodereserve.Assess(nodes), PVCReclaim: pvcReclaim, DiskUsage: diskReport, Health: health, Inventory: result, ServiceIssues: serviceIssues}, nil
 }

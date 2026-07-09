@@ -128,4 +128,17 @@ func TestEvaluate_FlagsRestartLoop(t *testing.T) {
 	}
 }
 
+func TestEvaluate_DiskUsageOffByDefault(t *testing.T) {
+	client := fake.NewSimpleClientset(
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"}},
+	)
+	res, err := Evaluate(context.Background(), client, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.DiskUsage.Over) != 0 || len(res.DiskUsage.Nodes) != 0 {
+		t.Errorf("disk usage must be empty when not enabled, got %+v", res.DiskUsage)
+	}
+}
+
 func p32(i int32) *int32 { return &i }

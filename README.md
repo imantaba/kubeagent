@@ -23,6 +23,9 @@ A Kubernetes troubleshooting agent, written in Go.
 - **PVC reclaim-policy check** — lists Bound PVCs whose PV reclaims with Delete
   (the data-loss-prone default for dynamic provisioners). Advisory and read-only;
   adds PVC + PV read RBAC.
+- **Disk-usage check (opt-in)** — `scan --disk-usage` flags node filesystems and
+  PVCs at or over `--disk-threshold` (default `0.80`) before the kubelet's
+  `DiskPressure` eviction fires. Needs the `nodes/proxy` add-on; off by default.
 
 It talks to the cluster directly via the official Kubernetes Go client
 (`client-go`) — the same library `kubectl` and operators are built on — and

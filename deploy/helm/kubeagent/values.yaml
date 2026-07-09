@@ -59,3 +59,7 @@ nodeSelector: {}
 tolerations: []
 affinity: {}
 podAnnotations: {}
+
+diskUsage:
+  enabled: false
+  threshold: "0.80"

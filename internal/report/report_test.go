@@ -9,6 +9,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/credlint"
 	"github.com/imantaba/kubeagent/internal/diagnose"
+	"github.com/imantaba/kubeagent/internal/diskusage"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/nodereserve"
 	"github.com/imantaba/kubeagent/internal/platform"
@@ -840,5 +841,76 @@ func TestPrintInventory_JSONIncludesPVCReclaim(t *testing.T) {
 	}
 	if pr["count"].(float64) != 1 {
 		t.Errorf("want count 1, got %v", pr["count"])
+	}
+}
+
+func TestPrintInventory_TextShowsDiskUsageInNeedsAttention(t *testing.T) {
+	var buf bytes.Buffer
+	rep := &diskusage.Report{Threshold: 0.80, Over: []diskusage.VolumeUsage{
+		{Kind: "pvc", Namespace: "clickhouse", Name: "data", UsedBytes: 46 << 30, CapacityBytes: 50 << 30, Ratio: 0.92},
+		{Kind: "node", Node: "n1", Name: "n1", UsedBytes: 168 << 30, CapacityBytes: 200 << 30, Ratio: 0.84},
+	}}
+	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1}, DiskUsage: rep}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "NEEDS ATTENTION") {
+		t.Errorf("disk usage should trip the NEEDS ATTENTION zone:\n%s", out)
+	}
+	if !strings.Contains(out, "✗ pvc clickhouse/data") || !strings.Contains(out, "92% full") {
+		t.Errorf("missing pvc disk line:\n%s", out)
+	}
+	if !strings.Contains(out, "✗ node n1") || !strings.Contains(out, "84% full") {
+		t.Errorf("missing node disk line:\n%s", out)
+	}
+	if strings.Contains(out, "No issues found") {
+		t.Errorf("all-clear must be suppressed when a disk is over threshold:\n%s", out)
+	}
+	if !strings.Contains(out, "Needs attention: 2 volumes low on disk") {
+		t.Errorf("header attention line should count the over-threshold volumes:\n%s", out)
+	}
+}
+
+func TestPrintInventory_DiskUsageAbsentWhenNilOrEmpty(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1}, DiskUsage: &diskusage.Report{Threshold: 0.80}}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf.String(), "disk") {
+		t.Errorf("no disk lines expected for an empty report:\n%s", buf.String())
+	}
+	if !strings.Contains(buf.String(), "No issues found") {
+		t.Errorf("empty disk report must not suppress all-clear:\n%s", buf.String())
+	}
+}
+
+func TestPrintInventory_JSONIncludesDiskUsage(t *testing.T) {
+	var buf bytes.Buffer
+	rep := &diskusage.Report{Threshold: 0.80, Over: []diskusage.VolumeUsage{
+		{Kind: "node", Node: "n1", Name: "n1", UsedBytes: 168 << 30, CapacityBytes: 200 << 30, Ratio: 0.84},
+	}}
+	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1}, DiskUsage: rep}
+	if err := PrintInventory(in, "json", &buf); err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got["diskUsage"].(map[string]any); !ok {
+		t.Fatalf("diskUsage missing in JSON: %s", buf.String())
+	}
+}
+
+func TestPrintInventory_JSONOmitsDiskUsageWhenNil(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1}}
+	if err := PrintInventory(in, "json", &buf); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf.String(), "diskUsage") {
+		t.Errorf("diskUsage must be absent from JSON when the check is off:\n%s", buf.String())
 	}
 }

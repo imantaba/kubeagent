@@ -34,6 +34,13 @@ spec:
             {{- if .Values.watch.namespace }}
             - "--namespace={{ .Values.watch.namespace }}"
             {{- end }}
+          {{- if .Values.diskUsage.enabled }}
+          env:
+            - name: KUBEAGENT_DISK_USAGE
+              value: "true"
+            - name: KUBEAGENT_DISK_THRESHOLD
+              value: {{ .Values.diskUsage.threshold | quote }}
+          {{- end }}
           ports:
             - name: metrics
               containerPort: {{ .Values.metricsPort }}

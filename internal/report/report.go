@@ -191,6 +191,10 @@ func attentionLine(in Input, real []svchealth.Issue) string {
 	if len(real) > 0 {
 		parts = append(parts, fmt.Sprintf("%d %s without endpoints", len(real), plural(len(real), "service", "services")))
 	}
+	if in.DiskUsage != nil && len(in.DiskUsage.Over) > 0 {
+		n := len(in.DiskUsage.Over)
+		parts = append(parts, fmt.Sprintf("%d %s low on disk", n, plural(n, "volume", "volumes")))
+	}
 	return strings.Join(parts, " · ")
 }
 

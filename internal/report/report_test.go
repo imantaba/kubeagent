@@ -867,6 +867,9 @@ func TestPrintInventory_TextShowsDiskUsageInNeedsAttention(t *testing.T) {
 	if strings.Contains(out, "No issues found") {
 		t.Errorf("all-clear must be suppressed when a disk is over threshold:\n%s", out)
 	}
+	if !strings.Contains(out, "Needs attention: 2 volumes low on disk") {
+		t.Errorf("header attention line should count the over-threshold volumes:\n%s", out)
+	}
 }
 
 func TestPrintInventory_DiskUsageAbsentWhenNilOrEmpty(t *testing.T) {
@@ -898,5 +901,16 @@ func TestPrintInventory_JSONIncludesDiskUsage(t *testing.T) {
 	}
 	if _, ok := got["diskUsage"].(map[string]any); !ok {
 		t.Fatalf("diskUsage missing in JSON: %s", buf.String())
+	}
+}
+
+func TestPrintInventory_JSONOmitsDiskUsageWhenNil(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1}}
+	if err := PrintInventory(in, "json", &buf); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf.String(), "diskUsage") {
+		t.Errorf("diskUsage must be absent from JSON when the check is off:\n%s", buf.String())
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -202,6 +203,8 @@ func runWatch(args []string) error {
 		Debounce:        *debounce,
 		IncludeCron:     *includeCron,
 		IncludeRestarts: *includeRestarts,
+		DiskUsage:       envBool("KUBEAGENT_DISK_USAGE", false),
+		DiskThreshold:   envFloat("KUBEAGENT_DISK_THRESHOLD", 0.80),
 	})
 }
 
@@ -218,6 +221,26 @@ func envDur(key string, def time.Duration) time.Duration {
 	if v := os.Getenv(key); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			return d
+		}
+	}
+	return def
+}
+
+// envBool parses a boolean env var, falling back to def on empty/invalid.
+func envBool(key string, def bool) bool {
+	if v := os.Getenv(key); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
+		}
+	}
+	return def
+}
+
+// envFloat parses a float env var, falling back to def on empty/invalid.
+func envFloat(key string, def float64) float64 {
+	if v := os.Getenv(key); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
 		}
 	}
 	return def

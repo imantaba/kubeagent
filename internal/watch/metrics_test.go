@@ -10,6 +10,7 @@ import (
 
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/diagnose"
+	"github.com/imantaba/kubeagent/internal/diskusage"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/nodereserve"
 	"github.com/imantaba/kubeagent/internal/pvcreclaim"
@@ -25,6 +26,11 @@ func sampleResult() *scan.Result {
 			{Namespace: "shop", Name: "web", Kind: "Deployment", Ready: 0, Desired: 1,
 				Findings: []diagnose.Finding{{Issue: "CrashLoopBackOff"}}},
 		}},
+		DiskUsage: diskusage.Report{
+			Threshold: 0.80,
+			Over:      []diskusage.VolumeUsage{{Kind: "node", Node: "n1", Name: "n1", Ratio: 0.84}},
+			Nodes:     []diskusage.VolumeUsage{{Kind: "node", Node: "n1", Name: "n1", Ratio: 0.84}},
+		},
 	}
 }
 
@@ -41,6 +47,8 @@ func TestMetrics_RenderReflectsResult(t *testing.T) {
 		"kubeagent_nodes_without_reservations 1",
 		"kubeagent_pvcs_reclaim_delete 2",
 		"kubeagent_scans_total 1",
+		`kubeagent_node_fs_usage_ratio{node="n1"} 0.84`,
+		"kubeagent_volumes_over_disk_threshold 1",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("metrics missing %q in:\n%s", want, out)

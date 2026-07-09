@@ -30,6 +30,8 @@ type metrics struct {
 	scanSeconds   float64
 	scansTotal    int64
 	scanErrors    int64
+	nodeFSRatio     map[string]float64
+	volumesOverDisk int
 }
 
 func newMetrics() *metrics { return &metrics{findings: map[string]int{}} }
@@ -68,6 +70,14 @@ func (m *metrics) update(res *scan.Result, dur time.Duration, now time.Time, err
 	}
 	m.flagged = flagged
 	m.findings = findings
+	if len(res.DiskUsage.Nodes) > 0 {
+		ratios := make(map[string]float64, len(res.DiskUsage.Nodes))
+		for _, n := range res.DiskUsage.Nodes {
+			ratios[n.Node] = n.Ratio
+		}
+		m.nodeFSRatio = ratios
+		m.volumesOverDisk = len(res.DiskUsage.Over)
+	}
 }
 
 func (m *metrics) markReady() { m.mu.Lock(); m.ready = true; m.mu.Unlock() }
@@ -102,6 +112,18 @@ func (m *metrics) render() string {
 	sort.Strings(issues)
 	for _, k := range issues {
 		fmt.Fprintf(&b, "kubeagent_findings{issue=%q} %d\n", k, m.findings[k])
+	}
+	if len(m.nodeFSRatio) > 0 {
+		names := make([]string, 0, len(m.nodeFSRatio))
+		for n := range m.nodeFSRatio {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		fmt.Fprintf(&b, "# HELP kubeagent_node_fs_usage_ratio Node root filesystem used/capacity (0-1)\n# TYPE kubeagent_node_fs_usage_ratio gauge\n")
+		for _, n := range names {
+			fmt.Fprintf(&b, "kubeagent_node_fs_usage_ratio{node=%q} %g\n", n, m.nodeFSRatio[n])
+		}
+		gauge("kubeagent_volumes_over_disk_threshold", "Node+PVC volumes at or over the disk-usage threshold", float64(m.volumesOverDisk))
 	}
 	gauge("kubeagent_last_scan_timestamp_seconds", "Unix time of the last evaluation", float64(m.lastScanUnix))
 	gauge("kubeagent_scan_duration_seconds", "Duration of the last evaluation in seconds", m.scanSeconds)

@@ -36,6 +36,8 @@ The daemon serves Prometheus text on `--metrics-addr` (default `:8080`):
 | `kubeagent_service_issues` | Service issues (no ready endpoints, LB pending) |
 | `kubeagent_nodes_without_reservations` | Number of nodes whose kubelet reserves no memory (allocatable == capacity) |
 | `kubeagent_pvcs_reclaim_delete` | Number of PVCs whose bound PV has reclaimPolicy Delete |
+| `kubeagent_node_fs_usage_ratio{node}` | Node root-filesystem usage ratio (opt-in; requires `--disk-usage` / `KUBEAGENT_DISK_USAGE=true`) |
+| `kubeagent_volumes_over_disk_threshold` | Number of node filesystems and PVCs at or over `--disk-threshold` (opt-in) |
 | `kubeagent_last_scan_timestamp_seconds` / `kubeagent_scan_duration_seconds` | evaluation freshness and cost |
 | `kubeagent_scans_total` / `kubeagent_scan_errors_total` | evaluation counters |
 
@@ -60,6 +62,16 @@ curl localhost:8080/metrics
 Flags (each with a `KUBEAGENT_*` env fallback): `--metrics-addr` (`:8080`),
 `--heartbeat` (`60s`), `--debounce` (`2s`), `--namespace`/`-n` (default all
 namespaces).
+
+### Disk-usage check (opt-in)
+
+Set `KUBEAGENT_DISK_USAGE=true` (and optionally `KUBEAGENT_DISK_THRESHOLD`,
+default `0.80`) to enable the daemon disk-usage check. This requires the
+`nodes/proxy` RBAC add-on — apply `deploy/rbac-diskusage.yaml` or set Helm
+`diskUsage.enabled=true`. Without the add-on the daemon stays strictly
+`get`/`list`/`watch`. When enabled, the daemon exposes
+`kubeagent_node_fs_usage_ratio{node}` and
+`kubeagent_volumes_over_disk_threshold` in addition to the standard metrics.
 
 ## Alerting
 

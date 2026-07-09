@@ -10,6 +10,7 @@ import (
 
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/credlint"
+	"github.com/imantaba/kubeagent/internal/diskusage"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/nodereserve"
 	"github.com/imantaba/kubeagent/internal/platform"
@@ -28,6 +29,7 @@ type inventoryReport struct {
 	CredentialWarnings []credlint.Finding          `json:"credentialWarnings,omitempty"`
 	NodeReserve        *nodereserve.Report         `json:"nodeReserve,omitempty"`
 	PVCReclaim         *pvcreclaim.Report          `json:"pvcReclaim,omitempty"`
+	DiskUsage          *diskusage.Report           `json:"diskUsage,omitempty"`
 	Explanation        string                      `json:"explanation,omitempty"`
 }
 
@@ -43,6 +45,7 @@ type Input struct {
 	NodeReserve        *nodereserve.Report
 	PVCReclaim         *pvcreclaim.Report
 	PVCReclaimFull     bool // --pvc-reclaim: expand the PVC list (text only)
+	DiskUsage          *diskusage.Report
 	Explanation        string
 }
 
@@ -61,6 +64,7 @@ func PrintInventory(in Input, format string, w io.Writer) error {
 			CredentialWarnings: in.CredentialWarnings,
 			NodeReserve:        in.NodeReserve,
 			PVCReclaim:         in.PVCReclaim,
+			DiskUsage:          in.DiskUsage,
 			Explanation:        in.Explanation,
 		})
 	case "text":
@@ -77,7 +81,8 @@ func printInventoryText(in Input, w io.Writer) error {
 		return err
 	}
 
-	hasAttention := len(in.Result.Workloads) > 0 || len(real) > 0 || len(in.CredentialWarnings) > 0
+	hasDisk := in.DiskUsage != nil && len(in.DiskUsage.Over) > 0
+	hasAttention := len(in.Result.Workloads) > 0 || len(real) > 0 || len(in.CredentialWarnings) > 0 || hasDisk
 	if hasAttention {
 		if _, err := fmt.Fprintln(w, "NEEDS ATTENTION"); err != nil {
 			return err
@@ -91,6 +96,9 @@ func printInventoryText(in Input, w io.Writer) error {
 			return err
 		}
 		if err := printCredentialWarnings(in.CredentialWarnings, w); err != nil {
+			return err
+		}
+		if err := printDiskUsage(in.DiskUsage, w); err != nil {
 			return err
 		}
 		if _, err := fmt.Fprintln(w); err != nil {
@@ -292,6 +300,38 @@ func printResLine(w io.Writer, label string, l resources.Line, unit string, metr
 	}
 	_, err := fmt.Fprintln(w, line)
 	return err
+}
+
+// printDiskUsage lists node filesystems and PVCs at or over the threshold.
+func printDiskUsage(rep *diskusage.Report, w io.Writer) error {
+	if rep == nil {
+		return nil
+	}
+	for _, v := range rep.Over {
+		pct := int(v.Ratio*100 + 0.5)
+		var line string
+		if v.Kind == "node" {
+			line = fmt.Sprintf("  ✗ node %s  disk %d%% full (%s/%s)", v.Name, pct, fmtBytes(v.UsedBytes), fmtBytes(v.CapacityBytes))
+		} else {
+			line = fmt.Sprintf("  ✗ pvc %s/%s  %d%% full (%s/%s)", v.Namespace, v.Name, pct, fmtBytes(v.UsedBytes), fmtBytes(v.CapacityBytes))
+		}
+		if _, err := fmt.Fprintln(w, line); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// fmtBytes renders a byte count in Gi/Mi (or B below 1Mi).
+func fmtBytes(b int64) string {
+	switch {
+	case b >= 1<<30:
+		return fmt.Sprintf("%.0fGi", float64(b)/(1<<30))
+	case b >= 1<<20:
+		return fmt.Sprintf("%.0fMi", float64(b)/(1<<20))
+	default:
+		return fmt.Sprintf("%dB", b)
+	}
 }
 
 // printPVCReclaim renders the Delete-reclaim PVCs: a grouped one-line summary by

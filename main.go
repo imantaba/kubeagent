@@ -20,6 +20,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/collect"
 	"github.com/imantaba/kubeagent/internal/connectivity"
 	"github.com/imantaba/kubeagent/internal/credlint"
+	"github.com/imantaba/kubeagent/internal/diskusage"
 	"github.com/imantaba/kubeagent/internal/explain"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/platform"
@@ -55,7 +56,7 @@ func run(args []string) error {
 		return runWatch(args[1:])
 	}
 	if len(args) == 0 || args[0] != "scan" {
-		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--fix [--dry-run|--yes]] | kubeagent watch [--kubeconfig path] [--context name] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] | kubeagent version")
+		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--disk-usage [--disk-threshold r]] [--fix [--dry-run|--yes]] | kubeagent watch [--kubeconfig path] [--context name] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] | kubeagent version")
 	}
 
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
@@ -68,6 +69,8 @@ func run(args []string) error {
 	includeRestarts := fs.Bool("include-restarts", false, "include workloads that are healthy now but have restarted")
 	lintSecrets := fs.Bool("lint-secrets", false, "scan ConfigMaps and pod env for credentials stored in the clear (never prints values)")
 	pvcReclaimFull := fs.Bool("pvc-reclaim", false, "list every PVC on a Delete reclaim policy (default: a grouped summary)")
+	diskUsage := fs.Bool("disk-usage", false, "check node filesystem and PVC usage via the kubelet (needs the nodes/proxy grant)")
+	diskThreshold := fs.Float64("disk-threshold", 0.80, "with --disk-usage: warn at this used ratio (0-1)")
 	fix := fs.Bool("fix", false, "propose and (after confirmation) apply safe, reversible remediations (opt-in writes)")
 	dryRun := fs.Bool("dry-run", false, "with --fix: print proposed remediations only; never prompt or write")
 	assumeYes := fs.Bool("yes", false, "with --fix: apply all proposed remediations without prompting")
@@ -96,6 +99,8 @@ func run(args []string) error {
 		Namespace:       namespace,
 		IncludeCron:     *includeCron,
 		IncludeRestarts: *includeRestarts,
+		DiskUsage:       *diskUsage,
+		DiskThreshold:   *diskThreshold,
 	})
 	if err != nil {
 		if diag, ok := connectivity.Diagnose(err); ok {
@@ -141,6 +146,11 @@ func run(args []string) error {
 		credWarnings = credlint.Scan(cms, res.Inputs.Pods)
 	}
 
+	var diskRep *diskusage.Report
+	if *diskUsage {
+		diskRep = &res.DiskUsage
+	}
+
 	if err := report.PrintInventory(report.Input{
 		Cluster:            health,
 		Result:             result,
@@ -151,6 +161,7 @@ func run(args []string) error {
 		NodeReserve:        &res.NodeReserve,
 		PVCReclaim:         &res.PVCReclaim,
 		PVCReclaimFull:     *pvcReclaimFull,
+		DiskUsage:          diskRep,
 		Explanation:        explanation,
 	}, *output, os.Stdout); err != nil {
 		return err

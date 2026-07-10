@@ -914,3 +914,42 @@ func TestPrintInventory_JSONOmitsDiskUsageWhenNil(t *testing.T) {
 		t.Errorf("diskUsage must be absent from JSON when the check is off:\n%s", buf.String())
 	}
 }
+
+func TestPrintInventory_TextShowsFindingEvidence(t *testing.T) {
+	var buf bytes.Buffer
+	ws := []inventory.Workload{{
+		Namespace: "shop", Name: "web", Kind: "Deployment", Desired: 1, Ready: 0, Status: "Pending",
+		Findings: []diagnose.Finding{{
+			Issue:    "Unschedulable",
+			Reason:   "No node can schedule this pod (resources, taints, or affinity)",
+			Evidence: "0/5 nodes are available: 3 Insufficient memory, 2 node(s) had untolerated taint",
+		}},
+	}}
+	if err := PrintInventory(Input{Result: inventory.Result{Workloads: ws}}, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "⚠ Unschedulable:") {
+		t.Errorf("missing the finding line:\n%s", out)
+	}
+	if !strings.Contains(out, "↳ 0/5 nodes are available: 3 Insufficient memory") {
+		t.Errorf("expected the Evidence sub-line with the scheduler message:\n%s", out)
+	}
+}
+
+func TestPrintInventory_TextOmitsEvidenceWhenEmptyOrDuplicate(t *testing.T) {
+	var buf bytes.Buffer
+	ws := []inventory.Workload{{
+		Namespace: "shop", Name: "web", Kind: "Deployment", Desired: 1, Ready: 0, Status: "Degraded",
+		Findings: []diagnose.Finding{
+			{Issue: "CrashLoopBackOff", Reason: "boom", Evidence: ""},    // empty -> no sub-line
+			{Issue: "OOMKilled", Reason: "same", Evidence: "same"},       // equals Reason -> no sub-line
+		},
+	}}
+	if err := PrintInventory(Input{Result: inventory.Result{Workloads: ws}}, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf.String(), "↳") {
+		t.Errorf("no Evidence sub-line expected for empty/duplicate evidence:\n%s", buf.String())
+	}
+}

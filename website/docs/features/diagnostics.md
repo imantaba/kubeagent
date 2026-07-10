@@ -107,6 +107,14 @@ A "Needs attention" line under the cluster verdict summarizes how many workloads
 are failing and how many Services have no endpoints. `--output json` is
 unaffected and always contains the full detail.
 
+Each finding in **NEEDS ATTENTION** now shows its underlying signal on an
+indented `↳` line — for example, an unschedulable pod prints the scheduler's
+verbatim message (`0/5 nodes are available: 3 Insufficient memory, …`) directly
+in the text output, without needing `--output json` or `--explain`. Similarly,
+a `NotReady` node names its kubelet-reported cause (the `NodeReady` condition's
+reason and message) instead of a bare `NotReady`. The cluster verdict and JSON
+schema are unchanged.
+
 ## Status
 
 `kubeagent scan` performs a read-only, whole-cluster scan and reports

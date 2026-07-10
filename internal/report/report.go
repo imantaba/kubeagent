@@ -457,6 +457,11 @@ func printWorkload(wl inventory.Workload, w io.Writer) error {
 		if _, err := fmt.Fprintf(w, "    ⚠ %s: %s\n", f.Issue, f.Reason); err != nil {
 			return err
 		}
+		if f.Evidence != "" && f.Evidence != f.Reason {
+			if _, err := fmt.Fprintf(w, "      ↳ %s\n", f.Evidence); err != nil {
+				return err
+			}
+		}
 		if f.Resources != nil {
 			r := f.Resources
 			if _, err := fmt.Fprintf(w, "      resources: memory req=%s limit=%s · cpu req=%s limit=%s\n",

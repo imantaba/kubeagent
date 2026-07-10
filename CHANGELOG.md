@@ -5,6 +5,19 @@ All notable changes to kubeagent are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Root cause for NotReady nodes and findings.** A `NotReady` node now names its
+  cause — the `NodeReady` condition's reason and message (e.g.
+  `NotReady: KubeletNotReady — container runtime network not ready: cni config
+  uninitialized`) — instead of a bare `NotReady`. And the text scan now prints
+  each finding's underlying signal (`Finding.Evidence`) beneath it, so a pending
+  pod shows the scheduler's message (`0/5 nodes are available: 3 Insufficient
+  memory, …`) without needing `--output json` or `--explain`. Read-only; the
+  cluster verdict and JSON schema are unchanged.
+
 ## [0.15.0] - 2026-07-09
 
 ### Added

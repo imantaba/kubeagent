@@ -4,6 +4,7 @@ package clusterhealth
 
 import (
 	"fmt"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -67,12 +68,15 @@ func NamespaceScopeNote(namespace string) string {
 }
 
 // nodeHealth returns whether the node's Ready condition is true and a list of
-// its problems ("NotReady", pressure types, "SchedulingDisabled").
+// its problems. The NotReady issue is enriched with the NodeReady condition's
+// reason and (trimmed) message so the output names the cause, not just "NotReady".
 func nodeHealth(n corev1.Node) (ready bool, issues []string) {
+	var readyReason, readyMessage string
 	for _, c := range n.Status.Conditions {
 		switch c.Type {
 		case corev1.NodeReady:
 			ready = c.Status == corev1.ConditionTrue
+			readyReason, readyMessage = c.Reason, c.Message
 		case corev1.NodeMemoryPressure, corev1.NodeDiskPressure, corev1.NodePIDPressure:
 			if c.Status == corev1.ConditionTrue {
 				issues = append(issues, string(c.Type))
@@ -80,10 +84,39 @@ func nodeHealth(n corev1.Node) (ready bool, issues []string) {
 		}
 	}
 	if !ready {
-		issues = append(issues, "NotReady")
+		issues = append(issues, notReadyIssue(readyReason, readyMessage))
 	}
 	if n.Spec.Unschedulable {
 		issues = append(issues, "SchedulingDisabled")
 	}
 	return ready, issues
+}
+
+// notReadyIssue builds the NotReady issue string, adding the NodeReady
+// condition's reason and trimmed message when present.
+func notReadyIssue(reason, message string) string {
+	s := "NotReady"
+	m := trimLine(message, 120)
+	switch {
+	case reason != "" && m != "":
+		s += ": " + reason + " — " + m
+	case reason != "":
+		s += ": " + reason
+	case m != "":
+		s += ": " + m
+	}
+	return s
+}
+
+// trimLine returns the first line of s, trimmed of surrounding space and
+// truncated to max runes with a trailing ellipsis when longer.
+func trimLine(s string, max int) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	s = strings.TrimSpace(s)
+	if r := []rune(s); len(r) > max {
+		return string(r[:max]) + "…"
+	}
+	return s
 }

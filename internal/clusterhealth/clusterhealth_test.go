@@ -104,6 +104,71 @@ func TestAssess_SystemJobFailedOmitsCount(t *testing.T) {
 	}
 }
 
+// notReadyNode builds a node whose NodeReady condition is False with the given
+// reason and message.
+func notReadyNode(name, reason, message string) corev1.Node {
+	return corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{
+			{Type: corev1.NodeReady, Status: corev1.ConditionFalse, Reason: reason, Message: message},
+		}},
+	}
+}
+
+func TestNodeHealth_NotReadyIncludesReasonAndMessage(t *testing.T) {
+	_, issues := nodeHealth(notReadyNode("n1", "KubeletNotReady", "container runtime network not ready: cni config uninitialized"))
+	if len(issues) != 1 {
+		t.Fatalf("want one issue, got %v", issues)
+	}
+	want := "NotReady: KubeletNotReady — container runtime network not ready: cni config uninitialized"
+	if issues[0] != want {
+		t.Errorf("want %q, got %q", want, issues[0])
+	}
+}
+
+func TestNodeHealth_NotReadyTrimsLongMessage(t *testing.T) {
+	long := "KubeletNotReady"
+	msg := ""
+	for i := 0; i < 200; i++ {
+		msg += "x"
+	}
+	_, issues := nodeHealth(notReadyNode("n1", long, msg))
+	if len(issues) != 1 {
+		t.Fatalf("want one issue, got %v", issues)
+	}
+	if []rune(issues[0])[len([]rune(issues[0]))-1] != '…' {
+		t.Errorf("expected a trailing ellipsis on a truncated message: %q", issues[0])
+	}
+	// "NotReady: KubeletNotReady — " prefix + 120 runes + "…"
+	if n := len([]rune(issues[0])); n > 160 {
+		t.Errorf("issue string too long (%d runes): %q", n, issues[0])
+	}
+}
+
+func TestNodeHealth_NotReadyFallsBackWhenEmpty(t *testing.T) {
+	_, issues := nodeHealth(notReadyNode("n1", "", ""))
+	if len(issues) != 1 || issues[0] != "NotReady" {
+		t.Errorf("want plain NotReady, got %v", issues)
+	}
+}
+
+func TestNodeHealth_FirstLineOfMessageOnly(t *testing.T) {
+	_, issues := nodeHealth(notReadyNode("n1", "KubeletNotReady", "first line\nsecond line"))
+	if len(issues) != 1 || issues[0] != "NotReady: KubeletNotReady — first line" {
+		t.Errorf("want only the first line of the message, got %v", issues)
+	}
+}
+
+func TestAssess_NotReadyIssueCarriesNodeNameAndReason(t *testing.T) {
+	ch := Assess([]corev1.Node{notReadyNode("worker-2", "KubeletNotReady", "kubelet stopped posting node status")}, nil)
+	if ch.Verdict != "Degraded" {
+		t.Errorf("a NotReady node should still make the cluster Degraded, got %q", ch.Verdict)
+	}
+	if len(ch.NodeIssues) != 1 || ch.NodeIssues[0] != "worker-2 NotReady: KubeletNotReady — kubelet stopped posting node status" {
+		t.Errorf("want the node name + enriched NotReady, got %v", ch.NodeIssues)
+	}
+}
+
 func TestAssess_DegradedByNodeAndSystem(t *testing.T) {
 	nodes := []corev1.Node{
 		node("a", true, nil, false),

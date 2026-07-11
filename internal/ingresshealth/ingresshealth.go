@@ -15,31 +15,6 @@ import (
 	"github.com/imantaba/kubeagent/internal/svchealth"
 )
 
-// readyEndpointCount returns a positive count when any ready endpoint exists for
-// the Service across its EndpointSlices. It delegates to svchealth.ReadyEndpoints
-// which counts addresses; when slices carry no addresses (e.g. in unit tests that
-// only set Conditions.Ready), it falls back to counting ready Endpoint objects so
-// that a "has ready pods" signal is still detectable regardless of whether
-// Addresses are populated.
-func readyEndpointCount(svc corev1.Service, slices []discoveryv1.EndpointSlice) int {
-	if n := svchealth.ReadyEndpoints(svc, slices); n > 0 {
-		return n
-	}
-	// Fallback: count endpoint objects whose Ready condition is true or nil.
-	total := 0
-	for _, sl := range slices {
-		if sl.Namespace != svc.Namespace || sl.Labels[discoveryv1.LabelServiceName] != svc.Name {
-			continue
-		}
-		for _, ep := range sl.Endpoints {
-			if ep.Conditions.Ready == nil || *ep.Conditions.Ready {
-				total++
-			}
-		}
-	}
-	return total
-}
-
 // RouteIssue is one broken Ingress route: a rule (or the default backend) whose
 // backend Service chain is broken.
 type RouteIssue struct {
@@ -94,7 +69,7 @@ func check(ns, ingName, host, path string, be networkingv1.IngressServiceBackend
 		r.Detail = fmt.Sprintf("backend Service %s not found", be.Name)
 		return r, true
 	}
-	if readyEndpointCount(svc, slices) == 0 {
+	if svchealth.ReadyEndpoints(svc, slices) == 0 {
 		r.Problem = "NoEndpoints"
 		if port != "" {
 			r.Detail = fmt.Sprintf("backend Service %s:%s has no ready endpoints (likely 502/503)", be.Name, port)

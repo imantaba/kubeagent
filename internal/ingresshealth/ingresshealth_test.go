@@ -22,7 +22,7 @@ func sliceFor(ns, svcName string, ready int) discoveryv1.EndpointSlice {
 	t := true
 	var eps []discoveryv1.Endpoint
 	for i := 0; i < ready; i++ {
-		eps = append(eps, discoveryv1.Endpoint{Conditions: discoveryv1.EndpointConditions{Ready: &t}})
+		eps = append(eps, discoveryv1.Endpoint{Addresses: []string{"10.0.0.1"}, Conditions: discoveryv1.EndpointConditions{Ready: &t}})
 	}
 	return discoveryv1.EndpointSlice{
 		ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: svcName + "-abc", Labels: map[string]string{"kubernetes.io/service-name": svcName}},

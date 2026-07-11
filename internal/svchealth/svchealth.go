@@ -48,7 +48,7 @@ func Assess(services []corev1.Service, slices []discoveryv1.EndpointSlice, backe
 		if len(s.Spec.Selector) == 0 {
 			continue
 		}
-		if readyEndpoints(s, slices) == 0 {
+		if ReadyEndpoints(s, slices) == 0 {
 			is := Issue{
 				Namespace: s.Namespace, Name: s.Name, Type: string(s.Spec.Type),
 				Problem: "NoEndpoints", Detail: "no ready endpoints",
@@ -73,9 +73,9 @@ func Assess(services []corev1.Service, slices []discoveryv1.EndpointSlice, backe
 	return out
 }
 
-// readyEndpoints counts ready backend addresses for a Service across its
+// ReadyEndpoints counts ready backend addresses for a Service across its
 // EndpointSlices (matched by namespace + the kubernetes.io/service-name label).
-func readyEndpoints(svc corev1.Service, slices []discoveryv1.EndpointSlice) int {
+func ReadyEndpoints(svc corev1.Service, slices []discoveryv1.EndpointSlice) int {
 	total := 0
 	for _, sl := range slices {
 		if sl.Namespace != svc.Namespace || sl.Labels[discoveryv1.LabelServiceName] != svc.Name {

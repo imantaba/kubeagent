@@ -72,6 +72,7 @@ func run(args []string) error {
 	pvcReclaimFull := fs.Bool("pvc-reclaim", false, "list every PVC on a Delete reclaim policy (default: a grouped summary)")
 	diskUsage := fs.Bool("disk-usage", false, "check node filesystem and PVC usage via the kubelet (needs the nodes/proxy grant)")
 	diskThreshold := fs.Float64("disk-threshold", 0.80, "with --disk-usage: warn at this used ratio (0-1)")
+	security := fs.Bool("security", false, "flag insecure workloads and exposed Services (read-only, advisory)")
 	fix := fs.Bool("fix", false, "propose and (after confirmation) apply safe, reversible remediations (opt-in writes)")
 	dryRun := fs.Bool("dry-run", false, "with --fix: print proposed remediations only; never prompt or write")
 	assumeYes := fs.Bool("yes", false, "with --fix: apply all proposed remediations without prompting")
@@ -102,6 +103,7 @@ func run(args []string) error {
 		IncludeRestarts: *includeRestarts,
 		DiskUsage:       *diskUsage,
 		DiskThreshold:   *diskThreshold,
+		Security:        *security,
 	})
 	if err != nil {
 		if diag, ok := connectivity.Diagnose(err); ok {

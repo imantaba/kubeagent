@@ -9,6 +9,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
+
+	"github.com/imantaba/kubeagent/internal/secscan"
 )
 
 func TestEvaluate_HealthyClusterNoFlags(t *testing.T) {
@@ -142,3 +144,61 @@ func TestEvaluate_DiskUsageOffByDefault(t *testing.T) {
 }
 
 func p32(i int32) *int32 { return &i }
+
+func boolp(b bool) *bool { return &b }
+
+func privPod(ns, name string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "c", SecurityContext: &corev1.SecurityContext{Privileged: boolp(true)}}}},
+	}
+}
+
+func nsCount(fs []secscan.Finding, ns string) int {
+	n := 0
+	for _, f := range fs {
+		if f.Namespace == ns {
+			n++
+		}
+	}
+	return n
+}
+
+func TestEvaluate_SecurityOptInAndSystemExclusion(t *testing.T) {
+	client := fake.NewSimpleClientset(privPod("default", "app"), privPod("kube-system", "cni"))
+
+	// Flag off: no security findings at all.
+	off, err := Evaluate(context.Background(), client, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(off.SecurityIssues) != 0 {
+		t.Errorf("without Security, expected no findings, got %+v", off.SecurityIssues)
+	}
+
+	// All namespaces: kube-system excluded, default kept.
+	all, err := Evaluate(context.Background(), client, Options{Security: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nsCount(all.SecurityIssues, "kube-system") != 0 {
+		t.Errorf("kube-system must be excluded in all-namespaces mode, got %+v", all.SecurityIssues)
+	}
+	if nsCount(all.SecurityIssues, "default") == 0 {
+		t.Errorf("default namespace privileged pod must be flagged, got %+v", all.SecurityIssues)
+	}
+
+	// Explicit -n kube-system: included.
+	sys, err := Evaluate(context.Background(), client, Options{Security: true, Namespace: "kube-system"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nsCount(sys.SecurityIssues, "kube-system") == 0 {
+		t.Errorf("explicit -n kube-system must include it, got %+v", sys.SecurityIssues)
+	}
+
+	// Advisory: security findings never flip the verdict.
+	if all.Health.Verdict != off.Health.Verdict {
+		t.Errorf("security must not change the verdict (%q vs %q)", all.Health.Verdict, off.Health.Verdict)
+	}
+}

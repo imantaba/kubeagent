@@ -21,6 +21,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/nodereserve"
 	"github.com/imantaba/kubeagent/internal/pvcreclaim"
 	"github.com/imantaba/kubeagent/internal/rollout"
+	"github.com/imantaba/kubeagent/internal/secscan"
 	"github.com/imantaba/kubeagent/internal/svchealth"
 )
 
@@ -31,6 +32,7 @@ type Options struct {
 	IncludeRestarts bool
 	DiskUsage       bool
 	DiskThreshold   float64
+	Security        bool
 }
 
 // Result is the structured health picture. Inputs and Nodes are exposed so the
@@ -44,8 +46,33 @@ type Result struct {
 	DiskUsage     diskusage.Report
 	Health        clusterhealth.ClusterHealth
 	Inventory     inventory.Result
-	ServiceIssues []svchealth.Issue
-	IngressIssues []ingresshealth.RouteIssue
+	ServiceIssues  []svchealth.Issue
+	IngressIssues  []ingresshealth.RouteIssue
+	SecurityIssues []secscan.Finding
+}
+
+// systemNamespaces are excluded from the security scan when scanning all
+// namespaces: their workloads (CNI, kube-proxy, …) are legitimately privileged.
+var systemNamespaces = map[string]bool{"kube-system": true, "kube-node-lease": true, "kube-public": true}
+
+func nonSystemPods(pods []corev1.Pod) []corev1.Pod {
+	var out []corev1.Pod
+	for _, p := range pods {
+		if !systemNamespaces[p.Namespace] {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func nonSystemServices(svcs []corev1.Service) []corev1.Service {
+	var out []corev1.Service
+	for _, s := range svcs {
+		if !systemNamespaces[s.Namespace] {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // Evaluate performs the read-only evaluation. The returned error is the raw
@@ -82,6 +109,16 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	ings, _ := collect.Ingresses(ctx, client, opts.Namespace)
 	ingressIssues := ingresshealth.Assess(ings, svcs, slices)
 
+	var securityIssues []secscan.Finding
+	if opts.Security {
+		pods, services := inputs.Pods, svcs
+		if opts.Namespace == "" {
+			pods = nonSystemPods(pods)
+			services = nonSystemServices(services)
+		}
+		securityIssues = secscan.Assess(pods, services, inputs.ReplicaSets)
+	}
+
 	pvcs, _ := collect.PersistentVolumeClaims(ctx, client, opts.Namespace)
 	pvs, _ := collect.PersistentVolumes(ctx, client)
 	pvcReclaim := pvcreclaim.Assess(pvcs, pvs)
@@ -110,5 +147,5 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 		diskReport = diskusage.Assess(summaries, opts.DiskThreshold)
 	}
 
-	return Result{Inputs: inputs, Nodes: nodes, NodeReserve: nodereserve.Assess(nodes), PVCReclaim: pvcReclaim, DiskUsage: diskReport, Health: health, Inventory: result, ServiceIssues: serviceIssues, IngressIssues: ingressIssues}, nil
+	return Result{Inputs: inputs, Nodes: nodes, NodeReserve: nodereserve.Assess(nodes), PVCReclaim: pvcReclaim, DiskUsage: diskReport, Health: health, Inventory: result, ServiceIssues: serviceIssues, IngressIssues: ingressIssues, SecurityIssues: securityIssues}, nil
 }

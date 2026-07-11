@@ -104,8 +104,9 @@ the cluster verdict.
 
 `scan --output text` groups findings by how urgently they need action:
 
-- **NEEDS ATTENTION** — failing workloads, Services with no ready endpoints, and
-  credential warnings.
+- **NEEDS ATTENTION** — failing workloads, Services with no ready endpoints,
+  credential warnings, volumes over the disk-usage threshold, and broken ingress
+  routes.
 - **NOTES** — advisories that rarely need immediate action: PersistentVolumeClaims
   on a `Delete` reclaim policy (a grouped summary; pass `--pvc-reclaim` for the
   full list), Services that are intentionally empty (scaled to zero or a CronJob

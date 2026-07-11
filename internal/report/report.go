@@ -183,7 +183,8 @@ func printHeader(in Input, real []svchealth.Issue, w io.Writer) error {
 	return nil
 }
 
-// attentionLine summarizes flagged workloads and real service issues.
+// attentionLine summarizes flagged workloads, services without endpoints,
+// volumes over the disk-usage threshold, and broken ingress routes.
 func attentionLine(in Input, real []svchealth.Issue) string {
 	failing := 0
 	for _, wl := range in.Result.Workloads {

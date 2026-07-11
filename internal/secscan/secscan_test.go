@@ -109,6 +109,22 @@ func TestAssess_HostPath(t *testing.T) {
 	}
 }
 
+func TestAssess_MultipleHostPaths(t *testing.T) {
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "infra", Name: "agent"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "c"}},
+			Volumes: []corev1.Volume{
+				{Name: "sock", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: "/var/run/docker.sock"}}},
+				{Name: "cni", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: "/etc/cni/net.d"}}},
+			},
+		},
+	}
+	if n := count(Assess([]corev1.Pod{pod}, nil, nil), "HostPath"); n != 2 {
+		t.Errorf("two distinct hostPath volumes must each be reported, got %d", n)
+	}
+}
+
 func TestAssess_HostPort(t *testing.T) {
 	pod := rsOwned("shop", "web-1", "web-rs",
 		corev1.Container{Name: "web", Ports: []corev1.ContainerPort{{HostPort: 8080, ContainerPort: 8080}}})

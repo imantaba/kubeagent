@@ -45,7 +45,7 @@ func Assess(pods []corev1.Pod, services []corev1.Service, replicaSets []appsv1.R
 	seen := make(map[string]bool)
 	var out []Finding
 	add := func(f Finding) {
-		key := strings.Join([]string{f.Namespace, f.Kind, f.Workload, f.Container, f.Check}, "\x00")
+		key := strings.Join([]string{f.Namespace, f.Kind, f.Workload, f.Container, f.Check, f.Detail}, "\x00")
 		if seen[key] {
 			return
 		}

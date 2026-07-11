@@ -22,7 +22,7 @@ rules:
     resources: [endpointslices]
     verbs: [get, list, watch]
   - apiGroups: ["networking.k8s.io"]
-    resources: [networkpolicies, ingressclasses]
+    resources: [networkpolicies, ingressclasses, ingresses]
     verbs: [get, list, watch]
   - apiGroups: ["storage.k8s.io"]
     resources: [storageclasses]

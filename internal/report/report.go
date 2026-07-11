@@ -11,6 +11,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/credlint"
 	"github.com/imantaba/kubeagent/internal/diskusage"
+	"github.com/imantaba/kubeagent/internal/ingresshealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/nodereserve"
 	"github.com/imantaba/kubeagent/internal/platform"
@@ -30,6 +31,7 @@ type inventoryReport struct {
 	NodeReserve        *nodereserve.Report         `json:"nodeReserve,omitempty"`
 	PVCReclaim         *pvcreclaim.Report          `json:"pvcReclaim,omitempty"`
 	DiskUsage          *diskusage.Report           `json:"diskUsage,omitempty"`
+	IngressIssues      []ingresshealth.RouteIssue  `json:"ingressIssues,omitempty"`
 	Explanation        string                      `json:"explanation,omitempty"`
 }
 
@@ -46,6 +48,7 @@ type Input struct {
 	PVCReclaim         *pvcreclaim.Report
 	PVCReclaimFull     bool // --pvc-reclaim: expand the PVC list (text only)
 	DiskUsage          *diskusage.Report
+	IngressIssues      []ingresshealth.RouteIssue
 	Explanation        string
 }
 
@@ -65,6 +68,7 @@ func PrintInventory(in Input, format string, w io.Writer) error {
 			NodeReserve:        in.NodeReserve,
 			PVCReclaim:         in.PVCReclaim,
 			DiskUsage:          in.DiskUsage,
+			IngressIssues:      in.IngressIssues,
 			Explanation:        in.Explanation,
 		})
 	case "text":
@@ -82,7 +86,7 @@ func printInventoryText(in Input, w io.Writer) error {
 	}
 
 	hasDisk := in.DiskUsage != nil && len(in.DiskUsage.Over) > 0
-	hasAttention := len(in.Result.Workloads) > 0 || len(real) > 0 || len(in.CredentialWarnings) > 0 || hasDisk
+	hasAttention := len(in.Result.Workloads) > 0 || len(real) > 0 || len(in.CredentialWarnings) > 0 || hasDisk || len(in.IngressIssues) > 0
 	if hasAttention {
 		if _, err := fmt.Fprintln(w, "NEEDS ATTENTION"); err != nil {
 			return err
@@ -99,6 +103,9 @@ func printInventoryText(in Input, w io.Writer) error {
 			return err
 		}
 		if err := printDiskUsage(in.DiskUsage, w); err != nil {
+			return err
+		}
+		if err := printIngressIssues(in.IngressIssues, w); err != nil {
 			return err
 		}
 		if _, err := fmt.Fprintln(w); err != nil {
@@ -194,6 +201,9 @@ func attentionLine(in Input, real []svchealth.Issue) string {
 	if in.DiskUsage != nil && len(in.DiskUsage.Over) > 0 {
 		n := len(in.DiskUsage.Over)
 		parts = append(parts, fmt.Sprintf("%d %s low on disk", n, plural(n, "volume", "volumes")))
+	}
+	if n := len(in.IngressIssues); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d ingress %s broken", n, plural(n, "route", "routes")))
 	}
 	return strings.Join(parts, " · ")
 }
@@ -336,6 +346,21 @@ func fmtBytes(b int64) string {
 	default:
 		return fmt.Sprintf("%dB", b)
 	}
+}
+
+// printIngressIssues lists Ingress routes whose backend chain is broken.
+func printIngressIssues(issues []ingresshealth.RouteIssue, w io.Writer) error {
+	for _, r := range issues {
+		line := fmt.Sprintf("  ✗ ingress %s/%s", r.Namespace, r.Ingress)
+		if route := r.Host + r.Path; route != "" {
+			line += "  " + route
+		}
+		line += "  " + r.Detail
+		if _, err := fmt.Fprintln(w, line); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // printPVCReclaim renders the Delete-reclaim PVCs: a grouped one-line summary by

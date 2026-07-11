@@ -10,6 +10,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/credlint"
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/diskusage"
+	"github.com/imantaba/kubeagent/internal/ingresshealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/nodereserve"
 	"github.com/imantaba/kubeagent/internal/platform"
@@ -951,5 +952,61 @@ func TestPrintInventory_TextOmitsEvidenceWhenEmptyOrDuplicate(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), "↳") {
 		t.Errorf("no Evidence sub-line expected for empty/duplicate evidence:\n%s", buf.String())
+	}
+}
+
+func TestPrintInventory_TextShowsIngressIssues(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		IngressIssues: []ingresshealth.RouteIssue{{
+			Namespace: "shop", Ingress: "web", Host: "example.com", Path: "/api",
+			Service: "api-svc", Port: "8080", Problem: "NoEndpoints",
+			Detail: "backend Service api-svc:8080 has no ready endpoints (likely 502/503)",
+		}},
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "NEEDS ATTENTION") {
+		t.Errorf("a broken ingress route should trip NEEDS ATTENTION:\n%s", out)
+	}
+	if !strings.Contains(out, "✗ ingress shop/web") || !strings.Contains(out, "example.com/api") || !strings.Contains(out, "likely 502/503") {
+		t.Errorf("missing the ingress route line:\n%s", out)
+	}
+	if !strings.Contains(out, "Needs attention: 1 ingress route broken") {
+		t.Errorf("attention line should count the broken route:\n%s", out)
+	}
+	if strings.Contains(out, "No issues found") {
+		t.Errorf("all-clear must be suppressed:\n%s", out)
+	}
+}
+
+func TestPrintInventory_JSONIncludesIngressIssues(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		IngressIssues: []ingresshealth.RouteIssue{{Namespace: "shop", Ingress: "web", Service: "api-svc", Problem: "NoService", Detail: "backend Service api-svc not found"}},
+	}
+	if err := PrintInventory(in, "json", &buf); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), `"ingressIssues"`) || !strings.Contains(buf.String(), `"problem": "NoService"`) {
+		t.Errorf("expected ingressIssues in JSON:\n%s", buf.String())
+	}
+}
+
+func TestPrintInventory_NoIngressLinesWhenEmpty(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1}}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf.String(), "ingress") {
+		t.Errorf("no ingress lines expected when there are no issues:\n%s", buf.String())
+	}
+	if !strings.Contains(buf.String(), "No issues found") {
+		t.Errorf("empty ingress issues must not suppress all-clear:\n%s", buf.String())
 	}
 }

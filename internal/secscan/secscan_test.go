@@ -228,3 +228,15 @@ func TestAssess_ExposedService(t *testing.T) {
 		t.Errorf("wrong attribution: %+v", f)
 	}
 }
+
+func TestAssess_ExposedService_NodePortAndExternalIPs(t *testing.T) {
+	svcs := []corev1.Service{
+		{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "np"},
+			Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeNodePort, Ports: []corev1.ServicePort{{Port: 80}}}},
+		{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "eip"},
+			Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeClusterIP, ExternalIPs: []string{"1.2.3.4"}, Ports: []corev1.ServicePort{{Port: 80}}}},
+	}
+	if n := count(Assess(nil, svcs, nil), "ExposedService"); n != 2 {
+		t.Errorf("NodePort and externalIPs services must each be flagged, got %d", n)
+	}
+}

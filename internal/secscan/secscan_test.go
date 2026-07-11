@@ -137,3 +137,78 @@ func TestAssess_AddedCapability(t *testing.T) {
 		t.Errorf("NET_BIND_SERVICE alone must not be flagged")
 	}
 }
+
+// hardened satisfies every workload check: non-root, no priv-esc, drops ALL.
+func hardenedContainer(name string) corev1.Container {
+	return corev1.Container{
+		Name: name,
+		SecurityContext: &corev1.SecurityContext{
+			RunAsNonRoot:             boolp(true),
+			AllowPrivilegeEscalation: boolp(false),
+			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+		},
+	}
+}
+
+func TestAssess_RunAsRoot_DefaultFlagged(t *testing.T) {
+	pod := rsOwned("shop", "web-1", "web-rs", corev1.Container{Name: "web"}) // no securityContext
+	if count(Assess([]corev1.Pod{pod}, nil, nil), "RunAsRoot") != 1 {
+		t.Error("a container with no runAsNonRoot must be flagged RunAsRoot")
+	}
+}
+
+func TestAssess_RunAsRoot_PodLevelNonRootSatisfies(t *testing.T) {
+	pod := rsOwned("shop", "web-1", "web-rs", corev1.Container{
+		Name:            "web",
+		SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: boolp(false), Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
+	})
+	pod.Spec.SecurityContext = &corev1.PodSecurityContext{RunAsNonRoot: boolp(true)} // inherited by the container
+	if count(Assess([]corev1.Pod{pod}, nil, nil), "RunAsRoot") != 0 {
+		t.Error("pod-level runAsNonRoot must satisfy the container")
+	}
+}
+
+func TestAssess_RunAsUserZeroFlagged(t *testing.T) {
+	pod := rsOwned("shop", "web-1", "web-rs", corev1.Container{
+		Name:            "web",
+		SecurityContext: &corev1.SecurityContext{RunAsUser: int64p(0), AllowPrivilegeEscalation: boolp(false), Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
+	})
+	if count(Assess([]corev1.Pod{pod}, nil, nil), "RunAsRoot") != 1 {
+		t.Error("runAsUser 0 must be flagged RunAsRoot")
+	}
+}
+
+func TestAssess_AllowPrivilegeEscalationAndCaps(t *testing.T) {
+	pod := rsOwned("shop", "web-1", "web-rs", corev1.Container{Name: "web"}) // nothing set
+	got := Assess([]corev1.Pod{pod}, nil, nil)
+	if count(got, "AllowPrivilegeEscalation") != 1 {
+		t.Error("no allowPrivilegeEscalation:false must be flagged")
+	}
+	if count(got, "CapabilitiesNotDropped") != 1 {
+		t.Error("not dropping ALL must be flagged")
+	}
+}
+
+func TestAssess_HardenedPodClean(t *testing.T) {
+	pod := rsOwned("shop", "web-1", "web-rs", hardenedContainer("web"))
+	if got := Assess([]corev1.Pod{pod}, nil, nil); len(got) != 0 {
+		t.Errorf("a fully hardened pod must yield no findings, got %+v", got)
+	}
+}
+
+func TestAssess_ExposedService(t *testing.T) {
+	svcs := []corev1.Service{
+		{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "admin"},
+			Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeLoadBalancer, Ports: []corev1.ServicePort{{Port: 80}}}},
+		{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "internal"},
+			Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeClusterIP, Ports: []corev1.ServicePort{{Port: 80}}}},
+	}
+	got := Assess(nil, svcs, nil)
+	if count(got, "ExposedService") != 1 {
+		t.Fatalf("want one ExposedService finding, got %+v", got)
+	}
+	f := got[0]
+	if f.Kind != "Service" || f.Workload != "admin" || f.Profile != "kubeagent" {
+		t.Errorf("wrong attribution: %+v", f)
+	}
+}

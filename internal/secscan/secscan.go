@@ -8,6 +8,7 @@ package secscan
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -57,6 +58,11 @@ func Assess(pods []corev1.Pod, services []corev1.Service, replicaSets []appsv1.R
 			add(f)
 		}
 	}
+	for _, svc := range services {
+		if f, ok := exposedService(svc); ok {
+			add(f)
+		}
+	}
 	sortFindings(out)
 	return out
 }
@@ -96,6 +102,7 @@ func podFindings(pod corev1.Pod, wl workloadRef) []Finding {
 	var out []Finding
 	out = append(out, baselinePodChecks(pod, wl)...)
 	out = append(out, containerChecks(pod, wl)...)
+	out = append(out, restrictedChecks(pod, wl)...)
 	return out
 }
 
@@ -135,6 +142,102 @@ func containerChecks(pod corev1.Pod, wl workloadRef) []Finding {
 		}
 	}
 	return out
+}
+
+// restrictedChecks covers per-container restricted controls, evaluated on
+// effective settings (a container's securityContext overrides the pod's).
+func restrictedChecks(pod corev1.Pod, wl workloadRef) []Finding {
+	var out []Finding
+	for _, c := range allContainers(pod) {
+		if !guaranteedNonRoot(pod, c) {
+			out = append(out, finding(pod, wl, profileRestricted, "RunAsRoot", c.Name,
+				fmt.Sprintf("container %q is not guaranteed to run as non-root", c.Name)))
+		}
+		if !escalationDisabled(c) {
+			out = append(out, finding(pod, wl, profileRestricted, "AllowPrivilegeEscalation", c.Name,
+				fmt.Sprintf("container %q allows privilege escalation (allowPrivilegeEscalation not false)", c.Name)))
+		}
+		if !dropsAll(c) {
+			out = append(out, finding(pod, wl, profileRestricted, "CapabilitiesNotDropped", c.Name,
+				fmt.Sprintf("container %q does not drop all capabilities", c.Name)))
+		}
+	}
+	return out
+}
+
+func guaranteedNonRoot(pod corev1.Pod, c corev1.Container) bool {
+	if nr := effectiveRunAsNonRoot(pod, c); nr != nil && *nr {
+		return true
+	}
+	uid := effectiveRunAsUser(pod, c)
+	return uid != nil && *uid > 0
+}
+
+func effectiveRunAsNonRoot(pod corev1.Pod, c corev1.Container) *bool {
+	if c.SecurityContext != nil && c.SecurityContext.RunAsNonRoot != nil {
+		return c.SecurityContext.RunAsNonRoot
+	}
+	if pod.Spec.SecurityContext != nil {
+		return pod.Spec.SecurityContext.RunAsNonRoot
+	}
+	return nil
+}
+
+func effectiveRunAsUser(pod corev1.Pod, c corev1.Container) *int64 {
+	if c.SecurityContext != nil && c.SecurityContext.RunAsUser != nil {
+		return c.SecurityContext.RunAsUser
+	}
+	if pod.Spec.SecurityContext != nil {
+		return pod.Spec.SecurityContext.RunAsUser
+	}
+	return nil
+}
+
+func escalationDisabled(c corev1.Container) bool {
+	return c.SecurityContext != nil && c.SecurityContext.AllowPrivilegeEscalation != nil && !*c.SecurityContext.AllowPrivilegeEscalation
+}
+
+func dropsAll(c corev1.Container) bool {
+	if c.SecurityContext == nil || c.SecurityContext.Capabilities == nil {
+		return false
+	}
+	for _, cap := range c.SecurityContext.Capabilities.Drop {
+		if cap == "ALL" {
+			return true
+		}
+	}
+	return false
+}
+
+// exposedService flags Services reachable from outside the cluster.
+func exposedService(svc corev1.Service) (Finding, bool) {
+	var reason string
+	switch {
+	case svc.Spec.Type == corev1.ServiceTypeLoadBalancer:
+		reason = "type LoadBalancer"
+	case svc.Spec.Type == corev1.ServiceTypeNodePort:
+		reason = "type NodePort"
+	case len(svc.Spec.ExternalIPs) > 0:
+		reason = "externalIPs set"
+	default:
+		return Finding{}, false
+	}
+	return Finding{
+		Namespace: svc.Namespace, Workload: svc.Name, Kind: "Service",
+		Profile: profileKubeagent, Check: "ExposedService",
+		Detail:  fmt.Sprintf("%s exposes %s externally", reason, servicePorts(svc)),
+	}, true
+}
+
+func servicePorts(svc corev1.Service) string {
+	var ps []string
+	for _, p := range svc.Spec.Ports {
+		ps = append(ps, strconv.Itoa(int(p.Port)))
+	}
+	if len(ps) == 0 {
+		return "no ports"
+	}
+	return "port(s) " + strings.Join(ps, ",")
 }
 
 // baselineAllowedCap is the only capability the baseline profile permits adding.

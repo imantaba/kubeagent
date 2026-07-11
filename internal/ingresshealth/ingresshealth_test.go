@@ -131,3 +131,15 @@ func TestAssess_ResourceBackendSkipped(t *testing.T) {
 		t.Errorf("resource backend must be skipped, got %+v", got)
 	}
 }
+
+// TestAssess_NoPortBackend_NotPortNotExposed guards the binding constraint that
+// a backend specifying no port is never a PortNotExposed candidate, even when
+// the Service is otherwise healthy. ing(...,0) yields a zero-value backend port.
+func TestAssess_NoPortBackend_NotPortNotExposed(t *testing.T) {
+	svcs := []corev1.Service{svc("shop", "api", 80)}
+	slices := []discoveryv1.EndpointSlice{sliceFor("shop", "api", 1)}
+	got := Assess([]networkingv1.Ingress{ing("shop", "web", "x.io", "/", "api", 0)}, svcs, slices)
+	if len(got) != 0 {
+		t.Fatalf("no-port backend with a ready service must not be flagged, got %+v", got)
+	}
+}

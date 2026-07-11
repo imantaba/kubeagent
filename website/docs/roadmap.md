@@ -54,6 +54,11 @@
   add-on); the daemon exposes `kubeagent_node_fs_usage_ratio` and
   `kubeagent_volumes_over_disk_threshold`. See
   [Failure diagnostics](features/diagnostics.md).
+- **Ingress route health** — `scan` follows each Ingress rule to its backend
+  Service and flags routes whose Service is missing, has no ready endpoints, or
+  does not expose the referenced port — the usual causes of a 502/503 — in
+  NEEDS ATTENTION, JSON `ingressIssues`, and the daemon gauge
+  `kubeagent_ingress_route_issues`. See [Failure diagnostics](features/diagnostics.md).
 
 !!! info "Version history"
     [GitHub Releases](https://github.com/imantaba/kubeagent/releases) and the

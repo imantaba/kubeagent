@@ -88,6 +88,18 @@ than kubeagent's usual `get`/`list`/`watch`), so you opt in explicitly with the
 flag and, in-cluster, with the `nodes/proxy` RBAC add-on. It never changes the
 cluster verdict.
 
+### Ingress route health
+
+`scan` walks every Ingress rule (and default backend) and follows the route to
+its backend Service. It flags a route when the Service is missing, has no ready
+endpoints (the usual cause of a 502/503), or does not expose the referenced
+port — so a broken public route reads as, e.g., `ingress shop/web
+example.com/api backend Service api-svc:8080 has no ready endpoints (likely
+502/503)`. Only Service backends are checked (Resource backends are skipped), and
+routes resolve within the Ingress's own namespace. It is read-only and advisory:
+it appears in **NEEDS ATTENTION** and JSON `ingressIssues` but does not change
+the cluster verdict.
+
 ### Output layout
 
 `scan --output text` groups findings by how urgently they need action:

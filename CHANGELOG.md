@@ -5,6 +5,19 @@ All notable changes to kubeagent are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Ingress route health.** `scan` now resolves each Ingress rule's backend
+  Service and flags broken routes — the backend Service is missing (`NoService`),
+  has no ready endpoints (`NoEndpoints`, the classic 502/503), or does not expose
+  the referenced port (`PortNotExposed`) — in the NEEDS ATTENTION section and JSON
+  `ingressIssues`, with the watch-daemon gauge `kubeagent_ingress_route_issues`.
+  This turns "why is my ingress returning 502?" into a concrete cause. Reads
+  Ingresses (a new read-only RBAC grant); advisory (does not change the cluster
+  verdict).
+
 ## [0.16.0] - 2026-07-09
 
 ### Changed

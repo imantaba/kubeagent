@@ -26,6 +26,10 @@ A Kubernetes troubleshooting agent, written in Go.
 - **Disk-usage check (opt-in)** — `scan --disk-usage` flags node filesystems and
   PVCs at or over `--disk-threshold` (default `0.80`) before the kubelet's
   `DiskPressure` eviction fires. Needs the `nodes/proxy` add-on; off by default.
+- **Ingress route health** — `scan` follows each Ingress rule to its backend
+  Service and flags routes whose Service is missing, has no ready endpoints
+  (`NoEndpoints` — the classic 502/503), or does not expose the referenced port
+  (`PortNotExposed`). Advisory and read-only; adds Ingress read RBAC.
 
 It talks to the cluster directly via the official Kubernetes Go client
 (`client-go`) — the same library `kubectl` and operators are built on — and

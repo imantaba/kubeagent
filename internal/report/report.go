@@ -17,6 +17,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/platform"
 	"github.com/imantaba/kubeagent/internal/pvcreclaim"
 	"github.com/imantaba/kubeagent/internal/resources"
+	"github.com/imantaba/kubeagent/internal/secscan"
 	"github.com/imantaba/kubeagent/internal/svchealth"
 )
 
@@ -32,6 +33,7 @@ type inventoryReport struct {
 	PVCReclaim         *pvcreclaim.Report          `json:"pvcReclaim,omitempty"`
 	DiskUsage          *diskusage.Report           `json:"diskUsage,omitempty"`
 	IngressIssues      []ingresshealth.RouteIssue  `json:"ingressIssues,omitempty"`
+	SecurityIssues     []secscan.Finding           `json:"securityIssues,omitempty"`
 	Explanation        string                      `json:"explanation,omitempty"`
 }
 
@@ -49,6 +51,7 @@ type Input struct {
 	PVCReclaimFull     bool // --pvc-reclaim: expand the PVC list (text only)
 	DiskUsage          *diskusage.Report
 	IngressIssues      []ingresshealth.RouteIssue
+	SecurityIssues     []secscan.Finding
 	Explanation        string
 }
 
@@ -69,6 +72,7 @@ func PrintInventory(in Input, format string, w io.Writer) error {
 			PVCReclaim:         in.PVCReclaim,
 			DiskUsage:          in.DiskUsage,
 			IngressIssues:      in.IngressIssues,
+			SecurityIssues:     in.SecurityIssues,
 			Explanation:        in.Explanation,
 		})
 	case "text":
@@ -113,6 +117,11 @@ func printInventoryText(in Input, w io.Writer) error {
 		}
 	}
 
+	hasSecurity := len(in.SecurityIssues) > 0
+	if err := printSecurityIssues(in.SecurityIssues, w); err != nil {
+		return err
+	}
+
 	if err := printNotes(in, expected, w); err != nil {
 		return err
 	}
@@ -121,7 +130,7 @@ func printInventoryText(in Input, w io.Writer) error {
 		return err
 	}
 
-	if !hasAttention && in.Cluster.Verdict == "Healthy" {
+	if !hasAttention && !hasSecurity && in.Cluster.Verdict == "Healthy" {
 		if _, err := fmt.Fprintln(w, "No issues found. ✅"); err != nil {
 			return err
 		}
@@ -360,6 +369,43 @@ func printIngressIssues(issues []ingresshealth.RouteIssue, w io.Writer) error {
 		if _, err := fmt.Fprintln(w, line); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// printSecurityIssues renders the advisory SECURITY section: workloads (and
+// Services) with insecure posture, grouped, most-dangerous first.
+func printSecurityIssues(issues []secscan.Finding, w io.Writer) error {
+	if len(issues) == 0 {
+		return nil
+	}
+	if _, err := fmt.Fprintln(w, "SECURITY  (advisory — does not affect the cluster verdict)"); err != nil {
+		return err
+	}
+	type grp struct{ ns, name, kind string }
+	var order []grp
+	byGrp := map[grp][]secscan.Finding{}
+	for _, f := range issues {
+		g := grp{f.Namespace, f.Workload, f.Kind}
+		if _, ok := byGrp[g]; !ok {
+			order = append(order, g)
+		}
+		byGrp[g] = append(byGrp[g], f)
+	}
+	for _, g := range order {
+		if _, err := fmt.Fprintf(w, "%s/%s  %s\n", g.ns, g.name, g.kind); err != nil {
+			return err
+		}
+		for _, f := range byGrp[g] {
+			if _, err := fmt.Fprintf(w, "  [%s] %s — %s\n", f.Profile, f.Check, f.Detail); err != nil {
+				return err
+			}
+		}
+	}
+	if _, err := fmt.Fprintf(w, "\nSecurity: %d %s across %d %s\n\n",
+		len(issues), plural(len(issues), "finding", "findings"),
+		len(order), plural(len(order), "workload", "workloads")); err != nil {
+		return err
 	}
 	return nil
 }

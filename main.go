@@ -166,6 +166,7 @@ func run(args []string) error {
 		PVCReclaimFull:     *pvcReclaimFull,
 		DiskUsage:          diskRep,
 		IngressIssues:      res.IngressIssues,
+		SecurityIssues:     res.SecurityIssues,
 		Explanation:        explanation,
 	}, *output, os.Stdout); err != nil {
 		return err

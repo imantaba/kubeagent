@@ -16,6 +16,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/platform"
 	"github.com/imantaba/kubeagent/internal/pvcreclaim"
 	"github.com/imantaba/kubeagent/internal/resources"
+	"github.com/imantaba/kubeagent/internal/secscan"
 	"github.com/imantaba/kubeagent/internal/svchealth"
 )
 
@@ -1008,5 +1009,60 @@ func TestPrintInventory_NoIngressLinesWhenEmpty(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "No issues found") {
 		t.Errorf("empty ingress issues must not suppress all-clear:\n%s", buf.String())
+	}
+}
+
+func TestPrintInventory_TextShowsSecurity(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		SecurityIssues: []secscan.Finding{{
+			Namespace: "payments", Workload: "api", Kind: "Deployment", Container: "app",
+			Profile: "baseline", Check: "Privileged", Detail: `container "app" runs privileged (full host access)`,
+		}},
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "SECURITY") {
+		t.Errorf("expected a SECURITY section:\n%s", out)
+	}
+	if !strings.Contains(out, "payments/api  Deployment") || !strings.Contains(out, "[baseline] Privileged") {
+		t.Errorf("missing the grouped finding line:\n%s", out)
+	}
+	if !strings.Contains(out, "Security: 1 finding across 1 workload") {
+		t.Errorf("missing the summary line:\n%s", out)
+	}
+	if strings.Contains(out, "No issues found") {
+		t.Errorf("all-clear must be suppressed when security findings exist:\n%s", out)
+	}
+}
+
+func TestPrintInventory_JSONIncludesSecurity(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster:        clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		SecurityIssues: []secscan.Finding{{Namespace: "shop", Workload: "admin", Kind: "Service", Profile: "kubeagent", Check: "ExposedService", Detail: "type LoadBalancer exposes port(s) 80 externally"}},
+	}
+	if err := PrintInventory(in, "json", &buf); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), `"securityIssues"`) || !strings.Contains(buf.String(), `"check": "ExposedService"`) {
+		t.Errorf("expected securityIssues in JSON:\n%s", buf.String())
+	}
+}
+
+func TestPrintInventory_NoSecurityWhenEmpty(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1}}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf.String(), "SECURITY") {
+		t.Errorf("no SECURITY section expected when there are no findings:\n%s", buf.String())
+	}
+	if !strings.Contains(buf.String(), "No issues found") {
+		t.Errorf("empty security must not suppress the all-clear:\n%s", buf.String())
 	}
 }

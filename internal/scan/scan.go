@@ -15,6 +15,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/collect"
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/diskusage"
+	"github.com/imantaba/kubeagent/internal/ingresshealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/netpolicy"
 	"github.com/imantaba/kubeagent/internal/nodereserve"
@@ -44,6 +45,7 @@ type Result struct {
 	Health        clusterhealth.ClusterHealth
 	Inventory     inventory.Result
 	ServiceIssues []svchealth.Issue
+	IngressIssues []ingresshealth.RouteIssue
 }
 
 // Evaluate performs the read-only evaluation. The returned error is the raw
@@ -77,6 +79,8 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	slices, _ := collect.EndpointSlices(ctx, client, opts.Namespace)
 	backends := svchealth.BackendsFrom(inputs.Deployments, inputs.StatefulSets, inputs.DaemonSets, inputs.Jobs, inputs.CronJobs)
 	serviceIssues := svchealth.Assess(svcs, slices, backends)
+	ings, _ := collect.Ingresses(ctx, client, opts.Namespace)
+	ingressIssues := ingresshealth.Assess(ings, svcs, slices)
 
 	pvcs, _ := collect.PersistentVolumeClaims(ctx, client, opts.Namespace)
 	pvs, _ := collect.PersistentVolumes(ctx, client)
@@ -106,5 +110,5 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 		diskReport = diskusage.Assess(summaries, opts.DiskThreshold)
 	}
 
-	return Result{Inputs: inputs, Nodes: nodes, NodeReserve: nodereserve.Assess(nodes), PVCReclaim: pvcReclaim, DiskUsage: diskReport, Health: health, Inventory: result, ServiceIssues: serviceIssues}, nil
+	return Result{Inputs: inputs, Nodes: nodes, NodeReserve: nodereserve.Assess(nodes), PVCReclaim: pvcReclaim, DiskUsage: diskReport, Health: health, Inventory: result, ServiceIssues: serviceIssues, IngressIssues: ingressIssues}, nil
 }

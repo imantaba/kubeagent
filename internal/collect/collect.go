@@ -173,6 +173,15 @@ func IngressClasses(ctx context.Context, client kubernetes.Interface) ([]network
 	return ics.Items, nil
 }
 
+// Ingresses lists Ingresses in the namespace (empty = all), read-only.
+func Ingresses(ctx context.Context, client kubernetes.Interface, namespace string) ([]networkingv1.Ingress, error) {
+	ings, err := client.NetworkingV1().Ingresses(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("listing ingresses: %w", err)
+	}
+	return ings.Items, nil
+}
+
 // SystemDaemonSets lists DaemonSets in kube-system (read-only) — used to detect
 // the CNI regardless of the scan's namespace scope.
 func SystemDaemonSets(ctx context.Context, client kubernetes.Interface) ([]appsv1.DaemonSet, error) {

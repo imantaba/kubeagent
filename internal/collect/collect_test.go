@@ -336,3 +336,16 @@ func TestPersistentVolumeClaimsAndVolumes_List(t *testing.T) {
 		t.Errorf("want 1 pv pv-a, got %+v", pvs)
 	}
 }
+
+func TestIngresses_List(t *testing.T) {
+	client := fake.NewSimpleClientset(
+		&networkingv1.Ingress{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web"}},
+	)
+	ings, err := Ingresses(context.Background(), client, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ings) != 1 || ings[0].Name != "web" {
+		t.Errorf("want 1 ingress web, got %+v", ings)
+	}
+}

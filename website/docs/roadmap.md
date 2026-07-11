@@ -60,6 +60,12 @@
   NEEDS ATTENTION, JSON `ingressIssues`, and the daemon gauge
   `kubeagent_ingress_route_issues`. See [Failure diagnostics](features/diagnostics.md).
 
+- **Workload security posture** — opt-in `scan --security` flags PSS-aligned
+  hardening problems (privileged/insecure containers, exposed Services) in a
+  `SECURITY` section and JSON `securityIssues`, labelled baseline/restricted/
+  kubeagent. Read-only, advisory, no new RBAC. See
+  [Failure diagnostics](features/diagnostics.md).
+
 !!! info "Version history"
     [GitHub Releases](https://github.com/imantaba/kubeagent/releases) and the
     [CHANGELOG](https://github.com/imantaba/kubeagent/blob/main/CHANGELOG.md)

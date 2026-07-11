@@ -5,6 +5,19 @@ All notable changes to kubeagent are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Workload security posture.** Opt-in `scan --security` flags PSS-aligned
+  hardening problems — privileged/over-privileged containers (privileged, host
+  namespaces, hostPath, hostPort, dangerous added capabilities), insecure
+  defaults (runs as root, privilege escalation allowed, capabilities not
+  dropped), and exposed Services (NodePort/LoadBalancer/externalIPs) — in a
+  dedicated `SECURITY` section and JSON `securityIssues`, each labelled
+  `baseline`/`restricted`/`kubeagent`. Read-only and advisory (does not change
+  the cluster verdict); needs no new RBAC; excludes system namespaces by default.
+
 ## [0.17.0] - 2026-07-11
 
 ### Added

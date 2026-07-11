@@ -100,6 +100,21 @@ routes resolve within the Ingress's own namespace. It is read-only and advisory:
 it appears in **NEEDS ATTENTION** and JSON `ingressIssues` but does not change
 the cluster verdict.
 
+### Security posture (opt-in)
+
+`scan --security` walks every workload's pod template and each Service and flags
+high-signal, Pod Security Standards-aligned problems: privileged or
+over-privileged containers (privileged, host namespaces, `hostPath`, `hostPort`,
+dangerous added capabilities), insecure container defaults (runs as root,
+`allowPrivilegeEscalation` not disabled, capabilities not dropped), and Services
+exposed outside the cluster (`NodePort` / `LoadBalancer` / `externalIPs`). Each
+finding is labelled `baseline`, `restricted`, or `kubeagent` and printed in a
+dedicated **SECURITY** section (also JSON `securityIssues`). It is a curated
+subset aligned with the Pod Security Standards, not a conformance scanner. It is
+read-only and **advisory** — it does not change the cluster verdict — needs no
+extra RBAC, and skips `kube-system`/`kube-node-lease`/`kube-public` unless you
+target one with `-n`.
+
 ### Output layout
 
 `scan --output text` groups findings by how urgently they need action:

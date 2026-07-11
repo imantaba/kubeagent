@@ -30,6 +30,10 @@ A Kubernetes troubleshooting agent, written in Go.
   Service and flags routes whose Service is missing, has no ready endpoints
   (`NoEndpoints` — the classic 502/503), or does not expose the referenced port
   (`PortNotExposed`). Advisory and read-only; adds Ingress read RBAC.
+- **Workload security posture (opt-in)** — `scan --security` flags PSS-aligned
+  hardening problems (privileged/insecure containers, exposed Services) in a
+  dedicated `SECURITY` section and JSON `securityIssues`. Advisory and
+  read-only; needs no new RBAC.
 
 It talks to the cluster directly via the official Kubernetes Go client
 (`client-go`) — the same library `kubectl` and operators are built on — and

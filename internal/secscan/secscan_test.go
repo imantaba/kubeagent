@@ -93,3 +93,47 @@ func TestAssess_DedupsReplicas(t *testing.T) {
 		t.Errorf("two replicas of one Deployment must collapse to one finding, got %d", n)
 	}
 }
+
+func TestAssess_HostPath(t *testing.T) {
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "infra", Name: "node-agent"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "c"}},
+			Volumes: []corev1.Volume{{Name: "sock", VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{Path: "/var/run/docker.sock"}}}},
+		},
+	}
+	got := Assess([]corev1.Pod{pod}, nil, nil)
+	if count(got, "HostPath") != 1 {
+		t.Fatalf("want one HostPath finding, got %+v", got)
+	}
+}
+
+func TestAssess_HostPort(t *testing.T) {
+	pod := rsOwned("shop", "web-1", "web-rs",
+		corev1.Container{Name: "web", Ports: []corev1.ContainerPort{{HostPort: 8080, ContainerPort: 8080}}})
+	if count(Assess([]corev1.Pod{pod}, nil, nil), "HostPort") != 1 {
+		t.Errorf("want one HostPort finding")
+	}
+}
+
+func TestAssess_AddedCapability(t *testing.T) {
+	pod := rsOwned("shop", "web-1", "web-rs", corev1.Container{
+		Name: "web",
+		SecurityContext: &corev1.SecurityContext{Capabilities: &corev1.Capabilities{
+			Add: []corev1.Capability{"NET_BIND_SERVICE", "SYS_ADMIN"}}},
+	})
+	got := Assess([]corev1.Pod{pod}, nil, nil)
+	if count(got, "AddedCapability") != 1 {
+		t.Fatalf("want one AddedCapability finding, got %+v", got)
+	}
+	// NET_BIND_SERVICE alone is allowed by baseline.
+	ok := rsOwned("shop", "ok-1", "ok-rs", corev1.Container{
+		Name: "web",
+		SecurityContext: &corev1.SecurityContext{Capabilities: &corev1.Capabilities{
+			Add: []corev1.Capability{"NET_BIND_SERVICE"}}},
+	})
+	if count(Assess([]corev1.Pod{ok}, nil, nil), "AddedCapability") != 0 {
+		t.Errorf("NET_BIND_SERVICE alone must not be flagged")
+	}
+}

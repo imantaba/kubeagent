@@ -105,6 +105,12 @@ func baselinePodChecks(pod corev1.Pod, wl workloadRef) []Finding {
 	if ns := hostNamespaces(pod); ns != "" {
 		out = append(out, finding(pod, wl, profileBaseline, "HostNamespaces", "", "pod shares the host "+ns))
 	}
+	for _, v := range pod.Spec.Volumes {
+		if v.HostPath != nil {
+			out = append(out, finding(pod, wl, profileBaseline, "HostPath", "",
+				fmt.Sprintf("mounts hostPath %s (writable host filesystem)", v.HostPath.Path)))
+		}
+	}
 	return out
 }
 
@@ -116,8 +122,35 @@ func containerChecks(pod corev1.Pod, wl workloadRef) []Finding {
 			out = append(out, finding(pod, wl, profileBaseline, "Privileged", c.Name,
 				fmt.Sprintf("container %q runs privileged (full host access)", c.Name)))
 		}
+		for _, p := range c.Ports {
+			if p.HostPort != 0 {
+				out = append(out, finding(pod, wl, profileBaseline, "HostPort", c.Name,
+					fmt.Sprintf("container %q binds host port %d", c.Name, p.HostPort)))
+				break
+			}
+		}
+		if caps := dangerousAddedCaps(c); len(caps) > 0 {
+			out = append(out, finding(pod, wl, profileBaseline, "AddedCapability", c.Name,
+				fmt.Sprintf("container %q adds capability %s", c.Name, strings.Join(caps, ", "))))
+		}
 	}
 	return out
+}
+
+// baselineAllowedCap is the only capability the baseline profile permits adding.
+const baselineAllowedCap = "NET_BIND_SERVICE"
+
+func dangerousAddedCaps(c corev1.Container) []string {
+	if c.SecurityContext == nil || c.SecurityContext.Capabilities == nil {
+		return nil
+	}
+	var bad []string
+	for _, cap := range c.SecurityContext.Capabilities.Add {
+		if string(cap) != baselineAllowedCap {
+			bad = append(bad, string(cap))
+		}
+	}
+	return bad
 }
 
 func isPrivileged(c corev1.Container) bool {

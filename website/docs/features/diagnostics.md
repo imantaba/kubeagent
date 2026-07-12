@@ -109,11 +109,16 @@ dangerous added capabilities), insecure container defaults (runs as root,
 `allowPrivilegeEscalation` not disabled, capabilities not dropped), and Services
 exposed outside the cluster (`NodePort` / `LoadBalancer` / `externalIPs`). Each
 finding is labelled `baseline`, `restricted`, or `kubeagent` and printed in a
-dedicated **SECURITY** section (also JSON `securityIssues`). It is a curated
-subset aligned with the Pod Security Standards, not a conformance scanner. It is
-read-only and **advisory** — it does not change the cluster verdict — needs no
-extra RBAC, and skips `kube-system`/`kube-node-lease`/`kube-public` unless you
-target one with `-n`.
+dedicated **SECURITY** section (also JSON `securityIssues`). The **SECURITY**
+section is signal-first: it opens with a one-line tier summary, shows the
+dangerous `baseline` and exposed-service findings in full per workload, and
+folds the near-universal `restricted` hardening gaps into a per-check aggregate;
+pass `--security-verbose` to list every finding per workload instead. JSON
+`securityIssues` always contains all findings regardless of the flag. It is a
+curated subset aligned with the Pod Security Standards, not a conformance
+scanner. It is read-only and **advisory** — it does not change the cluster
+verdict — needs no extra RBAC, and skips
+`kube-system`/`kube-node-lease`/`kube-public` unless you target one with `-n`.
 
 ### Output layout
 

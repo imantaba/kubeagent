@@ -15,8 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   defaults (runs as root, privilege escalation allowed, capabilities not
   dropped), and exposed Services (NodePort/LoadBalancer/externalIPs) — in a
   dedicated `SECURITY` section and JSON `securityIssues`, each labelled
-  `baseline`/`restricted`/`kubeagent`. Read-only and advisory (does not change
-  the cluster verdict); needs no new RBAC; excludes system namespaces by default.
+  `baseline`/`restricted`/`kubeagent`. The `SECURITY` section is signal-first:
+  it opens with a one-line tier summary, shows the dangerous `baseline` and
+  exposed-service findings in full per workload, and folds the near-universal
+  `restricted` hardening gaps into a per-check aggregate; pass
+  `--security-verbose` to list every finding per workload. JSON `securityIssues`
+  always contains all findings regardless of the flag. Read-only and advisory
+  (does not change the cluster verdict); needs no new RBAC; excludes system
+  namespaces by default.
 
 ## [0.17.0] - 2026-07-11
 

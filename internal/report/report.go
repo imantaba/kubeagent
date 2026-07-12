@@ -52,6 +52,7 @@ type Input struct {
 	DiskUsage          *diskusage.Report
 	IngressIssues      []ingresshealth.RouteIssue
 	SecurityIssues     []secscan.Finding
+	SecurityVerbose    bool
 	Explanation        string
 }
 
@@ -118,7 +119,7 @@ func printInventoryText(in Input, w io.Writer) error {
 	}
 
 	hasSecurity := len(in.SecurityIssues) > 0
-	if err := printSecurityIssues(in.SecurityIssues, w); err != nil {
+	if err := printSecurityIssues(in.SecurityIssues, in.SecurityVerbose, w); err != nil {
 		return err
 	}
 
@@ -373,15 +374,56 @@ func printIngressIssues(issues []ingresshealth.RouteIssue, w io.Writer) error {
 	return nil
 }
 
-// printSecurityIssues renders the advisory SECURITY section: workloads (and
-// Services) with insecure posture, grouped, most-dangerous first.
-func printSecurityIssues(issues []secscan.Finding, w io.Writer) error {
+// printSecurityIssues renders the advisory SECURITY section. By default it is
+// signal-first: a one-line tier summary, the baseline/kubeagent ("act-on-these")
+// findings in full per workload (worst-first), and the near-universal restricted
+// hardening gaps folded into a compact aggregate. verbose lists every finding
+// per workload and omits the aggregate.
+func printSecurityIssues(issues []secscan.Finding, verbose bool, w io.Writer) error {
 	if len(issues) == 0 {
 		return nil
 	}
 	if _, err := fmt.Fprintln(w, "SECURITY  (advisory — does not affect the cluster verdict)"); err != nil {
 		return err
 	}
+
+	// Tallies for the summary header and the restricted aggregate.
+	var nBaseline, nExposed, nRestricted int
+	allWorkloads := map[string]bool{}
+	restrictedWorkloads := map[string]bool{}
+	restrictedByCheck := map[string]int{}
+	for _, f := range issues {
+		wl := f.Namespace + "/" + f.Workload
+		allWorkloads[wl] = true
+		switch f.Profile {
+		case "restricted":
+			nRestricted++
+			restrictedWorkloads[wl] = true
+			restrictedByCheck[f.Check]++
+		case "kubeagent":
+			nExposed++
+		default: // baseline
+			nBaseline++
+		}
+	}
+
+	// Summary header: non-zero tiers joined by " · ", then the workload count.
+	var parts []string
+	if nBaseline > 0 {
+		parts = append(parts, fmt.Sprintf("%d baseline", nBaseline))
+	}
+	if nExposed > 0 {
+		parts = append(parts, fmt.Sprintf("%d exposed %s", nExposed, plural(nExposed, "service", "services")))
+	}
+	if nRestricted > 0 {
+		parts = append(parts, fmt.Sprintf("%d restricted hardening %s", nRestricted, plural(nRestricted, "gap", "gaps")))
+	}
+	parts = append(parts, fmt.Sprintf("%d %s", len(allWorkloads), plural(len(allWorkloads), "workload", "workloads")))
+	if _, err := fmt.Fprintf(w, "  %s\n\n", strings.Join(parts, " · ")); err != nil {
+		return err
+	}
+
+	// Group findings by workload, preserving Assess's per-workload finding order.
 	type grp struct{ ns, name, kind string }
 	var order []grp
 	byGrp := map[grp][]secscan.Finding{}
@@ -392,19 +434,72 @@ func printSecurityIssues(issues []secscan.Finding, w io.Writer) error {
 		}
 		byGrp[g] = append(byGrp[g], f)
 	}
+
+	// Detail blocks. Default: only workloads with act-on-these (non-restricted)
+	// findings, showing just those. Verbose: every workload, every finding.
+	type block struct {
+		g     grp
+		shown []secscan.Finding
+	}
+	var blocks []block
 	for _, g := range order {
-		if _, err := fmt.Fprintf(w, "%s/%s  %s\n", g.ns, g.name, g.kind); err != nil {
+		shown := byGrp[g]
+		if !verbose {
+			var act []secscan.Finding
+			for _, f := range shown {
+				if f.Profile != "restricted" {
+					act = append(act, f)
+				}
+			}
+			if len(act) == 0 {
+				continue // restricted-only workload -> aggregate only
+			}
+			shown = act
+		}
+		blocks = append(blocks, block{g, shown})
+	}
+	// Worst-first: most shown findings, then namespace, then workload.
+	sort.SliceStable(blocks, func(i, j int) bool {
+		a, b := blocks[i], blocks[j]
+		if len(a.shown) != len(b.shown) {
+			return len(a.shown) > len(b.shown)
+		}
+		if a.g.ns != b.g.ns {
+			return a.g.ns < b.g.ns
+		}
+		return a.g.name < b.g.name
+	})
+	for _, b := range blocks {
+		if _, err := fmt.Fprintf(w, "  ✗ %s/%s  %s\n", b.g.ns, b.g.name, b.g.kind); err != nil {
 			return err
 		}
-		for _, f := range byGrp[g] {
-			if _, err := fmt.Fprintf(w, "  [%s] %s — %s\n", f.Profile, f.Check, f.Detail); err != nil {
+		for _, f := range b.shown {
+			if _, err := fmt.Fprintf(w, "      [%s] %s — %s\n", f.Profile, f.Check, f.Detail); err != nil {
 				return err
 			}
 		}
 	}
-	if _, err := fmt.Fprintf(w, "\nSecurity: %d %s across %d %s\n\n",
-		len(issues), plural(len(issues), "finding", "findings"),
-		len(order), plural(len(order), "workload", "workloads")); err != nil {
+
+	// Restricted aggregate (default only, when there are restricted findings).
+	if !verbose && nRestricted > 0 {
+		if _, err := fmt.Fprintf(w, "\n  restricted (hardening gaps, near-universal): %d across %d %s\n",
+			nRestricted, len(restrictedWorkloads), plural(len(restrictedWorkloads), "workload", "workloads")); err != nil {
+			return err
+		}
+		var checks []string
+		for _, c := range []string{"RunAsRoot", "AllowPrivilegeEscalation", "CapabilitiesNotDropped"} {
+			if restrictedByCheck[c] > 0 {
+				checks = append(checks, fmt.Sprintf("%s ×%d", c, restrictedByCheck[c]))
+			}
+		}
+		if _, err := fmt.Fprintf(w, "    %s\n", strings.Join(checks, " · ")); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintln(w, "    → run with --security-verbose to list every finding per workload"); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintln(w); err != nil {
 		return err
 	}
 	return nil

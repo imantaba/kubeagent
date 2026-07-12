@@ -1012,14 +1012,16 @@ func TestPrintInventory_NoIngressLinesWhenEmpty(t *testing.T) {
 	}
 }
 
-func TestPrintInventory_TextShowsSecurity(t *testing.T) {
+func TestPrintInventory_SecurityDefaultView(t *testing.T) {
 	var buf bytes.Buffer
 	in := Input{
 		Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
-		SecurityIssues: []secscan.Finding{{
-			Namespace: "payments", Workload: "api", Kind: "Deployment", Container: "app",
-			Profile: "baseline", Check: "Privileged", Detail: `container "app" runs privileged (full host access)`,
-		}},
+		SecurityIssues: []secscan.Finding{
+			{Namespace: "shop", Workload: "api", Kind: "Deployment", Container: "app", Profile: "baseline", Check: "Privileged", Detail: `container "app" runs privileged (full host access)`},
+			{Namespace: "shop", Workload: "api", Kind: "Deployment", Container: "app", Profile: "restricted", Check: "RunAsRoot", Detail: `container "app" is not guaranteed to run as non-root`},
+			{Namespace: "shop", Workload: "web", Kind: "Deployment", Container: "web", Profile: "restricted", Check: "AllowPrivilegeEscalation", Detail: `container "web" allows privilege escalation (allowPrivilegeEscalation not false)`},
+			{Namespace: "shop", Workload: "web", Kind: "Deployment", Container: "web", Profile: "restricted", Check: "CapabilitiesNotDropped", Detail: `container "web" does not drop all capabilities`},
+		},
 	}
 	if err := PrintInventory(in, "text", &buf); err != nil {
 		t.Fatal(err)
@@ -1028,14 +1030,101 @@ func TestPrintInventory_TextShowsSecurity(t *testing.T) {
 	if !strings.Contains(out, "SECURITY") {
 		t.Errorf("expected a SECURITY section:\n%s", out)
 	}
-	if !strings.Contains(out, "payments/api  Deployment") || !strings.Contains(out, "[baseline] Privileged") {
-		t.Errorf("missing the grouped finding line:\n%s", out)
+	if !strings.Contains(out, "1 baseline · 3 restricted hardening gaps · 2 workloads") {
+		t.Errorf("missing tier summary header:\n%s", out)
 	}
-	if !strings.Contains(out, "Security: 1 finding across 1 workload") {
-		t.Errorf("missing the summary line:\n%s", out)
+	if !strings.Contains(out, "✗ shop/api  Deployment") || !strings.Contains(out, "[baseline] Privileged") {
+		t.Errorf("missing the act-on-these detail block:\n%s", out)
+	}
+	if strings.Contains(out, "[restricted] RunAsRoot") {
+		t.Errorf("restricted findings must be folded into the aggregate, not listed:\n%s", out)
+	}
+	if strings.Contains(out, "✗ shop/web") {
+		t.Errorf("a restricted-only workload must not get a detail block:\n%s", out)
+	}
+	if !strings.Contains(out, "restricted (hardening gaps, near-universal): 3 across 2 workloads") {
+		t.Errorf("missing restricted aggregate:\n%s", out)
+	}
+	if !strings.Contains(out, "RunAsRoot ×1 · AllowPrivilegeEscalation ×1 · CapabilitiesNotDropped ×1") {
+		t.Errorf("missing per-check counts:\n%s", out)
+	}
+	if !strings.Contains(out, "--security-verbose") {
+		t.Errorf("missing the --security-verbose hint:\n%s", out)
 	}
 	if strings.Contains(out, "No issues found") {
-		t.Errorf("all-clear must be suppressed when security findings exist:\n%s", out)
+		t.Errorf("all-clear must be suppressed when there are findings:\n%s", out)
+	}
+}
+
+func TestPrintInventory_SecurityVerbose(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster:         clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		SecurityVerbose: true,
+		SecurityIssues: []secscan.Finding{
+			{Namespace: "shop", Workload: "api", Kind: "Deployment", Container: "app", Profile: "baseline", Check: "Privileged", Detail: "p"},
+			{Namespace: "shop", Workload: "api", Kind: "Deployment", Container: "app", Profile: "restricted", Check: "RunAsRoot", Detail: "r"},
+			{Namespace: "shop", Workload: "web", Kind: "Deployment", Container: "web", Profile: "restricted", Check: "CapabilitiesNotDropped", Detail: "c"},
+		},
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "[restricted] RunAsRoot") {
+		t.Errorf("verbose must list restricted findings:\n%s", out)
+	}
+	if !strings.Contains(out, "✗ shop/web  Deployment") {
+		t.Errorf("verbose must show restricted-only workloads:\n%s", out)
+	}
+	if strings.Contains(out, "restricted (hardening gaps, near-universal)") {
+		t.Errorf("verbose must omit the aggregate block:\n%s", out)
+	}
+}
+
+func TestPrintInventory_SecurityOnlyRestricted(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		SecurityIssues: []secscan.Finding{
+			{Namespace: "shop", Workload: "web", Kind: "Deployment", Container: "web", Profile: "restricted", Check: "RunAsRoot", Detail: "r"},
+			{Namespace: "shop", Workload: "web", Kind: "Deployment", Container: "web", Profile: "restricted", Check: "CapabilitiesNotDropped", Detail: "c"},
+		},
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "✗ ") {
+		t.Errorf("restricted-only findings must produce no detail blocks:\n%s", out)
+	}
+	if !strings.Contains(out, "restricted (hardening gaps, near-universal): 2 across 1 workload") {
+		t.Errorf("missing restricted aggregate for restricted-only input:\n%s", out)
+	}
+	if strings.Contains(out, "No issues found") {
+		t.Errorf("all-clear must stay suppressed:\n%s", out)
+	}
+}
+
+func TestPrintInventory_SecurityWorstFirst(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		SecurityIssues: []secscan.Finding{
+			{Namespace: "ns", Workload: "bbb", Kind: "Deployment", Profile: "baseline", Check: "HostPath", Detail: "mounts hostPath /a"},
+			{Namespace: "ns", Workload: "aaa", Kind: "Deployment", Profile: "baseline", Check: "HostPath", Detail: "mounts hostPath /b"},
+			{Namespace: "ns", Workload: "aaa", Kind: "Deployment", Profile: "baseline", Check: "HostPath", Detail: "mounts hostPath /c"},
+		},
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if strings.Index(out, "ns/aaa") > strings.Index(out, "ns/bbb") {
+		t.Errorf("workload with more findings (aaa: 2) must sort before bbb (1):\n%s", out)
+	}
+	if strings.Contains(out, "restricted (hardening") {
+		t.Errorf("no restricted aggregate expected when there are no restricted findings:\n%s", out)
 	}
 }
 

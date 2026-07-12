@@ -1155,3 +1155,26 @@ func TestPrintInventory_NoSecurityWhenEmpty(t *testing.T) {
 		t.Errorf("empty security must not suppress the all-clear:\n%s", buf.String())
 	}
 }
+
+func TestPrintInventory_SecurityExposedServiceTier(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		SecurityIssues: []secscan.Finding{
+			{Namespace: "shop", Workload: "admin", Kind: "Service", Profile: "kubeagent", Check: "ExposedService", Detail: "type LoadBalancer exposes port(s) 80 externally"},
+		},
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "1 exposed service · 1 workload") {
+		t.Errorf("expected the exposed-service tier in the summary header:\n%s", out)
+	}
+	if !strings.Contains(out, "✗ shop/admin  Service") || !strings.Contains(out, "[kubeagent] ExposedService") {
+		t.Errorf("an exposed Service must be shown in full (act-on-these):\n%s", out)
+	}
+	if strings.Contains(out, "restricted (hardening") {
+		t.Errorf("no restricted aggregate expected when there are no restricted findings:\n%s", out)
+	}
+}

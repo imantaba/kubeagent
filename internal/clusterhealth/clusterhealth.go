@@ -5,7 +5,9 @@ package clusterhealth
 import (
 	"fmt"
 	"strings"
+	"time"
 
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 
 	"github.com/imantaba/kubeagent/internal/inventory"
@@ -15,24 +17,43 @@ const systemNamespace = "kube-system"
 
 // ClusterHealth is the first-line cluster verdict.
 type ClusterHealth struct {
-	Verdict      string   `json:"verdict"` // Healthy | Degraded
-	NodesTotal   int      `json:"nodesTotal"`
-	NodesReady   int      `json:"nodesReady"`
-	NodeIssues   []string `json:"nodeIssues,omitempty"`
-	SystemIssues []string `json:"systemIssues,omitempty"`
-	ScopeNote    string   `json:"scopeNote,omitempty"`
+	Verdict             string   `json:"verdict"` // Healthy | Degraded
+	NodesTotal          int      `json:"nodesTotal"`
+	NodesReady          int      `json:"nodesReady"`
+	NodesStaleHeartbeat int      `json:"nodesStaleHeartbeat,omitempty"`
+	NodeIssues          []string `json:"nodeIssues,omitempty"`
+	SystemIssues        []string `json:"systemIssues,omitempty"`
+	ScopeNote           string   `json:"scopeNote,omitempty"`
+}
+
+// Heartbeat carries the node-lease inputs for the kubelet-heartbeat-freshness
+// check. A Threshold <= 0 disables the check.
+type Heartbeat struct {
+	Leases    []coordinationv1.Lease
+	Now       time.Time
+	Threshold time.Duration
 }
 
 // Assess computes the verdict from nodes and the assembled workloads. A node is
-// unhealthy if not Ready, under Memory/Disk/PID pressure, or cordoned. System
-// issues are flagged kube-system workloads. The verdict is Healthy only when
-// there are no node and no system issues.
-func Assess(nodes []corev1.Node, workloads []inventory.Workload) ClusterHealth {
+// unhealthy if not Ready, under Memory/Disk/PID pressure, cordoned, or (when the
+// heartbeat check is enabled) Ready but its kubelet lease is stale/missing. The
+// verdict is Healthy only when there are no node and no system issues.
+func Assess(nodes []corev1.Node, hb Heartbeat, workloads []inventory.Workload) ClusterHealth {
 	ch := ClusterHealth{NodesTotal: len(nodes)}
+	leaseByNode := make(map[string]coordinationv1.Lease, len(hb.Leases))
+	for _, l := range hb.Leases {
+		leaseByNode[l.Name] = l
+	}
 	for _, n := range nodes {
 		ready, issues := nodeHealth(n)
 		if ready {
 			ch.NodesReady++
+			if hb.Threshold > 0 {
+				if iss, stale := staleHeartbeat(leaseByNode, n.Name, hb.Now, hb.Threshold); stale {
+					issues = append(issues, iss)
+					ch.NodesStaleHeartbeat++
+				}
+			}
 		}
 		for _, iss := range issues {
 			ch.NodeIssues = append(ch.NodeIssues, n.Name+" "+iss)
@@ -55,6 +76,20 @@ func Assess(nodes []corev1.Node, workloads []inventory.Workload) ClusterHealth {
 		ch.Verdict = "Degraded"
 	}
 	return ch
+}
+
+// staleHeartbeat reports whether a Ready node's kubelet lease is stale (or
+// missing/renewTime-less) beyond the threshold, and the issue string to record.
+func staleHeartbeat(leaseByNode map[string]coordinationv1.Lease, node string, now time.Time, threshold time.Duration) (string, bool) {
+	l, ok := leaseByNode[node]
+	if !ok || l.Spec.RenewTime == nil {
+		return "no kubelet lease", true
+	}
+	staleness := now.Sub(l.Spec.RenewTime.Time)
+	if staleness > threshold {
+		return fmt.Sprintf("kubelet not heartbeating (lease %s stale)", staleness.Round(time.Second)), true
+	}
+	return "", false
 }
 
 // NamespaceScopeNote returns a caveat for the verdict when the scan is scoped to

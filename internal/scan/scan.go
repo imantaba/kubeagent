@@ -99,7 +99,7 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	if err != nil {
 		return Result{}, err
 	}
-	health := clusterhealth.Assess(nodes, workloads)
+	health := clusterhealth.Assess(nodes, clusterhealth.Heartbeat{}, workloads)
 	health.ScopeNote = clusterhealth.NamespaceScopeNote(opts.Namespace)
 
 	svcs, _ := collect.Services(ctx, client, opts.Namespace)

@@ -1,8 +1,11 @@
 package clusterhealth
 
 import (
+	"strings"
 	"testing"
+	"time"
 
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -68,7 +71,7 @@ func TestAssess_HealthyClusterAndSystem(t *testing.T) {
 		{Namespace: "kube-system", Name: "coredns", Ready: 2, Desired: 2, Status: "Running"},
 		{Namespace: "default", Name: "web", Ready: 1, Desired: 2, Status: "Degraded"}, // not kube-system → ignored
 	}
-	ch := Assess(nodes, workloads)
+	ch := Assess(nodes, Heartbeat{}, workloads)
 	if ch.Verdict != "Healthy" {
 		t.Errorf("verdict = %q, want Healthy", ch.Verdict)
 	}
@@ -95,7 +98,7 @@ func TestNamespaceScopeNote(t *testing.T) {
 func TestAssess_SystemJobFailedOmitsCount(t *testing.T) {
 	nodes := []corev1.Node{node("a", true, nil, false)}
 	workloads := []inventory.Workload{{Namespace: "kube-system", Name: "migrate", Kind: "Job", Status: "Failed"}}
-	ch := Assess(nodes, workloads)
+	ch := Assess(nodes, Heartbeat{}, workloads)
 	if ch.Verdict != "Degraded" {
 		t.Fatalf("verdict = %q, want Degraded", ch.Verdict)
 	}
@@ -160,7 +163,7 @@ func TestNodeHealth_FirstLineOfMessageOnly(t *testing.T) {
 }
 
 func TestAssess_NotReadyIssueCarriesNodeNameAndReason(t *testing.T) {
-	ch := Assess([]corev1.Node{notReadyNode("worker-2", "KubeletNotReady", "kubelet stopped posting node status")}, nil)
+	ch := Assess([]corev1.Node{notReadyNode("worker-2", "KubeletNotReady", "kubelet stopped posting node status")}, Heartbeat{}, nil)
 	if ch.Verdict != "Degraded" {
 		t.Errorf("a NotReady node should still make the cluster Degraded, got %q", ch.Verdict)
 	}
@@ -177,7 +180,7 @@ func TestAssess_DegradedByNodeAndSystem(t *testing.T) {
 	workloads := []inventory.Workload{
 		{Namespace: "kube-system", Name: "coredns", Ready: 1, Desired: 2, Status: "Degraded"},
 	}
-	ch := Assess(nodes, workloads)
+	ch := Assess(nodes, Heartbeat{}, workloads)
 	if ch.Verdict != "Degraded" {
 		t.Errorf("verdict = %q, want Degraded", ch.Verdict)
 	}
@@ -189,5 +192,75 @@ func TestAssess_DegradedByNodeAndSystem(t *testing.T) {
 	}
 	if len(ch.SystemIssues) != 1 || ch.SystemIssues[0] != "kube-system/coredns 1/2 Degraded" {
 		t.Errorf("system issues = %v", ch.SystemIssues)
+	}
+}
+
+func hbReadyNode(name string) corev1.Node {
+	return corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Status:     corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}},
+	}
+}
+
+func hbLease(node string, renew time.Time) coordinationv1.Lease {
+	rt := metav1.NewMicroTime(renew)
+	return coordinationv1.Lease{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "kube-node-lease", Name: node},
+		Spec:       coordinationv1.LeaseSpec{RenewTime: &rt},
+	}
+}
+
+func TestAssess_StaleHeartbeatDegrades(t *testing.T) {
+	now := time.Now()
+	hb := Heartbeat{Leases: []coordinationv1.Lease{hbLease("w1", now.Add(-90 * time.Second))}, Now: now, Threshold: 40 * time.Second}
+	ch := Assess([]corev1.Node{hbReadyNode("w1")}, hb, nil)
+	if ch.Verdict != "Degraded" || ch.NodesStaleHeartbeat != 1 {
+		t.Fatalf("stale lease must degrade + count: %+v", ch)
+	}
+	if len(ch.NodeIssues) != 1 || !strings.Contains(ch.NodeIssues[0], "kubelet not heartbeating") {
+		t.Errorf("want a heartbeat issue, got %+v", ch.NodeIssues)
+	}
+}
+
+func TestAssess_FreshHeartbeatClean(t *testing.T) {
+	now := time.Now()
+	hb := Heartbeat{Leases: []coordinationv1.Lease{hbLease("w1", now.Add(-5 * time.Second))}, Now: now, Threshold: 40 * time.Second}
+	ch := Assess([]corev1.Node{hbReadyNode("w1")}, hb, nil)
+	if ch.Verdict != "Healthy" || ch.NodesStaleHeartbeat != 0 {
+		t.Errorf("fresh lease must stay Healthy: %+v", ch)
+	}
+}
+
+func TestAssess_MissingLeaseFlagged(t *testing.T) {
+	now := time.Now()
+	ch := Assess([]corev1.Node{hbReadyNode("w1")}, Heartbeat{Leases: nil, Now: now, Threshold: 40 * time.Second}, nil)
+	if ch.NodesStaleHeartbeat != 1 || len(ch.NodeIssues) != 1 || !strings.Contains(ch.NodeIssues[0], "no kubelet lease") {
+		t.Errorf("missing lease on a Ready node must flag: %+v", ch)
+	}
+}
+
+func TestAssess_NotReadyNodeNoDuplicateHeartbeat(t *testing.T) {
+	now := time.Now()
+	notReady := corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "w1"},
+		Status:     corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionFalse, Reason: "KubeletNotReady"}}},
+	}
+	hb := Heartbeat{Leases: []coordinationv1.Lease{hbLease("w1", now.Add(-90 * time.Second))}, Now: now, Threshold: 40 * time.Second}
+	ch := Assess([]corev1.Node{notReady}, hb, nil)
+	if ch.NodesStaleHeartbeat != 0 {
+		t.Errorf("NotReady node must not add a heartbeat issue: %+v", ch)
+	}
+	for _, iss := range ch.NodeIssues {
+		if strings.Contains(iss, "heartbeating") {
+			t.Errorf("no heartbeat issue expected on a NotReady node: %q", iss)
+		}
+	}
+}
+
+func TestAssess_HeartbeatThresholdDisabled(t *testing.T) {
+	now := time.Now()
+	ch := Assess([]corev1.Node{hbReadyNode("w1")}, Heartbeat{Leases: nil, Now: now, Threshold: 0}, nil)
+	if ch.NodesStaleHeartbeat != 0 || ch.Verdict != "Healthy" {
+		t.Errorf("threshold 0 disables the check: %+v", ch)
 	}
 }

@@ -211,8 +211,9 @@ func runWatch(args []string) error {
 		Debounce:        *debounce,
 		IncludeCron:     *includeCron,
 		IncludeRestarts: *includeRestarts,
-		DiskUsage:       envBool("KUBEAGENT_DISK_USAGE", false),
-		DiskThreshold:   envFloat("KUBEAGENT_DISK_THRESHOLD", 0.80),
+		DiskUsage:              envBool("KUBEAGENT_DISK_USAGE", false),
+		DiskThreshold:          envFloat("KUBEAGENT_DISK_THRESHOLD", 0.80),
+		NodeHeartbeatThreshold: envDur("KUBEAGENT_NODE_HEARTBEAT_THRESHOLD", 40*time.Second),
 	})
 }
 

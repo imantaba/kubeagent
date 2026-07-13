@@ -20,7 +20,7 @@ import (
 
 func sampleResult() *scan.Result {
 	return &scan.Result{
-		Health:      clusterhealth.ClusterHealth{Verdict: "Degraded", NodesReady: 2, NodesTotal: 3},
+		Health:      clusterhealth.ClusterHealth{Verdict: "Degraded", NodesReady: 2, NodesTotal: 3, NodesStaleHeartbeat: 1},
 		NodeReserve: nodereserve.Report{WarnCount: 1},
 		PVCReclaim:  pvcreclaim.Report{Count: 2},
 		Inventory: inventory.Result{Workloads: []inventory.Workload{
@@ -47,6 +47,7 @@ func TestMetrics_RenderReflectsResult(t *testing.T) {
 		"kubeagent_workloads_flagged 1",
 		`kubeagent_findings{issue="CrashLoopBackOff"} 1`,
 		"kubeagent_nodes_without_reservations 1",
+		"kubeagent_nodes_stale_heartbeat 1",
 		"kubeagent_pvcs_reclaim_delete 2",
 		"kubeagent_scans_total 1",
 		`kubeagent_node_fs_usage_ratio{node="n1"} 0.84`,

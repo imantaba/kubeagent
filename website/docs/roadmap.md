@@ -66,6 +66,11 @@
   kubeagent. Read-only, advisory, no new RBAC. See
   [Failure diagnostics](features/diagnostics.md).
 
+- **Node heartbeat freshness** — `scan` flags a Ready node whose kubelet `Lease`
+  has gone stale (kubelet not heartbeating) before it flips to `NotReady`, and
+  the daemon exposes `kubeagent_nodes_stale_heartbeat`. See
+  [Failure diagnostics](features/diagnostics.md).
+
 !!! info "Version history"
     [GitHub Releases](https://github.com/imantaba/kubeagent/releases) and the
     [CHANGELOG](https://github.com/imantaba/kubeagent/blob/main/CHANGELOG.md)

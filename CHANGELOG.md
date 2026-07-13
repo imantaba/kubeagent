@@ -5,6 +5,20 @@ All notable changes to kubeagent are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Node heartbeat freshness.** `scan` reads each node's `Lease`
+  (`kube-node-lease`) and flags a **Ready** node whose kubelet has stopped
+  heartbeating — `kubelet not heartbeating (lease Ns stale)` — catching a dark
+  kubelet in the window *before* the control plane marks the node `NotReady`.
+  It degrades the cluster verdict, is tunable via `--node-heartbeat-threshold`
+  (default `40s`), and the watch daemon exposes
+  `kubeagent_nodes_stale_heartbeat` (set `KUBEAGENT_NODE_HEARTBEAT_THRESHOLD`) so
+  you can alert before a node goes down. Reads `leases` (a new read-only RBAC
+  grant); on by default.
+
 ## [0.18.0] - 2026-07-12
 
 ### Added

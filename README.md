@@ -34,6 +34,10 @@ A Kubernetes troubleshooting agent, written in Go.
   hardening problems (privileged/insecure containers, exposed Services) in a
   dedicated `SECURITY` section and JSON `securityIssues`. Advisory and
   read-only; needs no new RBAC.
+- **Node heartbeat freshness** — `scan` flags a Ready node whose kubelet `Lease`
+  has gone stale (kubelet not heartbeating), catching a dark kubelet before the
+  node flips to `NotReady`. Tunable via `--node-heartbeat-threshold` (default
+  `40s`); adds `leases` read RBAC; on by default.
 
 It talks to the cluster directly via the official Kubernetes Go client
 (`client-go`) — the same library `kubectl` and operators are built on — and

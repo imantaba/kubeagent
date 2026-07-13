@@ -100,6 +100,18 @@ routes resolve within the Ingress's own namespace. It is read-only and advisory:
 it appears in **NEEDS ATTENTION** and JSON `ingressIssues` but does not change
 the cluster verdict.
 
+### Node heartbeat freshness
+
+Each node renews a `Lease` in `kube-node-lease` about every 10 seconds; the
+control plane only marks a node `NotReady` after ~40 seconds of missed renewals.
+`scan` reads those Leases and flags a node that still reads **Ready** but whose
+lease has gone stale — `✗ node worker-2 kubelet not heartbeating (lease 48s
+stale)` — so a crashed, hung, or partitioned kubelet shows up *before* the node
+flips to `NotReady`. It degrades the cluster verdict, and the threshold is
+tunable with `--node-heartbeat-threshold` (default `40s`; `0` disables it).
+Compares against the scanner's clock, so run it in-cluster (the watch daemon) or
+on a clock-synced host.
+
 ### Security posture (opt-in)
 
 `scan --security` walks every workload's pod template and each Service and flags

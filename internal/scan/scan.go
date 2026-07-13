@@ -27,12 +27,13 @@ import (
 
 // Options controls the evaluation scope.
 type Options struct {
-	Namespace       string
-	IncludeCron     bool
-	IncludeRestarts bool
-	DiskUsage       bool
-	DiskThreshold   float64
-	Security        bool
+	Namespace              string
+	IncludeCron            bool
+	IncludeRestarts        bool
+	DiskUsage              bool
+	DiskThreshold          float64
+	Security               bool
+	NodeHeartbeatThreshold time.Duration
 }
 
 // Result is the structured health picture. Inputs and Nodes are exposed so the
@@ -99,7 +100,8 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	if err != nil {
 		return Result{}, err
 	}
-	health := clusterhealth.Assess(nodes, clusterhealth.Heartbeat{}, workloads)
+	leases, _ := collect.NodeLeases(ctx, client)
+	health := clusterhealth.Assess(nodes, clusterhealth.Heartbeat{Leases: leases, Now: time.Now(), Threshold: opts.NodeHeartbeatThreshold}, workloads)
 	health.ScopeNote = clusterhealth.NamespaceScopeNote(opts.Namespace)
 
 	svcs, _ := collect.Services(ctx, client, opts.Namespace)

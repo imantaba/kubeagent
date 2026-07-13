@@ -57,7 +57,7 @@ func run(args []string) error {
 		return runWatch(args[1:])
 	}
 	if len(args) == 0 || args[0] != "scan" {
-		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--fix [--dry-run|--yes]] | kubeagent watch [--kubeconfig path] [--context name] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] | kubeagent version")
+		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--node-heartbeat-threshold dur] [--fix [--dry-run|--yes]] | kubeagent watch [--kubeconfig path] [--context name] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] | kubeagent version")
 	}
 
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
@@ -72,6 +72,7 @@ func run(args []string) error {
 	pvcReclaimFull := fs.Bool("pvc-reclaim", false, "list every PVC on a Delete reclaim policy (default: a grouped summary)")
 	diskUsage := fs.Bool("disk-usage", false, "check node filesystem and PVC usage via the kubelet (needs the nodes/proxy grant)")
 	diskThreshold := fs.Float64("disk-threshold", 0.80, "with --disk-usage: warn at this used ratio (0-1)")
+	nodeHeartbeatThreshold := fs.Duration("node-heartbeat-threshold", 40*time.Second, "flag a Ready node whose kubelet lease is stale beyond this (0 disables)")
 	security := fs.Bool("security", false, "flag insecure workloads and exposed Services (read-only, advisory)")
 	securityVerbose := fs.Bool("security-verbose", false, "with --security: list every finding per workload (default: dangerous findings in full, restricted gaps aggregated)")
 	fix := fs.Bool("fix", false, "propose and (after confirmation) apply safe, reversible remediations (opt-in writes)")
@@ -99,12 +100,13 @@ func run(args []string) error {
 	}
 
 	res, err := scan.Evaluate(context.Background(), client, scan.Options{
-		Namespace:       namespace,
-		IncludeCron:     *includeCron,
-		IncludeRestarts: *includeRestarts,
-		DiskUsage:       *diskUsage,
-		DiskThreshold:   *diskThreshold,
-		Security:        *security,
+		Namespace:              namespace,
+		IncludeCron:            *includeCron,
+		IncludeRestarts:        *includeRestarts,
+		DiskUsage:              *diskUsage,
+		DiskThreshold:          *diskThreshold,
+		Security:               *security,
+		NodeHeartbeatThreshold: *nodeHeartbeatThreshold,
 	})
 	if err != nil {
 		if diag, ok := connectivity.Diagnose(err); ok {

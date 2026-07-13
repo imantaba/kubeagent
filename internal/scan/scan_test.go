@@ -6,6 +6,7 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
@@ -140,6 +141,28 @@ func TestEvaluate_DiskUsageOffByDefault(t *testing.T) {
 	}
 	if len(res.DiskUsage.Over) != 0 || len(res.DiskUsage.Nodes) != 0 {
 		t.Errorf("disk usage must be empty when not enabled, got %+v", res.DiskUsage)
+	}
+}
+
+func TestEvaluate_StaleHeartbeatDegrades(t *testing.T) {
+	now := time.Now()
+	rt := metav1.NewMicroTime(now.Add(-2 * time.Minute))
+	client := fake.NewSimpleClientset(
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "w1"}, Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}},
+		&coordinationv1.Lease{ObjectMeta: metav1.ObjectMeta{Namespace: "kube-node-lease", Name: "w1"}, Spec: coordinationv1.LeaseSpec{RenewTime: &rt}},
+	)
+	res, err := Evaluate(context.Background(), client, Options{NodeHeartbeatThreshold: 40 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Health.Verdict != "Degraded" || res.Health.NodesStaleHeartbeat != 1 {
+		t.Errorf("a Ready node with a stale lease must degrade the verdict: %+v", res.Health)
+	}
+
+	// Threshold 0 disables the check -> same cluster reads Healthy.
+	off, _ := Evaluate(context.Background(), client, Options{})
+	if off.Health.NodesStaleHeartbeat != 0 {
+		t.Errorf("threshold 0 must disable the heartbeat check: %+v", off.Health)
 	}
 }
 

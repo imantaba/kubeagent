@@ -23,6 +23,7 @@ type metrics struct {
 	nodesTotal     int
 	nodesNoReserve      int
 	nodesStaleHeartbeat int
+	nodesExpectedAbsent int
 	pvcsReclaimDelete   int
 	flagged       int
 	serviceIssues int
@@ -59,6 +60,7 @@ func (m *metrics) update(res *scan.Result, dur time.Duration, now time.Time, err
 	m.nodesTotal = res.Health.NodesTotal
 	m.nodesNoReserve = res.NodeReserve.WarnCount
 	m.nodesStaleHeartbeat = res.Health.NodesStaleHeartbeat
+	m.nodesExpectedAbsent = res.Health.NodesExpectedAbsent
 	m.pvcsReclaimDelete = res.PVCReclaim.Count
 	m.serviceIssues = len(res.ServiceIssues)
 	m.ingressIssues = len(res.IngressIssues)
@@ -106,6 +108,7 @@ func (m *metrics) render() string {
 	gauge("kubeagent_nodes_total", "Total number of nodes", float64(m.nodesTotal))
 	gauge("kubeagent_nodes_without_reservations", "Nodes whose kubelet reserves no memory (allocatable == capacity)", float64(m.nodesNoReserve))
 	gauge("kubeagent_nodes_stale_heartbeat", "Ready nodes whose kubelet lease is stale (kubelet not heartbeating)", float64(m.nodesStaleHeartbeat))
+	gauge("kubeagent_nodes_expected_absent", "Declared expected nodes that are absent from the cluster", float64(m.nodesExpectedAbsent))
 	gauge("kubeagent_pvcs_reclaim_delete", "PVCs whose bound PV has reclaimPolicy Delete", float64(m.pvcsReclaimDelete))
 	gauge("kubeagent_workloads_flagged", "Number of workloads currently flagged", float64(m.flagged))
 	gauge("kubeagent_service_issues", "Number of Service issues", float64(m.serviceIssues))

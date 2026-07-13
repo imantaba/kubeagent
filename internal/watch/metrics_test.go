@@ -20,7 +20,7 @@ import (
 
 func sampleResult() *scan.Result {
 	return &scan.Result{
-		Health:      clusterhealth.ClusterHealth{Verdict: "Degraded", NodesReady: 2, NodesTotal: 3, NodesStaleHeartbeat: 1},
+		Health:      clusterhealth.ClusterHealth{Verdict: "Degraded", NodesReady: 2, NodesTotal: 3, NodesStaleHeartbeat: 1, NodesExpectedAbsent: 1},
 		NodeReserve: nodereserve.Report{WarnCount: 1},
 		PVCReclaim:  pvcreclaim.Report{Count: 2},
 		Inventory: inventory.Result{Workloads: []inventory.Workload{
@@ -53,6 +53,7 @@ func TestMetrics_RenderReflectsResult(t *testing.T) {
 		`kubeagent_node_fs_usage_ratio{node="n1"} 0.84`,
 		"kubeagent_volumes_over_disk_threshold 1",
 		"kubeagent_ingress_route_issues 1",
+		"kubeagent_nodes_expected_absent 1",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("metrics missing %q in:\n%s", want, out)

@@ -101,7 +101,7 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 		return Result{}, err
 	}
 	leases, _ := collect.NodeLeases(ctx, client)
-	health := clusterhealth.Assess(nodes, clusterhealth.Heartbeat{Leases: leases, Now: time.Now(), Threshold: opts.NodeHeartbeatThreshold}, workloads)
+	health := clusterhealth.Assess(nodes, clusterhealth.Heartbeat{Leases: leases, Now: time.Now(), Threshold: opts.NodeHeartbeatThreshold}, nil, workloads)
 	health.ScopeNote = clusterhealth.NamespaceScopeNote(opts.Namespace)
 
 	svcs, _ := collect.Services(ctx, client, opts.Namespace)

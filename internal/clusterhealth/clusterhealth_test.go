@@ -71,7 +71,7 @@ func TestAssess_HealthyClusterAndSystem(t *testing.T) {
 		{Namespace: "kube-system", Name: "coredns", Ready: 2, Desired: 2, Status: "Running"},
 		{Namespace: "default", Name: "web", Ready: 1, Desired: 2, Status: "Degraded"}, // not kube-system → ignored
 	}
-	ch := Assess(nodes, Heartbeat{}, workloads)
+	ch := Assess(nodes, Heartbeat{}, nil, workloads)
 	if ch.Verdict != "Healthy" {
 		t.Errorf("verdict = %q, want Healthy", ch.Verdict)
 	}
@@ -98,7 +98,7 @@ func TestNamespaceScopeNote(t *testing.T) {
 func TestAssess_SystemJobFailedOmitsCount(t *testing.T) {
 	nodes := []corev1.Node{node("a", true, nil, false)}
 	workloads := []inventory.Workload{{Namespace: "kube-system", Name: "migrate", Kind: "Job", Status: "Failed"}}
-	ch := Assess(nodes, Heartbeat{}, workloads)
+	ch := Assess(nodes, Heartbeat{}, nil, workloads)
 	if ch.Verdict != "Degraded" {
 		t.Fatalf("verdict = %q, want Degraded", ch.Verdict)
 	}
@@ -163,7 +163,7 @@ func TestNodeHealth_FirstLineOfMessageOnly(t *testing.T) {
 }
 
 func TestAssess_NotReadyIssueCarriesNodeNameAndReason(t *testing.T) {
-	ch := Assess([]corev1.Node{notReadyNode("worker-2", "KubeletNotReady", "kubelet stopped posting node status")}, Heartbeat{}, nil)
+	ch := Assess([]corev1.Node{notReadyNode("worker-2", "KubeletNotReady", "kubelet stopped posting node status")}, Heartbeat{}, nil, nil)
 	if ch.Verdict != "Degraded" {
 		t.Errorf("a NotReady node should still make the cluster Degraded, got %q", ch.Verdict)
 	}
@@ -180,7 +180,7 @@ func TestAssess_DegradedByNodeAndSystem(t *testing.T) {
 	workloads := []inventory.Workload{
 		{Namespace: "kube-system", Name: "coredns", Ready: 1, Desired: 2, Status: "Degraded"},
 	}
-	ch := Assess(nodes, Heartbeat{}, workloads)
+	ch := Assess(nodes, Heartbeat{}, nil, workloads)
 	if ch.Verdict != "Degraded" {
 		t.Errorf("verdict = %q, want Degraded", ch.Verdict)
 	}
@@ -213,7 +213,7 @@ func hbLease(node string, renew time.Time) coordinationv1.Lease {
 func TestAssess_StaleHeartbeatDegrades(t *testing.T) {
 	now := time.Now()
 	hb := Heartbeat{Leases: []coordinationv1.Lease{hbLease("w1", now.Add(-90 * time.Second))}, Now: now, Threshold: 40 * time.Second}
-	ch := Assess([]corev1.Node{hbReadyNode("w1")}, hb, nil)
+	ch := Assess([]corev1.Node{hbReadyNode("w1")}, hb, nil, nil)
 	if ch.Verdict != "Degraded" || ch.NodesStaleHeartbeat != 1 {
 		t.Fatalf("stale lease must degrade + count: %+v", ch)
 	}
@@ -225,7 +225,7 @@ func TestAssess_StaleHeartbeatDegrades(t *testing.T) {
 func TestAssess_FreshHeartbeatClean(t *testing.T) {
 	now := time.Now()
 	hb := Heartbeat{Leases: []coordinationv1.Lease{hbLease("w1", now.Add(-5 * time.Second))}, Now: now, Threshold: 40 * time.Second}
-	ch := Assess([]corev1.Node{hbReadyNode("w1")}, hb, nil)
+	ch := Assess([]corev1.Node{hbReadyNode("w1")}, hb, nil, nil)
 	if ch.Verdict != "Healthy" || ch.NodesStaleHeartbeat != 0 {
 		t.Errorf("fresh lease must stay Healthy: %+v", ch)
 	}
@@ -233,7 +233,7 @@ func TestAssess_FreshHeartbeatClean(t *testing.T) {
 
 func TestAssess_MissingLeaseFlagged(t *testing.T) {
 	now := time.Now()
-	ch := Assess([]corev1.Node{hbReadyNode("w1")}, Heartbeat{Leases: nil, Now: now, Threshold: 40 * time.Second}, nil)
+	ch := Assess([]corev1.Node{hbReadyNode("w1")}, Heartbeat{Leases: nil, Now: now, Threshold: 40 * time.Second}, nil, nil)
 	if ch.NodesStaleHeartbeat != 1 || len(ch.NodeIssues) != 1 || !strings.Contains(ch.NodeIssues[0], "no kubelet lease") {
 		t.Errorf("missing lease on a Ready node must flag: %+v", ch)
 	}
@@ -249,7 +249,7 @@ func TestAssess_NotReadyNodeNoDuplicateHeartbeat(t *testing.T) {
 		Status:     corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionFalse, Reason: "KubeletNotReady"}}},
 	}
 	hb := Heartbeat{Leases: []coordinationv1.Lease{hbLease("w1", now.Add(-90 * time.Second))}, Now: now, Threshold: 40 * time.Second}
-	ch := Assess([]corev1.Node{notReady}, hb, nil)
+	ch := Assess([]corev1.Node{notReady}, hb, nil, nil)
 	if ch.NodesStaleHeartbeat != 0 {
 		t.Errorf("NotReady node must not add a heartbeat issue: %+v", ch)
 	}
@@ -262,8 +262,65 @@ func TestAssess_NotReadyNodeNoDuplicateHeartbeat(t *testing.T) {
 
 func TestAssess_HeartbeatThresholdDisabled(t *testing.T) {
 	now := time.Now()
-	ch := Assess([]corev1.Node{hbReadyNode("w1")}, Heartbeat{Leases: nil, Now: now, Threshold: 0}, nil)
+	ch := Assess([]corev1.Node{hbReadyNode("w1")}, Heartbeat{Leases: nil, Now: now, Threshold: 0}, nil, nil)
 	if ch.NodesStaleHeartbeat != 0 || ch.Verdict != "Healthy" {
 		t.Errorf("threshold 0 disables the check: %+v", ch)
+	}
+}
+
+func TestAssess_ExpectedNodeAbsentDegrades(t *testing.T) {
+	nodes := []corev1.Node{hbReadyNode("nova-worker-1")}
+	ch := Assess(nodes, Heartbeat{}, []string{"nova-worker-1", "nova-worker-2"}, nil)
+	if ch.Verdict != "Degraded" || ch.NodesExpectedAbsent != 1 {
+		t.Fatalf("an absent expected node must degrade + count: %+v", ch)
+	}
+	if len(ch.NodeIssues) != 1 || !strings.Contains(ch.NodeIssues[0], "nova-worker-2 expected but absent from the cluster") {
+		t.Errorf("want absent issue for nova-worker-2, got %+v", ch.NodeIssues)
+	}
+}
+
+func TestAssess_ExpectedNodesAllPresentClean(t *testing.T) {
+	nodes := []corev1.Node{hbReadyNode("a"), hbReadyNode("b")}
+	ch := Assess(nodes, Heartbeat{}, []string{"a", "b"}, nil)
+	if ch.Verdict != "Healthy" || ch.NodesExpectedAbsent != 0 {
+		t.Errorf("all expected present -> Healthy: %+v", ch)
+	}
+}
+
+func TestAssess_ExpectedNotReadyCountsAsPresent(t *testing.T) {
+	// A node that exists but is NotReady is present for this check (its health is
+	// flagged separately); it must NOT produce an "expected but absent" issue.
+	nodes := []corev1.Node{notReadyNode("w1", "KubeletNotReady", "down")}
+	ch := Assess(nodes, Heartbeat{}, []string{"w1"}, nil)
+	if ch.NodesExpectedAbsent != 0 {
+		t.Errorf("a NotReady-but-present node must not be flagged absent: %+v", ch)
+	}
+	for _, iss := range ch.NodeIssues {
+		if strings.Contains(iss, "expected but absent") {
+			t.Errorf("no absent issue expected for a present node: %q", iss)
+		}
+	}
+}
+
+func TestAssess_ExpectedEmptyDisabled(t *testing.T) {
+	ch := Assess([]corev1.Node{hbReadyNode("a")}, Heartbeat{}, nil, nil)
+	if ch.NodesExpectedAbsent != 0 || ch.Verdict != "Healthy" {
+		t.Errorf("no expected list -> check disabled: %+v", ch)
+	}
+	ch2 := Assess([]corev1.Node{hbReadyNode("a")}, Heartbeat{}, []string{" ", ""}, nil)
+	if ch2.NodesExpectedAbsent != 0 {
+		t.Errorf("blank-only expected list -> disabled: %+v", ch2)
+	}
+}
+
+func TestAssess_ExpectedCleaningAndOrder(t *testing.T) {
+	// Trim + dedup: " zeta " and "alpha"/"alpha" collapse; absent names sort.
+	nodes := []corev1.Node{hbReadyNode("present")}
+	ch := Assess(nodes, Heartbeat{}, []string{" zeta ", "alpha", "alpha", "present"}, nil)
+	if ch.NodesExpectedAbsent != 2 {
+		t.Fatalf("want 2 absent (alpha, zeta) after trim+dedup: %+v", ch)
+	}
+	if !strings.Contains(ch.NodeIssues[0], "alpha") || !strings.Contains(ch.NodeIssues[1], "zeta") {
+		t.Errorf("absent issues must be sorted (alpha before zeta): %+v", ch.NodeIssues)
 	}
 }

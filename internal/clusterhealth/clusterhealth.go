@@ -4,6 +4,7 @@ package clusterhealth
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -17,13 +18,14 @@ const systemNamespace = "kube-system"
 
 // ClusterHealth is the first-line cluster verdict.
 type ClusterHealth struct {
-	Verdict             string   `json:"verdict"` // Healthy | Degraded
-	NodesTotal          int      `json:"nodesTotal"`
-	NodesReady          int      `json:"nodesReady"`
-	NodesStaleHeartbeat int      `json:"nodesStaleHeartbeat,omitempty"`
-	NodeIssues          []string `json:"nodeIssues,omitempty"`
-	SystemIssues        []string `json:"systemIssues,omitempty"`
-	ScopeNote           string   `json:"scopeNote,omitempty"`
+	Verdict              string   `json:"verdict"` // Healthy | Degraded
+	NodesTotal           int      `json:"nodesTotal"`
+	NodesReady           int      `json:"nodesReady"`
+	NodesStaleHeartbeat  int      `json:"nodesStaleHeartbeat,omitempty"`
+	NodesExpectedAbsent  int      `json:"nodesExpectedAbsent,omitempty"`
+	NodeIssues           []string `json:"nodeIssues,omitempty"`
+	SystemIssues         []string `json:"systemIssues,omitempty"`
+	ScopeNote            string   `json:"scopeNote,omitempty"`
 }
 
 // Heartbeat carries the node-lease inputs for the kubelet-heartbeat-freshness
@@ -36,15 +38,18 @@ type Heartbeat struct {
 
 // Assess computes the verdict from nodes and the assembled workloads. A node is
 // unhealthy if not Ready, under Memory/Disk/PID pressure, cordoned, or (when the
-// heartbeat check is enabled) Ready but its kubelet lease is stale/missing. The
-// verdict is Healthy only when there are no node and no system issues.
-func Assess(nodes []corev1.Node, hb Heartbeat, workloads []inventory.Workload) ClusterHealth {
+// heartbeat check is enabled) Ready but its kubelet lease is stale/missing. When
+// expected is non-empty, any declared name with no Node object is also flagged.
+// The verdict is Healthy only when there are no node and no system issues.
+func Assess(nodes []corev1.Node, hb Heartbeat, expected []string, workloads []inventory.Workload) ClusterHealth {
 	ch := ClusterHealth{NodesTotal: len(nodes)}
 	leaseByNode := make(map[string]coordinationv1.Lease, len(hb.Leases))
 	for _, l := range hb.Leases {
 		leaseByNode[l.Name] = l
 	}
+	present := make(map[string]bool, len(nodes))
 	for _, n := range nodes {
+		present[n.Name] = true
 		ready, issues := nodeHealth(n)
 		if ready {
 			ch.NodesReady++
@@ -57,6 +62,12 @@ func Assess(nodes []corev1.Node, hb Heartbeat, workloads []inventory.Workload) C
 		}
 		for _, iss := range issues {
 			ch.NodeIssues = append(ch.NodeIssues, n.Name+" "+iss)
+		}
+	}
+	for _, name := range cleanExpected(expected) {
+		if !present[name] {
+			ch.NodeIssues = append(ch.NodeIssues, name+" expected but absent from the cluster")
+			ch.NodesExpectedAbsent++
 		}
 	}
 	for _, w := range workloads {
@@ -76,6 +87,23 @@ func Assess(nodes []corev1.Node, hb Heartbeat, workloads []inventory.Workload) C
 		ch.Verdict = "Degraded"
 	}
 	return ch
+}
+
+// cleanExpected trims, drops blanks, dedups, and sorts the declared expected
+// node names.
+func cleanExpected(expected []string) []string {
+	seen := make(map[string]bool, len(expected))
+	var out []string
+	for _, name := range expected {
+		name = strings.TrimSpace(name)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // staleHeartbeat reports whether a Ready node's kubelet lease is stale (or

@@ -110,7 +110,7 @@ stale)` — so a crashed, hung, or partitioned kubelet shows up *before* the nod
 flips to `NotReady`. It degrades the cluster verdict, and the threshold is
 tunable with `--node-heartbeat-threshold` (default `40s`; `0` disables it).
 Compares against the scanner's clock, so run it in-cluster (the watch daemon) or
-on a clock-synced host.
+on a clock-synced host. The count of flagged nodes is also exposed in JSON as `nodesStaleHeartbeat`.
 
 ### Security posture (opt-in)
 

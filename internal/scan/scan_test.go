@@ -166,6 +166,24 @@ func TestEvaluate_StaleHeartbeatDegrades(t *testing.T) {
 	}
 }
 
+func TestEvaluate_ExpectedNodeAbsentDegrades(t *testing.T) {
+	client := fake.NewSimpleClientset(
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "a"}, Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}},
+	)
+	res, err := Evaluate(context.Background(), client, Options{ExpectedNodes: []string{"a", "b"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Health.Verdict != "Degraded" || res.Health.NodesExpectedAbsent != 1 {
+		t.Errorf("declared node b absent must degrade the verdict: %+v", res.Health)
+	}
+
+	off, _ := Evaluate(context.Background(), client, Options{})
+	if off.Health.NodesExpectedAbsent != 0 {
+		t.Errorf("no expected list must leave the count 0: %+v", off.Health)
+	}
+}
+
 func p32(i int32) *int32 { return &i }
 
 func boolp(b bool) *bool { return &b }

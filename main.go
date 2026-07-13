@@ -57,7 +57,7 @@ func run(args []string) error {
 		return runWatch(args[1:])
 	}
 	if len(args) == 0 || args[0] != "scan" {
-		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--node-heartbeat-threshold dur] [--fix [--dry-run|--yes]] | kubeagent watch [--kubeconfig path] [--context name] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] | kubeagent version")
+		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--node-heartbeat-threshold dur] [--expected-nodes a,b,…] [--fix [--dry-run|--yes]] | kubeagent watch [--kubeconfig path] [--context name] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] | kubeagent version")
 	}
 
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
@@ -73,6 +73,7 @@ func run(args []string) error {
 	diskUsage := fs.Bool("disk-usage", false, "check node filesystem and PVC usage via the kubelet (needs the nodes/proxy grant)")
 	diskThreshold := fs.Float64("disk-threshold", 0.80, "with --disk-usage: warn at this used ratio (0-1)")
 	nodeHeartbeatThreshold := fs.Duration("node-heartbeat-threshold", 40*time.Second, "flag a Ready node whose kubelet lease is stale beyond this (0 disables)")
+	expectedNodes := fs.String("expected-nodes", "", "names of nodes expected in the cluster; a declared name with no Node object is flagged Degraded (comma-separated)")
 	security := fs.Bool("security", false, "flag insecure workloads and exposed Services (read-only, advisory)")
 	securityVerbose := fs.Bool("security-verbose", false, "with --security: list every finding per workload (default: dangerous findings in full, restricted gaps aggregated)")
 	fix := fs.Bool("fix", false, "propose and (after confirmation) apply safe, reversible remediations (opt-in writes)")
@@ -107,6 +108,7 @@ func run(args []string) error {
 		DiskThreshold:          *diskThreshold,
 		Security:               *security,
 		NodeHeartbeatThreshold: *nodeHeartbeatThreshold,
+		ExpectedNodes:          splitCSV(*expectedNodes),
 	})
 	if err != nil {
 		if diag, ok := connectivity.Diagnose(err); ok {
@@ -215,6 +217,14 @@ func runWatch(args []string) error {
 		DiskThreshold:          envFloat("KUBEAGENT_DISK_THRESHOLD", 0.80),
 		NodeHeartbeatThreshold: envDur("KUBEAGENT_NODE_HEARTBEAT_THRESHOLD", 40*time.Second),
 	})
+}
+
+// splitCSV splits a comma-separated list into a slice, returning nil for empty.
+func splitCSV(s string) []string {
+	if s == "" {
+		return nil
+	}
+	return strings.Split(s, ",")
 }
 
 // envOr returns the env var value if set, else def.

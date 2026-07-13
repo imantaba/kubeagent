@@ -237,6 +237,9 @@ func TestAssess_MissingLeaseFlagged(t *testing.T) {
 	if ch.NodesStaleHeartbeat != 1 || len(ch.NodeIssues) != 1 || !strings.Contains(ch.NodeIssues[0], "no kubelet lease") {
 		t.Errorf("missing lease on a Ready node must flag: %+v", ch)
 	}
+	if ch.Verdict != "Degraded" {
+		t.Errorf("a missing lease on a Ready node must degrade the verdict, got %q", ch.Verdict)
+	}
 }
 
 func TestAssess_NotReadyNodeNoDuplicateHeartbeat(t *testing.T) {

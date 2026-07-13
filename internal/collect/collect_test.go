@@ -3,9 +3,11 @@ package collect
 import (
 	"context"
 	"testing"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -347,5 +349,20 @@ func TestIngresses_List(t *testing.T) {
 	}
 	if len(ings) != 1 || ings[0].Name != "web" {
 		t.Errorf("want 1 ingress web, got %+v", ings)
+	}
+}
+
+func TestNodeLeases_List(t *testing.T) {
+	rt := metav1.NewMicroTime(time.Now())
+	client := fake.NewSimpleClientset(&coordinationv1.Lease{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "kube-node-lease", Name: "node-1"},
+		Spec:       coordinationv1.LeaseSpec{RenewTime: &rt},
+	})
+	got, err := NodeLeases(context.Background(), client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Name != "node-1" {
+		t.Errorf("want 1 lease node-1, got %+v", got)
 	}
 }

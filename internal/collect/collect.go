@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	appsv1 "k8s.io/api/apps/v1"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -78,6 +79,15 @@ func Nodes(ctx context.Context, client kubernetes.Interface) ([]corev1.Node, err
 		return nil, fmt.Errorf("listing nodes: %w", err)
 	}
 	return nodes.Items, nil
+}
+
+// NodeLeases lists node heartbeat Leases in kube-node-lease (one per node), read-only.
+func NodeLeases(ctx context.Context, client kubernetes.Interface) ([]coordinationv1.Lease, error) {
+	leases, err := client.CoordinationV1().Leases("kube-node-lease").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("listing node leases: %w", err)
+	}
+	return leases.Items, nil
 }
 
 // VolumeAttachEvents lists FailedAttachVolume Warning events in the namespace

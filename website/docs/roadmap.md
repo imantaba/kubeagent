@@ -71,6 +71,11 @@
   the daemon exposes `kubeagent_nodes_stale_heartbeat`. See
   [Failure diagnostics](features/diagnostics.md).
 
+- **Expected-node baseline** — opt-in `scan --expected-nodes` flags a declared
+  node that is absent from the cluster (never registered or dropped out), and
+  the daemon exposes `kubeagent_nodes_expected_absent`. See
+  [Failure diagnostics](features/diagnostics.md).
+
 !!! info "Version history"
     [GitHub Releases](https://github.com/imantaba/kubeagent/releases) and the
     [CHANGELOG](https://github.com/imantaba/kubeagent/blob/main/CHANGELOG.md)

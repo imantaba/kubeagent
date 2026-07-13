@@ -40,6 +40,7 @@ The daemon serves Prometheus text on `--metrics-addr` (default `:8080`):
 | `kubeagent_volumes_over_disk_threshold` | Number of node filesystems and PVCs at or over `--disk-threshold` (opt-in) |
 | `kubeagent_ingress_route_issues` | Number of Ingress routes whose backend Service is missing, has no ready endpoints, or does not expose the referenced port |
 | `kubeagent_nodes_stale_heartbeat` | Number of Ready nodes whose kubelet lease is stale (kubelet not heartbeating) |
+| `kubeagent_nodes_expected_absent` | Number of declared expected nodes that are absent from the cluster (opt-in; requires `--expected-nodes` / `KUBEAGENT_EXPECTED_NODES`) |
 | `kubeagent_last_scan_timestamp_seconds` / `kubeagent_scan_duration_seconds` | evaluation freshness and cost |
 | `kubeagent_scans_total` / `kubeagent_scan_errors_total` | evaluation counters |
 
@@ -64,7 +65,9 @@ curl localhost:8080/metrics
 Flags (each with a `KUBEAGENT_*` env fallback): `--metrics-addr` (`:8080`),
 `--heartbeat` (`60s`), `--debounce` (`2s`), `--namespace`/`-n` (default all
 namespaces), `--node-heartbeat-threshold` / `KUBEAGENT_NODE_HEARTBEAT_THRESHOLD`
-(`40s`; `0` disables the kubelet-lease staleness check).
+(`40s`; `0` disables the kubelet-lease staleness check),
+`--expected-nodes` / `KUBEAGENT_EXPECTED_NODES` (comma-separated node names;
+unset by default — declares which nodes must be present).
 
 ### Disk-usage check (opt-in)
 

@@ -5,6 +5,20 @@ All notable changes to kubeagent are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Expected-node baseline.** Opt-in `scan --expected-nodes nova-worker-1,…`
+  declares the node names you expect; kubeagent flags each declared node that has
+  **no `Node` object** in the cluster — `node nova-worker-2 expected but absent
+  from the cluster` — catching a node that never registered or dropped out. It
+  degrades the cluster verdict, and the watch daemon exposes
+  `kubeagent_nodes_expected_absent` (set `KUBEAGENT_EXPECTED_NODES`). A node that
+  exists but is `NotReady` counts as present (its health is flagged elsewhere);
+  extra/unexpected nodes are not flagged. Read-only; no new RBAC; best on
+  clusters with stable node names.
+
 ## [0.19.0] - 2026-07-13
 
 ### Added

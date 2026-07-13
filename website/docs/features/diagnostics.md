@@ -112,6 +112,19 @@ tunable with `--node-heartbeat-threshold` (default `40s`; `0` disables it).
 Compares against the scanner's clock, so run it in-cluster (the watch daemon) or
 on a clock-synced host. The count of flagged nodes is also exposed in JSON as `nodesStaleHeartbeat`.
 
+### Expected-node baseline
+
+`scan --expected-nodes nova-worker-1,nova-worker-2,…` declares the node names you
+expect. kubeagent flags each declared node that has **no `Node` object** in the
+cluster — `✗ node nova-worker-2 expected but absent from the cluster` — which
+catches a kubelet that never registered its node, or a node that dropped out of
+the cluster entirely. It degrades the cluster verdict. A node that exists but is
+`NotReady` counts as **present** (its health is flagged by the NotReady /
+heartbeat checks); unexpected/extra nodes are never flagged. It is opt-in (off
+until you declare a list) and best on clusters with **stable** node names —
+autoscaled clusters whose node names churn would false-positive. The count is
+also exposed in JSON as `nodesExpectedAbsent`.
+
 ### Security posture (opt-in)
 
 `scan --security` walks every workload's pod template and each Service and flags

@@ -2,6 +2,9 @@
 
 > A read-only Kubernetes troubleshooting CLI that tells you **why** your pods are broken — not just that they are.
 
+<!-- Demo GIF — record with asciinema + agg (see README "Recording the demo"), then uncomment:
+![kubeagent scan demo](docs/kubeagent-demo.gif) -->
+
 [![CI](https://github.com/imantaba/kubeagent/actions/workflows/ci.yml/badge.svg)](https://github.com/imantaba/kubeagent/actions/workflows/ci.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/imantaba/kubeagent)](https://goreportcard.com/report/github.com/imantaba/kubeagent)
 [![Release](https://img.shields.io/github/v/release/imantaba/kubeagent)](https://github.com/imantaba/kubeagent/releases)

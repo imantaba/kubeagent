@@ -18,7 +18,7 @@ spec:
         runAsUser: 65532
       containers:
         - name: kubeagent
-          image: imantaba/kubeagent:v0.21.0 # official image on Docker Hub; or build your own (see README.md)
+          image: imantaba/kubeagent:v0.21.1 # official image on Docker Hub; or build your own (see README.md)
           args: ["watch", "--metrics-addr=:8080"]
           ports:
             - name: metrics

@@ -5,6 +5,22 @@ All notable changes to kubeagent are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.21.1] - 2026-07-14
+
+### Added
+
+- **Apache 2.0 license.** Added a `LICENSE` (Apache-2.0) and `NOTICE` file, making
+  the project's open-source terms explicit.
+
+### Changed
+
+- **README.** Added a hero section with badges (CI, Go Report Card, release,
+  license), a highlights list, and a `go install` quick-start.
+- **Release packaging.** The release workflow now also publishes an unversioned
+  `kubeagent_linux_amd64.tar.gz` asset, so
+  `releases/latest/download/kubeagent_linux_amd64.tar.gz` always resolves to the
+  newest release.
+
 ## [0.21.0] - 2026-07-14
 
 ### Added
@@ -326,6 +342,7 @@ infrastructure (a documentation site and a pre-release chaos-test harness).
 - CI (vet/test/build on push & PR) and a release workflow publishing a
   linux/amd64 tarball + `SHA256SUMS` to a GitHub Release.
 
+[0.21.1]: https://github.com/imantaba/kubeagent/compare/v0.21.0...v0.21.1
 [0.21.0]: https://github.com/imantaba/kubeagent/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/imantaba/kubeagent/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/imantaba/kubeagent/compare/v0.18.0...v0.19.0

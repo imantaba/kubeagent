@@ -20,7 +20,7 @@ its own `kind-kubeagent-chaos` context and never reads your current kubecontext.
 ./chaos/run.sh                 # create cluster, run all scenarios, leave cluster up
 ./chaos/run.sh --recreate      # delete + recreate the cluster first (clean slate)
 ./chaos/run.sh --teardown      # delete the cluster when finished
-./chaos/run.sh --only 7        # run a single scenario (1..10) for debugging
+./chaos/run.sh --only 7        # run a single scenario (1..11) for debugging
 ./chaos/run.sh --out path.md   # write the report somewhere specific
 ```
 
@@ -53,6 +53,7 @@ The key is read from the environment only; it is never written to the report.
 | 8 | Namespace deletion | `kubectl delete ns` | "No issues found" — a **boundary** (stateless) |
 | 9 | Faulty rollout | `kubectl set image` to a bad tag | ImagePullBackOff |
 | 10 | Credential leak | ConfigMap with a fake `AKIA…` value | `--lint-secrets` warning (location + pattern only) |
+| 11 | Kubelet health probe | `systemctl stop containerd` on a worker (kubelet stays up) | node NotReady (base scan); `--kubelet-health` probes every kubelet via `nodes/proxy` and does **not** false-positive — kubelet `/healthz` stays `ok` (only ping/log/syncloop, not the runtime) — a **boundary** |
 
 ### Validating `--fix` (remediation)
 

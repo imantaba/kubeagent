@@ -208,6 +208,30 @@ scenario_10_credleak() {   # ConfigMap with a fake AWS key -> --lint-secrets
   kubectl --context "$CTX" delete ns chaos-cred --wait=true --timeout=120s >/dev/null 2>&1 || true
 }
 
+scenario_11_kubelet() {   # runtime outage: node NotReady, kubelet /healthz still ok -> --kubelet-health abstains
+  log "scenario 11: kubelet health probe via nodes/proxy (--kubelet-health)"
+  local node; node="$(kubectl --context "$CTX" get nodes -o name | grep -m1 worker | cut -d/ -f2)"
+  # Stop the container runtime on a worker (its Kubernetes node name equals its Kind
+  # container name, so `docker exec` reaches it). The kubelet marks the node NotReady
+  # — the container-runtime health feeds the node's Ready condition, which the base
+  # scan flags — but the kubelet HTTP server keeps serving /healthz "ok": the only
+  # checks on kubelet /healthz are ping/log/syncloop, and syncloop survives a runtime
+  # outage. So --kubelet-health probes every kubelet through nodes/proxy and, correctly,
+  # does NOT double-flag this node: it targets a kubelet that *self-reports* unhealthy
+  # on /healthz (a failing syncloop), a distinct signal from NotReady. This exercises
+  # the probe path end-to-end (RBAC + nodes/proxy + classify) and pins its no-false-
+  # positive boundary; the unhealthy-classification path itself is unit-tested in
+  # internal/collect (a kubelet /healthz non-200 cannot be forced on Kind).
+  docker exec "$node" systemctl stop containerd >/dev/null 2>&1 || true
+  kubectl --context "$CTX" wait --for='condition=Ready=false' node/"$node" --timeout=120s >/dev/null 2>&1 || true
+  local h; h="$(kubectl --context "$CTX" get --raw "/api/v1/nodes/$node/proxy/healthz" 2>/dev/null || echo '<unreachable>')"
+  { scan --kubelet-health 2>&1 || true; } | record "11. Kubelet health probe via nodes/proxy (worker runtime down, --kubelet-health)" "boundary: node NotReady flagged by the base scan; kubelet /healthz reports '$h', so --kubelet-health probes every node and does not double-flag it (no false positive)"
+  # Revert: bring the runtime back and let the node settle Ready before the next scenario.
+  docker exec "$node" systemctl start containerd >/dev/null 2>&1 || true
+  kubectl --context "$CTX" wait --for=condition=Ready node/"$node" --timeout=180s >/dev/null 2>&1 || true
+  sleep 10
+}
+
 scenario_02_certs() {   # documented skip (can't force cert expiry on Kind)
   log "scenario 2: expired certificates (skipped)"
   printf 'Skipped on Kind: control-plane certificate expiry cannot be forced quickly or safely.\nkubeagent TLS / expired-certificate handling is covered by internal/connectivity unit tests\n(x509 UnknownAuthority / CertificateInvalid / Hostname errors, plus "x509:" / "certificate" / "tls: " substrings).\n' \
@@ -244,7 +268,7 @@ run_scenarios() {
   # etcd/apiserver flap for a while afterwards (and while the API is down even
   # `kubectl wait` can't settle it). Running it last keeps that recovery noise from
   # contaminating the other scenarios' scans.
-  local all=(02_certs 03_diskfull 04_networkpolicy 05_coredns 06_lb 07_oom 08_nsdelete 09_rollout 10_credleak 01_etcd)
+  local all=(02_certs 03_diskfull 04_networkpolicy 05_coredns 06_lb 07_oom 08_nsdelete 09_rollout 10_credleak 11_kubelet 01_etcd)
   for s in "${all[@]}"; do
     if [ -z "$ONLY" ] || [ "$ONLY" = "${s%%_*}" ]; then "scenario_$s"; fi
   done

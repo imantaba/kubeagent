@@ -24,6 +24,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/diskusage"
 	"github.com/imantaba/kubeagent/internal/explain"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/nodehealth"
 	"github.com/imantaba/kubeagent/internal/platform"
 	"github.com/imantaba/kubeagent/internal/remediate"
 	"github.com/imantaba/kubeagent/internal/report"
@@ -161,6 +162,11 @@ func run(args []string) error {
 		diskRep = &res.DiskUsage
 	}
 
+	var kubeletRep *nodehealth.Report
+	if *kubeletHealth {
+		kubeletRep = &res.KubeletHealth
+	}
+
 	if err := report.PrintInventory(report.Input{
 		Cluster:            health,
 		Result:             result,
@@ -172,6 +178,7 @@ func run(args []string) error {
 		PVCReclaim:         &res.PVCReclaim,
 		PVCReclaimFull:     *pvcReclaimFull,
 		DiskUsage:          diskRep,
+		KubeletHealth:      kubeletRep,
 		IngressIssues:      res.IngressIssues,
 		SecurityIssues:     res.SecurityIssues,
 		SecurityVerbose:    *securityVerbose,

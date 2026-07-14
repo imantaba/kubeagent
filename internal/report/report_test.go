@@ -12,6 +12,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/diskusage"
 	"github.com/imantaba/kubeagent/internal/ingresshealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/nodehealth"
 	"github.com/imantaba/kubeagent/internal/nodereserve"
 	"github.com/imantaba/kubeagent/internal/platform"
 	"github.com/imantaba/kubeagent/internal/pvcreclaim"
@@ -944,8 +945,8 @@ func TestPrintInventory_TextOmitsEvidenceWhenEmptyOrDuplicate(t *testing.T) {
 	ws := []inventory.Workload{{
 		Namespace: "shop", Name: "web", Kind: "Deployment", Desired: 1, Ready: 0, Status: "Degraded",
 		Findings: []diagnose.Finding{
-			{Issue: "CrashLoopBackOff", Reason: "boom", Evidence: ""},    // empty -> no sub-line
-			{Issue: "OOMKilled", Reason: "same", Evidence: "same"},       // equals Reason -> no sub-line
+			{Issue: "CrashLoopBackOff", Reason: "boom", Evidence: ""}, // empty -> no sub-line
+			{Issue: "OOMKilled", Reason: "same", Evidence: "same"},    // equals Reason -> no sub-line
 		},
 	}}
 	if err := PrintInventory(Input{Result: inventory.Result{Workloads: ws}}, "text", &buf); err != nil {
@@ -987,7 +988,7 @@ func TestPrintInventory_TextShowsIngressIssues(t *testing.T) {
 func TestPrintInventory_JSONIncludesIngressIssues(t *testing.T) {
 	var buf bytes.Buffer
 	in := Input{
-		Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		Cluster:       clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
 		IngressIssues: []ingresshealth.RouteIssue{{Namespace: "shop", Ingress: "web", Service: "api-svc", Problem: "NoService", Detail: "backend Service api-svc not found"}},
 	}
 	if err := PrintInventory(in, "json", &buf); err != nil {
@@ -1176,5 +1177,69 @@ func TestPrintInventory_SecurityExposedServiceTier(t *testing.T) {
 	}
 	if strings.Contains(out, "restricted (hardening") {
 		t.Errorf("no restricted aggregate expected when there are no restricted findings:\n%s", out)
+	}
+}
+
+func TestPrintInventory_KubeletHealthUnhealthy(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster:       clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		KubeletHealth: &nodehealth.Report{Probed: 2, Unhealthy: []nodehealth.Issue{{Node: "worker-2", Detail: "[-]pleg failed"}}},
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "KUBELET HEALTH") || !strings.Contains(out, "✗ node worker-2 kubelet /healthz unhealthy: [-]pleg failed") {
+		t.Errorf("missing kubelet-health section:\n%s", out)
+	}
+	if strings.Contains(out, "No issues found") {
+		t.Errorf("all-clear must be suppressed when unhealthy:\n%s", out)
+	}
+}
+
+func TestPrintInventory_KubeletHealthForbiddenHint(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster:       clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		KubeletHealth: &nodehealth.Report{Probed: 3, Forbidden: 3},
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "needs the nodes/proxy add-on") {
+		t.Errorf("missing missing-grant hint:\n%s", buf.String())
+	}
+}
+
+func TestPrintInventory_KubeletHealthCleanNoSection(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster:       clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		KubeletHealth: &nodehealth.Report{Probed: 3}, // all ok
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "KUBELET HEALTH") {
+		t.Errorf("no section expected when all healthy:\n%s", out)
+	}
+	if !strings.Contains(out, "No issues found") {
+		t.Errorf("all-clear preserved when clean:\n%s", out)
+	}
+}
+
+func TestPrintInventory_KubeletHealthJSON(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster:       clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		KubeletHealth: &nodehealth.Report{Probed: 1, Unhealthy: []nodehealth.Issue{{Node: "w", Detail: "d"}}},
+	}
+	if err := PrintInventory(in, "json", &buf); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), `"kubeletHealth"`) || !strings.Contains(buf.String(), `"node": "w"`) {
+		t.Errorf("expected kubeletHealth in JSON:\n%s", buf.String())
 	}
 }

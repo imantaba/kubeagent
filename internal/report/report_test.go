@@ -918,6 +918,17 @@ func TestPrintInventory_JSONOmitsDiskUsageWhenNil(t *testing.T) {
 	}
 }
 
+func TestPrintInventory_JSONOmitsKubeletHealthWhenNil(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1}}
+	if err := PrintInventory(in, "json", &buf); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf.String(), "kubeletHealth") {
+		t.Errorf("kubeletHealth must be absent from JSON when the check is off:\n%s", buf.String())
+	}
+}
+
 func TestPrintInventory_TextShowsFindingEvidence(t *testing.T) {
 	var buf bytes.Buffer
 	ws := []inventory.Workload{{

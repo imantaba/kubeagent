@@ -697,7 +697,7 @@ func printKubeletHealth(rep *nodehealth.Report, w io.Writer) error {
 		return err
 	}
 	if rep.Probed > 0 && rep.Forbidden == rep.Probed {
-		if _, err := fmt.Fprintln(w, "  kubelet-health needs the nodes/proxy add-on (deploy/rbac-diskusage.yaml or Helm kubeletHealth.enabled)"); err != nil {
+		if _, err := fmt.Fprintln(w, "  kubelet-health needs the nodes/proxy add-on (deploy/rbac-diskusage.yaml or Helm kubeletHealth.enabled=true)"); err != nil {
 			return err
 		}
 		return nil

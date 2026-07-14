@@ -1,7 +1,9 @@
 # Opt-in add-on: grants the kubeagent ServiceAccount read access to the kubelet
-# summary API via the nodes/proxy subresource, needed only when the daemon runs
-# with KUBEAGENT_DISK_USAGE=true. Apply alongside deploy/ to enable the
-# disk-usage check. Without it, kubeagent stays strictly get/list/watch.
+# via the nodes/proxy subresource — both the summary API (disk-usage) and
+# /healthz (kubelet-health). Needed when the daemon runs with
+# KUBEAGENT_DISK_USAGE=true or KUBEAGENT_KUBELET_HEALTH=true (or scan is run with
+# --disk-usage or --kubelet-health). Apply alongside deploy/ to enable those
+# checks. Without it, kubeagent stays strictly get/list/watch.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:

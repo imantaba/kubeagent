@@ -57,7 +57,7 @@ func run(args []string) error {
 		return runWatch(args[1:])
 	}
 	if len(args) == 0 || args[0] != "scan" {
-		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--node-heartbeat-threshold dur] [--expected-nodes a,b,…] [--fix [--dry-run|--yes]] | kubeagent watch [--kubeconfig path] [--context name] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] | kubeagent version")
+		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--kubelet-health] [--node-heartbeat-threshold dur] [--expected-nodes a,b,…] [--fix [--dry-run|--yes]] | kubeagent watch [--kubeconfig path] [--context name] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] | kubeagent version")
 	}
 
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
@@ -72,6 +72,7 @@ func run(args []string) error {
 	pvcReclaimFull := fs.Bool("pvc-reclaim", false, "list every PVC on a Delete reclaim policy (default: a grouped summary)")
 	diskUsage := fs.Bool("disk-usage", false, "check node filesystem and PVC usage via the kubelet (needs the nodes/proxy grant)")
 	diskThreshold := fs.Float64("disk-threshold", 0.80, "with --disk-usage: warn at this used ratio (0-1)")
+	kubeletHealth := fs.Bool("kubelet-health", false, "probe each kubelet's /healthz via nodes/proxy and flag unhealthy nodes (needs the nodes/proxy add-on)")
 	nodeHeartbeatThreshold := fs.Duration("node-heartbeat-threshold", 40*time.Second, "flag a Ready node whose kubelet lease is stale beyond this (0 disables)")
 	expectedNodes := fs.String("expected-nodes", "", "names of nodes expected in the cluster; a declared name with no Node object is flagged Degraded (comma-separated)")
 	security := fs.Bool("security", false, "flag insecure workloads and exposed Services (read-only, advisory)")
@@ -109,6 +110,7 @@ func run(args []string) error {
 		Security:               *security,
 		NodeHeartbeatThreshold: *nodeHeartbeatThreshold,
 		ExpectedNodes:          splitCSV(*expectedNodes),
+		KubeletHealth:          *kubeletHealth,
 	})
 	if err != nil {
 		if diag, ok := connectivity.Diagnose(err); ok {
@@ -207,12 +209,12 @@ func runWatch(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return watch.Run(ctx, client, watch.Config{
-		Namespace:       namespace,
-		MetricsAddr:     *metricsAddr,
-		Heartbeat:       *heartbeat,
-		Debounce:        *debounce,
-		IncludeCron:     *includeCron,
-		IncludeRestarts: *includeRestarts,
+		Namespace:              namespace,
+		MetricsAddr:            *metricsAddr,
+		Heartbeat:              *heartbeat,
+		Debounce:               *debounce,
+		IncludeCron:            *includeCron,
+		IncludeRestarts:        *includeRestarts,
 		DiskUsage:              envBool("KUBEAGENT_DISK_USAGE", false),
 		DiskThreshold:          envFloat("KUBEAGENT_DISK_THRESHOLD", 0.80),
 		NodeHeartbeatThreshold: envDur("KUBEAGENT_NODE_HEARTBEAT_THRESHOLD", 40*time.Second),

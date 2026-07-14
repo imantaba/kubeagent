@@ -243,3 +243,21 @@ func TestEvaluate_SecurityOptInAndSystemExclusion(t *testing.T) {
 		t.Errorf("security must not change the verdict (%q vs %q)", all.Health.Verdict, off.Health.Verdict)
 	}
 }
+
+func TestEvaluate_KubeletHealthOffByDefault(t *testing.T) {
+	// Mirrors TestEvaluate_DiskUsageOffByDefault: the fake clientset's
+	// RESTClient() is nil, so the nodes/proxy probe cannot be exercised through
+	// it (the same reason disk-usage only tests its off path here). The probe's
+	// classification is unit-tested directly in collect (TestClassifyKubeletHealthz);
+	// this test pins the opt-out gate — without --kubelet-health, no node is probed.
+	client := fake.NewSimpleClientset(
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"}},
+	)
+	res, err := Evaluate(context.Background(), client, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.KubeletHealth.Probed != 0 || len(res.KubeletHealth.Unhealthy) != 0 {
+		t.Errorf("kubelet health must be empty when not enabled, got %+v", res.KubeletHealth)
+	}
+}

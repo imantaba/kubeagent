@@ -44,6 +44,9 @@ jobs:
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
           tar -czf "kubeagent_${VERSION}_linux_amd64.tar.gz" kubeagent README.md
+          # Unversioned copy so releases/latest/download/kubeagent_linux_amd64.tar.gz
+          # always resolves to the newest release (used by the README quick-install).
+          cp "kubeagent_${VERSION}_linux_amd64.tar.gz" kubeagent_linux_amd64.tar.gz
           sha256sum "kubeagent_${VERSION}_linux_amd64.tar.gz" > SHA256SUMS
           cat SHA256SUMS
 
@@ -53,6 +56,7 @@ jobs:
           tag_name: ${{ steps.ver.outputs.version }}
           files: |
             kubeagent_${{ steps.ver.outputs.version }}_linux_amd64.tar.gz
+            kubeagent_linux_amd64.tar.gz
             SHA256SUMS
 
       # Container image for the watch daemon (deploy/deployment.yaml pulls this).

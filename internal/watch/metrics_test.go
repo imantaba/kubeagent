@@ -13,6 +13,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/diskusage"
 	"github.com/imantaba/kubeagent/internal/ingresshealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/nodehealth"
 	"github.com/imantaba/kubeagent/internal/nodereserve"
 	"github.com/imantaba/kubeagent/internal/pvcreclaim"
 	"github.com/imantaba/kubeagent/internal/scan"
@@ -33,6 +34,7 @@ func sampleResult() *scan.Result {
 			Nodes:     []diskusage.VolumeUsage{{Kind: "node", Node: "n1", Name: "n1", Ratio: 0.84}},
 		},
 		IngressIssues: []ingresshealth.RouteIssue{{Namespace: "shop", Ingress: "web", Service: "api-svc", Problem: "NoEndpoints"}},
+		KubeletHealth: nodehealth.Report{Probed: 2, Unhealthy: []nodehealth.Issue{{Node: "w"}}},
 	}
 }
 
@@ -54,6 +56,7 @@ func TestMetrics_RenderReflectsResult(t *testing.T) {
 		"kubeagent_volumes_over_disk_threshold 1",
 		"kubeagent_ingress_route_issues 1",
 		"kubeagent_nodes_expected_absent 1",
+		"kubeagent_kubelet_unhealthy 1",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("metrics missing %q in:\n%s", want, out)

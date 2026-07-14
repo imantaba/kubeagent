@@ -226,6 +226,7 @@ func runWatch(args []string) error {
 		DiskThreshold:          envFloat("KUBEAGENT_DISK_THRESHOLD", 0.80),
 		NodeHeartbeatThreshold: envDur("KUBEAGENT_NODE_HEARTBEAT_THRESHOLD", 40*time.Second),
 		ExpectedNodes:          splitCSV(envOr("KUBEAGENT_EXPECTED_NODES", "")),
+		KubeletHealth:          envBool("KUBEAGENT_KUBELET_HEALTH", false),
 	})
 }
 

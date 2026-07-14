@@ -28,7 +28,7 @@ rules:
   - apiGroups: ["coordination.k8s.io"]
     resources: [leases]
     verbs: [get, list, watch]
-  {{- if .Values.diskUsage.enabled }}
+  {{- if or .Values.diskUsage.enabled .Values.kubeletHealth.enabled }}
   - apiGroups: [""]
     resources: [nodes/proxy]
     verbs: [get]

@@ -1,6 +1,24 @@
 # kubeagent
 
-A Kubernetes troubleshooting agent, written in Go.
+> A read-only Kubernetes troubleshooting CLI that tells you **why** your pods are broken — not just that they are.
+
+[![CI](https://github.com/imantaba/kubeagent/actions/workflows/ci.yml/badge.svg)](https://github.com/imantaba/kubeagent/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/imantaba/kubeagent)](https://goreportcard.com/report/github.com/imantaba/kubeagent)
+[![Release](https://img.shields.io/github/v/release/imantaba/kubeagent)](https://github.com/imantaba/kubeagent/releases)
+[![License](https://img.shields.io/github/license/imantaba/kubeagent)](LICENSE)
+
+**Highlights:**
+
+- 🔒 **Read-only by default** — only `get`/`list`/`watch`, safe against prod. (Opt-in `--fix` applies a fixed allowlist of reversible remediations, each behind a `[y/N]` confirm, never in `kube-system`.)
+- 📴 **Deterministic & offline** — the whole diagnostic core needs no API key. AI is strictly opt-in.
+- 🤖 **Optional `--explain`** — one Claude API call summarizes findings in plain English (never sends pod specs, env, or secrets).
+- 📦 **Single Go binary** — built on `client-go`, the same library `kubectl` uses. No CRDs, no in-cluster agent required.
+- 📊 **`watch` daemon** — run it in-cluster for continuous read-only diagnosis with Prometheus metrics.
+
+```bash
+go install github.com/imantaba/kubeagent@latest
+kubeagent scan
+```
 
 📖 **Docs & site:** [k8sproject.top](https://k8sproject.top)
 

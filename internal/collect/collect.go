@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
@@ -18,6 +19,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/diskusage"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/nodehealth"
 )
 
 // CollectInventory lists pods and the controller kinds (Deployments, ReplicaSets,
@@ -288,6 +290,58 @@ func parseNodeSummary(node string, data []byte) (diskusage.NodeSummary, bool, er
 		}
 	}
 	return out, true, nil
+}
+
+// KubeletHealthz probes a node's kubelet /healthz via the nodes/proxy subresource
+// and classifies the result. Never returns an error (non-fatal, like NodeStats).
+func KubeletHealthz(ctx context.Context, client kubernetes.Interface, node string) nodehealth.Probe {
+	var code int
+	body, _ := client.CoreV1().RESTClient().Get().
+		AbsPath(fmt.Sprintf("/api/v1/nodes/%s/proxy/healthz", node)).
+		Do(ctx).StatusCode(&code).Raw()
+	return classify(node, code, body)
+}
+
+// classify maps a /healthz probe result to a Probe. 200 is ok; 401/403 is
+// forbidden (grant missing); code 0 (no HTTP status — transport error) is
+// unreachable; any other status the kubelet returned is unhealthy.
+func classify(node string, code int, body []byte) nodehealth.Probe {
+	switch {
+	case code == 200:
+		return nodehealth.Probe{Node: node, Status: "ok"}
+	case code == 401 || code == 403:
+		return nodehealth.Probe{Node: node, Status: "forbidden"}
+	case code == 0:
+		return nodehealth.Probe{Node: node, Status: "unreachable"}
+	default:
+		return nodehealth.Probe{Node: node, Status: "unhealthy", Detail: healthzDetail(body, 120)}
+	}
+}
+
+// healthzDetail returns the first failed-check line ("[-]…") from a kubelet
+// /healthz body, else the first non-empty line, trimmed and truncated to max runes.
+func healthzDetail(body []byte, max int) string {
+	var first string
+	for _, ln := range strings.Split(string(body), "\n") {
+		ln = strings.TrimSpace(ln)
+		if ln == "" {
+			continue
+		}
+		if first == "" {
+			first = ln
+		}
+		if strings.HasPrefix(ln, "[-]") {
+			return truncateRunes(ln, max)
+		}
+	}
+	return truncateRunes(first, max)
+}
+
+func truncateRunes(s string, max int) string {
+	if r := []rune(s); len(r) > max {
+		return string(r[:max]) + "…"
+	}
+	return s
 }
 
 // parseNodeMetrics decodes a metrics.k8s.io NodeMetricsList body into per-node

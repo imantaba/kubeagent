@@ -125,6 +125,21 @@ until you declare a list) and best on clusters with **stable** node names —
 autoscaled clusters whose node names churn would false-positive. The count is
 also exposed in JSON as `nodesExpectedAbsent`.
 
+### Kubelet health probe (opt-in)
+
+`scan --kubelet-health` actively probes each node's kubelet `/healthz` through
+the `nodes/proxy` subresource (the same add-on `--disk-usage` uses) and flags a
+kubelet that is **reachable but reporting unhealthy** — `✗ node worker-2 kubelet
+/healthz unhealthy: [-]pleg failed`. This is the "alive but sick" failure mode
+(a failing PLEG/runtime/syncloop subcheck) that the passive lease-heartbeat and
+`NotReady` checks miss, and it often shows *before* the node flips to `NotReady`.
+A dead/unreachable kubelet is skipped (already flagged by the node checks), and a
+missing `nodes/proxy` grant prints a one-line hint. It is read-only (a `GET`),
+opt-in, and **advisory** — it appears in the `KUBELET HEALTH` section and JSON
+`kubeletHealth` but does not change the cluster verdict. Enable it in the daemon
+with `KUBEAGENT_KUBELET_HEALTH=true` and the `nodes/proxy` add-on
+(`deploy/rbac-diskusage.yaml` or Helm `kubeletHealth.enabled=true`).
+
 ### Security posture (opt-in)
 
 `scan --security` walks every workload's pod template and each Service and flags

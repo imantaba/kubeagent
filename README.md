@@ -43,6 +43,10 @@ A Kubernetes troubleshooting agent, written in Go.
   from the cluster (`node name expected but absent from the cluster`), catching
   a node that never registered or dropped out. Read-only; no new RBAC; best on
   clusters with stable node names.
+- **Kubelet health probe (opt-in)** — `scan --kubelet-health` probes each node's
+  kubelet `/healthz` via `nodes/proxy` and flags a kubelet that is reachable but
+  unhealthy (PLEG/runtime failures), the "alive but sick" case heartbeat and
+  NotReady checks miss. Reuses the `nodes/proxy` add-on from `--disk-usage`.
 
 It talks to the cluster directly via the official Kubernetes Go client
 (`client-go`) — the same library `kubectl` and operators are built on — and

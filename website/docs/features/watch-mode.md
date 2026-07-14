@@ -41,6 +41,7 @@ The daemon serves Prometheus text on `--metrics-addr` (default `:8080`):
 | `kubeagent_ingress_route_issues` | Number of Ingress routes whose backend Service is missing, has no ready endpoints, or does not expose the referenced port |
 | `kubeagent_nodes_stale_heartbeat` | Number of Ready nodes whose kubelet lease is stale (kubelet not heartbeating) |
 | `kubeagent_nodes_expected_absent` | Number of declared expected nodes that are absent from the cluster (opt-in; requires `--expected-nodes` / `KUBEAGENT_EXPECTED_NODES`) |
+| `kubeagent_kubelet_unhealthy` | Number of nodes whose kubelet /healthz reported unhealthy (opt-in; requires `--kubelet-health` / `KUBEAGENT_KUBELET_HEALTH` and the `nodes/proxy` add-on) |
 | `kubeagent_last_scan_timestamp_seconds` / `kubeagent_scan_duration_seconds` | evaluation freshness and cost |
 | `kubeagent_scans_total` / `kubeagent_scan_errors_total` | evaluation counters |
 
@@ -67,7 +68,10 @@ Flags (each with a `KUBEAGENT_*` env fallback): `--metrics-addr` (`:8080`),
 namespaces), `--node-heartbeat-threshold` / `KUBEAGENT_NODE_HEARTBEAT_THRESHOLD`
 (`40s`; `0` disables the kubelet-lease staleness check),
 `--expected-nodes` / `KUBEAGENT_EXPECTED_NODES` (comma-separated node names;
-unset by default — declares which nodes must be present).
+unset by default — declares which nodes must be present),
+`--kubelet-health` / `KUBEAGENT_KUBELET_HEALTH` (off by default — probes each
+node's kubelet `/healthz` via the `nodes/proxy` add-on, the same grant
+`--disk-usage` uses; see [Disk-usage check](#disk-usage-check-opt-in)).
 
 ### Disk-usage check (opt-in)
 

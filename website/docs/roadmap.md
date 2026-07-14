@@ -76,6 +76,11 @@
   the daemon exposes `kubeagent_nodes_expected_absent`. See
   [Failure diagnostics](features/diagnostics.md).
 
+- **Kubelet health probe** — opt-in `scan --kubelet-health` probes each kubelet's
+  `/healthz` via `nodes/proxy` and flags an alive-but-unhealthy kubelet in a
+  `KUBELET HEALTH` section, with the daemon gauge `kubeagent_kubelet_unhealthy`.
+  See [Failure diagnostics](features/diagnostics.md).
+
 !!! info "Version history"
     [GitHub Releases](https://github.com/imantaba/kubeagent/releases) and the
     [CHANGELOG](https://github.com/imantaba/kubeagent/blob/main/CHANGELOG.md)

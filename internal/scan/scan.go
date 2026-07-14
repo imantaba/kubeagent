@@ -18,6 +18,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/ingresshealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/netpolicy"
+	"github.com/imantaba/kubeagent/internal/nodehealth"
 	"github.com/imantaba/kubeagent/internal/nodereserve"
 	"github.com/imantaba/kubeagent/internal/pvcreclaim"
 	"github.com/imantaba/kubeagent/internal/rollout"
@@ -35,22 +36,24 @@ type Options struct {
 	Security               bool
 	NodeHeartbeatThreshold time.Duration
 	ExpectedNodes          []string
+	KubeletHealth          bool
 }
 
 // Result is the structured health picture. Inputs and Nodes are exposed so the
 // CLI can compose its extra views (resource summary, platform facts, credential
 // lint, --fix) without re-collecting.
 type Result struct {
-	Inputs        inventory.Inputs
-	Nodes         []corev1.Node
-	NodeReserve   nodereserve.Report
-	PVCReclaim    pvcreclaim.Report
-	DiskUsage     diskusage.Report
-	Health        clusterhealth.ClusterHealth
-	Inventory     inventory.Result
+	Inputs         inventory.Inputs
+	Nodes          []corev1.Node
+	NodeReserve    nodereserve.Report
+	PVCReclaim     pvcreclaim.Report
+	DiskUsage      diskusage.Report
+	Health         clusterhealth.ClusterHealth
+	Inventory      inventory.Result
 	ServiceIssues  []svchealth.Issue
 	IngressIssues  []ingresshealth.RouteIssue
 	SecurityIssues []secscan.Finding
+	KubeletHealth  nodehealth.Report
 }
 
 // systemNamespaces are excluded from the security scan when scanning all
@@ -150,5 +153,14 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 		diskReport = diskusage.Assess(summaries, opts.DiskThreshold)
 	}
 
-	return Result{Inputs: inputs, Nodes: nodes, NodeReserve: nodereserve.Assess(nodes), PVCReclaim: pvcReclaim, DiskUsage: diskReport, Health: health, Inventory: result, ServiceIssues: serviceIssues, IngressIssues: ingressIssues, SecurityIssues: securityIssues}, nil
+	var kubeletHealth nodehealth.Report
+	if opts.KubeletHealth {
+		var probes []nodehealth.Probe
+		for _, n := range nodes {
+			probes = append(probes, collect.KubeletHealthz(ctx, client, n.Name))
+		}
+		kubeletHealth = nodehealth.Assess(probes)
+	}
+
+	return Result{Inputs: inputs, Nodes: nodes, NodeReserve: nodereserve.Assess(nodes), PVCReclaim: pvcReclaim, DiskUsage: diskReport, Health: health, Inventory: result, ServiceIssues: serviceIssues, IngressIssues: ingressIssues, SecurityIssues: securityIssues, KubeletHealth: kubeletHealth}, nil
 }

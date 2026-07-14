@@ -5,6 +5,20 @@ All notable changes to kubeagent are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Kubelet health probe.** Opt-in `scan --kubelet-health` probes each node's
+  kubelet `/healthz` through the `nodes/proxy` subresource and flags a kubelet
+  that is reachable but reporting unhealthy — `✗ node worker-2 kubelet /healthz
+  unhealthy: [-]pleg failed` — the "alive but sick" case the lease-heartbeat and
+  NotReady checks miss. Shown in a `KUBELET HEALTH` section and JSON
+  `kubeletHealth`, with the watch gauge `kubeagent_kubelet_unhealthy` (set
+  `KUBEAGENT_KUBELET_HEALTH`). Read-only and **advisory** (does not change the
+  cluster verdict); reuses the same `nodes/proxy` add-on as `--disk-usage` (no
+  new RBAC).
+
 ## [0.20.0] - 2026-07-13
 
 ### Added

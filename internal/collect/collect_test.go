@@ -366,3 +366,23 @@ func TestNodeLeases_List(t *testing.T) {
 		t.Errorf("want 1 lease node-1, got %+v", got)
 	}
 }
+
+func TestClassifyKubeletHealthz(t *testing.T) {
+	cases := []struct {
+		code                   int
+		body                   string
+		wantStatus, wantDetail string
+	}{
+		{200, "ok", "ok", ""},
+		{500, "[+]ping ok\n[-]pleg failed\nhealthz check failed", "unhealthy", "[-]pleg failed"},
+		{500, "healthz check failed", "unhealthy", "healthz check failed"},
+		{403, "forbidden", "forbidden", ""},
+		{0, "", "unreachable", ""},
+	}
+	for _, c := range cases {
+		p := classify("n", c.code, []byte(c.body))
+		if p.Node != "n" || p.Status != c.wantStatus || p.Detail != c.wantDetail {
+			t.Errorf("classify(%d, %q) = {%s, %q}, want {%s, %q}", c.code, c.body, p.Status, p.Detail, c.wantStatus, c.wantDetail)
+		}
+	}
+}

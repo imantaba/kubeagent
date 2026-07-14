@@ -63,3 +63,6 @@ podAnnotations: {}
 diskUsage:
   enabled: false
   threshold: "0.80"
+
+kubeletHealth:
+  enabled: false

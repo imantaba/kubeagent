@@ -13,6 +13,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/diskusage"
 	"github.com/imantaba/kubeagent/internal/ingresshealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/nodehealth"
 	"github.com/imantaba/kubeagent/internal/nodereserve"
 	"github.com/imantaba/kubeagent/internal/platform"
 	"github.com/imantaba/kubeagent/internal/pvcreclaim"
@@ -34,6 +35,7 @@ type inventoryReport struct {
 	DiskUsage          *diskusage.Report           `json:"diskUsage,omitempty"`
 	IngressIssues      []ingresshealth.RouteIssue  `json:"ingressIssues,omitempty"`
 	SecurityIssues     []secscan.Finding           `json:"securityIssues,omitempty"`
+	KubeletHealth      *nodehealth.Report          `json:"kubeletHealth,omitempty"`
 	Explanation        string                      `json:"explanation,omitempty"`
 }
 
@@ -53,6 +55,7 @@ type Input struct {
 	IngressIssues      []ingresshealth.RouteIssue
 	SecurityIssues     []secscan.Finding
 	SecurityVerbose    bool
+	KubeletHealth      *nodehealth.Report
 	Explanation        string
 }
 
@@ -74,6 +77,7 @@ func PrintInventory(in Input, format string, w io.Writer) error {
 			DiskUsage:          in.DiskUsage,
 			IngressIssues:      in.IngressIssues,
 			SecurityIssues:     in.SecurityIssues,
+			KubeletHealth:      in.KubeletHealth,
 			Explanation:        in.Explanation,
 		})
 	case "text":
@@ -123,6 +127,11 @@ func printInventoryText(in Input, w io.Writer) error {
 		return err
 	}
 
+	hasKubeletHealth := kubeletHealthRenders(in.KubeletHealth)
+	if err := printKubeletHealth(in.KubeletHealth, w); err != nil {
+		return err
+	}
+
 	if err := printNotes(in, expected, w); err != nil {
 		return err
 	}
@@ -131,7 +140,7 @@ func printInventoryText(in Input, w io.Writer) error {
 		return err
 	}
 
-	if !hasAttention && !hasSecurity && in.Cluster.Verdict == "Healthy" {
+	if !hasAttention && !hasSecurity && !hasKubeletHealth && in.Cluster.Verdict == "Healthy" {
 		if _, err := fmt.Fprintln(w, "No issues found. ✅"); err != nil {
 			return err
 		}
@@ -663,6 +672,42 @@ func printWorkload(wl inventory.Workload, w io.Writer) error {
 	}
 	if wl.PodsOmitted > 0 {
 		if _, err := fmt.Fprintf(w, "    +%d more pods\n", wl.PodsOmitted); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// kubeletHealthRenders reports whether the KUBELET HEALTH section would print
+// anything: unhealthy nodes, or the missing-grant hint (every probe forbidden).
+func kubeletHealthRenders(rep *nodehealth.Report) bool {
+	if rep == nil {
+		return false
+	}
+	return len(rep.Unhealthy) > 0 || (rep.Probed > 0 && rep.Forbidden == rep.Probed)
+}
+
+// printKubeletHealth renders the advisory KUBELET HEALTH section: nodes whose
+// kubelet /healthz reported unhealthy, or a hint when the nodes/proxy grant is missing.
+func printKubeletHealth(rep *nodehealth.Report, w io.Writer) error {
+	if !kubeletHealthRenders(rep) {
+		return nil
+	}
+	if _, err := fmt.Fprintln(w, "KUBELET HEALTH  (opt-in)"); err != nil {
+		return err
+	}
+	if rep.Probed > 0 && rep.Forbidden == rep.Probed {
+		if _, err := fmt.Fprintln(w, "  kubelet-health needs the nodes/proxy add-on (deploy/rbac-diskusage.yaml or Helm kubeletHealth.enabled=true)"); err != nil {
+			return err
+		}
+		return nil
+	}
+	for _, iss := range rep.Unhealthy {
+		line := fmt.Sprintf("  ✗ node %s kubelet /healthz unhealthy", iss.Node)
+		if iss.Detail != "" {
+			line += ": " + iss.Detail
+		}
+		if _, err := fmt.Fprintln(w, line); err != nil {
 			return err
 		}
 	}

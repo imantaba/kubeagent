@@ -1,0 +1,64 @@
+# Demo fault workloads for the README scan GIF.
+# A representative spread of the pod failures kubeagent detects, left in place so a
+# real `kubeagent scan` produces a rich, honest NEEDS ATTENTION section to record.
+# Applied into the `demo` namespace by the update-demo-gif skill.
+apiVersion: v1
+kind: Namespace
+metadata: { name: demo }
+---
+# CrashLoopBackOff — container starts then exits non-zero, repeatedly.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: web, namespace: demo, labels: { app: web } }
+spec:
+  replicas: 1
+  revisionHistoryLimit: 0
+  selector: { matchLabels: { app: web } }
+  template:
+    metadata: { labels: { app: web } }
+    spec:
+      containers:
+        - name: web
+          image: busybox:1.36
+          command: ["sh", "-c", "echo starting; sleep 2; exit 1"]
+---
+# ImagePullBackOff — a tag that does not exist on the registry.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: api, namespace: demo, labels: { app: api } }
+spec:
+  replicas: 1
+  revisionHistoryLimit: 0
+  selector: { matchLabels: { app: api } }
+  template:
+    metadata: { labels: { app: api } }
+    spec:
+      containers:
+        - name: api
+          image: busybox:9.9.9-nope
+---
+# OOMKilled (and CrashLoopBackOff) — a memory hog above its 64Mi limit.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: billing-worker, namespace: demo, labels: { app: billing-worker } }
+spec:
+  replicas: 1
+  revisionHistoryLimit: 0
+  selector: { matchLabels: { app: billing-worker } }
+  template:
+    metadata: { labels: { app: billing-worker } }
+    spec:
+      containers:
+        - name: worker
+          image: polinux/stress
+          resources: { requests: { memory: "32Mi" }, limits: { memory: "64Mi" } }
+          command: ["stress"]
+          args: ["--vm", "1", "--vm-bytes", "200M", "--vm-hang", "1"]
+---
+# Service with no ready endpoints — selector matches no pods (the classic 502/503).
+apiVersion: v1
+kind: Service
+metadata: { name: payments, namespace: demo }
+spec:
+  selector: { app: payments-does-not-exist }
+  ports: [{ port: 80, targetPort: 8080 }]

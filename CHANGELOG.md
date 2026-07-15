@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Node-reservation reporting is clearer and multi-resource.** `scan` now reports
+  the combined kube+system reservation for **memory, CPU, and ephemeral-storage**
+  in a labeled per-resource `CONTEXT` block (replacing the cryptic
+  `Nodes 0/2 reserve memory OK` line). Reserving no **ephemeral-storage** now
+  raises a `NOTES` warning alongside the existing no-memory warning (both are
+  node-destabilizers); CPU is informational. Still read-only and advisory; the
+  `watch` daemon and `kubeagent_nodes_without_reservations` gauge are unchanged.
+
 - **Relicensed to MIT.** Replaced the Apache-2.0 `LICENSE` with the MIT License
   and removed the Apache-specific `NOTICE` file.
 

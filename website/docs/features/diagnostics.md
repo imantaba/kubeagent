@@ -54,15 +54,19 @@ status. Read-only.
 
 ### Node reservations
 
-`scan` shows each node's aggregate kubelet resource reservation, computed as
-`Capacity − Allocatable` (the combined effect of `system-reserved`,
-`kube-reserved`, and `eviction-hard`). A node is flagged with a **WARNING** when
-it reserves no memory (allocatable memory equals capacity) — a kubelet
-configuration that lets OS or kubelet memory pressure destabilise the node. CPU
-reservation is shown but not warned, since many clusters intentionally leave it
-unset. The check reads only the Node objects already listed during a scan, so it
-needs no extra permissions, and it is advisory: it never changes the cluster
-verdict.
+`scan` reports each node's aggregate kubelet resource reservation for **memory,
+CPU, and ephemeral-storage**, computed as `Capacity − Allocatable` (the combined
+effect of `system-reserved`, `kube-reserved`, and `eviction-hard` — the Node API
+cannot split kube- from system-reserved). A per-resource summary appears under
+`CONTEXT` — one line each for memory, CPU, and ephemeral-storage, reading `N of M nodes
+reserve none` or `all M nodes reserve some` (with `⚠`/`✓` on the memory and
+ephemeral-storage lines). A node that reserves no
+**memory** or no **ephemeral-storage** is flagged with a **WARNING** in `NOTES` —
+both let OS/kubelet memory or disk pressure destabilise the node. CPU reservation
+is shown but not warned, since it is compressible and many clusters intentionally
+leave it unset; a resource a node does not report is shown as `not reported`. The
+check reads only the Node objects already listed during a scan, so it needs no
+extra permissions, and it is advisory: it never changes the cluster verdict.
 
 ### PVC reclaim policy
 

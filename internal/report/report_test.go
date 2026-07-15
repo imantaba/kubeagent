@@ -621,9 +621,12 @@ func TestPrintInventory_TextShowsNodeReservations(t *testing.T) {
 	if notes < 0 || !strings.Contains(out, "reserve no memory") || !strings.Contains(out, "w1") {
 		t.Errorf("expected NOTES warning naming w1 in:\n%s", out)
 	}
-	// CONTEXT shows collapsed line with ok/total counts.
-	if !strings.Contains(out, "1/2 reserve memory OK") {
-		t.Errorf("missing collapsed reservations line in:\n%s", out)
+	// CONTEXT shows the per-resource reservation block.
+	if !strings.Contains(out, "Kubelet reservations (combined kube+system)") {
+		t.Errorf("missing reservations block header in:\n%s", out)
+	}
+	if !strings.Contains(out, "1 of 2 nodes reserve none") {
+		t.Errorf("missing per-resource memory status in:\n%s", out)
 	}
 }
 
@@ -765,8 +768,8 @@ func TestPrintInventory_NodeReservationsCollapseWhenAllOK(t *testing.T) {
 	if strings.Contains(out, "n1") || strings.Contains(out, "n2") {
 		t.Errorf("all-OK reservations must collapse (no per-node lines):\n%s", out)
 	}
-	if !strings.Contains(out, "reservations OK") {
-		t.Errorf("missing collapsed reservations line:\n%s", out)
+	if !strings.Contains(out, "all 2 nodes reserve some") {
+		t.Errorf("missing all-OK reservation status in:\n%s", out)
 	}
 }
 
@@ -784,6 +787,9 @@ func TestPrintInventory_NodeReservationsWarningIsNote(t *testing.T) {
 	notes := strings.Index(out, "NOTES")
 	if notes < 0 || !strings.Contains(out, "reserve no memory") || !strings.Contains(out, "bad") {
 		t.Errorf("expected a NOTES warning naming the bad node:\n%s", out)
+	}
+	if !strings.Contains(out, "memory pressure can destabilize the node") {
+		t.Errorf("expected the memory consequence line in:\n%s", out)
 	}
 }
 
@@ -1252,5 +1258,50 @@ func TestPrintInventory_KubeletHealthJSON(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), `"kubeletHealth"`) || !strings.Contains(buf.String(), `"node": "w"`) {
 		t.Errorf("expected kubeletHealth in JSON:\n%s", buf.String())
+	}
+}
+
+func TestPrintInventory_NoEphemeralWarnsAndContext(t *testing.T) {
+	var buf bytes.Buffer
+	rep := &nodereserve.Report{
+		WarnCount: 0, EphemeralNone: 1, EphemeralReporting: 2,
+		Nodes: []nodereserve.NodeReservation{
+			{Name: "diskless", CPUReserved: "200m", MemReserved: "1Gi", EphemeralReserved: "0", NoEphemeral: true},
+			{Name: "ok", CPUReserved: "200m", MemReserved: "1Gi", EphemeralReserved: "5Gi"},
+		},
+	}
+	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 2, NodesTotal: 2}, NodeReserve: rep}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "reserve no ephemeral-storage: diskless") || !strings.Contains(out, "disk pressure can destabilize the node") {
+		t.Errorf("expected ephemeral NOTES warning naming diskless in:\n%s", out)
+	}
+	// WarnCount==0 here, so memory reads "all ... reserve some"; the
+	// "reserve none ⚠" status uniquely identifies the ephemeral-storage line.
+	if !strings.Contains(out, "1 of 2 nodes reserve none  ⚠") {
+		t.Errorf("expected ephemeral CONTEXT line with warn glyph in:\n%s", out)
+	}
+}
+
+func TestPrintInventory_ReservationsNotReportedEphemeral(t *testing.T) {
+	var buf bytes.Buffer
+	rep := &nodereserve.Report{
+		WarnCount: 0, EphemeralReporting: 0,
+		Nodes: []nodereserve.NodeReservation{
+			{Name: "n1", CPUReserved: "200m", MemReserved: "1Gi", EphemeralReserved: "—"},
+		},
+	}
+	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1}, NodeReserve: rep}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "ephemeral-storage not reported") {
+		t.Errorf("expected 'ephemeral-storage not reported' in:\n%s", out)
+	}
+	if strings.Contains(out, "reserve no ephemeral-storage") {
+		t.Errorf("must not warn on ephemeral when not reported:\n%s", out)
 	}
 }

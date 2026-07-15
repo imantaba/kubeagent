@@ -239,14 +239,27 @@ func plural(n int, one, many string) string {
 // the hidden-counts footer.
 func printNotes(in Input, expected []svchealth.Issue, w io.Writer) error {
 	var b strings.Builder
-	if n := in.NodeReserve; n != nil && n.WarnCount > 0 {
-		var names []string
-		for _, r := range n.Nodes {
-			if r.Warning {
-				names = append(names, r.Name)
+	if n := in.NodeReserve; n != nil {
+		if n.WarnCount > 0 {
+			var names []string
+			for _, r := range n.Nodes {
+				if r.Warning {
+					names = append(names, r.Name)
+				}
 			}
+			fmt.Fprintf(&b, "  • %d %s reserve no memory: %s\n", n.WarnCount, plural(n.WarnCount, "node", "nodes"), strings.Join(names, ", "))
+			fmt.Fprintln(&b, "      — OS/kubelet memory pressure can destabilize the node")
 		}
-		fmt.Fprintf(&b, "  • %d %s reserve no memory: %s\n", n.WarnCount, plural(n.WarnCount, "node", "nodes"), strings.Join(names, ", "))
+		if n.EphemeralNone > 0 {
+			var names []string
+			for _, r := range n.Nodes {
+				if r.NoEphemeral {
+					names = append(names, r.Name)
+				}
+			}
+			fmt.Fprintf(&b, "  • %d %s reserve no ephemeral-storage: %s\n", n.EphemeralNone, plural(n.EphemeralNone, "node", "nodes"), strings.Join(names, ", "))
+			fmt.Fprintln(&b, "      — disk pressure can destabilize the node")
+		}
 	}
 	if err := printPVCReclaim(in.PVCReclaim, in.PVCReclaimFull, &b); err != nil {
 		return err
@@ -275,12 +288,14 @@ func printContext(in Input, w io.Writer) error {
 	var b strings.Builder
 	if n := in.NodeReserve; n != nil && len(n.Nodes) > 0 {
 		total := len(n.Nodes)
-		ok := total - n.WarnCount
-		line := fmt.Sprintf("Nodes  %d/%d reserve memory OK", ok, total)
-		if n.WarnCount == 0 {
-			line = fmt.Sprintf("Nodes  %d nodes · kubelet reservations OK", total)
+		fmt.Fprintln(&b, "Kubelet reservations (combined kube+system)")
+		fmt.Fprintln(&b, reserveLine("memory", n.WarnCount, total, true))
+		fmt.Fprintln(&b, reserveLine("cpu", n.CPUNone, total, false))
+		if n.EphemeralReporting == 0 {
+			fmt.Fprintf(&b, "  %-17s %s\n", "ephemeral-storage", "not reported")
+		} else {
+			fmt.Fprintln(&b, reserveLine("ephemeral-storage", n.EphemeralNone, n.EphemeralReporting, true))
 		}
-		fmt.Fprintln(&b, line)
 	}
 	if err := printResources(in.Resources, &b); err != nil {
 		return err
@@ -298,6 +313,25 @@ func printContext(in Input, w io.Writer) error {
 	}
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+// reserveLine formats one CONTEXT reservation line, padded so statuses align.
+// warn=true appends ⚠ (some node reserves none) or ✓ (all reserve some) — used
+// for memory and ephemeral-storage; cpu (warn=false) gets no glyph (informational).
+func reserveLine(label string, none, reporting int, warn bool) string {
+	var status string
+	if none == 0 {
+		status = fmt.Sprintf("all %d %s reserve some", reporting, plural(reporting, "node", "nodes"))
+		if warn {
+			status += "  ✓"
+		}
+	} else {
+		status = fmt.Sprintf("%d of %d nodes reserve none", none, reporting)
+		if warn {
+			status += "  ⚠"
+		}
+	}
+	return fmt.Sprintf("  %-17s %s", label, status)
 }
 
 func printResources(s *resources.Summary, w io.Writer) error {

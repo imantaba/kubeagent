@@ -108,3 +108,83 @@ func TestAssess_RoleFromLabels(t *testing.T) {
 		t.Errorf("want Role worker, got %q", got)
 	}
 }
+
+// nodeEph builds a fake node that also reports ephemeral-storage capacity/allocatable.
+func nodeEph(name, capCPU, capMem, capEph, allocCPU, allocMem, allocEph string) corev1.Node {
+	return corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Status: corev1.NodeStatus{
+			Capacity: corev1.ResourceList{
+				corev1.ResourceCPU:              resource.MustParse(capCPU),
+				corev1.ResourceMemory:           resource.MustParse(capMem),
+				corev1.ResourceEphemeralStorage: resource.MustParse(capEph),
+			},
+			Allocatable: corev1.ResourceList{
+				corev1.ResourceCPU:              resource.MustParse(allocCPU),
+				corev1.ResourceMemory:           resource.MustParse(allocMem),
+				corev1.ResourceEphemeralStorage: resource.MustParse(allocEph),
+			},
+		},
+	}
+}
+
+func TestAssess_FlagsAllThreeWhenNoneReserved(t *testing.T) {
+	// capacity == allocatable for cpu/mem/ephemeral -> nothing reserved anywhere.
+	r := Assess([]corev1.Node{nodeEph("n", "4", "16Gi", "100Gi", "4", "16Gi", "100Gi")})
+	n := find(r, "n")
+	if !n.Warning || !n.NoCPU || !n.NoEphemeral {
+		t.Fatalf("want all three no-reserve flags set, got %+v", n)
+	}
+	if r.WarnCount != 1 || r.CPUNone != 1 || r.EphemeralNone != 1 || r.EphemeralReporting != 1 {
+		t.Errorf("want counts 1/1/1 reporting 1, got warn=%d cpu=%d eph=%d reporting=%d",
+			r.WarnCount, r.CPUNone, r.EphemeralNone, r.EphemeralReporting)
+	}
+}
+
+func TestAssess_EphemeralOnlyUnreserved(t *testing.T) {
+	// cpu + mem reserved, ephemeral not reserved.
+	r := Assess([]corev1.Node{nodeEph("n", "4", "16Gi", "100Gi", "3800m", "15Gi", "100Gi")})
+	n := find(r, "n")
+	if n.Warning || n.NoCPU {
+		t.Errorf("want mem/cpu reserved (no flags), got %+v", n)
+	}
+	if !n.NoEphemeral {
+		t.Errorf("want NoEphemeral=true, got %+v", n)
+	}
+	if r.EphemeralNone != 1 || r.WarnCount != 0 || r.CPUNone != 0 {
+		t.Errorf("want eph-none 1, warn 0, cpu-none 0; got %d/%d/%d", r.EphemeralNone, r.WarnCount, r.CPUNone)
+	}
+	if n.EphemeralReserved != "0" {
+		t.Errorf("want EphemeralReserved %q, got %q", "0", n.EphemeralReserved)
+	}
+}
+
+func TestAssess_AllThreeReserved(t *testing.T) {
+	// 200m cpu, 1Gi mem, 2Gi ephemeral reserved -> no flags.
+	r := Assess([]corev1.Node{nodeEph("n", "4", "16Gi", "100Gi", "3800m", "15Gi", "98Gi")})
+	n := find(r, "n")
+	if n.Warning || n.NoCPU || n.NoEphemeral {
+		t.Errorf("want no flags when all reserved, got %+v", n)
+	}
+	if n.EphemeralReserved != "2Gi" {
+		t.Errorf("want EphemeralReserved %q, got %q", "2Gi", n.EphemeralReserved)
+	}
+	if r.EphemeralReporting != 1 || r.EphemeralNone != 0 {
+		t.Errorf("want reporting 1, eph-none 0; got %d/%d", r.EphemeralReporting, r.EphemeralNone)
+	}
+}
+
+func TestAssess_EphemeralNotReported(t *testing.T) {
+	// node() reports only cpu/mem -> ephemeral is "not reported".
+	r := Assess([]corev1.Node{node("n", "4", "16Gi", "3800m", "15Gi", nil)})
+	n := find(r, "n")
+	if n.EphemeralReserved != "—" {
+		t.Errorf("want EphemeralReserved %q when not reported, got %q", "—", n.EphemeralReserved)
+	}
+	if n.NoEphemeral {
+		t.Errorf("want NoEphemeral=false when not reported, got true")
+	}
+	if r.EphemeralReporting != 0 || r.EphemeralNone != 0 {
+		t.Errorf("want reporting 0, eph-none 0; got %d/%d", r.EphemeralReporting, r.EphemeralNone)
+	}
+}

@@ -5,6 +5,13 @@ All notable changes to kubeagent are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Relicensed to MIT.** Replaced the Apache-2.0 `LICENSE` with the MIT License
+  and removed the Apache-specific `NOTICE` file.
+
 ## [0.21.1] - 2026-07-14
 
 ### Added
@@ -342,6 +349,7 @@ infrastructure (a documentation site and a pre-release chaos-test harness).
 - CI (vet/test/build on push & PR) and a release workflow publishing a
   linux/amd64 tarball + `SHA256SUMS` to a GitHub Release.
 
+[Unreleased]: https://github.com/imantaba/kubeagent/compare/v0.21.1...HEAD
 [0.21.1]: https://github.com/imantaba/kubeagent/compare/v0.21.0...v0.21.1
 [0.21.0]: https://github.com/imantaba/kubeagent/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/imantaba/kubeagent/compare/v0.19.0...v0.20.0

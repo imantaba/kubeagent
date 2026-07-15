@@ -788,6 +788,9 @@ func TestPrintInventory_NodeReservationsWarningIsNote(t *testing.T) {
 	if notes < 0 || !strings.Contains(out, "reserve no memory") || !strings.Contains(out, "bad") {
 		t.Errorf("expected a NOTES warning naming the bad node:\n%s", out)
 	}
+	if !strings.Contains(out, "memory pressure can destabilize the node") {
+		t.Errorf("expected the memory consequence line in:\n%s", out)
+	}
 }
 
 func TestPrintInventory_PVCReclaimSummaryByDefault(t *testing.T) {

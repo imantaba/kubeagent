@@ -58,7 +58,9 @@ status. Read-only.
 CPU, and ephemeral-storage**, computed as `Capacity − Allocatable` (the combined
 effect of `system-reserved`, `kube-reserved`, and `eviction-hard` — the Node API
 cannot split kube- from system-reserved). A per-resource summary appears under
-`CONTEXT` (e.g. `memory  2 of 2 nodes reserve none ⚠`). A node that reserves no
+`CONTEXT` — one line each for memory, CPU, and ephemeral-storage, reading `N of M nodes
+reserve none` or `all M nodes reserve some` (with `⚠`/`✓` on the memory and
+ephemeral-storage lines). A node that reserves no
 **memory** or no **ephemeral-storage** is flagged with a **WARNING** in `NOTES` —
 both let OS/kubelet memory or disk pressure destabilise the node. CPU reservation
 is shown but not warned, since it is compressible and many clusters intentionally

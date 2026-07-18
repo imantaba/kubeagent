@@ -168,6 +168,7 @@ func run(args []string) error {
 	}
 
 	if err := report.PrintInventory(report.Input{
+		Now:                time.Now(),
 		Cluster:            health,
 		Result:             result,
 		Resources:          &summary,

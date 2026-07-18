@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/credlint"
@@ -1303,5 +1304,26 @@ func TestPrintInventory_ReservationsNotReportedEphemeral(t *testing.T) {
 	}
 	if strings.Contains(out, "reserve no ephemeral-storage") {
 		t.Errorf("must not warn on ephemeral when not reported:\n%s", out)
+	}
+}
+
+func TestPrintInventory_UsesInjectedClock(t *testing.T) {
+	// A degraded workload that restarted at a fixed instant; Now is 5 days later.
+	// The rendered age must be measured from Input.Now, not wall-clock.
+	in := Input{
+		Now:     time.Date(2020, 1, 6, 0, 0, 0, 0, time.UTC),
+		Cluster: clusterhealth.ClusterHealth{Verdict: "Degraded", NodesReady: 1, NodesTotal: 1},
+		Result: inventory.Result{Workloads: []inventory.Workload{{
+			Namespace: "shop", Name: "web", Kind: "Deployment", Desired: 1, Ready: 0,
+			Status: "Degraded", Restarts: 8, LastRestart: "2020-01-01T00:00:00Z",
+			Findings: []diagnose.Finding{{Pod: "shop/web", Issue: "CrashLoopBackOff", Reason: "keeps crashing", Evidence: "restartCount=8"}},
+		}}},
+	}
+	var buf bytes.Buffer
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "5d ago") {
+		t.Errorf("age should be measured from Input.Now (want \"5d ago\"):\n%s", buf.String())
 	}
 }

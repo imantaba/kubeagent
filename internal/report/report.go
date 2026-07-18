@@ -57,6 +57,7 @@ type Input struct {
 	SecurityVerbose    bool
 	KubeletHealth      *nodehealth.Report
 	Explanation        string
+	Now                time.Time // clock for relative ages; main sets time.Now(); zero → wall-clock
 }
 
 // PrintInventory writes the cluster verdict and the prioritized workload set to w.
@@ -87,7 +88,17 @@ func PrintInventory(in Input, format string, w io.Writer) error {
 	}
 }
 
+// nowOr returns t, or the wall clock when t is the zero value, so callers that
+// don't set Input.Now keep rendering ages against time.Now() exactly as before.
+func nowOr(t time.Time) time.Time {
+	if t.IsZero() {
+		return time.Now()
+	}
+	return t
+}
+
 func printInventoryText(in Input, w io.Writer) error {
+	now := nowOr(in.Now)
 	real, expected := splitServiceIssues(in.ServiceIssues)
 
 	if err := printHeader(in, real, w); err != nil {
@@ -101,11 +112,11 @@ func printInventoryText(in Input, w io.Writer) error {
 			return err
 		}
 		for _, wl := range in.Result.Workloads {
-			if err := printWorkload(wl, w); err != nil {
+			if err := printWorkload(wl, now, w); err != nil {
 				return err
 			}
 		}
-		if err := printServiceIssues(real, "  ✗", w); err != nil {
+		if err := printServiceIssues(real, "  ✗", now, w); err != nil {
 			return err
 		}
 		if err := printCredentialWarnings(in.CredentialWarnings, w); err != nil {
@@ -238,6 +249,7 @@ func plural(n int, one, many string) string {
 // printNotes renders advisory content: expected-empty services, PVC reclaim, and
 // the hidden-counts footer.
 func printNotes(in Input, expected []svchealth.Issue, w io.Writer) error {
+	now := nowOr(in.Now)
 	var b strings.Builder
 	if n := in.NodeReserve; n != nil {
 		if n.WarnCount > 0 {
@@ -264,7 +276,7 @@ func printNotes(in Input, expected []svchealth.Issue, w io.Writer) error {
 	if err := printPVCReclaim(in.PVCReclaim, in.PVCReclaimFull, &b); err != nil {
 		return err
 	}
-	if err := printServiceIssues(expected, "  •", &b); err != nil {
+	if err := printServiceIssues(expected, "  •", now, &b); err != nil {
 		return err
 	}
 	if hint := footerHint(in.Result); hint != "" {
@@ -613,11 +625,11 @@ func footerHint(result inventory.Result) string {
 	return strings.Join(parts, " · ")
 }
 
-func printServiceIssues(issues []svchealth.Issue, glyph string, w io.Writer) error {
+func printServiceIssues(issues []svchealth.Issue, glyph string, now time.Time, w io.Writer) error {
 	for _, is := range issues {
 		line := fmt.Sprintf("%s %s/%s  %s  %s", glyph, is.Namespace, is.Name, is.Type, is.Detail)
 		if is.Since != "" {
-			line += " · " + inventory.HumanSince(is.Since, time.Now())
+			line += " · " + inventory.HumanSince(is.Since, now)
 		}
 		if _, err := fmt.Fprintln(w, line); err != nil {
 			return err
@@ -635,7 +647,7 @@ func printCredentialWarnings(findings []credlint.Finding, w io.Writer) error {
 	return nil
 }
 
-func printWorkload(wl inventory.Workload, w io.Writer) error {
+func printWorkload(wl inventory.Workload, now time.Time, w io.Writer) error {
 	flag := "  "
 	if wl.Flagged() {
 		flag = "✗ "
@@ -652,7 +664,7 @@ func printWorkload(wl inventory.Workload, w io.Writer) error {
 	if wl.Restarts > 0 {
 		header += fmt.Sprintf("  · %d restarts", wl.Restarts)
 		if wl.LastRestart != "" {
-			header += fmt.Sprintf(", last %s", inventory.HumanSince(wl.LastRestart, time.Now()))
+			header += fmt.Sprintf(", last %s", inventory.HumanSince(wl.LastRestart, now))
 		}
 	}
 	if _, err := fmt.Fprintln(w, header); err != nil {
@@ -697,7 +709,7 @@ func printWorkload(wl inventory.Workload, w io.Writer) error {
 	for _, p := range wl.Pods {
 		restarts := fmt.Sprintf("%d", p.Restarts)
 		if p.LastRestart != "" {
-			restarts += " (" + inventory.HumanSince(p.LastRestart, time.Now()) + ")"
+			restarts += " (" + inventory.HumanSince(p.LastRestart, now) + ")"
 		}
 		if _, err := fmt.Fprintf(w, "    %s  %s  %s  restarts=%s  %s  %s  %s\n",
 			p.Name, p.Ready, p.Phase, restarts, p.Node, p.IP, p.Age); err != nil {

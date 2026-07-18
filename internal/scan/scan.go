@@ -6,6 +6,7 @@ package scan
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -17,6 +18,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/diskusage"
 	"github.com/imantaba/kubeagent/internal/ingresshealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/logscan"
 	"github.com/imantaba/kubeagent/internal/netpolicy"
 	"github.com/imantaba/kubeagent/internal/nodehealth"
 	"github.com/imantaba/kubeagent/internal/nodereserve"
@@ -37,6 +39,7 @@ type Options struct {
 	NodeHeartbeatThreshold time.Duration
 	ExpectedNodes          []string
 	KubeletHealth          bool
+	Logs                   bool
 }
 
 // Result is the structured health picture. Inputs and Nodes are exposed so the
@@ -70,6 +73,13 @@ func nonSystemPods(pods []corev1.Pod) []corev1.Pod {
 	return out
 }
 
+func splitNamespacedName(s string) (ns, name string, ok bool) {
+	if i := strings.IndexByte(s, '/'); i > 0 && i < len(s)-1 {
+		return s[:i], s[i+1:], true
+	}
+	return "", "", false
+}
+
 func nonSystemServices(svcs []corev1.Service) []corev1.Service {
 	var out []corev1.Service
 	for _, s := range svcs {
@@ -98,6 +108,24 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	}
 	attachEvents, _ := collect.VolumeAttachEvents(ctx, client, opts.Namespace)
 	findings := diagnose.Run(detectors, collect.FactsFrom(inputs.Pods, attachEvents))
+	if opts.Logs {
+		for i := range findings {
+			if findings[i].Container == "" {
+				continue
+			}
+			ns, name, ok := splitNamespacedName(findings[i].Pod) // "ns/pod"
+			if !ok {
+				continue
+			}
+			if log, ok := collect.PreviousLogs(ctx, client, ns, name, findings[i].Container); ok {
+				clue := logscan.Classify(log)
+				if clue.Cause != "" {
+					findings[i].LogCause = clue.Cause
+					findings[i].LogExcerpt = clue.Excerpt
+				}
+			}
+		}
+	}
 	workloads := inventory.Assemble(inputs, findings)
 
 	nodes, err := collect.Nodes(ctx, client)

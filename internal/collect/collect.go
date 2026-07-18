@@ -292,6 +292,20 @@ func parseNodeSummary(node string, data []byte) (diskusage.NodeSummary, bool, er
 	return out, true, nil
 }
 
+// PreviousLogs fetches the last-terminated instance's logs for one container, capped at
+// 25 lines. Never returns an error (non-fatal, like NodeStats): returns ("", false) on any
+// failure (no previous instance, forbidden, transport error, empty).
+func PreviousLogs(ctx context.Context, client kubernetes.Interface, ns, pod, container string) (string, bool) {
+	tail := int64(25)
+	raw, err := client.CoreV1().Pods(ns).GetLogs(pod, &corev1.PodLogOptions{
+		Container: container, Previous: true, TailLines: &tail,
+	}).DoRaw(ctx)
+	if err != nil || len(raw) == 0 {
+		return "", false
+	}
+	return string(raw), true
+}
+
 // KubeletHealthz probes a node's kubelet /healthz via the nodes/proxy subresource
 // and classifies the result. Never returns an error (non-fatal, like NodeStats).
 func KubeletHealthz(ctx context.Context, client kubernetes.Interface, node string) nodehealth.Probe {

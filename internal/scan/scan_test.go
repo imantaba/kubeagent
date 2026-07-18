@@ -184,6 +184,40 @@ func TestEvaluate_ExpectedNodeAbsentDegrades(t *testing.T) {
 	}
 }
 
+func TestEvaluate_LogsEnrichCrashFindings(t *testing.T) {
+	crashPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "web-1", Namespace: "shop", Labels: map[string]string{"app": "web"}},
+		Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
+			Name: "web", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+		}}},
+	}
+	client := fake.NewSimpleClientset(crashPod)
+	on, err := Evaluate(context.Background(), client, Options{Logs: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := findLogCause(on, "shop/web-1"); got == "" {
+		t.Errorf("with --logs a crash finding should carry a LogCause, got none:\n%+v", on.Inventory.Workloads)
+	}
+	// Opt-out: no enrichment.
+	off, _ := Evaluate(context.Background(), client, Options{})
+	if got := findLogCause(off, "shop/web-1"); got != "" {
+		t.Errorf("without --logs no LogCause, got %q", got)
+	}
+}
+
+// findLogCause returns the first finding's LogCause for the given "ns/pod".
+func findLogCause(r Result, pod string) string {
+	for _, w := range r.Inventory.Workloads {
+		for _, f := range w.Findings {
+			if f.Pod == pod && f.LogCause != "" {
+				return f.LogCause
+			}
+		}
+	}
+	return ""
+}
+
 func p32(i int32) *int32 { return &i }
 
 func boolp(b bool) *bool { return &b }

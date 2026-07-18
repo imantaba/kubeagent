@@ -82,7 +82,7 @@ func goldenWorkloads() []inventory.Workload {
 		{Namespace: "shop", Name: "web", Kind: "Deployment", Desired: 1, Ready: 0, Status: "Degraded",
 			Restarts: 8, LastRestart: r, Image: "busybox:1.36",
 			Pods:     []inventory.PodRow{{Name: "web-5b8-2wplt", Phase: "Running", Ready: "0/1", Restarts: 8, LastRestart: r, Node: "worker-1", IP: "10.244.2.2", Age: "20d", Image: "busybox:1.36"}},
-			Findings: []diagnose.Finding{{Pod: "shop/web", Issue: "CrashLoopBackOff", Reason: "Container repeatedly crashes after starting", Evidence: `container "web", restartCount=8`}}},
+			Findings: []diagnose.Finding{{Pod: "shop/web", Issue: "CrashLoopBackOff", Reason: "Container repeatedly crashes after starting", Evidence: `container "web", restartCount=8`, Container: "web", LogExcerpt: "panic: runtime error: invalid memory address", LogCause: "application panic (code bug)"}}},
 		{Namespace: "shop", Name: "api", Kind: "Deployment", Desired: 2, Ready: 0, Status: "Degraded",
 			Image:    "nginx:9.9.9-nope",
 			Pods:     []inventory.PodRow{{Name: "api-864-dxtdh", Phase: "Pending", Ready: "0/1", Restarts: 0, Node: "worker-1", IP: "10.244.2.4", Age: "6d", Image: "nginx:9.9.9-nope"}},

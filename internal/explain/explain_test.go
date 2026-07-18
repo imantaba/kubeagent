@@ -265,6 +265,23 @@ func TestBuildInventoryPrompt_IncludesRolloutChange(t *testing.T) {
 	}
 }
 
+func TestBuildInventoryPrompt_IncludesLogCauseNotExcerpt(t *testing.T) {
+	workloads := []inventory.Workload{{
+		Namespace: "shop", Name: "web", Kind: "Deployment", Desired: 1, Ready: 0,
+		Findings: []diagnose.Finding{{
+			Pod: "shop/web-1", Issue: "CrashLoopBackOff", Reason: "keeps crashing", Evidence: "restartCount=8",
+			LogCause: "application panic (code bug)", LogExcerpt: "panic: SECRET_TOKEN=abc123",
+		}},
+	}}
+	prompt := buildInventoryPrompt(clusterhealth.ClusterHealth{Verdict: "Degraded"}, nil, nil, nil, workloads)
+	if !strings.Contains(prompt, "application panic (code bug)") {
+		t.Errorf("prompt should include the derived LogCause:\n%s", prompt)
+	}
+	if strings.Contains(prompt, "SECRET_TOKEN") || strings.Contains(prompt, "panic: SECRET_TOKEN") {
+		t.Errorf("prompt must NOT include the raw LogExcerpt:\n%s", prompt)
+	}
+}
+
 func TestResolveModel(t *testing.T) {
 	cases := []struct {
 		name, flag, env, want string

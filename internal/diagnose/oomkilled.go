@@ -23,6 +23,7 @@ func (d OOMKilledDetector) Detect(facts PodFacts) *Finding {
 					Reason:    "Container exceeded its memory limit and was killed",
 					Evidence:  fmt.Sprintf("container %q, exitCode=%d", cs.Name, term.ExitCode),
 					Resources: containerResources(facts.Pod, cs.Name),
+					Container: cs.Name,
 				}
 			}
 		}

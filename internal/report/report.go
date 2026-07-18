@@ -691,6 +691,11 @@ func printWorkload(wl inventory.Workload, now time.Time, w io.Writer) error {
 				return err
 			}
 		}
+		if f.LogExcerpt != "" {
+			if _, err := fmt.Fprintf(w, "      logs (previous container):\n        %s\n        → %s\n", f.LogExcerpt, f.LogCause); err != nil {
+				return err
+			}
+		}
 	}
 	if len(wl.NetworkPolicies) > 0 {
 		if _, err := fmt.Fprintf(w, "    ⚠ NetworkPolicy: pods selected by %s — may be blocking traffic\n", strings.Join(wl.NetworkPolicies, ", ")); err != nil {

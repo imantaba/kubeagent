@@ -71,6 +71,9 @@ kubeagent scan
   kubelet `/healthz` via `nodes/proxy` and flags a kubelet that is reachable but
   unhealthy (PLEG/runtime failures), the "alive but sick" case heartbeat and
   NotReady checks miss. Reuses the `nodes/proxy` add-on from `--disk-usage`.
+- **Crash log root-cause (opt-in)** — `scan --logs` reads a crashing container's
+  previous logs and names the failure (panic, connection refused, bad entrypoint, …).
+  Needs the `pods/log` grant (`deploy/rbac-logs.yaml`).
 
 It talks to the cluster directly via the official Kubernetes Go client
 (`client-go`) — the same library `kubectl` and operators are built on — and

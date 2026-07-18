@@ -4,7 +4,11 @@
     render the kubeagent OG card. Kept as a small override instead of pulling in
     Material's social plugin (which needs cairo/pango system deps). -#}
 {% block extrahead %}
-  {% set og_title = page.title if page and page.title else config.site_name %}
+  {% if page and page.title and not page.is_homepage %}
+    {% set og_title = page.title ~ " · " ~ config.site_name %}
+  {% else %}
+    {% set og_title = config.site_name %}
+  {% endif %}
   {% set og_url = page.canonical_url if page and page.canonical_url else config.site_url %}
   {% set og_image = "https://k8sproject.top/assets/kubeagent-og.png" %}
   <meta property="og:type" content="website">

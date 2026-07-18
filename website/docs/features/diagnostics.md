@@ -171,7 +171,9 @@ that just exited) and classifies the failure line into a plain-language cause sh
 directly under the finding:
 
 ```text
-logs (previous container): panic: runtime error: index out of range → application panic (code bug)
+      logs (previous container):
+        panic: runtime error: index out of range
+        → application panic (code bug)
 ```
 
 Recognised signatures include:
@@ -179,8 +181,8 @@ Recognised signatures include:
 - `application panic (code bug)` — a Go/Python/JVM panic or unhandled exception
 - `cannot reach a dependency (…) — connection refused` — a dependency is not up yet, or the address is wrong
 - `bad command or entrypoint` — the container command / entrypoint does not exist in the image
-- `OOM (out of memory)` — memory limit enforced at the OS level before the container restarts
-- `configuration error` — a missing env var, bad config file, or failed unmarshal on startup
+- `ran out of memory in-process` — the process hit an allocation failure (distinct from a kernel OOM-kill, which the `OOMKilled` detector reports)
+- `configuration parse/validation error` — malformed YAML/JSON, a failed unmarshal, or an invalid config on startup
 
 Only the crash findings (**CrashLoopBackOff**, **RestartLoop**, **OOMKilled**) are
 probed — `--logs` is a no-op for ImagePullBackOff, Pending, and other non-crash

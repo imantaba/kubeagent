@@ -206,6 +206,30 @@ func TestEvaluate_LogsEnrichCrashFindings(t *testing.T) {
 	}
 }
 
+// TestEvaluate_LogsDedupPerContainer guards against enriching the same container
+// twice. A container in CrashLoopBackOff whose last exit was OOMKilled fires BOTH
+// the CrashLoop and OOMKilled detectors — two findings for one container. --logs
+// must fetch+classify its previous logs once and enrich a single finding, so the
+// report shows the "logs (previous container)" block once, not twice.
+func TestEvaluate_LogsDedupPerContainer(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "web-1", Namespace: "shop", Labels: map[string]string{"app": "web"}},
+		Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
+			Name:                 "web",
+			State:                corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+			LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "OOMKilled", ExitCode: 137}},
+		}}},
+	}
+	client := fake.NewSimpleClientset(pod)
+	on, err := Evaluate(context.Background(), client, Options{Logs: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := countLogCause(on, "shop/web-1"); n != 1 {
+		t.Errorf("crashloop+OOM on one container should enrich exactly one finding, got %d", n)
+	}
+}
+
 // findLogCause returns the first finding's LogCause for the given "ns/pod".
 func findLogCause(r Result, pod string) string {
 	for _, w := range r.Inventory.Workloads {
@@ -216,6 +240,19 @@ func findLogCause(r Result, pod string) string {
 		}
 	}
 	return ""
+}
+
+// countLogCause counts findings carrying a LogCause for the given "ns/pod".
+func countLogCause(r Result, pod string) int {
+	n := 0
+	for _, w := range r.Inventory.Workloads {
+		for _, f := range w.Findings {
+			if f.Pod == pod && f.LogCause != "" {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 func p32(i int32) *int32 { return &i }

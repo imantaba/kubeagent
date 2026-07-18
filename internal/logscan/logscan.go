@@ -26,7 +26,7 @@ type signature struct {
 // runtime "permission denied" falls through to perm-denied. "panic" is first so a panic
 // body containing "no such file" isn't mis-matched.
 var signatures = []signature{
-	{"panic", regexp.MustCompile(`(?i)^panic:|goroutine \d+ \[running\]`), func([]string) string { return "application panic (code bug)" }},
+	{"panic", regexp.MustCompile(`(?i)^panic:|goroutine \d+ \[running\]:`), func([]string) string { return "application panic (code bug)" }},
 	{"entrypoint", regexp.MustCompile(`(?i)exec:.*(?:executable file not found|no such file or directory|permission denied)`), func([]string) string { return "bad command or entrypoint" }},
 	{"conn-refused", regexp.MustCompile(`(?i)dial tcp (\S+): connect: connection refused`), func(m []string) string { return "cannot reach a dependency (" + m[1] + ") — connection refused" }},
 	{"dns", regexp.MustCompile(`(?i)no such host|server misbehaving`), func([]string) string { return "DNS resolution failed (name lookup)" }},

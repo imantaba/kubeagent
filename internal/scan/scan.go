@@ -109,14 +109,20 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	attachEvents, _ := collect.VolumeAttachEvents(ctx, client, opts.Namespace)
 	findings := diagnose.Run(detectors, collect.FactsFrom(inputs.Pods, attachEvents))
 	if opts.Logs {
+		enriched := map[string]bool{} // one log fetch + one enriched finding per pod/container
 		for i := range findings {
 			if findings[i].Container == "" {
 				continue
+			}
+			key := findings[i].Pod + "/" + findings[i].Container
+			if enriched[key] {
+				continue // a container that trips two detectors (e.g. CrashLoop + OOM) is enriched once
 			}
 			ns, name, ok := splitNamespacedName(findings[i].Pod) // "ns/pod"
 			if !ok {
 				continue
 			}
+			enriched[key] = true
 			if log, ok := collect.PreviousLogs(ctx, client, ns, name, findings[i].Container); ok {
 				clue := logscan.Classify(log)
 				if clue.Cause != "" {

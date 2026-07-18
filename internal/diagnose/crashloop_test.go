@@ -24,3 +24,11 @@ func TestCrashLoopDetector_IgnoresOtherWaitingReasons(t *testing.T) {
 		t.Errorf("expected nil for non-crashloop pod, got %+v", f)
 	}
 }
+
+func TestCrashLoopDetector_SetsContainer(t *testing.T) {
+	facts := PodFacts{Pod: podWaiting("default", "web", "app", "CrashLoopBackOff", "")}
+	f := CrashLoopDetector{}.Detect(facts)
+	if f == nil || f.Container != "app" {
+		t.Fatalf("expected Container=\"app\", got %+v", f)
+	}
+}

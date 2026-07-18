@@ -11,6 +11,9 @@ NEEDS ATTENTION
     image busybox:1.36
     ⚠ CrashLoopBackOff: Container repeatedly crashes after starting
       ↳ container "web", restartCount=8
+      logs (previous container):
+        panic: runtime error: invalid memory address
+        → application panic (code bug)
     web-5b8-2wplt  0/1  Running  restarts=8 (205d ago)  worker-1  10.244.2.2  20d
 ✗ shop/api  Deployment  0/2 Degraded
     image nginx:9.9.9-nope

@@ -1307,6 +1307,30 @@ func TestPrintInventory_ReservationsNotReportedEphemeral(t *testing.T) {
 	}
 }
 
+func TestPrintInventory_ShowsLogRootCause(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster: clusterhealth.ClusterHealth{Verdict: "Degraded", NodesReady: 1, NodesTotal: 1},
+		Result: inventory.Result{Workloads: []inventory.Workload{{
+			Namespace: "shop", Name: "web", Kind: "Deployment", Desired: 1, Ready: 0, Status: "Degraded",
+			Findings: []diagnose.Finding{{
+				Pod: "shop/web-1", Issue: "CrashLoopBackOff", Reason: "Container repeatedly crashes after starting",
+				Evidence: `container "web", restartCount=8`, Container: "web",
+				LogExcerpt: "panic: runtime error: invalid memory address", LogCause: "application panic (code bug)",
+			}},
+		}}},
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "logs (previous container):") ||
+		!strings.Contains(out, "panic: runtime error: invalid memory address") ||
+		!strings.Contains(out, "→ application panic (code bug)") {
+		t.Errorf("missing log root-cause block:\n%s", out)
+	}
+}
+
 func TestPrintInventory_UsesInjectedClock(t *testing.T) {
 	// A degraded workload that restarted at a fixed instant; Now is 5 days later.
 	// The rendered age must be measured from Input.Now, not wall-clock.

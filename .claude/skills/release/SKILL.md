@@ -48,11 +48,12 @@ go build ./... && go test ./...
 
 All packages must pass. Do not proceed on any failure.
 
-## Step 3 — Chaos gate (pre-release)
+## Step 3 — Pre-release gate (match the gate to the change)
 
-The chaos harness is the documented gate before tagging. It spins up a
-disposable Kind cluster (Calico CNI), injects the 10 common outages, and runs
-`kubeagent scan` against each.
+**Cluster-interaction changes** — anything touching RBAC, `nodes/proxy`, `--fix`,
+`internal/collect`, `internal/cluster`, the watch daemon, or Helm templates — get the
+**full chaos gate**. It spins up a disposable Kind cluster (Calico CNI), injects the
+common outages, and runs `kubeagent scan` against each.
 
 ```bash
 export PATH=$PATH:/usr/local/go/bin:$HOME/.local/bin
@@ -60,38 +61,49 @@ unset ANTHROPIC_API_KEY          # keep keys out of the shell; --explain scenari
 ./chaos/run.sh --recreate        # long-running; run in background and watch the log
 ```
 
-Review the results report — every scenario should be green. **Known flake:**
-Calico (`calico-kube-controllers` / `calico-node`) can miss its rollout deadline
-on a cold cluster (`exceeded its progress deadline`). If that is the only
-failure, just re-run `./chaos/run.sh --recreate`. The harness tears its cluster
+Review the results report — every scenario should be green. The harness now **preloads
+the Calico images into the Kind nodes** (`preload_calico_images`), which fixes the old
+`calico-node exceeded its progress deadline` flake (slow serial in-node pulls). If it
+still flakes on a cold cluster, re-run `./chaos/run.sh --recreate`. It tears its cluster
 down on exit.
+
+**Detector / report / docs-only changes** fully covered by unit tests + the fake
+clientset (a new pure detector, an output-format tweak) don't need the full outage suite —
+a **lightweight real-cluster smoke** confirms the change renders on live nodes:
+
+```bash
+kind create cluster --name kubeagent-smoke --wait 90s \
+  --config <(printf 'kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\nnodes:\n  - role: control-plane\n  - role: worker\n')
+go build -o kubeagent . && ./kubeagent scan --context kind-kubeagent-smoke   # eyeball the new output
+kind delete cluster --name kubeagent-smoke
+```
+
+When in doubt, run the full gate.
 
 ## Step 4 — Bump every version reference
 
-Bump `v0.<old>` → `$VERSION` in all of these (grep afterwards to be sure none
-were missed):
-
-- `CHANGELOG.md`:
-  - Rename the `## [Unreleased]` heading to `## [X.Y.Z] - YYYY-MM-DD` (use the
-    real date; the environment's current date is authoritative).
-  - Add a compare-link line at the top of the footer block:
-    `[X.Y.Z]: https://github.com/imantaba/kubeagent/compare/v<old>...vX.Y.Z`
-  - (The repeated `### Added` MD024 lint warnings are expected Keep-a-Changelog
-    style — ignore them.)
-- `deploy/deployment.yaml` — `image: imantaba/kubeagent:$VERSION`
-- `deploy/helm/kubeagent/Chart.yaml` — `appVersion: "$VERSION"` **and** bump
-  `version:` (the chart's own SemVer, e.g. `0.1.0 → 0.2.0`) whenever the chart
-  changed.
-- `deploy/README.md` — the `--set image.tag=` example.
-- `website/docs/install.md` — the `imantaba/kubeagent:` pin and the
-  `--set image.tag=` example.
-
-Confirm nothing stale remains (history + `docs/superpowers/` are allowed to keep
-old versions):
+Run the bump script — it rewrites the `CHANGELOG` (`[Unreleased]` → the release, a fresh
+`[Unreleased]`, and both compare links), the deploy manifest image tag, the chart's
+`appVersion` + a patch bump of the chart `version`, and the two docs, then fails if any
+stale `v<old>` reference remains:
 
 ```bash
-grep -rn "v0\.<old>\.0" --include=*.yaml --include=*.md . | grep -v CHANGELOG | grep -v docs/superpowers
+scripts/bump-version.sh $VERSION                          # e.g. v0.23.0
+# RELEASE_DATE=YYYY-MM-DD scripts/bump-version.sh $VERSION  # to override the CHANGELOG date
 ```
+
+It reads the previous version from the chart's `appVersion` (the single source of truth),
+so nothing to pass but the new version.
+
+**Chart version policy:** the script patch-bumps the chart `version` (correct when only
+`appVersion` changed). If this release changed the chart's **templates or values**, edit
+`deploy/helm/kubeagent/Chart.yaml` `version:` to a **minor** bump instead — the script
+prints the exact value.
+
+The script moves whatever sat under `## [Unreleased]` into the new version section, so
+make sure your feature's changelog note is there (it should already be, from the feature
+branch). Review `git diff`. The repeated `### Added`/`### Changed` MD024 lint warnings are
+expected Keep-a-Changelog style — ignore them.
 
 ## Step 5 — Verify packaging + docs
 

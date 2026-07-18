@@ -47,10 +47,28 @@ create_cluster() {
   kind create cluster --name "$CLUSTER" --config chaos/kind-config.yaml --wait 120s
 }
 
+# preload_calico_images side-loads the Calico images into the Kind nodes before we
+# apply the CNI. Kind nodes have their own containerd store, so on a cold cluster the
+# kubelet pulls calico/cni + calico/node serially from docker.io (~3-4m each) — and the
+# calico-node rollout routinely misses its deadline waiting on that, the #1 flake in this
+# harness. Pulling to the host once and `kind load`-ing makes the in-node pull instant.
+# Best-effort: if a pull/load fails, install_calico's in-node pull + wait still covers it.
+preload_calico_images() {
+  log "preload Calico images into $CLUSTER nodes"
+  local ref
+  for ref in $(grep -hoE 'docker\.io/calico/[A-Za-z0-9._/-]+:[A-Za-z0-9._-]+' chaos/manifests/calico.yaml | sort -u); do
+    docker image inspect "$ref" >/dev/null 2>&1 || docker pull "$ref" || { echo "preload: pull $ref failed; falling back to in-node pull" >&2; continue; }
+    # `docker pull docker.io/calico/x:tag` tags the local image `calico/x:tag`; kind load
+    # re-adds the docker.io/ prefix in the node store, matching the manifest's image ref.
+    kind load docker-image "${ref#docker.io/}" --name "$CLUSTER" || echo "preload: load $ref failed; falling back to in-node pull" >&2
+  done
+}
+
 install_calico() {
   log "install Calico CNI"
   kubectl --context "$CTX" apply -f chaos/manifests/calico.yaml
-  # First run pulls large Calico images (cni/node) serially — allow generous time.
+  # Images are preloaded (see preload_calico_images), so the rollout is normally fast;
+  # the generous timeout only covers a preload miss falling back to an in-node pull.
   kubectl --context "$CTX" -n kube-system rollout status ds/calico-node --timeout=600s
   kubectl --context "$CTX" wait --for=condition=Ready nodes --all --timeout=600s
 }
@@ -278,6 +296,7 @@ main() {
   preflight
   build_kubeagent
   create_cluster
+  preload_calico_images
   install_calico
 
   mkdir -p "$(dirname "$OUT")"

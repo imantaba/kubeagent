@@ -1,0 +1,80 @@
+Cluster: Degraded — 2/4 nodes Ready
+  ✗ node worker-2 NotReady: KubeletNotReady — container runtime is down
+  ✗ node worker-3 SchedulingDisabled
+  ✗ node worker-1 kubelet not heartbeating (lease 95s stale)
+  ✗ node db-01 expected but absent from the cluster
+  ✗ system kube-system/coredns Degraded 1/2
+  Needs attention: 6 workloads failing · 2 services without endpoints · 1 ingress route broken
+
+NEEDS ATTENTION
+✗ shop/web  Deployment  0/1 Degraded  · 8 restarts, last 8d ago
+    image busybox:1.36
+    ⚠ CrashLoopBackOff: Container repeatedly crashes after starting
+      ↳ container "web", restartCount=8
+    web-5b8-2wplt  0/1  Running  restarts=8 (8d ago)  worker-1  10.244.2.2  20d
+✗ shop/api  Deployment  0/2 Degraded
+    image nginx:9.9.9-nope
+    ⚠ ImagePullBackOff: Bad image reference or registry authentication
+      ↳ container "api": Back-off pulling image "nginx:9.9.9-nope": not found
+    api-864-dxtdh  0/1  Pending  restarts=0  worker-1  10.244.2.4  6d
+✗ shop/billing-worker  Deployment  0/1 Degraded  · 6 restarts, last 8d ago
+    image polinux/stress
+    ⚠ CrashLoopBackOff: Container repeatedly crashes after starting
+      ↳ container "worker", restartCount=6
+    ⚠ OOMKilled: Container exceeded its memory limit and was killed
+      ↳ container "worker", exitCode=137
+      resources: memory req=32Mi limit=64Mi · cpu req= limit=
+    billing-7c7-vbgd7  0/1  Running  restarts=6 (8d ago)  worker-2  10.244.1.2  18d
+✗ shop/report-cron  Deployment  0/1 Pending
+    image busybox:1.36
+    ⚠ Unschedulable: No node can schedule this pod (resources, taints, or affinity)
+      ↳ 0/4 nodes are available: 1 node(s) had untolerated taint, 3 Insufficient cpu
+    report-cron-767-xghsp  0/1  Pending  restarts=0      20d
+✗ shop/cache  Deployment  1/1 Running  · 5 restarts, last 8d ago
+    image redis:7-alpine
+    ⚠ RestartLoop: Container keeps exiting with a non-OOM error and restarting
+      ↳ container "cache", restartCount=5 (still flapping)
+    cache-6d9-abcde  1/1  Running  restarts=5 (8d ago)  worker-3  10.244.3.7  12d
+✗ shop/data  StatefulSet  0/1 Degraded
+    image postgres:16
+    ⚠ VolumeAttachError: A ReadWriteOnce volume is still attached to another node (Multi-Attach)
+      ↳ Multi-Attach error for volume "pvc-data-0": volume is already used by pod(s) on node worker-1
+    data-0  0/1  Pending  restarts=0  worker-2    9d
+  ✗ default/web  ClusterIP  no ready endpoints
+  ✗ default/api-lb  LoadBalancer  no external address · 0s ago
+  ✗ default/app-config  ConfigMap[DB_PASSWORD]  credential-like name with a literal value
+  ✗ default/web  Pod[app/AWS_SECRET]  AWS access key
+  ✗ ingress shop/storefront  shop.example.com/  backend Service payments:80 has no ready endpoints (likely 502/503)
+
+SECURITY  (advisory — does not affect the cluster verdict)
+  2 baseline · 1 exposed service · 18 restricted hardening gaps · 7 workloads
+
+  ✗ shop/legacy-agent  Deployment
+      [baseline] Privileged — container "agent" runs privileged (full host access)
+      [baseline] HostPath — mounts hostPath /var/run (writable host filesystem)
+  ✗ shop/payments  Service
+      [kubeagent] ExposedService — type NodePort exposes port(s) 80 externally
+
+  restricted (hardening gaps, near-universal): 18 across 6 workloads
+    RunAsRoot ×6 · AllowPrivilegeEscalation ×6 · CapabilitiesNotDropped ×6
+    → run with --security-verbose to list every finding per workload
+
+KUBELET HEALTH  (opt-in)
+  ✗ node worker-2 kubelet /healthz unhealthy: [-]syncloop failed
+NOTES
+  • 2 nodes reserve no memory: worker-1, worker-2
+      — OS/kubelet memory pressure can destabilize the node
+  • 2 nodes reserve no ephemeral-storage: worker-1, worker-2
+      — disk pressure can destabilize the node
+  • 1 PVC on Delete reclaim policy — standard ×1   [--pvc-reclaim]
+
+CONTEXT
+Kubelet reservations (combined kube+system)
+  memory            2 of 2 nodes reserve none  ⚠
+  cpu               2 of 2 nodes reserve none
+  ephemeral-storage 2 of 2 nodes reserve none  ⚠
+Resources (cluster):
+  CPU     8.0 cores · req 2.0 (25%) · lim 4.0 (50%) · used 2.0 (25%)
+  Memory  16Gi · req 4Gi (25%) · lim 8Gi (50%) · used 4Gi (25%)
+
+Platform: Cilium CNI · Traefik ingress · Hetzner CSI (+NFS CSI) storage · Kubernetes v1.35 (RKE2) · containerd · Hetzner Cloud

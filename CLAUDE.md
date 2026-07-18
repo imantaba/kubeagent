@@ -49,6 +49,11 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   no cluster needed.
 - I/O packages (`cluster`, `collect`) use client-go's **fake clientset**.
 - **TDD:** write the failing test first, watch it fail, then implement.
+- **Golden output test:** `internal/report/golden_test.go` snapshots the full `scan`
+  text output against `testdata/golden-scan.txt`. When a report-format change is
+  intentional, regenerate it with
+  `go test ./internal/report -run TestGoldenScanOutput -update`, then refresh the README
+  demo GIF (the `update-demo-gif` skill) and the quickstart example output.
 
 ## Learning companion
 

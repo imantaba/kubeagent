@@ -1,5 +1,18 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="6" fill="#3f51b5"/>
-  <circle cx="14.5" cy="14.5" r="5" stroke="#fff" stroke-width="2" fill="none"/>
-  <line x1="18.2" y1="18.2" x2="23" y2="23" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <rect width="32" height="32" rx="7" fill="#3f51b5"/>
+  <g stroke="#fff" stroke-linecap="round" stroke-linejoin="round">
+    <!-- helm wheel / magnifier lens -->
+    <circle cx="13.5" cy="13.5" r="7.3" stroke-width="2.2"/>
+    <!-- handle -->
+    <line x1="19" y1="19" x2="24.5" y2="24.5" stroke-width="3"/>
+    <!-- 6 helm spokes -->
+    <line x1="13.5" y1="9.6" x2="13.5" y2="7.2" stroke-width="1.5"/>
+    <line x1="16.9" y1="11.55" x2="18.98" y2="10.35" stroke-width="1.5"/>
+    <line x1="16.9" y1="15.45" x2="18.98" y2="16.65" stroke-width="1.5"/>
+    <line x1="13.5" y1="17.4" x2="13.5" y2="19.8" stroke-width="1.5"/>
+    <line x1="10.1" y1="15.45" x2="8.02" y2="16.65" stroke-width="1.5"/>
+    <line x1="10.1" y1="11.55" x2="8.02" y2="10.35" stroke-width="1.5"/>
+  </g>
+  <!-- hub = emerald scan point -->
+  <circle cx="13.5" cy="13.5" r="2.4" fill="#10b981"/>
 </svg>

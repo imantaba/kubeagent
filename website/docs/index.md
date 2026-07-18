@@ -4,6 +4,10 @@ hide:
   - toc
 ---
 
+<p style="text-align:center;margin:.4rem 0 .2rem">
+  <img src="assets/logo-hero.svg" alt="kubeagent logo" width="150">
+</p>
+
 # kubeagent
 
 **Read-only Kubernetes troubleshooting, explained.**

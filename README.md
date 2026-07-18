@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/kubeagent-logo.svg" alt="kubeagent logo" width="150">
+</p>
+
 # kubeagent
 
 > A read-only Kubernetes troubleshooting CLI that tells you **why** your pods are broken — not just that they are.

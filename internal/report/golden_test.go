@@ -17,12 +17,13 @@ import (
 	"github.com/imantaba/kubeagent/internal/nodereserve"
 	"github.com/imantaba/kubeagent/internal/pvcreclaim"
 	"github.com/imantaba/kubeagent/internal/secscan"
+	"github.com/imantaba/kubeagent/internal/svchealth"
 )
 
 var update = flag.Bool("update", false, "rewrite golden files")
 
 // goldenNow is the fixed clock for the snapshot; every fixture timestamp precedes it.
-var goldenNow = time.Date(2026, 1, 2, 15, 4, 5, 0, time.UTC)
+var goldenNow = time.Date(2026, 7, 18, 15, 4, 5, 0, time.UTC)
 
 const goldenPath = "testdata/golden-scan.txt"
 
@@ -46,7 +47,12 @@ func goldenInput(now time.Time) Input {
 		Resources:          sampleSummary(),
 		Platform:           sampleFacts(),
 		CredentialWarnings: sampleCredWarnings(),
-		ServiceIssues:      sampleServiceIssues(),
+		// sampleServiceIssues() are "real" (NEEDS ATTENTION); the appended Expected issue
+		// exercises the NOTES "•" expected-service path too.
+		ServiceIssues: append(sampleServiceIssues(), svchealth.Issue{
+			Namespace: "shop", Name: "internal-metrics", Type: "ClusterIP",
+			Problem: "NoEndpoints", Detail: "no ready endpoints", Expected: true,
+		}),
 		IngressIssues: []ingresshealth.RouteIssue{{
 			Namespace: "shop", Ingress: "storefront", Host: "shop.example.com", Path: "/",
 			Service: "payments", Port: "80", Problem: "NoEndpoints",
@@ -179,5 +185,16 @@ func TestGoldenInputCoversAllSections(t *testing.T) {
 		len(in.IngressIssues) == 0 || len(in.SecurityIssues) == 0 || in.NodeReserve == nil ||
 		in.PVCReclaim == nil || in.KubeletHealth == nil {
 		t.Fatal("goldenInput must populate every section so the golden stays comprehensive")
+	}
+	// Guard the *distinct* failure modes too, so a fixture regression can't drop one
+	// (e.g. a second CrashLoop replacing VolumeAttachError) while still counting six.
+	modes := map[string]bool{}
+	for _, wl := range in.Result.Workloads {
+		for _, f := range wl.Findings {
+			modes[f.Issue] = true
+		}
+	}
+	if len(modes) < 6 {
+		t.Fatalf("goldenInput must exercise at least 6 distinct failure modes, got %d: %v", len(modes), modes)
 	}
 }

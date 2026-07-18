@@ -53,7 +53,8 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   text output against `testdata/golden-scan.txt`. When a report-format change is
   intentional, regenerate it with
   `go test ./internal/report -run TestGoldenScanOutput -update`, then refresh the README
-  demo GIF (the `update-demo-gif` skill) and the quickstart example output.
+  demo GIF (the `update-demo-gif` skill) and the quickstart example output
+  (`website/docs/quickstart.md`).
 
 ## Learning companion
 

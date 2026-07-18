@@ -98,6 +98,13 @@ in the daemon environment. Without this add-on, kubeagent stays strictly
 also exposes `kubeagent_node_fs_usage_ratio{node}` and
 `kubeagent_volumes_over_disk_threshold` as Prometheus gauges.
 
+## Crash log root-cause (opt-in)
+
+Applying `deploy/rbac-logs.yaml` grants the `pods/log` `get` subresource needed
+by `scan --logs`. This is a scan-only add-on (not used by the watch daemon);
+most human kubeconfigs already allow `pods/log`. Without it, `--logs` reports no
+log cause and continues non-fatally.
+
 ## Security notes
 
 - The daemon runs as UID 65532 (non-root) with a read-only root filesystem and

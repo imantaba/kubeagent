@@ -52,6 +52,9 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 # flag credentials stored in the clear (ConfigMaps and pod env literals)
 ./kubeagent scan --lint-secrets
+
+# read a crashing container's previous logs and classify the failure
+./kubeagent scan --logs
 ```
 
 See [Credential lint](features/credential-lint.md) for details on what

@@ -1,0 +1,25 @@
+# Opt-in add-on: grants read access to container logs via the pods/log subresource,
+# needed only when running `scan --logs`. Apply alongside deploy/ for a restricted
+# context; most human kubeconfigs already allow pods/log. Without it, --logs simply
+# reports no log cause (non-fatal). kubeagent stays strictly get/list/watch otherwise.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubeagent-pods-log
+rules:
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubeagent-pods-log
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubeagent-pods-log
+subjects:
+  - kind: ServiceAccount
+    name: kubeagent
+    namespace: kubeagent

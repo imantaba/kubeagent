@@ -164,6 +164,36 @@ scanner. It is read-only and **advisory** — it does not change the cluster
 verdict — needs no extra RBAC, and skips
 `kube-system`/`kube-node-lease`/`kube-public` unless you target one with `-n`.
 
+### Crash log root-cause (opt-in)
+
+`scan --logs` fetches each crashing container's `--previous` logs (the instance
+that just exited) and classifies the failure line into a plain-language cause shown
+directly under the finding:
+
+```text
+logs (previous container): panic: runtime error: index out of range → application panic (code bug)
+```
+
+Recognised signatures include:
+
+- `application panic (code bug)` — a Go/Python/JVM panic or unhandled exception
+- `cannot reach a dependency (…) — connection refused` — a dependency is not up yet, or the address is wrong
+- `bad command or entrypoint` — the container command / entrypoint does not exist in the image
+- `OOM (out of memory)` — memory limit enforced at the OS level before the container restarts
+- `configuration error` — a missing env var, bad config file, or failed unmarshal on startup
+
+Only the crash findings (**CrashLoopBackOff**, **RestartLoop**, **OOMKilled**) are
+probed — `--logs` is a no-op for ImagePullBackOff, Pending, and other non-crash
+detectors.
+
+It is **read-only**, **opt-in**, and **scan-only** (not available in the `watch`
+daemon). Running it in-cluster requires the `pods/log` RBAC add-on
+(`deploy/rbac-logs.yaml`); most human kubeconfigs already allow `pods/log`. Without
+the grant, `--logs` reports no log cause and continues non-fatally.
+
+`--explain` receives **only** the derived cause (`logCause`) — never the raw log text
+(`logExcerpt`) — so no container output is sent to the Claude API.
+
 ### Output layout
 
 `scan --output text` groups findings by how urgently they need action:

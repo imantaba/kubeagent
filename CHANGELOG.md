@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Crash log root-cause (opt-in).** `scan --logs` reads each crashing container's
+  previous-instance logs (`pods/log`) and classifies the failure into a plain-language
+  cause — `application panic (code bug)`, `cannot reach a dependency (…) — connection
+  refused`, `bad command or entrypoint`, etc. — shown under the finding as
+  `logs (previous container): … → <cause>` and in JSON as `logCause`/`logExcerpt`. Only
+  the crash findings (CrashLoopBackOff / RestartLoop / OOMKilled) are probed. Read-only,
+  scan-only; needs the `pods/log` grant (`deploy/rbac-logs.yaml`). `--explain` receives
+  only the derived cause, never raw log text.
+
 ## [0.22.0] - 2026-07-15
 
 ### Changed

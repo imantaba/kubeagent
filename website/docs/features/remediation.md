@@ -49,6 +49,12 @@ An accidental cordon is uncordoned; a deliberate drain (which carries a
 ./kubeagent scan --fix --yes
 ```
 
+`--fix --dry-run` against a cluster with a bad rollout and a cordoned node: it runs the
+normal scan, then lists the proposed fixes — a `RolloutUndo` and an `Uncordon` — and
+exits without writing anything:
+
+![kubeagent scan --fix --dry-run](../assets/fix-dry-run.gif)
+
 ## Example
 
 ```text

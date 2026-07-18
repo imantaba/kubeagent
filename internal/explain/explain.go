@@ -122,6 +122,9 @@ func buildInventoryPrompt(cluster clusterhealth.ClusterHealth, summary *resource
 				w.Namespace, w.Name, w.Kind, w.Ready, w.Desired, w.Status, w.Restarts)
 			for _, f := range w.Findings {
 				fmt.Fprintf(&b, "    issue: %s — %s (%s)\n", f.Issue, f.Reason, f.Evidence)
+				if f.LogCause != "" {
+					fmt.Fprintf(&b, "      log cause: %s\n", f.LogCause)
+				}
 				if f.Resources != nil {
 					r := f.Resources
 					fmt.Fprintf(&b, "      container resources: memory req=%s limit=%s, cpu req=%s limit=%s\n",

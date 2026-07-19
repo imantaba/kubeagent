@@ -396,6 +396,33 @@ func TestEvaluate_FlagsInitContainerFailure(t *testing.T) {
 	}
 }
 
+func TestEvaluate_FlagsPendingPVC(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}}
+	sc := "fast"
+	pvc := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "data-pvc"},
+		Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: &sc},
+		Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimPending},
+	}
+	ev := &corev1.Event{
+		ObjectMeta:     metav1.ObjectMeta{Namespace: "shop", Name: "data-pvc.ev"},
+		Reason:         "ProvisioningFailed",
+		Type:           "Warning",
+		Message:        `storageclass "fast" not found`,
+		LastTimestamp:  metav1.Now(),
+		InvolvedObject: corev1.ObjectReference{Kind: "PersistentVolumeClaim", Namespace: "shop", Name: "data-pvc"},
+	}
+	cli := fake.NewSimpleClientset(node, pvc, ev)
+	res, err := Evaluate(context.Background(), cli, Options{Namespace: "shop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.PVCIssues) != 1 || res.PVCIssues[0].Name != "data-pvc" {
+		t.Errorf("expected 1 PVCIssue for data-pvc, got %+v", res.PVCIssues)
+	}
+}
+
 func TestEvaluate_KubeletHealthOffByDefault(t *testing.T) {
 	// Mirrors TestEvaluate_DiskUsageOffByDefault: the fake clientset's
 	// RESTClient() is nil, so the nodes/proxy probe cannot be exercised through

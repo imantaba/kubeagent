@@ -16,6 +16,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/nodehealth"
 	"github.com/imantaba/kubeagent/internal/nodereserve"
 	"github.com/imantaba/kubeagent/internal/platform"
+	"github.com/imantaba/kubeagent/internal/pvchealth"
 	"github.com/imantaba/kubeagent/internal/pvcreclaim"
 	"github.com/imantaba/kubeagent/internal/resources"
 	"github.com/imantaba/kubeagent/internal/secscan"
@@ -1349,5 +1350,26 @@ func TestPrintInventory_UsesInjectedClock(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "5d ago") {
 		t.Errorf("age should be measured from Input.Now (want \"5d ago\"):\n%s", buf.String())
+	}
+}
+
+func TestPrintInventory_ShowsPVCIssues(t *testing.T) {
+	in := Input{
+		Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy"},
+		PVCIssues: []pvchealth.Issue{{
+			Namespace: "shop", Name: "data-pvc", Phase: "Pending",
+			Reason: "ProvisioningFailed", Detail: `storageclass "fast" not found`, StorageClass: "fast",
+		}},
+	}
+	var buf bytes.Buffer
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, `✗ shop/data-pvc  PersistentVolumeClaim  Pending — storageclass "fast" not found`) {
+		t.Errorf("PVC issue not rendered in NEEDS ATTENTION:\n%s", out)
+	}
+	if !strings.Contains(out, "1 PVC failing to provision") {
+		t.Errorf("attention summary missing the PVC count:\n%s", out)
 	}
 }

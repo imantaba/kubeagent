@@ -183,6 +183,7 @@ func run(args []string) error {
 		DiskUsage:          diskRep,
 		KubeletHealth:      kubeletRep,
 		IngressIssues:      res.IngressIssues,
+		PVCIssues:          res.PVCIssues,
 		SecurityIssues:     res.SecurityIssues,
 		SecurityVerbose:    *securityVerbose,
 		Explanation:        explanation,

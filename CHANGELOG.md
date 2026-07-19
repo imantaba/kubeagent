@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Pending-PVC provisioning check.** `scan` flags a PersistentVolumeClaim stuck
+  `Pending` because provisioning/binding failed (`ProvisioningFailed` / `FailedBinding`
+  events), naming the cause and rendering it in NEEDS ATTENTION (and JSON `pvcIssues`).
+  Event-based like `VolumeAttachError`, so the normal `WaitForFirstConsumer` state is
+  never flagged. Read-only, always-on, no new RBAC; advisory (does not change the verdict).
+
 ## [0.25.0] - 2026-07-19
 
 ### Added

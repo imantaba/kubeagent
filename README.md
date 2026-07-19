@@ -59,6 +59,11 @@ kubeagent scan
   Service and flags routes whose Service is missing, has no ready endpoints
   (`NoEndpoints` — the classic 502/503), or does not expose the referenced port
   (`PortNotExposed`). Advisory and read-only; adds Ingress read RBAC.
+- **Pending-PVC provisioning check** — `scan` flags a PersistentVolumeClaim stuck
+  `Pending` because provisioning/binding failed (`ProvisioningFailed` /
+  `FailedBinding` events), naming the cause. Event-based (like `VolumeAttachError`),
+  so the normal `WaitForFirstConsumer` state is never flagged. Advisory and
+  read-only; no new RBAC.
 - **Workload security posture (opt-in)** — `scan --security` flags PSS-aligned
   hardening problems (privileged/insecure containers, exposed Services) in a
   dedicated `SECURITY` section and JSON `securityIssues`. Advisory and

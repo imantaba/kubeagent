@@ -103,6 +103,17 @@ func VolumeAttachEvents(ctx context.Context, client kubernetes.Interface, namesp
 	return events.Items, nil
 }
 
+// UnhealthyEvents lists the kubelet's probe-failure ("Unhealthy") Warning events
+// in the namespace ("" = all). Read-only; mirrors VolumeAttachEvents. Needs no
+// permission beyond the event list scan already performs.
+func UnhealthyEvents(ctx context.Context, client kubernetes.Interface, namespace string) ([]corev1.Event, error) {
+	events, err := client.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{FieldSelector: "reason=Unhealthy"})
+	if err != nil {
+		return nil, fmt.Errorf("listing probe (Unhealthy) events: %w", err)
+	}
+	return events.Items, nil
+}
+
 // FactsFrom wraps each pod in a diagnose.PodFacts, attaching any of the given
 // events that reference that pod (by InvolvedObject). Pods with no matching
 // events get an empty slice, so status-only detectors are unaffected.

@@ -367,6 +367,24 @@ func TestNodeLeases_List(t *testing.T) {
 	}
 }
 
+func TestUnhealthyEvents(t *testing.T) {
+	ev := &corev1.Event{
+		ObjectMeta:     metav1.ObjectMeta{Namespace: "shop", Name: "web.ev"},
+		Reason:         "Unhealthy",
+		Type:           "Warning",
+		Message:        "Readiness probe failed: HTTP probe failed with statuscode: 503",
+		InvolvedObject: corev1.ObjectReference{Kind: "Pod", Namespace: "shop", Name: "web"},
+	}
+	client := fake.NewSimpleClientset(ev)
+	got, err := UnhealthyEvents(context.Background(), client, "shop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Reason != "Unhealthy" {
+		t.Errorf("want 1 Unhealthy event, got %+v", got)
+	}
+}
+
 func TestClassifyKubeletHealthz(t *testing.T) {
 	cases := []struct {
 		code                   int

@@ -105,9 +105,12 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 		diagnose.PendingDetector{},
 		diagnose.VolumeAttachDetector{},
 		diagnose.RestartLoopDetector{Now: time.Now()},
+		diagnose.ProbeFailureDetector{},
 	}
 	attachEvents, _ := collect.VolumeAttachEvents(ctx, client, opts.Namespace)
-	findings := diagnose.Run(detectors, collect.FactsFrom(inputs.Pods, attachEvents))
+	unhealthyEvents, _ := collect.UnhealthyEvents(ctx, client, opts.Namespace)
+	events := append(attachEvents, unhealthyEvents...)
+	findings := diagnose.Run(detectors, collect.FactsFrom(inputs.Pods, events))
 	if opts.Logs {
 		enriched := map[string]bool{} // one log fetch + one enriched finding per pod/container
 		for i := range findings {

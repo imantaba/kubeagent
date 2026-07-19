@@ -2,6 +2,7 @@ package pvchealth
 
 import (
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -61,6 +62,9 @@ func TestAssess_BoundPVCSkipped(t *testing.T) {
 
 func TestAssess_WaitForFirstConsumerSkipped(t *testing.T) {
 	pvcs := []corev1.PersistentVolumeClaim{pendingPVC("shop", "data-pvc", "local-path")}
+	// A real WaitForFirstConsumer event is Normal-typed, but Assess filters on Reason
+	// (not Type): the Reason is neither ProvisioningFailed nor FailedBinding, so the PVC
+	// is skipped. The Type is set here only to mirror a real event.
 	ev := pvcEvent("shop", "data-pvc", "WaitForFirstConsumer", "waiting for first consumer to be created before binding")
 	ev.Type = "Normal"
 	if got := Assess(pvcs, []corev1.Event{ev}); len(got) != 0 {
@@ -87,5 +91,23 @@ func TestAssess_CorrelationAndOrder(t *testing.T) {
 	}
 	if got[0].Detail != "a failed" {
 		t.Errorf("a-pvc correlated to the wrong event: %q", got[0].Detail)
+	}
+}
+
+func TestAssess_NewestEventWins(t *testing.T) {
+	// Two ProvisioningFailed events for the same PVC: newestFailureEvent must pick the
+	// one with the later LastTimestamp regardless of slice order.
+	older := pvcEvent("shop", "data-pvc", "ProvisioningFailed", "older cause")
+	older.LastTimestamp = metav1.NewTime(time.Unix(1000, 0))
+	newer := pvcEvent("shop", "data-pvc", "ProvisioningFailed", "newer cause")
+	newer.LastTimestamp = metav1.NewTime(time.Unix(2000, 0))
+	pvcs := []corev1.PersistentVolumeClaim{pendingPVC("shop", "data-pvc", "fast")}
+	// older first, so a naive first-match implementation would pick the wrong event.
+	got := Assess(pvcs, []corev1.Event{older, newer})
+	if len(got) != 1 {
+		t.Fatalf("want 1 issue, got %+v", got)
+	}
+	if got[0].Detail != "newer cause" {
+		t.Errorf("newest event must win, got Detail=%q", got[0].Detail)
 	}
 }

@@ -88,7 +88,7 @@ Run the bump script — it rewrites the `CHANGELOG` (`[Unreleased]` → the rele
 stale `v<old>` reference remains:
 
 ```bash
-scripts/bump-version.sh $VERSION                          # e.g. v0.23.0
+scripts/bump-version.sh $VERSION                          # e.g. vX.Y.Z
 # RELEASE_DATE=YYYY-MM-DD scripts/bump-version.sh $VERSION  # to override the CHANGELOG date
 ```
 

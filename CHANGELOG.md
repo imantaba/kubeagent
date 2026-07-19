@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **ProbeFailure detector.** `scan` flags a Running-but-not-Ready pod whose readiness,
+  liveness, or startup probe keeps failing, reading the kubelet's `Unhealthy` events and
+  naming the probe, container, and a plain-language reason (`HTTP 503`, `connection
+  refused`, `timed out`, …). Complementary to `RestartLoop`/`CrashLoopBackOff`.
+  Read-only, always-on, **no new RBAC**. The raw probe message (which may carry a pod IP
+  or `exec` output) is never surfaced, so `--explain` stays privacy-preserving.
+
 ## [0.23.0] - 2026-07-18
 
 ### Added

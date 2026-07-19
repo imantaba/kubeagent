@@ -52,6 +52,19 @@ condition only fires while the container is in a `Waiting` / back-off state.
 `kubeagent` reads `RestartCount` and `lastState.Terminated` from the pod
 status. Read-only.
 
+### ProbeFailure
+
+A pod that is **Running but not Ready** because a container's **readiness**,
+**liveness**, or **startup** probe keeps failing. `kubeagent` reads the kubelet's
+`Unhealthy` events and names the probe, the container, and a plain-language reason
+(`HTTP 503`, `connection refused`, `timed out`, `DNS lookup failed`,
+`gRPC NOT_SERVING`, …) — for example `container "web": readiness probe failed —
+HTTP 503`. It is complementary to `RestartLoop`/`CrashLoopBackOff`: a liveness probe
+that restarts a container shows both the pattern and the probe as the cause. To keep
+the failure reason safe for `--explain`, the raw probe message is never surfaced — no
+pod IP and no `exec`-probe command output ever leaves the local report. Read-only: it
+lists `Unhealthy` events (no extra permission beyond the scan's existing event list).
+
 ### Node reservations
 
 `scan` reports each node's aggregate kubelet resource reservation for **memory,
@@ -228,7 +241,7 @@ schema are unchanged.
 
 `kubeagent scan` performs a read-only, whole-cluster scan and reports
 CrashLoopBackOff, ImagePullBackOff/ErrImagePull, OOMKilled,
-Pending/Unschedulable, VolumeAttachError (Multi-Attach), and RestartLoop pods, in text or JSON.
+Pending/Unschedulable, VolumeAttachError (Multi-Attach), RestartLoop, and ProbeFailure pods, in text or JSON.
 
 The optional `--explain` flag makes a single Claude API call to summarize
 findings in plain English. The deterministic core still works offline with no

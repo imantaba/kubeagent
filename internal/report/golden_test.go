@@ -107,6 +107,12 @@ func goldenWorkloads() []inventory.Workload {
 			Image:    "postgres:16",
 			Pods:     []inventory.PodRow{{Name: "data-0", Phase: "Pending", Ready: "0/1", Restarts: 0, Node: "worker-2", IP: "", Age: "9d", Image: "postgres:16"}},
 			Findings: []diagnose.Finding{{Pod: "shop/data-0", Issue: "VolumeAttachError", Reason: "A ReadWriteOnce volume is still attached to another node (Multi-Attach)", Evidence: "Multi-Attach error for volume \"pvc-data-0\": volume is already used by pod(s) on node worker-1"}}},
+		{Namespace: "shop", Name: "checkout", Kind: "Deployment", Desired: 1, Ready: 0, Status: "Degraded",
+			Image: "checkout:2.1",
+			Pods:  []inventory.PodRow{{Name: "checkout-7f9-qk2mn", Phase: "Running", Ready: "0/1", Restarts: 0, Node: "worker-3", IP: "10.244.3.9", Age: "5d", Image: "checkout:2.1"}},
+			Findings: []diagnose.Finding{{Pod: "shop/checkout", Issue: "ProbeFailure",
+				Reason:   "the readiness probe keeps failing — the pod is kept out of Service endpoints",
+				Evidence: `container "checkout": readiness probe failed — HTTP 503`, Container: "checkout"}}},
 	}
 }
 

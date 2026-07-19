@@ -113,6 +113,12 @@ func goldenWorkloads() []inventory.Workload {
 			Findings: []diagnose.Finding{{Pod: "shop/checkout", Issue: "ProbeFailure",
 				Reason:   "the readiness probe keeps failing — the pod is kept out of Service endpoints",
 				Evidence: `container "checkout": readiness probe failed — HTTP 503`, Container: "checkout"}}},
+		{Namespace: "shop", Name: "orders", Kind: "Deployment", Desired: 1, Ready: 0, Status: "Degraded",
+			Image: "orders:3.0",
+			Pods:  []inventory.PodRow{{Name: "orders-6f9-qk2mn", Phase: "Init:CrashLoopBackOff", Ready: "0/1", Restarts: 0, Node: "worker-3", IP: "10.244.3.11", Age: "4m", Image: "orders:3.0"}},
+			Findings: []diagnose.Finding{{Pod: "shop/orders", Issue: "Init:CrashLoopBackOff",
+				Reason:   "an init container is crash-looping — the pod cannot start its main containers",
+				Evidence: `init container "wait-for-db" (1/2), restartCount=6`, Container: "wait-for-db"}}},
 	}
 }
 

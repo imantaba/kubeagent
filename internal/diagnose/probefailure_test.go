@@ -126,6 +126,8 @@ func TestClassifyProbe(t *testing.T) {
 	cases := []struct{ msg, wantType, wantReason string }{
 		{"Readiness probe failed: HTTP probe failed with statuscode: 503", "readiness", "HTTP 503"},
 		{"Liveness probe failed: dial tcp 10.0.0.1:8080: connect: connection refused", "liveness", "connection refused"},
+		{"Liveness probe failed: read tcp 10.0.0.1:8080: connection reset by peer", "liveness", "connection reset"},
+		{"Readiness probe failed: dial tcp 10.0.0.1:8080: connect: no route to host", "readiness", "unreachable"},
 		{`Startup probe failed: Get "http://10.0.0.1/": context deadline exceeded`, "startup", "timed out"},
 		{"Readiness probe failed: dial tcp: lookup db on 10.96.0.10:53: no such host", "readiness", "DNS lookup failed"},
 		{`Liveness probe failed: service unhealthy (responded with "NOT_SERVING")`, "liveness", "gRPC NOT_SERVING"},

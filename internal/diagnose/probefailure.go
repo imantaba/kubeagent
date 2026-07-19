@@ -134,7 +134,9 @@ func probeReasonTail(message string) string {
 // httpStatusCode extracts the integer following "statuscode: " in an HTTP probe message.
 func httpStatusCode(message string) string {
 	const marker = "statuscode: "
-	i := strings.Index(message, marker)
+	// Search case-insensitively so this stays aligned with probeReasonTail's
+	// lowercased gate; ASCII ToLower preserves byte offsets, so i indexes the original.
+	i := strings.Index(strings.ToLower(message), marker)
 	if i < 0 {
 		return ""
 	}

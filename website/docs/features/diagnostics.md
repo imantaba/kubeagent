@@ -72,8 +72,9 @@ A pod stuck in its **init phase** because an init container is failing —
 `Init:ErrImagePull` (its image can't be pulled), or `Init:OOMKilled` (killed for
 exceeding its memory limit). `kubeagent` reads `Status.InitContainerStatuses` — the
 slice the main-container crash detectors don't look at — and names which init
-container is failing, its position, and the reason, e.g. `init container
-"wait-for-db" (1/2), restartCount=6`. Init containers run sequentially and block the
+container is failing, its position, and the reason — for a crash loop, `init container
+"wait-for-db" (1/2), restartCount=6` (an image-pull or OOM failure shows the pull
+message or `exitCode` instead). Init containers run sequentially and block the
 pod, so at most one is failing; a pod whose inits all succeeded is left to the
 main-container detectors (no overlap). Read-only; reads pod status already collected
 (no new RBAC).

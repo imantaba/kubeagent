@@ -355,6 +355,47 @@ func TestEvaluate_FlagsProbeFailure(t *testing.T) {
 	}
 }
 
+func TestEvaluate_FlagsInitContainerFailure(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "orders-1", Labels: map[string]string{"app": "orders"}},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodPending,
+			InitContainerStatuses: []corev1.ContainerStatus{{
+				Name: "wait-for-db", RestartCount: 6,
+				State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+			}},
+			ContainerStatuses: []corev1.ContainerStatus{{
+				Name:  "app",
+				State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "PodInitializing"}},
+			}},
+		},
+	}
+	cli := fake.NewSimpleClientset(node, pod)
+	res, err := Evaluate(context.Background(), cli, Options{Namespace: "shop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var initFindings, crashFindings int
+	for _, w := range res.Inventory.Workloads {
+		for _, f := range w.Findings {
+			switch f.Issue {
+			case "Init:CrashLoopBackOff":
+				initFindings++
+			case "CrashLoopBackOff":
+				crashFindings++
+			}
+		}
+	}
+	if initFindings != 1 {
+		t.Errorf("expected exactly 1 Init:CrashLoopBackOff finding, got %d (%+v)", initFindings, res.Inventory.Workloads)
+	}
+	if crashFindings != 0 {
+		t.Errorf("main-container CrashLoopBackOff must not fire for an init-blocked pod, got %d", crashFindings)
+	}
+}
+
 func TestEvaluate_KubeletHealthOffByDefault(t *testing.T) {
 	// Mirrors TestEvaluate_DiskUsageOffByDefault: the fake clientset's
 	// RESTClient() is nil, so the nodes/proxy probe cannot be exercised through

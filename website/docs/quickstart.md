@@ -3,7 +3,7 @@
 `kubeagent` is a read-only Kubernetes troubleshooting CLI that tells you **why**
 your workloads are broken, not just that they are. A single `scan` diagnoses the
 common pod failure modes — CrashLoopBackOff, ImagePullBackOff / ErrImagePull,
-OOMKilled, Pending / Unschedulable, VolumeAttachError, silent restart loops, and failing readiness/liveness/startup probes —
+OOMKilled, Pending / Unschedulable, VolumeAttachError, silent restart loops, failing readiness/liveness/startup probes, and failing init containers —
 and names the underlying cause for each (the container exit reason, the scheduler's
 message, the failed image pull). It also checks cluster and node health (NotReady
 nodes *with* their root cause, stale kubelet heartbeats, a declared expected-node

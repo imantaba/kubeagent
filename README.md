@@ -43,6 +43,9 @@ kubeagent scan
   the case `CrashLoopBackOff` misses.
 - **ProbeFailure** — a Running-but-not-Ready pod whose readiness, liveness, or
   startup probe keeps failing; names the probe, container, and reason.
+- **InitContainer failures** — a pod stuck in its init phase because an init
+  container is crash-looping, can't pull its image, or was OOM-killed; names which
+  init container and why.
 - **Node reservation check** — warns when a node's kubelet reserves no memory
   (allocatable == capacity), meaning OS or kubelet memory pressure can destabilise
   the node. Advisory and read-only; no new RBAC.
@@ -85,7 +88,7 @@ operates **read-only by default** (an opt-in `--fix` flag can apply safe, revers
 
 ✅ **v1 shipped** — `kubeagent scan` performs a read-only, whole-cluster scan and
 reports CrashLoopBackOff, ImagePullBackOff/ErrImagePull, OOMKilled,
-Pending/Unschedulable, VolumeAttachError (Multi-Attach), RestartLoop, and ProbeFailure pods, in text or JSON.
+Pending/Unschedulable, VolumeAttachError (Multi-Attach), RestartLoop, ProbeFailure, and init-container failures, in text or JSON.
 
 ✅ **v2 shipped** — an optional `--explain` flag makes a single Claude API call
 (via the official Go SDK) to summarize findings in plain English. The

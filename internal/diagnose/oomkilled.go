@@ -31,17 +31,19 @@ func (d OOMKilledDetector) Detect(facts PodFacts) *Finding {
 	return nil
 }
 
-// containerResources finds the named container in the pod spec and returns its
-// cpu/memory requests and limits; nil if the container is not in the spec.
+// containerResources finds the named container in the pod spec (main OR init) and
+// returns its cpu/memory requests and limits; nil if the container is not in the spec.
 func containerResources(pod *corev1.Pod, name string) *ContainerResources {
-	for _, c := range pod.Spec.Containers {
-		if c.Name == name {
-			return &ContainerResources{
-				Container:  name,
-				CPURequest: quantityOrUnset(c.Resources.Requests, corev1.ResourceCPU),
-				CPULimit:   quantityOrUnset(c.Resources.Limits, corev1.ResourceCPU),
-				MemRequest: quantityOrUnset(c.Resources.Requests, corev1.ResourceMemory),
-				MemLimit:   quantityOrUnset(c.Resources.Limits, corev1.ResourceMemory),
+	for _, list := range [][]corev1.Container{pod.Spec.Containers, pod.Spec.InitContainers} {
+		for _, c := range list {
+			if c.Name == name {
+				return &ContainerResources{
+					Container:  name,
+					CPURequest: quantityOrUnset(c.Resources.Requests, corev1.ResourceCPU),
+					CPULimit:   quantityOrUnset(c.Resources.Limits, corev1.ResourceCPU),
+					MemRequest: quantityOrUnset(c.Resources.Requests, corev1.ResourceMemory),
+					MemLimit:   quantityOrUnset(c.Resources.Limits, corev1.ResourceMemory),
+				}
 			}
 		}
 	}

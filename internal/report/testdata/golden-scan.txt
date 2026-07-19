@@ -4,7 +4,7 @@ Cluster: Degraded — 2/4 nodes Ready
   ✗ node worker-1 kubelet not heartbeating (lease 95s stale)
   ✗ node db-01 expected but absent from the cluster
   ✗ system kube-system/coredns Degraded 1/2
-  Needs attention: 7 workloads failing · 2 services without endpoints · 1 ingress route broken
+  Needs attention: 8 workloads failing · 2 services without endpoints · 1 ingress route broken
 
 NEEDS ATTENTION
 ✗ shop/web  Deployment  0/1 Degraded  · 8 restarts, last 205d ago
@@ -48,6 +48,11 @@ NEEDS ATTENTION
     ⚠ ProbeFailure: the readiness probe keeps failing — the pod is kept out of Service endpoints
       ↳ container "checkout": readiness probe failed — HTTP 503
     checkout-7f9-qk2mn  0/1  Running  restarts=0  worker-3  10.244.3.9  5d
+✗ shop/orders  Deployment  0/1 Degraded
+    image orders:3.0
+    ⚠ Init:CrashLoopBackOff: an init container is crash-looping — the pod cannot start its main containers
+      ↳ init container "wait-for-db" (1/2), restartCount=6
+    orders-6f9-qk2mn  0/1  Init:CrashLoopBackOff  restarts=0  worker-3  10.244.3.11  4m
   ✗ default/web  ClusterIP  no ready endpoints
   ✗ default/api-lb  LoadBalancer  no external address · 19d ago
   ✗ default/app-config  ConfigMap[DB_PASSWORD]  credential-like name with a literal value

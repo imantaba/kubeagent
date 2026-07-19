@@ -65,6 +65,20 @@ the failure reason safe for `--explain`, the raw probe message is never surfaced
 pod IP and no `exec`-probe command output ever leaves the local report. Read-only: it
 lists `Unhealthy` events (no extra permission beyond the scan's existing event list).
 
+### Init container failures
+
+A pod stuck in its **init phase** because an init container is failing —
+`Init:CrashLoopBackOff` (crash-looping), `Init:ImagePullBackOff` /
+`Init:ErrImagePull` (its image can't be pulled), or `Init:OOMKilled` (killed for
+exceeding its memory limit). `kubeagent` reads `Status.InitContainerStatuses` — the
+slice the main-container crash detectors don't look at — and names which init
+container is failing, its position, and the reason — for a crash loop, `init container
+"wait-for-db" (1/2), restartCount=6` (an image-pull or OOM failure shows the pull
+message or `exitCode` instead). Init containers run sequentially and block the
+pod, so at most one is failing; a pod whose inits all succeeded is left to the
+main-container detectors (no overlap). Read-only; reads pod status already collected
+(no new RBAC).
+
 ### Node reservations
 
 `scan` reports each node's aggregate kubelet resource reservation for **memory,
@@ -241,7 +255,7 @@ schema are unchanged.
 
 `kubeagent scan` performs a read-only, whole-cluster scan and reports
 CrashLoopBackOff, ImagePullBackOff/ErrImagePull, OOMKilled,
-Pending/Unschedulable, VolumeAttachError (Multi-Attach), RestartLoop, and ProbeFailure pods, in text or JSON.
+Pending/Unschedulable, VolumeAttachError (Multi-Attach), RestartLoop, ProbeFailure, and init-container failures, in text or JSON.
 
 The optional `--explain` flag makes a single Claude API call to summarize
 findings in plain English. The deterministic core still works offline with no

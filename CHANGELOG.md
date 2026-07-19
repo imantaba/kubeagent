@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-07-19
+
 ### Added
 
 - **ProbeFailure detector.** `scan` flags a Running-but-not-Ready pod whose readiness,
@@ -381,7 +383,8 @@ infrastructure (a documentation site and a pre-release chaos-test harness).
 - CI (vet/test/build on push & PR) and a release workflow publishing a
   linux/amd64 tarball + `SHA256SUMS` to a GitHub Release.
 
-[Unreleased]: https://github.com/imantaba/kubeagent/compare/v0.23.0...HEAD
+[Unreleased]: https://github.com/imantaba/kubeagent/compare/v0.24.0...HEAD
+[0.24.0]: https://github.com/imantaba/kubeagent/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/imantaba/kubeagent/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/imantaba/kubeagent/compare/v0.21.1...v0.22.0
 [0.21.1]: https://github.com/imantaba/kubeagent/compare/v0.21.0...v0.21.1

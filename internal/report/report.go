@@ -16,6 +16,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/nodehealth"
 	"github.com/imantaba/kubeagent/internal/nodereserve"
 	"github.com/imantaba/kubeagent/internal/platform"
+	"github.com/imantaba/kubeagent/internal/pvchealth"
 	"github.com/imantaba/kubeagent/internal/pvcreclaim"
 	"github.com/imantaba/kubeagent/internal/resources"
 	"github.com/imantaba/kubeagent/internal/secscan"
@@ -34,6 +35,7 @@ type inventoryReport struct {
 	PVCReclaim         *pvcreclaim.Report          `json:"pvcReclaim,omitempty"`
 	DiskUsage          *diskusage.Report           `json:"diskUsage,omitempty"`
 	IngressIssues      []ingresshealth.RouteIssue  `json:"ingressIssues,omitempty"`
+	PVCIssues          []pvchealth.Issue           `json:"pvcIssues,omitempty"`
 	SecurityIssues     []secscan.Finding           `json:"securityIssues,omitempty"`
 	KubeletHealth      *nodehealth.Report          `json:"kubeletHealth,omitempty"`
 	Explanation        string                      `json:"explanation,omitempty"`
@@ -53,6 +55,7 @@ type Input struct {
 	PVCReclaimFull     bool // --pvc-reclaim: expand the PVC list (text only)
 	DiskUsage          *diskusage.Report
 	IngressIssues      []ingresshealth.RouteIssue
+	PVCIssues          []pvchealth.Issue
 	SecurityIssues     []secscan.Finding
 	SecurityVerbose    bool
 	KubeletHealth      *nodehealth.Report
@@ -77,6 +80,7 @@ func PrintInventory(in Input, format string, w io.Writer) error {
 			PVCReclaim:         in.PVCReclaim,
 			DiskUsage:          in.DiskUsage,
 			IngressIssues:      in.IngressIssues,
+			PVCIssues:          in.PVCIssues,
 			SecurityIssues:     in.SecurityIssues,
 			KubeletHealth:      in.KubeletHealth,
 			Explanation:        in.Explanation,
@@ -106,7 +110,7 @@ func printInventoryText(in Input, w io.Writer) error {
 	}
 
 	hasDisk := in.DiskUsage != nil && len(in.DiskUsage.Over) > 0
-	hasAttention := len(in.Result.Workloads) > 0 || len(real) > 0 || len(in.CredentialWarnings) > 0 || hasDisk || len(in.IngressIssues) > 0
+	hasAttention := len(in.Result.Workloads) > 0 || len(real) > 0 || len(in.CredentialWarnings) > 0 || hasDisk || len(in.IngressIssues) > 0 || len(in.PVCIssues) > 0
 	if hasAttention {
 		if _, err := fmt.Fprintln(w, "NEEDS ATTENTION"); err != nil {
 			return err
@@ -126,6 +130,9 @@ func printInventoryText(in Input, w io.Writer) error {
 			return err
 		}
 		if err := printIngressIssues(in.IngressIssues, w); err != nil {
+			return err
+		}
+		if err := printPVCIssues(in.PVCIssues, w); err != nil {
 			return err
 		}
 		if _, err := fmt.Fprintln(w); err != nil {
@@ -235,6 +242,9 @@ func attentionLine(in Input, real []svchealth.Issue) string {
 	}
 	if n := len(in.IngressIssues); n > 0 {
 		parts = append(parts, fmt.Sprintf("%d ingress %s broken", n, plural(n, "route", "routes")))
+	}
+	if n := len(in.PVCIssues); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d %s failing to provision", n, plural(n, "PVC", "PVCs")))
 	}
 	return strings.Join(parts, " · ")
 }
@@ -423,6 +433,16 @@ func printIngressIssues(issues []ingresshealth.RouteIssue, w io.Writer) error {
 		}
 		line += "  " + r.Detail
 		if _, err := fmt.Fprintln(w, line); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// printPVCIssues lists PersistentVolumeClaims stuck Pending because provisioning failed.
+func printPVCIssues(issues []pvchealth.Issue, w io.Writer) error {
+	for _, iss := range issues {
+		if _, err := fmt.Fprintf(w, "  ✗ %s/%s  PersistentVolumeClaim  %s — %s\n", iss.Namespace, iss.Name, iss.Phase, iss.Detail); err != nil {
 			return err
 		}
 	}

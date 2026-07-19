@@ -9,7 +9,7 @@ message, the failed image pull). It also checks cluster and node health (NotRead
 nodes *with* their root cause, stale kubelet heartbeats, a declared expected-node
 baseline, and kubelet resource reservations) and runs a set of advisory checks:
 broken Ingress routes, Services with no endpoints, credentials stored in the clear,
-PVCs on a `Delete` reclaim policy, workload security posture, node disk usage, and a
+PVCs on a `Delete` reclaim policy, PVCs stuck provisioning, workload security posture, node disk usage, and a
 kubelet `/healthz` probe.
 
 The report is **prioritized**: cluster health (P1 — nodes and kube-system) first,

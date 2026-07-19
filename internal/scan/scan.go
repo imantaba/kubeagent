@@ -22,6 +22,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/netpolicy"
 	"github.com/imantaba/kubeagent/internal/nodehealth"
 	"github.com/imantaba/kubeagent/internal/nodereserve"
+	"github.com/imantaba/kubeagent/internal/pvchealth"
 	"github.com/imantaba/kubeagent/internal/pvcreclaim"
 	"github.com/imantaba/kubeagent/internal/rollout"
 	"github.com/imantaba/kubeagent/internal/secscan"
@@ -55,6 +56,7 @@ type Result struct {
 	Inventory      inventory.Result
 	ServiceIssues  []svchealth.Issue
 	IngressIssues  []ingresshealth.RouteIssue
+	PVCIssues      []pvchealth.Issue
 	SecurityIssues []secscan.Finding
 	KubeletHealth  nodehealth.Report
 }
@@ -166,6 +168,8 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	pvcs, _ := collect.PersistentVolumeClaims(ctx, client, opts.Namespace)
 	pvs, _ := collect.PersistentVolumes(ctx, client)
 	pvcReclaim := pvcreclaim.Assess(pvcs, pvs)
+	pvcEvents, _ := collect.PVCEvents(ctx, client, opts.Namespace)
+	pvcIssues := pvchealth.Assess(pvcs, pvcEvents)
 
 	result := inventory.Prioritize(workloads, inventory.Opts{
 		IncludeRestarts: opts.IncludeRestarts,
@@ -200,5 +204,5 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 		kubeletHealth = nodehealth.Assess(probes)
 	}
 
-	return Result{Inputs: inputs, Nodes: nodes, NodeReserve: nodereserve.Assess(nodes), PVCReclaim: pvcReclaim, DiskUsage: diskReport, Health: health, Inventory: result, ServiceIssues: serviceIssues, IngressIssues: ingressIssues, SecurityIssues: securityIssues, KubeletHealth: kubeletHealth}, nil
+	return Result{Inputs: inputs, Nodes: nodes, NodeReserve: nodereserve.Assess(nodes), PVCReclaim: pvcReclaim, DiskUsage: diskReport, Health: health, Inventory: result, ServiceIssues: serviceIssues, IngressIssues: ingressIssues, PVCIssues: pvcIssues, SecurityIssues: securityIssues, KubeletHealth: kubeletHealth}, nil
 }

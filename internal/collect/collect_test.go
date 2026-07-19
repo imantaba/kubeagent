@@ -385,6 +385,24 @@ func TestUnhealthyEvents(t *testing.T) {
 	}
 }
 
+func TestPVCEvents(t *testing.T) {
+	ev := &corev1.Event{
+		ObjectMeta:     metav1.ObjectMeta{Namespace: "shop", Name: "data-pvc.ev"},
+		Reason:         "ProvisioningFailed",
+		Type:           "Warning",
+		Message:        `storageclass "fast" not found`,
+		InvolvedObject: corev1.ObjectReference{Kind: "PersistentVolumeClaim", Namespace: "shop", Name: "data-pvc"},
+	}
+	client := fake.NewSimpleClientset(ev)
+	got, err := PVCEvents(context.Background(), client, "shop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Reason != "ProvisioningFailed" {
+		t.Errorf("want 1 PVC event, got %+v", got)
+	}
+}
+
 func TestClassifyKubeletHealthz(t *testing.T) {
 	cases := []struct {
 		code                   int

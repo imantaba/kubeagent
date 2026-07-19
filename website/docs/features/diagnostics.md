@@ -131,6 +131,18 @@ routes resolve within the Ingress's own namespace. It is read-only and advisory:
 it appears in **NEEDS ATTENTION** and JSON `ingressIssues` but does not change
 the cluster verdict.
 
+### Pending PVC (storage provisioning)
+
+`scan` flags a PersistentVolumeClaim stuck **Pending** because provisioning or binding
+failed, reading the PVC's `ProvisioningFailed` / `FailedBinding` events and naming the
+cause — e.g. `✗ shop/data-pvc  PersistentVolumeClaim  Pending — storageclass "fast" not
+found`. It is the provision-time complement to `VolumeAttachError` (attach-time). Like
+that check it is **event-based**, so a PVC that is merely Pending under
+`WaitForFirstConsumer` (waiting for a pod to consume it) — which emits no failure event
+— is never flagged. It appears in **NEEDS ATTENTION** and JSON `pvcIssues` but is advisory
+(it does not change the cluster verdict). Read-only; listing PVCs and events needs no
+extra permission.
+
 ### Node heartbeat freshness
 
 Each node renews a `Lease` in `kube-node-lease` about every 10 seconds; the

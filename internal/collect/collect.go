@@ -114,6 +114,16 @@ func UnhealthyEvents(ctx context.Context, client kubernetes.Interface, namespace
 	return events.Items, nil
 }
 
+// PVCEvents lists events involving PersistentVolumeClaims in the namespace (""=all).
+// Read-only; pvchealth.Assess filters to the provisioning/binding failure reasons.
+func PVCEvents(ctx context.Context, client kubernetes.Interface, namespace string) ([]corev1.Event, error) {
+	events, err := client.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{FieldSelector: "involvedObject.kind=PersistentVolumeClaim"})
+	if err != nil {
+		return nil, fmt.Errorf("listing PVC events: %w", err)
+	}
+	return events.Items, nil
+}
+
 // FactsFrom wraps each pod in a diagnose.PodFacts, attaching any of the given
 // events that reference that pod (by InvolvedObject). Pods with no matching
 // events get an empty slice, so status-only detectors are unaffected.

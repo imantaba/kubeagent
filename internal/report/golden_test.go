@@ -15,6 +15,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/nodehealth"
 	"github.com/imantaba/kubeagent/internal/nodereserve"
+	"github.com/imantaba/kubeagent/internal/pvchealth"
 	"github.com/imantaba/kubeagent/internal/pvcreclaim"
 	"github.com/imantaba/kubeagent/internal/secscan"
 	"github.com/imantaba/kubeagent/internal/svchealth"
@@ -43,7 +44,11 @@ func goldenInput(now time.Time) Input {
 			},
 			SystemIssues: []string{"kube-system/coredns Degraded 1/2"},
 		},
-		Result:             inventory.Result{Workloads: goldenWorkloads()},
+		Result: inventory.Result{Workloads: goldenWorkloads()},
+		PVCIssues: []pvchealth.Issue{{
+			Namespace: "shop", Name: "reports-data", Phase: "Pending",
+			Reason: "ProvisioningFailed", Detail: `storageclass "fast-ssd" not found`, StorageClass: "fast-ssd",
+		}},
 		Resources:          sampleSummary(),
 		Platform:           sampleFacts(),
 		CredentialWarnings: sampleCredWarnings(),
@@ -195,7 +200,7 @@ func TestGoldenInputCoversAllSections(t *testing.T) {
 	if in.Cluster.Verdict == "" || len(in.Result.Workloads) < 6 || in.Resources == nil ||
 		in.Platform == nil || len(in.ServiceIssues) == 0 || len(in.CredentialWarnings) == 0 ||
 		len(in.IngressIssues) == 0 || len(in.SecurityIssues) == 0 || in.NodeReserve == nil ||
-		in.PVCReclaim == nil || in.KubeletHealth == nil {
+		in.PVCReclaim == nil || in.KubeletHealth == nil || len(in.PVCIssues) == 0 {
 		t.Fatal("goldenInput must populate every section so the golden stays comprehensive")
 	}
 	// Guard the *distinct* failure modes too, so a fixture regression can't drop one

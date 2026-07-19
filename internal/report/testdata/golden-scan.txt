@@ -4,7 +4,7 @@ Cluster: Degraded — 2/4 nodes Ready
   ✗ node worker-1 kubelet not heartbeating (lease 95s stale)
   ✗ node db-01 expected but absent from the cluster
   ✗ system kube-system/coredns Degraded 1/2
-  Needs attention: 8 workloads failing · 2 services without endpoints · 1 ingress route broken
+  Needs attention: 8 workloads failing · 2 services without endpoints · 1 ingress route broken · 1 PVC failing to provision
 
 NEEDS ATTENTION
 ✗ shop/web  Deployment  0/1 Degraded  · 8 restarts, last 205d ago
@@ -58,6 +58,7 @@ NEEDS ATTENTION
   ✗ default/app-config  ConfigMap[DB_PASSWORD]  credential-like name with a literal value
   ✗ default/web  Pod[app/AWS_SECRET]  AWS access key
   ✗ ingress shop/storefront  shop.example.com/  backend Service payments:80 has no ready endpoints (likely 502/503)
+  ✗ shop/reports-data  PersistentVolumeClaim  Pending — storageclass "fast-ssd" not found
 
 SECURITY  (advisory — does not affect the cluster verdict)
   2 baseline · 1 exposed service · 18 restricted hardening gaps · 7 workloads

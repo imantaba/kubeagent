@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **InitContainer failure detector.** `scan` flags a pod blocked in its init phase —
+  `Init:CrashLoopBackOff`, `Init:ImagePullBackOff` / `Init:ErrImagePull`, or
+  `Init:OOMKilled` — reading `InitContainerStatuses` (which the main-container crash
+  detectors don't look at) and naming which init container is failing, its position,
+  and why. Read-only, always-on, no new RBAC.
+
 ## [0.24.0] - 2026-07-19
 
 ### Added

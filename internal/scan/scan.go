@@ -105,6 +105,7 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 		diagnose.PendingDetector{},
 		diagnose.VolumeAttachDetector{},
 		diagnose.RestartLoopDetector{Now: time.Now()},
+		diagnose.InitContainerDetector{},
 		diagnose.ProbeFailureDetector{},
 	}
 	attachEvents, _ := collect.VolumeAttachEvents(ctx, client, opts.Namespace)

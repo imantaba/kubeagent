@@ -103,6 +103,19 @@ func VolumeAttachEvents(ctx context.Context, client kubernetes.Interface, namesp
 	return events.Items, nil
 }
 
+// FailedCreateEvents lists the controller "FailedCreate" Warning events in the
+// namespace ("" = all) — a Deployment's ReplicaSet, a StatefulSet, or a DaemonSet
+// reporting that it cannot create pods (quota, LimitRange, admission webhook).
+// Read-only; mirrors VolumeAttachEvents. Needs no permission beyond the event
+// list scan already performs.
+func FailedCreateEvents(ctx context.Context, client kubernetes.Interface, namespace string) ([]corev1.Event, error) {
+	events, err := client.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{FieldSelector: "reason=FailedCreate"})
+	if err != nil {
+		return nil, fmt.Errorf("listing FailedCreate events: %w", err)
+	}
+	return events.Items, nil
+}
+
 // UnhealthyEvents lists the kubelet's probe-failure ("Unhealthy") Warning events
 // in the namespace ("" = all). Read-only; mirrors VolumeAttachEvents. Needs no
 // permission beyond the event list scan already performs.

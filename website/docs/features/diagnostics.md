@@ -90,6 +90,19 @@ CronJobs were hidden without `--include-cron`; healthy ones still are). Only the
 scheduled run's outcome is considered, so an older, already-superseded failure is not
 re-flagged. Read-only; Jobs/CronJobs are already listed, so it needs no extra permission.
 
+### FailedCreate (controller can't create pods)
+
+A workload can sit below its desired replicas with **no pods at all** when its
+controller is being denied pod *creation* — a `ResourceQuota` is exhausted, a
+`LimitRange` rejects the pod's resources, or an admission webhook blocks it. The
+pod-level detectors see nothing (there is no pod), so the workload would
+otherwise show only `0/N Degraded` with no cause. kubeagent reads the
+controller's `FailedCreate` events and names the cause on the workload — e.g.
+`⚠ FailedCreate: the controller cannot create pods — blocked by a ResourceQuota`,
+with the raw admission message as evidence. A Deployment's event lands on its
+ReplicaSet and is resolved back to the Deployment; StatefulSets and DaemonSets
+are matched directly. Read-only, always-on, no new RBAC.
+
 ### Node reservations
 
 `scan` reports each node's aggregate kubelet resource reservation for **memory,
@@ -278,7 +291,7 @@ schema are unchanged.
 
 `kubeagent scan` performs a read-only, whole-cluster scan and reports
 CrashLoopBackOff, ImagePullBackOff/ErrImagePull, OOMKilled,
-Pending/Unschedulable, VolumeAttachError (Multi-Attach), RestartLoop, ProbeFailure, init-container failures, and failed Jobs/CronJobs, in text or JSON.
+Pending/Unschedulable, VolumeAttachError (Multi-Attach), RestartLoop, ProbeFailure, init-container failures, failed Jobs/CronJobs, and controllers that cannot create pods (FailedCreate), in text or JSON.
 
 The optional `--explain` flag makes a single Claude API call to summarize
 findings in plain English. The deterministic core still works offline with no

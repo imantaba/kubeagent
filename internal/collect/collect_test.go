@@ -403,6 +403,24 @@ func TestPVCEvents(t *testing.T) {
 	}
 }
 
+func TestFailedCreateEvents(t *testing.T) {
+	ev := &corev1.Event{
+		ObjectMeta:     metav1.ObjectMeta{Namespace: "shop", Name: "api-7c9f.ev"},
+		Reason:         "FailedCreate",
+		Type:           "Warning",
+		Message:        `pods "api-7c9f-" is forbidden: exceeded quota: compute`,
+		InvolvedObject: corev1.ObjectReference{Kind: "ReplicaSet", Namespace: "shop", Name: "api-7c9f"},
+	}
+	client := fake.NewSimpleClientset(ev)
+	got, err := FailedCreateEvents(context.Background(), client, "shop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Reason != "FailedCreate" {
+		t.Fatalf("want one FailedCreate event, got %+v", got)
+	}
+}
+
 func TestClassifyKubeletHealthz(t *testing.T) {
 	cases := []struct {
 		code                   int

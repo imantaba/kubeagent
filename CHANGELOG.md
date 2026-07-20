@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **"Can't create pods" (FailedCreate) check.** `scan` now flags a workload stuck below its
+  desired replicas because its controller cannot create pods — a `ResourceQuota`,
+  `LimitRange`, or admission webhook is rejecting them — naming the cause on the workload
+  (e.g. "blocked by a ResourceQuota") with the admission message as evidence. Covers
+  Deployments (via their ReplicaSet), StatefulSets, and DaemonSets. Read-only, always-on,
+  no new RBAC.
+
 - **`kubeagent_pvc_pending_issues` watch metric.** The `watch` daemon now exposes a
   Prometheus gauge for the count of PersistentVolumeClaims stuck Pending because
   provisioning/binding failed (the v0.26.0 Pending-PVC check), so operators can alert on

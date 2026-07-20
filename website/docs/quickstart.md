@@ -3,7 +3,7 @@
 `kubeagent` is a read-only Kubernetes troubleshooting CLI that tells you **why**
 your workloads are broken, not just that they are. A single `scan` diagnoses the
 common pod failure modes — CrashLoopBackOff, ImagePullBackOff / ErrImagePull,
-OOMKilled, Pending / Unschedulable, VolumeAttachError, silent restart loops, failing readiness/liveness/startup probes, failing init containers, and failed Jobs/CronJobs —
+OOMKilled, Pending / Unschedulable, VolumeAttachError, silent restart loops, failing readiness/liveness/startup probes, failing init containers, failed Jobs/CronJobs, and FailedCreate (controllers blocked from creating pods) —
 and names the underlying cause for each (the container exit reason, the scheduler's
 message, the failed image pull). It also checks cluster and node health (NotReady
 nodes *with* their root cause, stale kubelet heartbeats, a declared expected-node
@@ -110,6 +110,9 @@ NEEDS ATTENTION
   ✗ shop/payments  NodePort  no ready endpoints
   ✗ shop/app-config  ConfigMap[AWS_SECRET_ACCESS_KEY]  AWS access key
   ✗ ingress shop/storefront  shop.example.com/  backend Service payments:80 has no ready endpoints (likely 502/503)
+✗ shop/storefront  Deployment  0/3 Degraded
+    ⚠ FailedCreate: the controller cannot create pods — blocked by a ResourceQuota
+      ↳ pods "storefront-7c9f-" is forbidden: exceeded quota: compute, requested: requests.cpu=2, used: requests.cpu=4, limited: requests.cpu=4
 
 SECURITY  (advisory — does not affect the cluster verdict)
   2 baseline · 1 exposed service · 18 restricted hardening gaps · 7 workloads

@@ -48,6 +48,8 @@ kubeagent scan
   init container and why.
 - **JobFailed** — a Job or CronJob whose run failed (exhausted retries or hit its
   deadline); a failing CronJob is shown even without `--include-cron`.
+- **FailedCreate** — a workload whose controller cannot create pods because a
+  ResourceQuota, LimitRange, or admission webhook is rejecting them.
 - **Node reservation check** — warns when a node's kubelet reserves no memory
   (allocatable == capacity), meaning OS or kubelet memory pressure can destabilise
   the node. Advisory and read-only; no new RBAC.
@@ -95,7 +97,7 @@ operates **read-only by default** (an opt-in `--fix` flag can apply safe, revers
 
 ✅ **v1 shipped** — `kubeagent scan` performs a read-only, whole-cluster scan and
 reports CrashLoopBackOff, ImagePullBackOff/ErrImagePull, OOMKilled,
-Pending/Unschedulable, VolumeAttachError (Multi-Attach), RestartLoop, ProbeFailure, init-container failures, and failed Jobs/CronJobs, in text or JSON.
+Pending/Unschedulable, VolumeAttachError (Multi-Attach), RestartLoop, ProbeFailure, init-container failures, failed Jobs/CronJobs, and pod-creation denials (FailedCreate), in text or JSON.
 
 ✅ **v2 shipped** — an optional `--explain` flag makes a single Claude API call
 (via the official Go SDK) to summarize findings in plain English. The

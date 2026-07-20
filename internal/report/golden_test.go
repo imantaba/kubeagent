@@ -132,6 +132,10 @@ func goldenWorkloads() []inventory.Workload {
 			Findings: []diagnose.Finding{{Pod: "shop/nightly-report", Issue: "JobFailed",
 				Reason:   "the most recent scheduled run failed — hit its deadline (DeadlineExceeded)",
 				Evidence: `job "nightly-report-28901234": Job was active longer than specified deadline`}}},
+		{Namespace: "shop", Name: "storefront", Kind: "Deployment", Desired: 3, Ready: 0, Status: "Degraded",
+			Findings: []diagnose.Finding{{Pod: "shop/storefront", Issue: "FailedCreate",
+				Reason:   "the controller cannot create pods — blocked by a ResourceQuota",
+				Evidence: `pods "storefront-7c9f-" is forbidden: exceeded quota: compute, requested: requests.cpu=2, used: requests.cpu=4, limited: requests.cpu=4`}}},
 	}
 }
 

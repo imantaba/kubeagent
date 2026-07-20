@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Job / CronJob failure check.** `scan` flags a failed Job (`BackoffLimitExceeded` /
+  `DeadlineExceeded`) and a CronJob whose most-recent run failed, naming the cause on the
+  workload. A failing CronJob is now shown by default (healthy ones stay hidden behind
+  `--include-cron`). Read-only, always-on, no new RBAC.
+
 ## [0.26.0] - 2026-07-19
 
 ### Added

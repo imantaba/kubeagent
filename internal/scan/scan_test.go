@@ -451,6 +451,38 @@ func TestEvaluate_FlagsFailedJob(t *testing.T) {
 	}
 }
 
+func TestEvaluate_FlagsFailedCreate(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}}
+	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "api"},
+		Spec: appsv1.DeploymentSpec{Replicas: p32(3)}}
+	rs := &appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "api-7c9f",
+		OwnerReferences: []metav1.OwnerReference{{Kind: "Deployment", Name: "api", Controller: boolp(true)}}}}
+	ev := &corev1.Event{
+		ObjectMeta:     metav1.ObjectMeta{Namespace: "shop", Name: "api-7c9f.ev"},
+		Reason:         "FailedCreate",
+		Type:           "Warning",
+		Message:        `pods "api-7c9f-" is forbidden: exceeded quota: compute`,
+		InvolvedObject: corev1.ObjectReference{Kind: "ReplicaSet", Namespace: "shop", Name: "api-7c9f"},
+	}
+	cli := fake.NewSimpleClientset(node, dep, rs, ev)
+	res, err := Evaluate(context.Background(), cli, Options{Namespace: "shop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, w := range res.Inventory.Workloads {
+		for _, f := range w.Findings {
+			if f.Issue == "FailedCreate" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected a FailedCreate finding, got %+v", res.Inventory.Workloads)
+	}
+}
+
 func TestEvaluate_KubeletHealthOffByDefault(t *testing.T) {
 	// Mirrors TestEvaluate_DiskUsageOffByDefault: the fake clientset's
 	// RESTClient() is nil, so the nodes/proxy probe cannot be exercised through

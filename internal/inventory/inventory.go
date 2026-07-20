@@ -417,10 +417,14 @@ func Prioritize(workloads []Workload, opts Opts) Result {
 	for _, w := range workloads {
 		switch {
 		case w.Kind == "CronJob":
-			if opts.IncludeCron {
+			switch {
+			case w.Flagged():
+				w.Priority = priorityProblem
+				res.Workloads = append(res.Workloads, w)
+			case opts.IncludeCron:
 				w.Priority = priorityCron
 				res.Workloads = append(res.Workloads, w)
-			} else {
+			default:
 				res.HiddenCron++
 			}
 		case w.Flagged():

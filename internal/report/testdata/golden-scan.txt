@@ -91,6 +91,7 @@ NOTES
       — disk pressure can destabilize the node
   • 1 PVC on Delete reclaim policy — standard ×1   [--pvc-reclaim]
   • shop/internal-metrics  ClusterIP  no ready endpoints
+  • ingress shop/dashboard  dash.example.com/  backend Service grafana is intentionally empty (scaled to 0) — route parked
 
 CONTEXT
 Kubelet reservations (combined kube+system)

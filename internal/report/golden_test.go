@@ -58,11 +58,14 @@ func goldenInput(now time.Time) Input {
 			Namespace: "shop", Name: "internal-metrics", Type: "ClusterIP",
 			Problem: "NoEndpoints", Detail: "no ready endpoints", Expected: true,
 		}),
-		IngressIssues: []ingresshealth.RouteIssue{{
-			Namespace: "shop", Ingress: "storefront", Host: "shop.example.com", Path: "/",
-			Service: "payments", Port: "80", Problem: "NoEndpoints",
-			Detail: "backend Service payments:80 has no ready endpoints (likely 502/503)",
-		}},
+		IngressIssues: []ingresshealth.RouteIssue{
+			{Namespace: "shop", Ingress: "storefront", Host: "shop.example.com", Path: "/",
+				Service: "payments", Port: "80", Problem: "NoEndpoints",
+				Detail: "backend Service payments:80 has no ready endpoints (likely 502/503)"},
+			{Namespace: "shop", Ingress: "dashboard", Host: "dash.example.com", Path: "/",
+				Service: "grafana", Problem: "NoEndpoints", Expected: true,
+				Detail: "backend Service grafana is intentionally empty (scaled to 0) — route parked"},
+		},
 		SecurityIssues: goldenSecurity(),
 		NodeReserve: &nodereserve.Report{
 			WarnCount: 2, EphemeralNone: 2, CPUNone: 2, EphemeralReporting: 2,

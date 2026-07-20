@@ -104,13 +104,14 @@ func nowOr(t time.Time) time.Time {
 func printInventoryText(in Input, w io.Writer) error {
 	now := nowOr(in.Now)
 	real, expected := splitServiceIssues(in.ServiceIssues)
+	realIng, expectedIng := splitIngressIssues(in.IngressIssues)
 
-	if err := printHeader(in, real, w); err != nil {
+	if err := printHeader(in, real, realIng, w); err != nil {
 		return err
 	}
 
 	hasDisk := in.DiskUsage != nil && len(in.DiskUsage.Over) > 0
-	hasAttention := len(in.Result.Workloads) > 0 || len(real) > 0 || len(in.CredentialWarnings) > 0 || hasDisk || len(in.IngressIssues) > 0 || len(in.PVCIssues) > 0
+	hasAttention := len(in.Result.Workloads) > 0 || len(real) > 0 || len(in.CredentialWarnings) > 0 || hasDisk || len(realIng) > 0 || len(in.PVCIssues) > 0
 	if hasAttention {
 		if _, err := fmt.Fprintln(w, "NEEDS ATTENTION"); err != nil {
 			return err
@@ -129,7 +130,7 @@ func printInventoryText(in Input, w io.Writer) error {
 		if err := printDiskUsage(in.DiskUsage, w); err != nil {
 			return err
 		}
-		if err := printIngressIssues(in.IngressIssues, w); err != nil {
+		if err := printIngressIssues(realIng, "  ✗", w); err != nil {
 			return err
 		}
 		if err := printPVCIssues(in.PVCIssues, w); err != nil {
@@ -150,7 +151,7 @@ func printInventoryText(in Input, w io.Writer) error {
 		return err
 	}
 
-	if err := printNotes(in, expected, w); err != nil {
+	if err := printNotes(in, expected, expectedIng, w); err != nil {
 		return err
 	}
 
@@ -184,9 +185,21 @@ func splitServiceIssues(issues []svchealth.Issue) (real, expected []svchealth.Is
 	return real, expected
 }
 
+// splitIngressIssues separates real broken routes from expected-empty (parked) ones.
+func splitIngressIssues(issues []ingresshealth.RouteIssue) (real, expected []ingresshealth.RouteIssue) {
+	for _, r := range issues {
+		if r.Expected {
+			expected = append(expected, r)
+		} else {
+			real = append(real, r)
+		}
+	}
+	return real, expected
+}
+
 // printHeader prints the cluster verdict line and, when anything is flagged, a
 // workload-scoped attention line.
-func printHeader(in Input, real []svchealth.Issue, w io.Writer) error {
+func printHeader(in Input, real []svchealth.Issue, realIng []ingresshealth.RouteIssue, w io.Writer) error {
 	c := in.Cluster
 	if c.Verdict == "" {
 		return nil
@@ -209,7 +222,7 @@ func printHeader(in Input, real []svchealth.Issue, w io.Writer) error {
 			return err
 		}
 	}
-	if line := attentionLine(in, real); line != "" {
+	if line := attentionLine(in, real, realIng); line != "" {
 		if _, err := fmt.Fprintf(w, "  Needs attention: %s\n", line); err != nil {
 			return err
 		}
@@ -222,7 +235,7 @@ func printHeader(in Input, real []svchealth.Issue, w io.Writer) error {
 
 // attentionLine summarizes flagged workloads, services without endpoints,
 // volumes over the disk-usage threshold, and broken ingress routes.
-func attentionLine(in Input, real []svchealth.Issue) string {
+func attentionLine(in Input, real []svchealth.Issue, realIng []ingresshealth.RouteIssue) string {
 	failing := 0
 	for _, wl := range in.Result.Workloads {
 		if wl.Flagged() {
@@ -240,7 +253,7 @@ func attentionLine(in Input, real []svchealth.Issue) string {
 		n := len(in.DiskUsage.Over)
 		parts = append(parts, fmt.Sprintf("%d %s low on disk", n, plural(n, "volume", "volumes")))
 	}
-	if n := len(in.IngressIssues); n > 0 {
+	if n := len(realIng); n > 0 {
 		parts = append(parts, fmt.Sprintf("%d ingress %s broken", n, plural(n, "route", "routes")))
 	}
 	if n := len(in.PVCIssues); n > 0 {
@@ -256,9 +269,9 @@ func plural(n int, one, many string) string {
 	return many
 }
 
-// printNotes renders advisory content: expected-empty services, PVC reclaim, and
-// the hidden-counts footer.
-func printNotes(in Input, expected []svchealth.Issue, w io.Writer) error {
+// printNotes renders advisory content: expected-empty services, expected-empty
+// ingress routes, PVC reclaim, and the hidden-counts footer.
+func printNotes(in Input, expected []svchealth.Issue, expectedIng []ingresshealth.RouteIssue, w io.Writer) error {
 	now := nowOr(in.Now)
 	var b strings.Builder
 	if n := in.NodeReserve; n != nil {
@@ -287,6 +300,9 @@ func printNotes(in Input, expected []svchealth.Issue, w io.Writer) error {
 		return err
 	}
 	if err := printServiceIssues(expected, "  •", now, &b); err != nil {
+		return err
+	}
+	if err := printIngressIssues(expectedIng, "  •", &b); err != nil {
 		return err
 	}
 	if hint := footerHint(in.Result); hint != "" {
@@ -424,10 +440,11 @@ func fmtBytes(b int64) string {
 	}
 }
 
-// printIngressIssues lists Ingress routes whose backend chain is broken.
-func printIngressIssues(issues []ingresshealth.RouteIssue, w io.Writer) error {
+// printIngressIssues lists Ingress routes whose backend chain is broken (glyph "  ✗")
+// or is intentionally empty (glyph "  •").
+func printIngressIssues(issues []ingresshealth.RouteIssue, glyph string, w io.Writer) error {
 	for _, r := range issues {
-		line := fmt.Sprintf("  ✗ ingress %s/%s", r.Namespace, r.Ingress)
+		line := fmt.Sprintf("%s ingress %s/%s", glyph, r.Namespace, r.Ingress)
 		if route := r.Host + r.Path; route != "" {
 			line += "  " + route
 		}

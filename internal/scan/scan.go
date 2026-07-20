@@ -156,7 +156,7 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	backends := svchealth.BackendsFrom(inputs.Deployments, inputs.StatefulSets, inputs.DaemonSets, inputs.Jobs, inputs.CronJobs)
 	serviceIssues := svchealth.Assess(svcs, slices, backends)
 	ings, _ := collect.Ingresses(ctx, client, opts.Namespace)
-	ingressIssues := ingresshealth.Assess(ings, svcs, slices)
+	ingressIssues := ingresshealth.Assess(ings, svcs, slices, backends)
 
 	var securityIssues []secscan.Finding
 	if opts.Security {

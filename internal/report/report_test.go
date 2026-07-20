@@ -1373,3 +1373,36 @@ func TestPrintInventory_ShowsPVCIssues(t *testing.T) {
 		t.Errorf("attention summary missing the PVC count:\n%s", out)
 	}
 }
+
+func TestPrintInventory_ExpectedIngressGoesToNotes(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		IngressIssues: []ingresshealth.RouteIssue{
+			{Namespace: "shop", Ingress: "real", Host: "a.io", Path: "/", Service: "api", Port: "80",
+				Problem: "NoEndpoints", Detail: "backend Service api:80 has no ready endpoints (likely 502/503)"},
+			{Namespace: "shop", Ingress: "parked", Host: "b.io", Path: "/", Service: "web",
+				Problem: "NoEndpoints", Expected: true,
+				Detail: "backend Service web is intentionally empty (scaled to 0) — route parked"},
+		},
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	// The attention line counts only the real route.
+	if !strings.Contains(out, "1 ingress route broken") {
+		t.Errorf("attention line should count only the real route:\n%s", out)
+	}
+	// The real route is in NEEDS ATTENTION with the ✗ glyph.
+	if !strings.Contains(out, "✗ ingress shop/real") {
+		t.Errorf("real route should be under NEEDS ATTENTION:\n%s", out)
+	}
+	// The parked route is a quiet NOTE with the • glyph, not an attention ✗.
+	if !strings.Contains(out, "• ingress shop/parked") {
+		t.Errorf("parked route should be a NOTE:\n%s", out)
+	}
+	if strings.Contains(out, "✗ ingress shop/parked") {
+		t.Errorf("parked route must not appear under NEEDS ATTENTION:\n%s", out)
+	}
+}

@@ -1,12 +1,15 @@
 package ingresshealth
 
 import (
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/imantaba/kubeagent/internal/svchealth"
 )
 
 func svc(ns, name string, ports ...int32) corev1.Service {
@@ -50,7 +53,7 @@ func ing(ns, name, host, path, svcName string, portNum int32) networkingv1.Ingre
 }
 
 func TestAssess_NoService(t *testing.T) {
-	got := Assess([]networkingv1.Ingress{ing("shop", "web", "x.io", "/api", "missing", 80)}, nil, nil)
+	got := Assess([]networkingv1.Ingress{ing("shop", "web", "x.io", "/api", "missing", 80)}, nil, nil, nil)
 	if len(got) != 1 || got[0].Problem != "NoService" {
 		t.Fatalf("want one NoService, got %+v", got)
 	}
@@ -61,7 +64,7 @@ func TestAssess_NoService(t *testing.T) {
 
 func TestAssess_NoEndpoints(t *testing.T) {
 	svcs := []corev1.Service{svc("shop", "api", 80)}
-	got := Assess([]networkingv1.Ingress{ing("shop", "web", "x.io", "/api", "api", 80)}, svcs, nil) // no slices -> 0 ready
+	got := Assess([]networkingv1.Ingress{ing("shop", "web", "x.io", "/api", "api", 80)}, svcs, nil, nil) // no slices -> 0 ready
 	if len(got) != 1 || got[0].Problem != "NoEndpoints" {
 		t.Fatalf("want one NoEndpoints, got %+v", got)
 	}
@@ -73,7 +76,7 @@ func TestAssess_NoEndpoints(t *testing.T) {
 func TestAssess_PortNotExposed(t *testing.T) {
 	svcs := []corev1.Service{svc("shop", "api", 80)}
 	slices := []discoveryv1.EndpointSlice{sliceFor("shop", "api", 1)}
-	got := Assess([]networkingv1.Ingress{ing("shop", "web", "x.io", "/api", "api", 8080)}, svcs, slices) // ready, but 8080 not exposed
+	got := Assess([]networkingv1.Ingress{ing("shop", "web", "x.io", "/api", "api", 8080)}, svcs, slices, nil) // ready, but 8080 not exposed
 	if len(got) != 1 || got[0].Problem != "PortNotExposed" {
 		t.Fatalf("want one PortNotExposed, got %+v", got)
 	}
@@ -82,7 +85,7 @@ func TestAssess_PortNotExposed(t *testing.T) {
 func TestAssess_HealthyRouteNoIssue(t *testing.T) {
 	svcs := []corev1.Service{svc("shop", "api", 80)}
 	slices := []discoveryv1.EndpointSlice{sliceFor("shop", "api", 2)}
-	got := Assess([]networkingv1.Ingress{ing("shop", "web", "x.io", "/api", "api", 80)}, svcs, slices)
+	got := Assess([]networkingv1.Ingress{ing("shop", "web", "x.io", "/api", "api", 80)}, svcs, slices, nil)
 	if len(got) != 0 {
 		t.Fatalf("healthy route should yield no issue, got %+v", got)
 	}
@@ -100,7 +103,7 @@ func TestAssess_NamedPortMatch(t *testing.T) {
 			}},
 		}}},
 	}
-	if got := Assess([]networkingv1.Ingress{in}, []corev1.Service{s}, slices); len(got) != 0 {
+	if got := Assess([]networkingv1.Ingress{in}, []corev1.Service{s}, slices, nil); len(got) != 0 {
 		t.Errorf("named port 'http' should match, got %+v", got)
 	}
 }
@@ -112,7 +115,7 @@ func TestAssess_DefaultBackendChecked(t *testing.T) {
 			Service: &networkingv1.IngressServiceBackend{Name: "fallback", Port: networkingv1.ServiceBackendPort{Number: 80}},
 		}},
 	}
-	got := Assess([]networkingv1.Ingress{in}, nil, nil)
+	got := Assess([]networkingv1.Ingress{in}, nil, nil, nil)
 	if len(got) != 1 || got[0].Problem != "NoService" || got[0].Service != "fallback" || got[0].Host != "" || got[0].Path != "" {
 		t.Fatalf("default backend should be checked, got %+v", got)
 	}
@@ -127,7 +130,7 @@ func TestAssess_ResourceBackendSkipped(t *testing.T) {
 			}},
 		}}},
 	}
-	if got := Assess([]networkingv1.Ingress{in}, nil, nil); len(got) != 0 {
+	if got := Assess([]networkingv1.Ingress{in}, nil, nil, nil); len(got) != 0 {
 		t.Errorf("resource backend must be skipped, got %+v", got)
 	}
 }
@@ -138,8 +141,44 @@ func TestAssess_ResourceBackendSkipped(t *testing.T) {
 func TestAssess_NoPortBackend_NotPortNotExposed(t *testing.T) {
 	svcs := []corev1.Service{svc("shop", "api", 80)}
 	slices := []discoveryv1.EndpointSlice{sliceFor("shop", "api", 1)}
-	got := Assess([]networkingv1.Ingress{ing("shop", "web", "x.io", "/", "api", 0)}, svcs, slices)
+	got := Assess([]networkingv1.Ingress{ing("shop", "web", "x.io", "/", "api", 0)}, svcs, slices, nil)
 	if len(got) != 0 {
 		t.Fatalf("no-port backend with a ready service must not be flagged, got %+v", got)
+	}
+}
+
+func TestAssess_ExpectedEmpty_ScaledToZeroBackend(t *testing.T) {
+	svcs := []corev1.Service{svc("shop", "web", 80)} // helper builds a Service with port 80
+	svcs[0].Spec.Selector = map[string]string{"app": "web"}
+	backends := []svchealth.Backend{{Kind: "Deployment", Namespace: "shop", TemplateLabels: map[string]string{"app": "web"}, Desired: 0}}
+	got := Assess([]networkingv1.Ingress{ing("shop", "site", "x.io", "/", "web", 80)}, svcs, nil, backends) // no slices -> 0 ready
+	if len(got) != 1 || !got[0].Expected {
+		t.Fatalf("route to a scaled-to-0 backend must be Expected, got %+v", got)
+	}
+	if !strings.Contains(got[0].Detail, "route parked") {
+		t.Errorf("expected 'route parked' detail, got %q", got[0].Detail)
+	}
+}
+
+func TestAssess_ExpectedEmpty_Annotated(t *testing.T) {
+	svcs := []corev1.Service{svc("db", "pg-ro", 5432)}
+	svcs[0].Spec.Selector = map[string]string{"role": "replica"}
+	svcs[0].Annotations = map[string]string{svchealth.ExpectedEmptyAnnotation: "true"}
+	got := Assess([]networkingv1.Ingress{ing("db", "pg", "pg.io", "/", "pg-ro", 5432)}, svcs, nil, nil)
+	if len(got) != 1 || !got[0].Expected {
+		t.Fatalf("route to an annotated Service must be Expected, got %+v", got)
+	}
+}
+
+func TestAssess_GenuinelyBroken_NotExpected(t *testing.T) {
+	svcs := []corev1.Service{svc("shop", "api", 80)}
+	svcs[0].Spec.Selector = map[string]string{"app": "api"}
+	backends := []svchealth.Backend{{Kind: "Deployment", Namespace: "shop", TemplateLabels: map[string]string{"app": "api"}, Desired: 3}} // live, 0 ready
+	got := Assess([]networkingv1.Ingress{ing("shop", "site", "x.io", "/", "api", 80)}, svcs, nil, backends)
+	if len(got) != 1 || got[0].Expected {
+		t.Fatalf("route to a live backend with 0 endpoints is a real issue, got %+v", got)
+	}
+	if !strings.Contains(got[0].Detail, "502/503") {
+		t.Errorf("expected '502/503' detail, got %q", got[0].Detail)
 	}
 }

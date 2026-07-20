@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Quiet intentionally-empty endpoints.** An Ingress route whose backend Service is empty
+  on purpose — the backing workload is scaled to zero (or between runs), or the Service is
+  annotated `kubeagent.io/expected-empty: "true"` — is now shown as a parked route in NOTES
+  instead of a 502/503 in NEEDS ATTENTION. The annotation also quiets the bare Service
+  finding, covering operator-managed role-split Services (e.g. CloudNativePG `-ro` on a
+  single-instance cluster) that kubeagent can't infer. Read-only, always-on, no new RBAC.
+
 ## [0.28.0] - 2026-07-20
 
 ### Added

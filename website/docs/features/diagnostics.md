@@ -155,6 +155,14 @@ routes resolve within the Ingress's own namespace. It is read-only and advisory:
 it appears in **NEEDS ATTENTION** and JSON `ingressIssues` but does not change
 the cluster verdict.
 
+A route whose backend Service is **intentionally empty** — the backing workload is scaled to zero (or a Job/CronJob between runs), or the Service is explicitly annotated `kubeagent.io/expected-empty: "true"` — is treated as **parked**: it moves to the quiet NOTES section instead of NEEDS ATTENTION, so a deliberately-idle app or an operator-managed role-split Service (e.g. a CloudNativePG `-ro` service on a single-instance cluster) does not read as a 502/503 outage. Set the annotation on the **Service** to silence a route (or the bare Service finding) kubeagent cannot infer is empty by design:
+
+```yaml
+metadata:
+  annotations:
+    kubeagent.io/expected-empty: "true"
+```
+
 ### Pending PVC (storage provisioning)
 
 `scan` flags a PersistentVolumeClaim stuck **Pending** because provisioning or binding

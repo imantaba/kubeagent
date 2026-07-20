@@ -12,6 +12,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/imantaba/kubeagent/internal/batchhealth"
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/collect"
 	"github.com/imantaba/kubeagent/internal/diagnose"
@@ -139,6 +140,7 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 		}
 	}
 	workloads := inventory.Assemble(inputs, findings)
+	batchhealth.Annotate(workloads, inputs.Jobs)
 
 	nodes, err := collect.Nodes(ctx, client)
 	if err != nil {

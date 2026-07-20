@@ -6,6 +6,7 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -420,6 +421,33 @@ func TestEvaluate_FlagsPendingPVC(t *testing.T) {
 	}
 	if len(res.PVCIssues) != 1 || res.PVCIssues[0].Name != "data-pvc" {
 		t.Errorf("expected 1 PVCIssue for data-pvc, got %+v", res.PVCIssues)
+	}
+}
+
+func TestEvaluate_FlagsFailedJob(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}}
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "db-migrate"},
+		Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{
+			{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Reason: "BackoffLimitExceeded", Message: "Job has reached the specified backoff limit"},
+		}},
+	}
+	cli := fake.NewSimpleClientset(node, job)
+	res, err := Evaluate(context.Background(), cli, Options{Namespace: "shop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, w := range res.Inventory.Workloads {
+		for _, f := range w.Findings {
+			if f.Issue == "JobFailed" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected a JobFailed finding, got %+v", res.Inventory.Workloads)
 	}
 }
 

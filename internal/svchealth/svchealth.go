@@ -6,6 +6,7 @@ package svchealth
 
 import (
 	"sort"
+	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -57,6 +58,9 @@ func Assess(services []corev1.Service, slices []discoveryv1.EndpointSlice, backe
 				is.Expected = true
 				is.Backing = backing
 				is.Detail = detail
+			} else if annotatedExpectedEmpty(s) {
+				is.Expected = true
+				is.Detail = "no ready endpoints — declared via " + ExpectedEmptyAnnotation
 			}
 			out = append(out, is)
 		}
@@ -142,6 +146,42 @@ func selectorMatches(selector, labels map[string]string) bool {
 		}
 	}
 	return true
+}
+
+// ExpectedEmptyAnnotation, when set to "true" on a Service, declares that the Service is
+// meant to have no ready endpoints (e.g. an operator-managed role-split Service such as a
+// CloudNativePG "-ro" service on a single-instance cluster). kubeagent then treats its
+// empty endpoints as expected rather than a problem.
+const ExpectedEmptyAnnotation = "kubeagent.io/expected-empty"
+
+func annotatedExpectedEmpty(svc corev1.Service) bool {
+	return strings.EqualFold(svc.Annotations[ExpectedEmptyAnnotation], "true")
+}
+
+// ExpectedEmpty reports whether a Service's lack of ready endpoints is intentional, with a
+// short human reason. It is the shared decision reused by ingresshealth. Order: the
+// annotation (an absolute operator declaration, honored even over a live backend), then a
+// scaled-to-0 / between-runs backend.
+func ExpectedEmpty(svc corev1.Service, backends []Backend) (reason string, ok bool) {
+	if annotatedExpectedEmpty(svc) {
+		return "declared via " + ExpectedEmptyAnnotation, true
+	}
+	if backing, _, ok := classifyBacking(svc, backends); ok {
+		return backingReason(backing), true
+	}
+	return "", false
+}
+
+// backingReason is the short ingress-facing phrase for a scaled-to-0 / between-runs backend.
+func backingReason(kind string) string {
+	switch kind {
+	case "Job", "CronJob":
+		return "expected between runs"
+	case "DaemonSet":
+		return "0 desired"
+	default: // Deployment, StatefulSet
+		return "scaled to 0"
+	}
 }
 
 // classifyBacking decides whether a Service's lack of endpoints is expected

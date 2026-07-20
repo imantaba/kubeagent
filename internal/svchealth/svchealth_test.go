@@ -301,3 +301,56 @@ func TestAssess_BackendInDifferentNamespaceIgnored(t *testing.T) {
 		t.Fatalf("a backend in a different namespace must not classify the issue as expected, got %+v", got)
 	}
 }
+
+func TestExpectedEmpty_Annotation(t *testing.T) {
+	s := corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "db", Name: "pg-ro",
+			Annotations: map[string]string{ExpectedEmptyAnnotation: "true"}},
+		Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeClusterIP, Selector: map[string]string{"role": "replica"}},
+	}
+	// No backend at all, and even with a LIVE backend the annotation must win (absolute override).
+	live := []Backend{{Kind: "Deployment", Namespace: "db", TemplateLabels: map[string]string{"role": "replica"}, Desired: 3}}
+	for _, backends := range [][]Backend{nil, live} {
+		reason, ok := ExpectedEmpty(s, backends)
+		if !ok {
+			t.Fatalf("annotated Service must be expected-empty (backends=%v)", backends)
+		}
+		if !strings.Contains(reason, ExpectedEmptyAnnotation) {
+			t.Errorf("reason %q should name the annotation", reason)
+		}
+	}
+}
+
+func TestExpectedEmpty_AnnotationSetsIssueExpected(t *testing.T) {
+	s := corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "db", Name: "pg-ro",
+			Annotations: map[string]string{ExpectedEmptyAnnotation: "true"}},
+		Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeClusterIP, Selector: map[string]string{"role": "replica"}},
+	}
+	got := Assess([]corev1.Service{s}, nil, nil) // no slices -> 0 endpoints
+	if len(got) != 1 || !got[0].Expected {
+		t.Fatalf("annotated empty Service must yield one Expected issue, got %+v", got)
+	}
+}
+
+func TestExpectedEmpty_NotAnnotatedNoBacking(t *testing.T) {
+	s := corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "db", Name: "pg-ro"},
+		Spec:       corev1.ServiceSpec{Type: corev1.ServiceTypeClusterIP, Selector: map[string]string{"role": "replica"}},
+	}
+	if _, ok := ExpectedEmpty(s, nil); ok {
+		t.Error("a Service with no annotation and no backing must not be expected-empty")
+	}
+}
+
+func TestExpectedEmpty_ScaledToZeroBacking(t *testing.T) {
+	s := corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web"},
+		Spec:       corev1.ServiceSpec{Type: corev1.ServiceTypeClusterIP, Selector: map[string]string{"app": "web"}},
+	}
+	backends := []Backend{{Kind: "Deployment", Namespace: "shop", TemplateLabels: map[string]string{"app": "web"}, Desired: 0}}
+	reason, ok := ExpectedEmpty(s, backends)
+	if !ok || !strings.Contains(reason, "scaled to 0") {
+		t.Fatalf("scaled-to-0 Deployment backing should be expected with 'scaled to 0', got %q ok=%v", reason, ok)
+	}
+}

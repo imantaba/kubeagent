@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-07-20
+
 ### Added
 
 - **"Can't create pods" (FailedCreate) check.** `scan` now flags a workload stuck below its
@@ -426,7 +428,8 @@ infrastructure (a documentation site and a pre-release chaos-test harness).
 - CI (vet/test/build on push & PR) and a release workflow publishing a
   linux/amd64 tarball + `SHA256SUMS` to a GitHub Release.
 
-[Unreleased]: https://github.com/imantaba/kubeagent/compare/v0.27.0...HEAD
+[Unreleased]: https://github.com/imantaba/kubeagent/compare/v0.28.0...HEAD
+[0.28.0]: https://github.com/imantaba/kubeagent/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/imantaba/kubeagent/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/imantaba/kubeagent/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/imantaba/kubeagent/compare/v0.24.0...v0.25.0

@@ -67,7 +67,16 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
 
 ## Roadmap
 
-- **v1** — deterministic scan + diagnose: CrashLoopBackOff,
+- **v1 (shipped)** — deterministic scan + diagnose: CrashLoopBackOff,
   ImagePullBackOff/ErrImagePull, OOMKilled, Pending/Unschedulable.
-- **v2** — optional `--explain` flag: a single Claude API call summarizing
+- **v2 (shipped)** — optional `--explain` flag: a single Claude API call summarizing
   findings in plain English (the deterministic core stays usable offline).
+- **Now shipping (0.2x)** — a broad detector suite (probes, init containers,
+  Job/CronJob, FailedCreate, Pending-PVC, …), the read-only `watch` daemon, and
+  guard-railed `--fix`. See the CHANGELOG for per-release detail.
+- **The living forward roadmap** — principles, themed tracks, and milestone
+  releases (root-cause correlation → principled `--explain`/`--fix` → continuous
+  ops → operator/ecosystem coverage → MCP server & `kubectl` plugin → v1.0
+  production contract) lives in
+  [website/docs/roadmap.md](website/docs/roadmap.md). Update it when a milestone
+  ships or the plan shifts.

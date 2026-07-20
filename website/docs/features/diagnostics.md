@@ -79,6 +79,17 @@ pod, so at most one is failing; a pod whose inits all succeeded is left to the
 main-container detectors (no overlap). Read-only; reads pod status already collected
 (no new RBAC).
 
+### Job / CronJob failures
+
+`scan` flags a batch workload whose run failed: a standalone **Job** with a `Failed`
+condition (`BackoffLimitExceeded` — exhausted its retries; `DeadlineExceeded` — hit its
+`activeDeadlineSeconds`), and a **CronJob** whose most-recent scheduled run failed. It
+names the cause on the workload — e.g. `⚠ JobFailed: the Job failed — exhausted its
+retries (BackoffLimitExceeded)`. A **failing CronJob is shown by default** (previously all
+CronJobs were hidden without `--include-cron`; healthy ones still are). Only the *latest*
+scheduled run's outcome is considered, so an older, already-superseded failure is not
+re-flagged. Read-only; Jobs/CronJobs are already listed, so it needs no extra permission.
+
 ### Node reservations
 
 `scan` reports each node's aggregate kubelet resource reservation for **memory,
@@ -267,7 +278,7 @@ schema are unchanged.
 
 `kubeagent scan` performs a read-only, whole-cluster scan and reports
 CrashLoopBackOff, ImagePullBackOff/ErrImagePull, OOMKilled,
-Pending/Unschedulable, VolumeAttachError (Multi-Attach), RestartLoop, ProbeFailure, and init-container failures, in text or JSON.
+Pending/Unschedulable, VolumeAttachError (Multi-Attach), RestartLoop, ProbeFailure, init-container failures, and failed Jobs/CronJobs, in text or JSON.
 
 The optional `--explain` flag makes a single Claude API call to summarize
 findings in plain English. The deterministic core still works offline with no

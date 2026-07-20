@@ -554,6 +554,26 @@ func TestPrioritize_FailedCronGatedButFailedJobIsProblem(t *testing.T) {
 	}
 }
 
+func TestPrioritize_FailingCronJobShownByDefault(t *testing.T) {
+	flagged := Workload{Namespace: "shop", Name: "nightly", Kind: "CronJob", Status: "Idle",
+		Findings: []diagnose.Finding{{Issue: "JobFailed", Reason: "the most recent scheduled run failed"}}}
+	healthy := Workload{Namespace: "shop", Name: "hourly", Kind: "CronJob", Status: "Idle"}
+	res := Prioritize([]Workload{flagged, healthy}, Opts{}) // no IncludeCron
+	shown := map[string]int{}
+	for _, w := range res.Workloads {
+		shown[w.Name] = w.Priority
+	}
+	if p, ok := shown["nightly"]; !ok || p != priorityProblem {
+		t.Errorf("a flagged CronJob must be shown at priorityProblem(%d); shown=%+v", priorityProblem, shown)
+	}
+	if _, ok := shown["hourly"]; ok {
+		t.Errorf("a healthy CronJob must stay hidden without --include-cron")
+	}
+	if res.HiddenCron != 1 {
+		t.Errorf("HiddenCron = %d, want 1 (the healthy CronJob only)", res.HiddenCron)
+	}
+}
+
 func TestPrioritize_SortsByPriorityThenNamespaceName(t *testing.T) {
 	in := []Workload{
 		{Namespace: "b", Name: "p2", Kind: "Deployment", Ready: 0, Desired: 1},

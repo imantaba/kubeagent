@@ -9,8 +9,35 @@ import (
 	"sync"
 	"time"
 
+	"github.com/imantaba/kubeagent/internal/ingresshealth"
 	"github.com/imantaba/kubeagent/internal/scan"
+	"github.com/imantaba/kubeagent/internal/svchealth"
 )
+
+// realServiceIssues counts Service issues that need attention, excluding
+// intentionally-empty (Expected/parked) ones so alerts don't fire on backends
+// that are empty by design.
+func realServiceIssues(issues []svchealth.Issue) int {
+	n := 0
+	for _, is := range issues {
+		if !is.Expected {
+			n++
+		}
+	}
+	return n
+}
+
+// realIngressIssues counts broken Ingress routes, excluding intentionally-empty
+// (Expected/parked) ones.
+func realIngressIssues(issues []ingresshealth.RouteIssue) int {
+	n := 0
+	for _, r := range issues {
+		if !r.Expected {
+			n++
+		}
+	}
+	return n
+}
 
 // metrics holds the latest evaluation snapshot and renders it as Prometheus text.
 // All access is mutex-guarded; the daemon updates it from the reconcile loop and
@@ -65,8 +92,8 @@ func (m *metrics) update(res *scan.Result, dur time.Duration, now time.Time, err
 	m.nodesExpectedAbsent = res.Health.NodesExpectedAbsent
 	m.kubeletUnhealthy = len(res.KubeletHealth.Unhealthy)
 	m.pvcsReclaimDelete = res.PVCReclaim.Count
-	m.serviceIssues = len(res.ServiceIssues)
-	m.ingressIssues = len(res.IngressIssues)
+	m.serviceIssues = realServiceIssues(res.ServiceIssues)
+	m.ingressIssues = realIngressIssues(res.IngressIssues)
 	m.pvcPendingIssues = len(res.PVCIssues)
 	flagged := 0
 	findings := map[string]int{}

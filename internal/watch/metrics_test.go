@@ -18,6 +18,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/pvchealth"
 	"github.com/imantaba/kubeagent/internal/pvcreclaim"
 	"github.com/imantaba/kubeagent/internal/scan"
+	"github.com/imantaba/kubeagent/internal/svchealth"
 )
 
 func sampleResult() *scan.Result {
@@ -34,8 +35,17 @@ func sampleResult() *scan.Result {
 			Over:      []diskusage.VolumeUsage{{Kind: "node", Node: "n1", Name: "n1", Ratio: 0.84}},
 			Nodes:     []diskusage.VolumeUsage{{Kind: "node", Node: "n1", Name: "n1", Ratio: 0.84}},
 		},
-		IngressIssues: []ingresshealth.RouteIssue{{Namespace: "shop", Ingress: "web", Service: "api-svc", Problem: "NoEndpoints"}},
-		PVCIssues:     []pvchealth.Issue{{Namespace: "shop", Name: "data-pvc", Phase: "Pending", Reason: "ProvisioningFailed"}},
+		// One real issue and one intentionally-empty (Expected/parked) issue each: the
+		// gauges must count only the real one, so alerts don't fire on parked backends.
+		ServiceIssues: []svchealth.Issue{
+			{Namespace: "shop", Name: "api-svc", Problem: "NoEndpoints"},
+			{Namespace: "shop", Name: "parked-svc", Problem: "NoEndpoints", Expected: true},
+		},
+		IngressIssues: []ingresshealth.RouteIssue{
+			{Namespace: "shop", Ingress: "web", Service: "api-svc", Problem: "NoEndpoints"},
+			{Namespace: "shop", Ingress: "parked", Service: "parked-svc", Problem: "NoEndpoints", Expected: true},
+		},
+		PVCIssues: []pvchealth.Issue{{Namespace: "shop", Name: "data-pvc", Phase: "Pending", Reason: "ProvisioningFailed"}},
 		KubeletHealth: nodehealth.Report{Probed: 2, Unhealthy: []nodehealth.Issue{{Node: "w"}}},
 	}
 }
@@ -57,6 +67,7 @@ func TestMetrics_RenderReflectsResult(t *testing.T) {
 		`kubeagent_node_fs_usage_ratio{node="n1"} 0.84`,
 		"kubeagent_volumes_over_disk_threshold 1",
 		"kubeagent_ingress_route_issues 1",
+		"kubeagent_service_issues 1",
 		"kubeagent_pvc_pending_issues 1",
 		"kubeagent_nodes_expected_absent 1",
 		"kubeagent_kubelet_unhealthy 1",

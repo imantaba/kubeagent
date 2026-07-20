@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Watch gauges exclude parked endpoints.** `kubeagent_service_issues` and
+  `kubeagent_ingress_route_issues` now count only real problems, excluding
+  intentionally-empty (Expected/parked) Services and routes — a backend scaled to zero or
+  annotated `kubeagent.io/expected-empty: "true"` no longer inflates the alert gauges,
+  matching how the `scan` report already treats them.
+
 ## [0.28.1] - 2026-07-20
 
 ### Added

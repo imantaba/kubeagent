@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`kubeagent_pvc_pending_issues` watch metric.** The `watch` daemon now exposes a
+  Prometheus gauge for the count of PersistentVolumeClaims stuck Pending because
+  provisioning/binding failed (the v0.26.0 Pending-PVC check), so operators can alert on
+  it alongside the existing `kubeagent_*_issues` gauges.
+
 ## [0.27.0] - 2026-07-20
 
 ### Added

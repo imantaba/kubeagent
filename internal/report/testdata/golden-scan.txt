@@ -4,7 +4,7 @@ Cluster: Degraded — 2/4 nodes Ready
   ✗ node worker-1 kubelet not heartbeating (lease 95s stale)
   ✗ node db-01 expected but absent from the cluster
   ✗ system kube-system/coredns Degraded 1/2
-  Needs attention: 10 workloads failing · 2 services without endpoints · 1 ingress route broken · 1 PVC failing to provision
+  Needs attention: 11 workloads failing · 2 services without endpoints · 1 ingress route broken · 1 PVC failing to provision
 
 NEEDS ATTENTION
 ✗ shop/web  Deployment  0/1 Degraded  · 8 restarts, last 205d ago
@@ -59,6 +59,9 @@ NEEDS ATTENTION
 ✗ shop/nightly-report  CronJob  Idle  (0 2 * * *)
     ⚠ JobFailed: the most recent scheduled run failed — hit its deadline (DeadlineExceeded)
       ↳ job "nightly-report-28901234": Job was active longer than specified deadline
+✗ shop/storefront  Deployment  0/3 Degraded
+    ⚠ FailedCreate: the controller cannot create pods — blocked by a ResourceQuota
+      ↳ pods "storefront-7c9f-" is forbidden: exceeded quota: compute, requested: requests.cpu=2, used: requests.cpu=4, limited: requests.cpu=4
   ✗ default/web  ClusterIP  no ready endpoints
   ✗ default/api-lb  LoadBalancer  no external address · 19d ago
   ✗ default/app-config  ConfigMap[DB_PASSWORD]  credential-like name with a literal value

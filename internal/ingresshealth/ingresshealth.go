@@ -24,14 +24,15 @@ type RouteIssue struct {
 	Path      string `json:"path,omitempty"`
 	Service   string `json:"service"`
 	Port      string `json:"port,omitempty"`
-	Problem   string `json:"problem"` // "NoService" | "NoEndpoints" | "PortNotExposed"
+	Problem   string `json:"problem"`            // "NoService" | "NoEndpoints" | "PortNotExposed"
 	Detail    string `json:"detail"`
+	Expected  bool   `json:"expected,omitempty"` // true when the empty backend is intentional (scaled to 0 / annotated)
 }
 
 // Assess resolves each Ingress rule's backend Service (in the Ingress's own
 // namespace) and flags broken routes. Only Service backends are checked;
 // Resource backends are skipped.
-func Assess(ingresses []networkingv1.Ingress, services []corev1.Service, slices []discoveryv1.EndpointSlice) []RouteIssue {
+func Assess(ingresses []networkingv1.Ingress, services []corev1.Service, slices []discoveryv1.EndpointSlice, backends []svchealth.Backend) []RouteIssue {
 	byKey := make(map[string]corev1.Service, len(services))
 	for _, s := range services {
 		byKey[s.Namespace+"/"+s.Name] = s
@@ -39,7 +40,7 @@ func Assess(ingresses []networkingv1.Ingress, services []corev1.Service, slices 
 	var issues []RouteIssue
 	for _, ing := range ingresses {
 		if b := ing.Spec.DefaultBackend; b != nil && b.Service != nil {
-			if iss, ok := check(ing.Namespace, ing.Name, "", "", *b.Service, byKey, slices); ok {
+			if iss, ok := check(ing.Namespace, ing.Name, "", "", *b.Service, byKey, slices, backends); ok {
 				issues = append(issues, iss)
 			}
 		}
@@ -51,7 +52,7 @@ func Assess(ingresses []networkingv1.Ingress, services []corev1.Service, slices 
 				if p.Backend.Service == nil {
 					continue // Resource backend — skip
 				}
-				if iss, ok := check(ing.Namespace, ing.Name, rule.Host, p.Path, *p.Backend.Service, byKey, slices); ok {
+				if iss, ok := check(ing.Namespace, ing.Name, rule.Host, p.Path, *p.Backend.Service, byKey, slices, backends); ok {
 					issues = append(issues, iss)
 				}
 			}
@@ -60,7 +61,7 @@ func Assess(ingresses []networkingv1.Ingress, services []corev1.Service, slices 
 	return issues
 }
 
-func check(ns, ingName, host, path string, be networkingv1.IngressServiceBackend, byKey map[string]corev1.Service, slices []discoveryv1.EndpointSlice) (RouteIssue, bool) {
+func check(ns, ingName, host, path string, be networkingv1.IngressServiceBackend, byKey map[string]corev1.Service, slices []discoveryv1.EndpointSlice, backends []svchealth.Backend) (RouteIssue, bool) {
 	port := portString(be.Port)
 	r := RouteIssue{Namespace: ns, Ingress: ingName, Host: host, Path: path, Service: be.Name, Port: port}
 	svc, ok := byKey[ns+"/"+be.Name]
@@ -71,7 +72,10 @@ func check(ns, ingName, host, path string, be networkingv1.IngressServiceBackend
 	}
 	if svchealth.ReadyEndpoints(svc, slices) == 0 {
 		r.Problem = "NoEndpoints"
-		if port != "" {
+		if reason, ok := svchealth.ExpectedEmpty(svc, backends); ok {
+			r.Expected = true
+			r.Detail = fmt.Sprintf("backend Service %s is intentionally empty (%s) — route parked", be.Name, reason)
+		} else if port != "" {
 			r.Detail = fmt.Sprintf("backend Service %s:%s has no ready endpoints (likely 502/503)", be.Name, port)
 		} else {
 			r.Detail = fmt.Sprintf("backend Service %s has no ready endpoints (likely 502/503)", be.Name)

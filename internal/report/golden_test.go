@@ -16,6 +16,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/nodehealth"
 	"github.com/imantaba/kubeagent/internal/nodereserve"
+	"github.com/imantaba/kubeagent/internal/pdbhealth"
 	"github.com/imantaba/kubeagent/internal/pvchealth"
 	"github.com/imantaba/kubeagent/internal/pvcreclaim"
 	"github.com/imantaba/kubeagent/internal/secscan"
@@ -88,6 +89,10 @@ func goldenInput(now time.Time) Input {
 		StuckTerminating: []termhealth.Issue{
 			{Kind: "Namespace", Name: "legacy-ns", Age: "3h", Reason: "NamespaceFinalizersRemaining — some content has finalizers remaining: kubernetes"},
 			{Kind: "Pod", Namespace: "shop", Name: "api-7c9d5-x2v", Age: "8m", PastGrace: true, Reason: "finalizer example.com/cleanup-hook"}},
+		PDBIssues: []pdbhealth.Issue{
+			{Namespace: "shop", Name: "api-pdb", Rule: "minAvailable: 3", Category: "unsatisfiable",
+				Reason: "covers all 3 pods — no voluntary eviction can ever proceed; every node drain will hang"},
+		},
 	}
 }
 
@@ -237,7 +242,7 @@ func TestGoldenInputCoversAllSections(t *testing.T) {
 		in.Platform == nil || len(in.ServiceIssues) == 0 || len(in.CredentialWarnings) == 0 ||
 		len(in.IngressIssues) == 0 || len(in.SecurityIssues) == 0 || in.NodeReserve == nil ||
 		in.PVCReclaim == nil || in.KubeletHealth == nil || len(in.PVCIssues) == 0 || in.Certificates == nil ||
-		len(in.StuckTerminating) == 0 {
+		len(in.StuckTerminating) == 0 || len(in.PDBIssues) == 0 {
 		t.Fatal("goldenInput must populate every section so the golden stays comprehensive")
 	}
 	// Guard the *distinct* failure modes too, so a fixture regression can't drop one

@@ -270,6 +270,28 @@ mounting it). Read-only and advisory — it never removes a finalizer (that is a
 `--fix` concern) and never changes the cluster verdict. The daemon exposes
 `kubeagent_resources_stuck_terminating`.
 
+### PodDisruptionBudget-blocked drains
+
+`scan` flags a PodDisruptionBudget that will block a node drain, covering three
+categories:
+
+- **unsatisfiable** — the budget requires more healthy pods than the workload has
+  (e.g. `minAvailable: 3` covering only 3 replicas), so no voluntary eviction can
+  ever be permitted; every `kubectl drain` will hang indefinitely.
+- **stale** — the PDB's selector matches no pods (the workload was renamed,
+  deleted, or the selector drifted), so the budget protects nothing but would
+  still block drain attempts.
+- **blocking** — the workload is already degraded (fewer healthy pods than the PDB
+  demands), so `DisruptionsAllowed == 0` and the node cannot be drained until the
+  workload heals.
+
+Findings appear in **NEEDS ATTENTION** with the rule and the reason, e.g.:
+`✗ shop/api-pdb  PodDisruptionBudget  minAvailable: 3` / `⚠ PDBBlocked: covers
+all 3 pods — no voluntary eviction can ever proceed; every node drain will hang`.
+Read-only and advisory — it does not change the cluster verdict. The daemon
+exposes `kubeagent_pdb_blocking_issues`. Adds a base
+`policy/poddisruptionbudgets` read grant.
+
 ### Security posture (opt-in)
 
 `scan --security` walks every workload's pod template and each Service and flags

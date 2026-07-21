@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **PodDisruptionBudget-blocked drains.** `scan` flags a PDB that will block a
+  node drain — one that can never allow a voluntary eviction, a stale zero-pod
+  selector, or a PDB blocking evictions on an already-degraded workload —
+  naming the rule and the guarded-pod counts. Read-only and advisory; the
+  daemon exposes `kubeagent_pdb_blocking_issues`. Adds a base
+  `policy/poddisruptionbudgets` read grant.
+
 ## [0.34.0] - 2026-07-21
 
 ### Added

@@ -237,14 +237,33 @@ func printHeader(in Input, real []svchealth.Issue, realIng []ingresshealth.Route
 // volumes over the disk-usage threshold, and broken ingress routes.
 func attentionLine(in Input, real []svchealth.Issue, realIng []ingresshealth.RouteIssue) string {
 	failing := 0
+	attributed := 0
+	var causeNodes []string
+	seenNode := map[string]bool{}
 	for _, wl := range in.Result.Workloads {
 		if wl.Flagged() {
 			failing++
 		}
+		if wl.RootCause != "" {
+			attributed++
+			n := rootCauseNode(wl.RootCause)
+			if !seenNode[n] {
+				seenNode[n] = true
+				causeNodes = append(causeNodes, n)
+			}
+		}
 	}
 	var parts []string
 	if failing > 0 {
-		parts = append(parts, fmt.Sprintf("%d %s failing", failing, plural(failing, "workload", "workloads")))
+		s := fmt.Sprintf("%d %s failing", failing, plural(failing, "workload", "workloads"))
+		if attributed > 0 {
+			if len(causeNodes) == 1 {
+				s += fmt.Sprintf(" (%d ⇐ %s)", attributed, causeNodes[0])
+			} else {
+				s += fmt.Sprintf(" (%d ⇐ %d unhealthy nodes)", attributed, len(causeNodes))
+			}
+		}
+		parts = append(parts, s)
 	}
 	if len(real) > 0 {
 		parts = append(parts, fmt.Sprintf("%d %s without endpoints", len(real), plural(len(real), "service", "services")))
@@ -260,6 +279,12 @@ func attentionLine(in Input, real []svchealth.Issue, realIng []ingresshealth.Rou
 		parts = append(parts, fmt.Sprintf("%d %s failing to provision", n, plural(n, "PVC", "PVCs")))
 	}
 	return strings.Join(parts, " · ")
+}
+
+// rootCauseNode extracts the "node X" prefix from a RootCause string of the fixed
+// form "node X (reason)" for the attention-line rollup.
+func rootCauseNode(rc string) string {
+	return strings.SplitN(rc, " (", 2)[0]
 }
 
 func plural(n int, one, many string) string {
@@ -706,6 +731,11 @@ func printWorkload(wl inventory.Workload, now time.Time, w io.Writer) error {
 	}
 	if _, err := fmt.Fprintln(w, header); err != nil {
 		return err
+	}
+	if wl.RootCause != "" {
+		if _, err := fmt.Fprintf(w, "    ↳ likely caused by %s\n", wl.RootCause); err != nil {
+			return err
+		}
 	}
 	if wl.Image != "" {
 		if _, err := fmt.Fprintf(w, "    image %s\n", wl.Image); err != nil {

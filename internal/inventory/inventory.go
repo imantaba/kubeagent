@@ -47,6 +47,7 @@ type Workload struct {
 	Priority        int                `json:"priority,omitempty"`        // 2 problem | 3 restart-only | 4 cron (set by Prioritize)
 	NetworkPolicies []string           `json:"networkPolicies,omitempty"` // names of NPs selecting this workload's pods (hint; set by netpolicy.Annotate)
 	Rollout         *RolloutChange     `json:"rollout,omitempty"`         // recent-rollout correlation (hint; set by rollout.Annotate)
+	RootCause       string             `json:"rootCause,omitempty"`       // "node X (reason)" — root-cause attribution (hint; set by rootcause.Annotate)
 }
 
 // RolloutChange is a recent-rollout correlation for a flagged Deployment: what

@@ -113,6 +113,11 @@
   error) as a one-line `LogCause` on the finding; never sent verbatim to a shared
   service. See [Failure diagnostics](features/diagnostics.md).
 
+- **Node-anchored root-cause attribution** — a hard-down node (NotReady or
+  kubelet-not-heartbeating) becomes the named root cause of the workloads with pods
+  on it, instead of N disconnected findings; the first slice of the root-cause
+  correlation theme. See [Failure diagnostics](features/diagnostics.md).
+
 !!! info "Version history"
     [GitHub Releases](https://github.com/imantaba/kubeagent/releases) and the
     [CHANGELOG](https://github.com/imantaba/kubeagent/blob/main/CHANGELOG.md)

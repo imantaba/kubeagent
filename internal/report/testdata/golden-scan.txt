@@ -4,10 +4,11 @@ Cluster: Degraded — 2/4 nodes Ready
   ✗ node worker-1 kubelet not heartbeating (lease 95s stale)
   ✗ node db-01 expected but absent from the cluster
   ✗ system kube-system/coredns Degraded 1/2
-  Needs attention: 11 workloads failing · 2 services without endpoints · 1 ingress route broken · 1 PVC failing to provision
+  Needs attention: 11 workloads failing (4 ⇐ 2 unhealthy nodes) · 2 services without endpoints · 1 ingress route broken · 1 PVC failing to provision
 
 NEEDS ATTENTION
 ✗ shop/web  Deployment  0/1 Degraded  · 8 restarts, last 205d ago
+    ↳ likely caused by node worker-1 (kubelet not heartbeating)
     image busybox:1.36
     ⚠ CrashLoopBackOff: Container repeatedly crashes after starting
       ↳ container "web", restartCount=8
@@ -16,11 +17,13 @@ NEEDS ATTENTION
         → application panic (code bug)
     web-5b8-2wplt  0/1  Running  restarts=8 (205d ago)  worker-1  10.244.2.2  20d
 ✗ shop/api  Deployment  0/2 Degraded
+    ↳ likely caused by node worker-1 (kubelet not heartbeating)
     image nginx:9.9.9-nope
     ⚠ ImagePullBackOff: Bad image reference or registry authentication
       ↳ container "api": Back-off pulling image "nginx:9.9.9-nope": not found
     api-864-dxtdh  0/1  Pending  restarts=0  worker-1  10.244.2.4  6d
 ✗ shop/billing-worker  Deployment  0/1 Degraded  · 6 restarts, last 205d ago
+    ↳ likely caused by node worker-2 (NotReady)
     image polinux/stress
     ⚠ CrashLoopBackOff: Container repeatedly crashes after starting
       ↳ container "worker", restartCount=6
@@ -39,6 +42,7 @@ NEEDS ATTENTION
       ↳ container "cache", restartCount=5 (still flapping)
     cache-6d9-abcde  1/1  Running  restarts=5 (205d ago)  worker-3  10.244.3.7  12d
 ✗ shop/data  StatefulSet  0/1 Degraded
+    ↳ likely caused by node worker-2 (NotReady)
     image postgres:16
     ⚠ VolumeAttachError: A ReadWriteOnce volume is still attached to another node (Multi-Attach)
       ↳ Multi-Attach error for volume "pvc-data-0": volume is already used by pod(s) on node worker-1

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Per-finding confidence score.** Every finding now carries a confidence level —
+  high for a directly Kubernetes-asserted state, medium for a kubeagent heuristic
+  (`RestartLoop`, `ProbeFailure`) or a statistical correlation (a shared-registry
+  attribution). The text report tags only the non-high findings and hints
+  (`⚠ RestartLoop [medium]`, `↳ likely caused by registry … [medium]`); JSON
+  always carries `"confidence"`. Informational — it never changes priority or the
+  cluster verdict. Read-only, always-on, no new RBAC.
+
 ## [0.32.0] - 2026-07-21
 
 ### Added

@@ -23,13 +23,13 @@ NEEDS ATTENTION
       ↳ container "api": Back-off pulling image "nginx:9.9.9-nope": not found
     api-864-dxtdh  0/1  Pending  restarts=0  worker-1  10.244.2.4  6d
 ✗ shop/frontend  Deployment  0/1 Degraded
-    ↳ likely caused by registry ghcr.io (2 workloads failing to pull)
+    ↳ likely caused by registry ghcr.io (2 workloads failing to pull) [medium]
     image ghcr.io/shop/frontend:2.4
     ⚠ ImagePullBackOff: Bad image reference or registry authentication
       ↳ container "frontend": Back-off pulling image "ghcr.io/shop/frontend:2.4": 403 Forbidden
     frontend-58d-x2vqp  0/1  Pending  restarts=0  worker-3  10.244.3.14  3h
 ✗ shop/search  Deployment  0/1 Degraded
-    ↳ likely caused by registry ghcr.io (2 workloads failing to pull)
+    ↳ likely caused by registry ghcr.io (2 workloads failing to pull) [medium]
     image ghcr.io/shop/search:1.9
     ⚠ ErrImagePull: Bad image reference or registry authentication
       ↳ container "search": pulling image "ghcr.io/shop/search:1.9": 403 Forbidden
@@ -54,7 +54,7 @@ NEEDS ATTENTION
     report-cron-767-xghsp  0/1  Pending  restarts=0      20d
 ✗ shop/cache  Deployment  1/1 Running  · 5 restarts, last 205d ago
     image redis:7-alpine
-    ⚠ RestartLoop: Container keeps exiting with a non-OOM error and restarting
+    ⚠ RestartLoop [medium]: Container keeps exiting with a non-OOM error and restarting
       ↳ container "cache", restartCount=5 (still flapping)
     cache-6d9-abcde  1/1  Running  restarts=5 (205d ago)  worker-3  10.244.3.7  12d
 ✗ shop/data  StatefulSet  0/1 Degraded
@@ -65,7 +65,7 @@ NEEDS ATTENTION
     data-0  0/1  Pending  restarts=0  worker-2    9d
 ✗ shop/checkout  Deployment  0/1 Degraded
     image checkout:2.1
-    ⚠ ProbeFailure: the readiness probe keeps failing — the pod is kept out of Service endpoints
+    ⚠ ProbeFailure [medium]: the readiness probe keeps failing — the pod is kept out of Service endpoints
       ↳ container "checkout": readiness probe failed — HTTP 503
     checkout-7f9-qk2mn  0/1  Running  restarts=0  worker-3  10.244.3.9  5d
 ✗ shop/orders  Deployment  0/1 Degraded

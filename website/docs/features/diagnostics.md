@@ -310,6 +310,19 @@ the grant, `--logs` reports no log cause and continues non-fatally.
 `--explain` receives **only** the derived cause (`logCause`) — never the raw log text
 (`logExcerpt`) — so no container output is sent to the Claude API.
 
+### Finding confidence
+
+Every finding carries a **confidence** level reflecting how directly the observed
+signal implies the diagnosis: **high** when Kubernetes itself asserts the state
+(CrashLoopBackOff, OOMKilled, Unschedulable, a controller event, …) and
+**medium** for a kubeagent heuristic (`RestartLoop`, `ProbeFailure`) or a
+statistical correlation (a shared-registry attribution). High is the unmarked
+default; the text report tags only the less-certain findings and hints
+(`⚠ RestartLoop [medium]: …`, `↳ likely caused by registry … [medium]`) so the
+tag draws the eye to exactly what to second-guess. JSON always carries
+`"confidence"` on every finding. Confidence is informational — it never changes a
+finding's priority or the cluster verdict.
+
 ### Output layout
 
 `scan --output text` groups findings by how urgently they need action:

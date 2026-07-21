@@ -85,6 +85,7 @@ func TestRegistryHost(t *testing.T) {
 		"registry.local:5000/app": "registry.local:5000",
 		"localhost/app":           "localhost",
 		"nginx":                   "docker.io",
+		"nginx@sha256:abc123":     "docker.io", // bare name with digest, no registry prefix
 	}
 	for image, want := range cases {
 		if got := registryHost(image); got != want {

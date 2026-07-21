@@ -213,6 +213,7 @@ func resultInput(res scan.Result) report.Input {
 		Certificates:     res.Certificates,
 		StuckTerminating: res.StuckTerminating,
 		PDBIssues:        res.PDBIssues,
+		HPAIssues:        res.HPAIssues,
 	}
 }
 

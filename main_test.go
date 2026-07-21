@@ -14,6 +14,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/imantaba/kubeagent/internal/diagnose"
+	"github.com/imantaba/kubeagent/internal/hpahealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/pdbhealth"
 	"github.com/imantaba/kubeagent/internal/scan"
@@ -42,6 +43,18 @@ func TestResultInput_CarriesPDBIssues(t *testing.T) {
 	in := resultInput(res)
 	if len(in.PDBIssues) != 1 || in.PDBIssues[0].Name != "api" {
 		t.Fatalf("resultInput must carry PDBIssues into report.Input, got %+v", in.PDBIssues)
+	}
+}
+
+func TestResultInput_CarriesHPAIssues(t *testing.T) {
+	// Regression: the scan.Result → report.Input mapping must carry HPAIssues, or
+	// the section never renders in the CLI (the stuck-terminating v0.34.0 bug).
+	res := scan.Result{HPAIssues: []hpahealth.Issue{
+		{Namespace: "shop", Name: "api-hpa", Target: "Deployment/api", Category: "metrics", Reason: "…"},
+	}}
+	in := resultInput(res)
+	if len(in.HPAIssues) != 1 || in.HPAIssues[0].Name != "api-hpa" {
+		t.Fatalf("resultInput must carry HPAIssues into report.Input, got %+v", in.HPAIssues)
 	}
 }
 

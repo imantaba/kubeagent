@@ -173,32 +173,46 @@ func run(args []string) error {
 		kubeletRep = &res.KubeletHealth
 	}
 
-	if err := report.PrintInventory(report.Input{
-		Now:                time.Now(),
-		Cluster:            health,
-		Result:             result,
-		Resources:          &summary,
-		Platform:           &facts,
-		ServiceIssues:      serviceIssues,
-		CredentialWarnings: credWarnings,
-		NodeReserve:        &res.NodeReserve,
-		PVCReclaim:         &res.PVCReclaim,
-		PVCReclaimFull:     *pvcReclaimFull,
-		DiskUsage:          diskRep,
-		KubeletHealth:      kubeletRep,
-		IngressIssues:      res.IngressIssues,
-		PVCIssues:          res.PVCIssues,
-		SecurityIssues:     res.SecurityIssues,
-		SecurityVerbose:    *securityVerbose,
-		Certificates:       res.Certificates,
-		Explanation:        explanation,
-	}, *output, os.Stdout); err != nil {
+	in := resultInput(res)
+	// Presentation-layer extras that live only in runScan (clock, summaries,
+	// flag-gated reports, credential/explain output).
+	in.Now = time.Now()
+	in.Resources = &summary
+	in.Platform = &facts
+	in.CredentialWarnings = credWarnings
+	in.PVCReclaimFull = *pvcReclaimFull
+	in.DiskUsage = diskRep
+	in.KubeletHealth = kubeletRep
+	in.SecurityVerbose = *securityVerbose
+	in.Explanation = explanation
+	if err := report.PrintInventory(in, *output, os.Stdout); err != nil {
 		return err
 	}
 	if *fix {
 		runFixes(context.Background(), client, result.Workloads, res.Inputs.ReplicaSets, nodes, *dryRun, *assumeYes, os.Stdout, os.Stdin)
 	}
 	return nil
+}
+
+// resultInput maps every scan.Result-derived field onto a report.Input. Keeping
+// this mapping in one testable place guards against a Result field silently never
+// reaching the report — as StuckTerminating once did when only the inline literal
+// carried the wiring. The presentation-layer extras (clock, resource summary,
+// platform facts, flag-gated reports, credential/explain output) are filled in by
+// the caller after this returns.
+func resultInput(res scan.Result) report.Input {
+	return report.Input{
+		Cluster:          res.Health,
+		Result:           res.Inventory,
+		ServiceIssues:    res.ServiceIssues,
+		NodeReserve:      &res.NodeReserve,
+		PVCReclaim:       &res.PVCReclaim,
+		IngressIssues:    res.IngressIssues,
+		PVCIssues:        res.PVCIssues,
+		SecurityIssues:   res.SecurityIssues,
+		Certificates:     res.Certificates,
+		StuckTerminating: res.StuckTerminating,
+	}
 }
 
 func runWatch(args []string) error {

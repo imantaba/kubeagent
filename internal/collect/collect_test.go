@@ -6,6 +6,7 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	batchv1 "k8s.io/api/batch/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -476,5 +477,17 @@ func TestPodDisruptionBudgets(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].Name != "api" {
 		t.Fatalf("expected the seeded PDB, got %+v", got)
+	}
+}
+
+func TestHorizontalPodAutoscalers(t *testing.T) {
+	hpa := &autoscalingv2.HorizontalPodAutoscaler{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "api-hpa"}}
+	client := fake.NewSimpleClientset(hpa)
+	got, err := HorizontalPodAutoscalers(context.Background(), client, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "api-hpa" {
+		t.Fatalf("expected the seeded HPA, got %+v", got)
 	}
 }

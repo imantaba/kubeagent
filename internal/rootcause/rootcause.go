@@ -12,6 +12,7 @@ import (
 
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/pvchealth"
 )
 
 // Annotate sets w.RootCause on each flagged workload that has a pod on a hard-down
@@ -109,4 +110,47 @@ func registryHost(image string) string {
 		return "docker.io"
 	}
 	return seg
+}
+
+// AnnotatePVC sets w.RootCause = "PVC <name> (<reason>)" on each flagged,
+// not-yet-attributed workload that has a pod mounting a PersistentVolumeClaim
+// pvchealth diagnosed as broken (Pending with a provisioning/binding failure).
+// podPVCs maps "namespace/podName" to the PVC names that pod mounts. The
+// threshold is a single workload — the PVC is independently diagnosed, so this
+// is a join against evidence, not an inference. Pure and deterministic (issue
+// keys checked in sorted order). Call after Annotate (nodes win) and before
+// AnnotateRegistry (evidence beats statistics).
+func AnnotatePVC(workloads []inventory.Workload, podPVCs map[string][]string, issues []pvchealth.Issue) {
+	if len(issues) == 0 || len(podPVCs) == 0 {
+		return
+	}
+	reasonByKey := make(map[string]string, len(issues))
+	keys := make([]string, 0, len(issues))
+	for _, is := range issues {
+		key := is.Namespace + "/" + is.Name
+		if _, seen := reasonByKey[key]; !seen {
+			keys = append(keys, key)
+		}
+		reasonByKey[key] = is.Reason
+	}
+	sort.Strings(keys)
+	for i := range workloads {
+		w := &workloads[i]
+		if !w.Flagged() || w.RootCause != "" {
+			continue
+		}
+		mounted := map[string]bool{}
+		for _, p := range w.Pods {
+			for _, claim := range podPVCs[w.Namespace+"/"+p.Name] {
+				mounted[w.Namespace+"/"+claim] = true
+			}
+		}
+		for _, key := range keys {
+			if mounted[key] {
+				name := key[strings.IndexByte(key, '/')+1:]
+				workloads[i].RootCause = "PVC " + name + " (" + reasonByKey[key] + ")"
+				break
+			}
+		}
+	}
 }

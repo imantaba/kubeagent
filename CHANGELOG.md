@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-07-21
+
 ### Added
 
 - **Failed-PVC root-cause attribution.** A workload whose pod mounts a
@@ -482,7 +484,8 @@ infrastructure (a documentation site and a pre-release chaos-test harness).
 - CI (vet/test/build on push & PR) and a release workflow publishing a
   linux/amd64 tarball + `SHA256SUMS` to a GitHub Release.
 
-[Unreleased]: https://github.com/imantaba/kubeagent/compare/v0.30.0...HEAD
+[Unreleased]: https://github.com/imantaba/kubeagent/compare/v0.31.0...HEAD
+[0.31.0]: https://github.com/imantaba/kubeagent/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/imantaba/kubeagent/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/imantaba/kubeagent/compare/v0.28.2...v0.29.0
 [0.28.2]: https://github.com/imantaba/kubeagent/compare/v0.28.1...v0.28.2

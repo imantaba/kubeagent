@@ -11,6 +11,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
@@ -463,5 +464,17 @@ func TestTLSSecrets(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].Name != "shop-tls" {
 		t.Fatalf("want the seeded TLS secret, got %+v", got)
+	}
+}
+
+func TestPodDisruptionBudgets(t *testing.T) {
+	pdb := &policyv1.PodDisruptionBudget{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "api"}}
+	client := fake.NewSimpleClientset(pdb)
+	got, err := PodDisruptionBudgets(context.Background(), client, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "api" {
+		t.Fatalf("expected the seeded PDB, got %+v", got)
 	}
 }

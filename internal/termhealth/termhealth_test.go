@@ -79,6 +79,33 @@ func TestAssess_SortedByKindNamespaceName(t *testing.T) {
 	}
 }
 
+func TestAssess_NamespaceIgnoresResolvedCondition(t *testing.T) {
+	// A ConditionFalse (resolved) condition must NOT be reported; fall back to spec.finalizers.
+	ns := corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: "ns", DeletionTimestamp: delTime(1 * time.Hour)},
+		Spec:       corev1.NamespaceSpec{Finalizers: []corev1.FinalizerName{"kubernetes"}},
+		Status: corev1.NamespaceStatus{Conditions: []corev1.NamespaceCondition{
+			{Type: "NamespaceFinalizersRemaining", Status: corev1.ConditionFalse, Message: "resolved"}}},
+	}
+	got := Assess([]corev1.Namespace{ns}, nil, nil, 2*time.Minute, now)
+	if len(got) != 1 {
+		t.Fatalf("want one issue, got %+v", got)
+	}
+	if contains(got[0].Reason, "NamespaceFinalizersRemaining") {
+		t.Errorf("a ConditionFalse condition must not be reported as the blocker, got %q", got[0].Reason)
+	}
+	if !contains(got[0].Reason, "finalizers kubernetes") {
+		t.Errorf("want the spec.finalizers fallback, got %q", got[0].Reason)
+	}
+}
+
+func TestAssess_ExactlyAtThresholdNotFlagged(t *testing.T) {
+	pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "edge", DeletionTimestamp: delTime(2 * time.Minute)}}
+	if got := Assess(nil, []corev1.Pod{pod}, nil, 2*time.Minute, now); len(got) != 0 {
+		t.Errorf("a deletion exactly at the threshold must not be flagged, got %+v", got)
+	}
+}
+
 func contains(s, sub string) bool { return len(sub) == 0 || (len(s) >= len(sub) && indexOf(s, sub) >= 0) }
 func indexOf(s, sub string) int {
 	for i := 0; i+len(sub) <= len(s); i++ {

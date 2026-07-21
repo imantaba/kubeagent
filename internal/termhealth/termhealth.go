@@ -99,6 +99,7 @@ func pvcReason(c corev1.PersistentVolumeClaim, pods []corev1.Pod) string {
 	for _, f := range c.Finalizers {
 		if f == "kubernetes.io/pvc-protection" {
 			hasProtection = true
+			break
 		}
 	}
 	if hasProtection {
@@ -131,7 +132,9 @@ func mountingPod(c corev1.PersistentVolumeClaim, pods []corev1.Pod) string {
 func nsReason(ns corev1.Namespace) string {
 	byType := map[corev1.NamespaceConditionType]corev1.NamespaceCondition{}
 	for _, c := range ns.Status.Conditions {
-		byType[c.Type] = c
+		if c.Status == corev1.ConditionTrue {
+			byType[c.Type] = c
+		}
 	}
 	for _, t := range nsConditionOrder {
 		if c, ok := byType[t]; ok {

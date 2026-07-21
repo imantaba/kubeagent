@@ -1406,3 +1406,41 @@ func TestPrintInventory_ExpectedIngressGoesToNotes(t *testing.T) {
 		t.Errorf("parked route must not appear under NEEDS ATTENTION:\n%s", out)
 	}
 }
+
+func TestPrintInventory_RootCauseLineAndRollup(t *testing.T) {
+	ws := []inventory.Workload{
+		{Namespace: "shop", Name: "api", Kind: "Deployment", Desired: 2, Ready: 0, Status: "Degraded",
+			RootCause: "node worker-2 (NotReady)",
+			Findings:  []diagnose.Finding{{Issue: "CrashLoopBackOff", Reason: "keeps crashing"}}},
+		{Namespace: "shop", Name: "web", Kind: "Deployment", Desired: 1, Ready: 0, Status: "Degraded",
+			RootCause: "node worker-2 (NotReady)"},
+	}
+	var buf bytes.Buffer
+	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Degraded", NodesReady: 2, NodesTotal: 3},
+		Result: inventory.Result{Workloads: ws}}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "↳ likely caused by node worker-2 (NotReady)") {
+		t.Errorf("missing root-cause line:\n%s", out)
+	}
+	if !strings.Contains(out, "(2 ⇐ node worker-2)") {
+		t.Errorf("attention line should roll up both workloads under one node:\n%s", out)
+	}
+}
+
+func TestPrintInventory_RootCauseMultiNodeRollup(t *testing.T) {
+	ws := []inventory.Workload{
+		{Namespace: "shop", Name: "api", Kind: "Deployment", Desired: 1, Ready: 0, Status: "Degraded", RootCause: "node worker-2 (NotReady)"},
+		{Namespace: "shop", Name: "web", Kind: "Deployment", Desired: 1, Ready: 0, Status: "Degraded", RootCause: "node worker-1 (kubelet not heartbeating)"},
+	}
+	var buf bytes.Buffer
+	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Degraded", NodesReady: 1, NodesTotal: 3}, Result: inventory.Result{Workloads: ws}}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "(2 ⇐ 2 unhealthy nodes)") {
+		t.Errorf("attention line should report 2 unhealthy nodes:\n%s", buf.String())
+	}
+}

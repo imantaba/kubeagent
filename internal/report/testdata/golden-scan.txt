@@ -4,7 +4,7 @@ Cluster: Degraded — 2/4 nodes Ready
   ✗ node worker-1 kubelet not heartbeating (lease 95s stale)
   ✗ node db-01 expected but absent from the cluster
   ✗ system kube-system/coredns Degraded 1/2
-  Needs attention: 11 workloads failing (4 ⇐ 2 unhealthy nodes) · 2 services without endpoints · 1 ingress route broken · 1 PVC failing to provision
+  Needs attention: 13 workloads failing (6 ⇐ 3 root causes) · 2 services without endpoints · 1 ingress route broken · 1 PVC failing to provision
 
 NEEDS ATTENTION
 ✗ shop/web  Deployment  0/1 Degraded  · 8 restarts, last 205d ago
@@ -22,6 +22,18 @@ NEEDS ATTENTION
     ⚠ ImagePullBackOff: Bad image reference or registry authentication
       ↳ container "api": Back-off pulling image "nginx:9.9.9-nope": not found
     api-864-dxtdh  0/1  Pending  restarts=0  worker-1  10.244.2.4  6d
+✗ shop/frontend  Deployment  0/1 Degraded
+    ↳ likely caused by registry ghcr.io (2 workloads failing to pull)
+    image ghcr.io/shop/frontend:2.4
+    ⚠ ImagePullBackOff: Bad image reference or registry authentication
+      ↳ container "frontend": Back-off pulling image "ghcr.io/shop/frontend:2.4": 403 Forbidden
+    frontend-58d-x2vqp  0/1  Pending  restarts=0  worker-3  10.244.3.14  3h
+✗ shop/search  Deployment  0/1 Degraded
+    ↳ likely caused by registry ghcr.io (2 workloads failing to pull)
+    image ghcr.io/shop/search:1.9
+    ⚠ ErrImagePull: Bad image reference or registry authentication
+      ↳ container "search": pulling image "ghcr.io/shop/search:1.9": 403 Forbidden
+    search-7b4-mm1zq  0/1  Pending  restarts=0  worker-3  10.244.3.15  3h
 ✗ shop/billing-worker  Deployment  0/1 Degraded  · 6 restarts, last 205d ago
     ↳ likely caused by node worker-2 (NotReady)
     image polinux/stress

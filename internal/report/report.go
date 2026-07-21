@@ -10,6 +10,7 @@ import (
 
 	"github.com/imantaba/kubeagent/internal/certhealth"
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
+	"github.com/imantaba/kubeagent/internal/confidence"
 	"github.com/imantaba/kubeagent/internal/credlint"
 	"github.com/imantaba/kubeagent/internal/diskusage"
 	"github.com/imantaba/kubeagent/internal/ingresshealth"
@@ -742,7 +743,11 @@ func printWorkload(wl inventory.Workload, now time.Time, w io.Writer) error {
 		return err
 	}
 	if wl.RootCause != "" {
-		if _, err := fmt.Fprintf(w, "    ↳ likely caused by %s\n", wl.RootCause); err != nil {
+		rcTag := ""
+		if c := confidence.ForRootCause(wl.RootCause); c != "" && c != "high" {
+			rcTag = " [" + c + "]"
+		}
+		if _, err := fmt.Fprintf(w, "    ↳ likely caused by %s%s\n", wl.RootCause, rcTag); err != nil {
 			return err
 		}
 	}
@@ -752,7 +757,11 @@ func printWorkload(wl inventory.Workload, now time.Time, w io.Writer) error {
 		}
 	}
 	for _, f := range wl.Findings {
-		if _, err := fmt.Fprintf(w, "    ⚠ %s: %s\n", f.Issue, f.Reason); err != nil {
+		tag := ""
+		if f.Confidence != "" && f.Confidence != "high" {
+			tag = " [" + f.Confidence + "]"
+		}
+		if _, err := fmt.Fprintf(w, "    ⚠ %s%s: %s\n", f.Issue, tag, f.Reason); err != nil {
 			return err
 		}
 		if f.Evidence != "" && f.Evidence != f.Reason {

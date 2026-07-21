@@ -1540,3 +1540,48 @@ func TestPrintInventory_CertificatesAbsentWhenNilOrClean(t *testing.T) {
 		t.Error("section must be absent when everything is healthy")
 	}
 }
+
+func TestPrintInventory_ConfidenceTags(t *testing.T) {
+	ws := []inventory.Workload{
+		{Namespace: "shop", Name: "cache", Kind: "Deployment", Desired: 1, Ready: 0, Status: "Degraded",
+			RootCause: "registry ghcr.io (2 workloads failing to pull)",
+			Findings: []diagnose.Finding{
+				{Issue: "RestartLoop", Reason: "keeps erroring", Confidence: "medium"},
+				{Issue: "CrashLoopBackOff", Reason: "repeatedly crashes", Confidence: "high"},
+			}},
+		{Namespace: "shop", Name: "db", Kind: "StatefulSet", Desired: 1, Ready: 0, Status: "Degraded",
+			RootCause: "node worker-2 (NotReady)",
+			Findings:  []diagnose.Finding{{Issue: "VolumeAttachError", Reason: "Multi-Attach", Confidence: "high"}}},
+	}
+	var buf bytes.Buffer
+	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Degraded", NodesReady: 2, NodesTotal: 3},
+		Result: inventory.Result{Workloads: ws}}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "⚠ RestartLoop [medium]: keeps erroring") {
+		t.Errorf("medium finding should be tagged:\n%s", out)
+	}
+	if !strings.Contains(out, "⚠ CrashLoopBackOff: repeatedly crashes") || strings.Contains(out, "CrashLoopBackOff [high]") {
+		t.Errorf("high finding must be unmarked:\n%s", out)
+	}
+	if !strings.Contains(out, "↳ likely caused by registry ghcr.io (2 workloads failing to pull) [medium]") {
+		t.Errorf("registry attribution should be tagged medium:\n%s", out)
+	}
+	if strings.Contains(out, "node worker-2 (NotReady) [") {
+		t.Errorf("node attribution (high) must be unmarked:\n%s", out)
+	}
+}
+
+func TestPrintInventory_JSONFindingCarriesConfidence(t *testing.T) {
+	ws := []inventory.Workload{{Namespace: "shop", Name: "web", Kind: "Deployment", Desired: 1, Ready: 0, Status: "Degraded",
+		Findings: []diagnose.Finding{{Issue: "CrashLoopBackOff", Reason: "x", Confidence: "high"}}}}
+	var buf bytes.Buffer
+	if err := PrintInventory(Input{Result: inventory.Result{Workloads: ws}}, "json", &buf); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), `"confidence": "high"`) {
+		t.Errorf("JSON must carry finding confidence:\n%s", buf.String())
+	}
+}

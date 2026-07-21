@@ -28,6 +28,9 @@ rules:
   - apiGroups: ["coordination.k8s.io"]
     resources: [leases]
     verbs: [get, list, watch]
+  - apiGroups: ["policy"]
+    resources: [poddisruptionbudgets]
+    verbs: [get, list, watch]
   {{- if or .Values.diskUsage.enabled .Values.kubeletHealth.enabled }}
   - apiGroups: [""]
     resources: [nodes/proxy]

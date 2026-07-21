@@ -48,14 +48,23 @@ func Assess(hpas []autoscalingv2.HorizontalPodAutoscaler) []Issue {
 	return out
 }
 
+// reason joins a category prefix with a condition message, omitting the "— <msg>"
+// suffix when the message is empty so the reason never ends in a dangling em dash.
+func reason(prefix, msg string) string {
+	if m := trimMsg(msg); m != "" {
+		return prefix + " — " + m
+	}
+	return prefix
+}
+
 // classify returns the first matching category (unable → metrics → capped) for an
 // HPA, or ok=false when it is healthy/benign.
-func classify(h autoscalingv2.HorizontalPodAutoscaler) (category, reason string, ok bool) {
+func classify(h autoscalingv2.HorizontalPodAutoscaler) (category, msg string, ok bool) {
 	if c := condition(h, autoscalingv2.AbleToScale); c != nil && c.Status == corev1.ConditionFalse {
-		return "unable", "can't scale — " + trimMsg(c.Message), true
+		return "unable", reason("can't scale", c.Message), true
 	}
 	if c := condition(h, autoscalingv2.ScalingActive); c != nil && c.Status == corev1.ConditionFalse {
-		return "metrics", "can't fetch metrics — " + trimMsg(c.Message), true
+		return "metrics", reason("can't fetch metrics", c.Message), true
 	}
 	// "TooManyReplicas" is the literal reason the upstream HPA controller sets on
 	// ScalingLimited when it clamps the desired count down to maxReplicas.

@@ -106,3 +106,21 @@ func TestAssess_SortedByNamespaceName(t *testing.T) {
 		t.Fatalf("not sorted by (ns,name): %+v", got)
 	}
 }
+
+func TestAssess_EmptyMessageNoDanglingDash(t *testing.T) {
+	h := hpa("a", "nomsg", "Deployment", "x", 3,
+		cond(autoscalingv2.AbleToScale, corev1.ConditionFalse, "FailedGetScale", ""))
+	is, ok := find(Assess([]autoscalingv2.HorizontalPodAutoscaler{h}), "nomsg")
+	if !ok || is.Reason != "can't scale" {
+		t.Fatalf(`empty message must yield "can't scale" with no trailing dash, got %q`, is.Reason)
+	}
+}
+
+func TestAssess_MetricsBeatsCapped(t *testing.T) {
+	h := hpa("a", "mc", "Deployment", "x", 4,
+		cond(autoscalingv2.ScalingActive, corev1.ConditionFalse, "FailedGetResourceMetric", "no metric"),
+		cond(autoscalingv2.ScalingLimited, corev1.ConditionTrue, "TooManyReplicas", "clamped"))
+	if is, _ := find(Assess([]autoscalingv2.HorizontalPodAutoscaler{h}), "mc"); is.Category != "metrics" {
+		t.Fatalf("metrics must win over capped, got %+v", is)
+	}
+}

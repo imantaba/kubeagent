@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/imantaba/kubeagent/internal/certhealth"
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/diskusage"
@@ -47,6 +48,9 @@ func sampleResult() *scan.Result {
 		},
 		PVCIssues: []pvchealth.Issue{{Namespace: "shop", Name: "data-pvc", Phase: "Pending", Reason: "ProvisioningFailed"}},
 		KubeletHealth: nodehealth.Report{Probed: 2, Unhealthy: []nodehealth.Issue{{Node: "w"}}},
+		Certificates: &certhealth.Report{WarnDays: 30, Checked: 4,
+			Expired:  []certhealth.Cert{{Namespace: "shop", Name: "shop-tls", Days: -3}},
+			Expiring: []certhealth.Cert{{Namespace: "infra", Name: "api-tls", Days: 12}}},
 	}
 }
 
@@ -71,6 +75,8 @@ func TestMetrics_RenderReflectsResult(t *testing.T) {
 		"kubeagent_pvc_pending_issues 1",
 		"kubeagent_nodes_expected_absent 1",
 		"kubeagent_kubelet_unhealthy 1",
+		"kubeagent_certificates_expired 1",
+		"kubeagent_certificates_expiring 1",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("metrics missing %q in:\n%s", want, out)

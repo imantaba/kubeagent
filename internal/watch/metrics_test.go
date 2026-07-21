@@ -12,6 +12,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/diskusage"
+	"github.com/imantaba/kubeagent/internal/hpahealth"
 	"github.com/imantaba/kubeagent/internal/ingresshealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/nodehealth"
@@ -51,6 +52,7 @@ func sampleResult() *scan.Result {
 		PVCIssues: []pvchealth.Issue{{Namespace: "shop", Name: "data-pvc", Phase: "Pending", Reason: "ProvisioningFailed"}},
 		StuckTerminating: []termhealth.Issue{{Kind: "Namespace", Name: "legacy-ns", Age: "3h", Reason: "NamespaceFinalizersRemaining — x"}},
 		PDBIssues:        []pdbhealth.Issue{{Namespace: "shop", Name: "api"}},
+		HPAIssues:        []hpahealth.Issue{{Namespace: "shop", Name: "api-hpa"}},
 		KubeletHealth: nodehealth.Report{Probed: 2, Unhealthy: []nodehealth.Issue{{Node: "w"}}},
 		Certificates: &certhealth.Report{WarnDays: 30, Checked: 4,
 			Expired:  []certhealth.Cert{{Namespace: "shop", Name: "shop-tls", Days: -3}},
@@ -79,6 +81,7 @@ func TestMetrics_RenderReflectsResult(t *testing.T) {
 		"kubeagent_pvc_pending_issues 1",
 		"kubeagent_resources_stuck_terminating 1",
 		"kubeagent_pdb_blocking_issues 1",
+		"kubeagent_hpa_scaling_issues 1",
 		"kubeagent_nodes_expected_absent 1",
 		"kubeagent_kubelet_unhealthy 1",
 		"kubeagent_certificates_expired 1",

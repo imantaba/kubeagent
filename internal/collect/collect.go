@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
@@ -229,6 +230,17 @@ func PodDisruptionBudgets(ctx context.Context, client kubernetes.Interface, name
 	list, err := client.PolicyV1().PodDisruptionBudgets(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("listing poddisruptionbudgets: %w", err)
+	}
+	return list.Items, nil
+}
+
+// HorizontalPodAutoscalers lists HPAs in the namespace (empty = all), read-only.
+// Used by the HPA-can't-scale check. Needs the base autoscaling/horizontalpodautoscalers
+// list grant; a forbidden/absent result simply omits the check.
+func HorizontalPodAutoscalers(ctx context.Context, client kubernetes.Interface, namespace string) ([]autoscalingv2.HorizontalPodAutoscaler, error) {
+	list, err := client.AutoscalingV2().HorizontalPodAutoscalers(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("listing horizontalpodautoscalers: %w", err)
 	}
 	return list.Items, nil
 }

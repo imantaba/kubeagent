@@ -12,6 +12,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/certhealth"
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/diagnose"
+	"github.com/imantaba/kubeagent/internal/hpahealth"
 	"github.com/imantaba/kubeagent/internal/ingresshealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/nodehealth"
@@ -92,6 +93,10 @@ func goldenInput(now time.Time) Input {
 		PDBIssues: []pdbhealth.Issue{
 			{Namespace: "shop", Name: "api-pdb", Rule: "minAvailable: 3", Category: "unsatisfiable",
 				Reason: "covers all 3 pods — no voluntary eviction can ever proceed; every node drain will hang"},
+		},
+		HPAIssues: []hpahealth.Issue{
+			{Namespace: "shop", Name: "api-hpa", Target: "Deployment/api", Category: "metrics",
+				Reason: "can't fetch metrics — unable to get resource metric cpu: no metrics returned"},
 		},
 	}
 }
@@ -242,7 +247,7 @@ func TestGoldenInputCoversAllSections(t *testing.T) {
 		in.Platform == nil || len(in.ServiceIssues) == 0 || len(in.CredentialWarnings) == 0 ||
 		len(in.IngressIssues) == 0 || len(in.SecurityIssues) == 0 || in.NodeReserve == nil ||
 		in.PVCReclaim == nil || in.KubeletHealth == nil || len(in.PVCIssues) == 0 || in.Certificates == nil ||
-		len(in.StuckTerminating) == 0 || len(in.PDBIssues) == 0 {
+		len(in.StuckTerminating) == 0 || len(in.PDBIssues) == 0 || len(in.HPAIssues) == 0 {
 		t.Fatal("goldenInput must populate every section so the golden stays comprehensive")
 	}
 	// Guard the *distinct* failure modes too, so a fixture regression can't drop one

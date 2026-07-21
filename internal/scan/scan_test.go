@@ -10,7 +10,11 @@ import (
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/imantaba/kubeagent/internal/secscan"
 )
@@ -651,6 +655,51 @@ func TestEvaluate_AttributesRootCauseToBrokenPVC(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected a workload attributed to PVC reports-data, got %+v", res.Inventory.Workloads)
+	}
+}
+
+func TestEvaluate_CertsOffMakesNoSecretsCall(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}}
+	cli := fake.NewSimpleClientset(node)
+	if _, err := Evaluate(context.Background(), cli, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range cli.Actions() {
+		if a.GetResource().Resource == "secrets" {
+			t.Fatalf("default scan must not touch secrets, saw action %+v", a)
+		}
+	}
+}
+
+func TestEvaluate_CertsOnAssessesTLSSecrets(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}}
+	bad := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "bad-tls"},
+		Type: corev1.SecretTypeTLS, Data: map[string][]byte{"tls.crt": []byte("not a certificate")}}
+	cli := fake.NewSimpleClientset(node, bad)
+	res, err := Evaluate(context.Background(), cli, Options{Certs: true, CertWarnDays: 30})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Certificates == nil || res.Certificates.Checked != 1 || len(res.Certificates.Invalid) != 1 {
+		t.Errorf("want Certificates with 1 checked / 1 invalid, got %+v", res.Certificates)
+	}
+}
+
+func TestEvaluate_CertsForbiddenGraceful(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}}
+	cli := fake.NewSimpleClientset(node)
+	cli.Fake.PrependReactor("list", "secrets", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "secrets"}, "", nil)
+	})
+	res, err := Evaluate(context.Background(), cli, Options{Certs: true, CertWarnDays: 30})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Certificates == nil || !res.Certificates.Forbidden {
+		t.Errorf("forbidden secrets list must set Certificates.Forbidden, got %+v", res.Certificates)
 	}
 }
 

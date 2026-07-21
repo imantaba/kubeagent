@@ -4,7 +4,7 @@ Cluster: Degraded — 2/4 nodes Ready
   ✗ node worker-1 kubelet not heartbeating (lease 95s stale)
   ✗ node db-01 expected but absent from the cluster
   ✗ system kube-system/coredns Degraded 1/2
-  Needs attention: 13 workloads failing (6 ⇐ 3 root causes) · 2 services without endpoints · 1 ingress route broken · 1 PVC failing to provision
+  Needs attention: 14 workloads failing (7 ⇐ 4 root causes) · 2 services without endpoints · 1 ingress route broken · 1 PVC failing to provision
 
 NEEDS ATTENTION
 ✗ shop/web  Deployment  0/1 Degraded  · 8 restarts, last 205d ago
@@ -34,6 +34,10 @@ NEEDS ATTENTION
     ⚠ ErrImagePull: Bad image reference or registry authentication
       ↳ container "search": pulling image "ghcr.io/shop/search:1.9": 403 Forbidden
     search-7b4-mm1zq  0/1  Pending  restarts=0  worker-3  10.244.3.15  3h
+✗ shop/reports  Deployment  0/1 Pending
+    ↳ likely caused by PVC reports-data (ProvisioningFailed)
+    image busybox:1.36
+    reports-6c9-fk2vw  0/1  Pending  restarts=0  worker-3    2h
 ✗ shop/billing-worker  Deployment  0/1 Degraded  · 6 restarts, last 205d ago
     ↳ likely caused by node worker-2 (NotReady)
     image polinux/stress

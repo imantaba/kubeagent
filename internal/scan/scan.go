@@ -185,11 +185,21 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	for _, p := range inputs.Pods {
 		podLabels[p.Namespace+"/"+p.Name] = p.Labels
 	}
+	podPVCs := make(map[string][]string, len(inputs.Pods))
+	for _, p := range inputs.Pods {
+		for _, v := range p.Spec.Volumes {
+			if v.PersistentVolumeClaim != nil {
+				key := p.Namespace + "/" + p.Name
+				podPVCs[key] = append(podPVCs[key], v.PersistentVolumeClaim.ClaimName)
+			}
+		}
+	}
 	failedCreateEvents, _ := collect.FailedCreateEvents(ctx, client, opts.Namespace)
 	createhealth.Annotate(result.Workloads, inputs.ReplicaSets, failedCreateEvents)
 	netpolicy.Annotate(result.Workloads, podLabels, nps)
 	rollout.Annotate(result.Workloads, inputs.ReplicaSets, time.Now())
 	rootcause.Annotate(result.Workloads, health.DownNodes)
+	rootcause.AnnotatePVC(result.Workloads, podPVCs, pvcIssues)
 	rootcause.AnnotateRegistry(result.Workloads)
 
 	var diskReport diskusage.Report

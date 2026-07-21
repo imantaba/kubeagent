@@ -6,6 +6,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/pvchealth"
 )
 
 func wl(ns, name string, ready, desired int, nodes ...string) inventory.Workload {
@@ -158,5 +159,121 @@ func TestAnnotateRegistry_TwoGroupsIndependent(t *testing.T) {
 	if ws[0].RootCause != "registry ghcr.io (2 workloads failing to pull)" ||
 		ws[2].RootCause != "registry quay.io (2 workloads failing to pull)" {
 		t.Errorf("each group gets its own host, got %q / %q", ws[0].RootCause, ws[2].RootCause)
+	}
+}
+
+// pvcWL builds a flagged 0/1 Pending Deployment with one named pod (no findings —
+// the realistic stuck-on-storage shape, flagged via Ready<Desired).
+func pvcWL(ns, name, podName string) inventory.Workload {
+	return inventory.Workload{Namespace: ns, Name: name, Kind: "Deployment",
+		Ready: 0, Desired: 1, Status: "Pending",
+		Pods: []inventory.PodRow{{Name: podName, Phase: "Pending"}}}
+}
+
+func TestAnnotatePVC_MountedIssueAttributed(t *testing.T) {
+	ws := []inventory.Workload{pvcWL("shop", "reports", "reports-1")}
+	podPVCs := map[string][]string{"shop/reports-1": {"reports-data"}}
+	issues := []pvchealth.Issue{{Namespace: "shop", Name: "reports-data", Phase: "Pending", Reason: "ProvisioningFailed"}}
+	AnnotatePVC(ws, podPVCs, issues)
+	if ws[0].RootCause != "PVC reports-data (ProvisioningFailed)" {
+		t.Errorf("RootCause = %q, want PVC reports-data (ProvisioningFailed)", ws[0].RootCause)
+	}
+}
+
+func TestAnnotatePVC_FailedBindingReason(t *testing.T) {
+	ws := []inventory.Workload{pvcWL("db", "pg", "pg-0")}
+	podPVCs := map[string][]string{"db/pg-0": {"pg-data"}}
+	issues := []pvchealth.Issue{{Namespace: "db", Name: "pg-data", Phase: "Pending", Reason: "FailedBinding"}}
+	AnnotatePVC(ws, podPVCs, issues)
+	if ws[0].RootCause != "PVC pg-data (FailedBinding)" {
+		t.Errorf("RootCause = %q", ws[0].RootCause)
+	}
+}
+
+func TestAnnotatePVC_HealthyMountsNotAttributed(t *testing.T) {
+	ws := []inventory.Workload{pvcWL("shop", "reports", "reports-1")}
+	podPVCs := map[string][]string{"shop/reports-1": {"other-healthy-pvc"}}
+	issues := []pvchealth.Issue{{Namespace: "shop", Name: "reports-data", Reason: "ProvisioningFailed"}}
+	AnnotatePVC(ws, podPVCs, issues)
+	if ws[0].RootCause != "" {
+		t.Errorf("workload mounting only healthy PVCs must not be attributed, got %q", ws[0].RootCause)
+	}
+}
+
+func TestAnnotatePVC_ExistingRootCausePreserved(t *testing.T) {
+	w := pvcWL("shop", "reports", "reports-1")
+	w.RootCause = "node worker-2 (NotReady)"
+	ws := []inventory.Workload{w}
+	podPVCs := map[string][]string{"shop/reports-1": {"reports-data"}}
+	issues := []pvchealth.Issue{{Namespace: "shop", Name: "reports-data", Reason: "ProvisioningFailed"}}
+	AnnotatePVC(ws, podPVCs, issues)
+	if ws[0].RootCause != "node worker-2 (NotReady)" {
+		t.Errorf("node attribution must win, got %q", ws[0].RootCause)
+	}
+}
+
+func TestAnnotatePVC_NotFlaggedSkipped(t *testing.T) {
+	w := pvcWL("shop", "reports", "reports-1")
+	w.Ready, w.Desired, w.Status = 1, 1, "Running"
+	ws := []inventory.Workload{w}
+	podPVCs := map[string][]string{"shop/reports-1": {"reports-data"}}
+	issues := []pvchealth.Issue{{Namespace: "shop", Name: "reports-data", Reason: "ProvisioningFailed"}}
+	AnnotatePVC(ws, podPVCs, issues)
+	if ws[0].RootCause != "" {
+		t.Errorf("a healthy workload must be skipped, got %q", ws[0].RootCause)
+	}
+}
+
+func TestAnnotatePVC_NamespaceIsolation(t *testing.T) {
+	// Same PVC name broken in ANOTHER namespace must not match.
+	ws := []inventory.Workload{pvcWL("shop", "reports", "reports-1")}
+	podPVCs := map[string][]string{"shop/reports-1": {"reports-data"}}
+	issues := []pvchealth.Issue{{Namespace: "other", Name: "reports-data", Reason: "ProvisioningFailed"}}
+	AnnotatePVC(ws, podPVCs, issues)
+	if ws[0].RootCause != "" {
+		t.Errorf("an issue in a different namespace must not match, got %q", ws[0].RootCause)
+	}
+}
+
+func TestAnnotatePVC_DeterministicSortedPick(t *testing.T) {
+	// Pod mounts two broken PVCs; the sorted-first issue key wins.
+	ws := []inventory.Workload{pvcWL("shop", "reports", "reports-1")}
+	podPVCs := map[string][]string{"shop/reports-1": {"zeta-data", "alpha-data"}}
+	issues := []pvchealth.Issue{
+		{Namespace: "shop", Name: "zeta-data", Reason: "ProvisioningFailed"},
+		{Namespace: "shop", Name: "alpha-data", Reason: "FailedBinding"},
+	}
+	AnnotatePVC(ws, podPVCs, issues)
+	if ws[0].RootCause != "PVC alpha-data (FailedBinding)" {
+		t.Errorf("sorted-first issue key must win, got %q", ws[0].RootCause)
+	}
+}
+
+func TestAnnotatePVC_BeatsRegistryWhenRunFirst(t *testing.T) {
+	// A workload that both mounts a broken PVC AND fails pulls alongside another
+	// workload: running AnnotatePVC before AnnotateRegistry (the scan order) must
+	// give it the PVC cause and shrink the registry group below threshold.
+	stuck := pvcWL("shop", "reports", "reports-1")
+	stuck.Image = "ghcr.io/shop/reports:1.0"
+	stuck.Findings = []diagnose.Finding{{Pod: "shop/reports", Issue: "ImagePullBackOff", Reason: "Bad image reference or registry authentication"}}
+	other := pullWL("web", "ghcr.io/shop/web:3.1", "ImagePullBackOff")
+	ws := []inventory.Workload{stuck, other}
+	podPVCs := map[string][]string{"shop/reports-1": {"reports-data"}}
+	issues := []pvchealth.Issue{{Namespace: "shop", Name: "reports-data", Reason: "ProvisioningFailed"}}
+	AnnotatePVC(ws, podPVCs, issues)
+	AnnotateRegistry(ws)
+	if ws[0].RootCause != "PVC reports-data (ProvisioningFailed)" {
+		t.Errorf("PVC cause must win when run first, got %q", ws[0].RootCause)
+	}
+	if ws[1].RootCause != "" {
+		t.Errorf("with the PVC-attributed workload excluded, the registry group is 1 -> no attribution, got %q", ws[1].RootCause)
+	}
+}
+
+func TestAnnotatePVC_EmptyInputsNoop(t *testing.T) {
+	ws := []inventory.Workload{pvcWL("shop", "reports", "reports-1")}
+	AnnotatePVC(ws, nil, nil)
+	if ws[0].RootCause != "" {
+		t.Errorf("empty inputs => no-op, got %q", ws[0].RootCause)
 	}
 }

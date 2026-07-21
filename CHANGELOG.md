@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Failed-PVC root-cause attribution.** A workload whose pod mounts a
+  PersistentVolumeClaim that cannot provision or bind (the v0.26.0 Pending-PVC
+  check) is now attributed to that PVC — "↳ likely caused by PVC reports-data
+  (ProvisioningFailed)" — connecting a pod stuck Pending/ContainerCreating, which
+  has no pod-level finding of its own, to the storage cause kubeagent already
+  reports. One affected workload is enough (the PVC is independently diagnosed);
+  node attribution takes precedence. Read-only, always-on, no new RBAC.
+
 ## [0.30.0] - 2026-07-21
 
 ### Added

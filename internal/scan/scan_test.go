@@ -609,6 +609,51 @@ func TestEvaluate_NodeAttributionWinsOverRegistry(t *testing.T) {
 	}
 }
 
+func TestEvaluate_AttributesRootCauseToBrokenPVC(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}}
+	sc := "fast"
+	pvc := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "reports-data"},
+		Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: &sc},
+		Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimPending},
+	}
+	ev := &corev1.Event{
+		ObjectMeta:     metav1.ObjectMeta{Namespace: "shop", Name: "reports-data.ev"},
+		Reason:         "ProvisioningFailed",
+		Type:           "Warning",
+		Message:        `storageclass "fast" not found`,
+		LastTimestamp:  metav1.Now(),
+		InvolvedObject: corev1.ObjectReference{Kind: "PersistentVolumeClaim", Namespace: "shop", Name: "reports-data"},
+	}
+	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "reports"},
+		Spec: appsv1.DeploymentSpec{Replicas: p32(1)}}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "reports-1",
+		Labels: map[string]string{"app": "reports"}},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "reports", Image: "busybox:1.36"}},
+			Volumes: []corev1.Volume{{Name: "data", VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "reports-data"}}}},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodPending, ContainerStatuses: []corev1.ContainerStatus{{
+			Name: "reports", Ready: false,
+			State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ContainerCreating"}}}}}}
+	cli := fake.NewSimpleClientset(node, pvc, ev, dep, pod)
+	res, err := Evaluate(context.Background(), cli, Options{Namespace: "shop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, w := range res.Inventory.Workloads {
+		if w.RootCause == "PVC reports-data (ProvisioningFailed)" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a workload attributed to PVC reports-data, got %+v", res.Inventory.Workloads)
+	}
+}
+
 func TestEvaluate_KubeletHealthOffByDefault(t *testing.T) {
 	// Mirrors TestEvaluate_DiskUsageOffByDefault: the fake clientset's
 	// RESTClient() is nil, so the nodes/proxy probe cannot be exercised through

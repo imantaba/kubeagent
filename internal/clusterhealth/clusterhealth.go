@@ -18,14 +18,23 @@ const systemNamespace = "kube-system"
 
 // ClusterHealth is the first-line cluster verdict.
 type ClusterHealth struct {
-	Verdict              string   `json:"verdict"` // Healthy | Degraded
-	NodesTotal           int      `json:"nodesTotal"`
-	NodesReady           int      `json:"nodesReady"`
-	NodesStaleHeartbeat  int      `json:"nodesStaleHeartbeat,omitempty"`
-	NodesExpectedAbsent  int      `json:"nodesExpectedAbsent,omitempty"`
-	NodeIssues           []string `json:"nodeIssues,omitempty"`
-	SystemIssues         []string `json:"systemIssues,omitempty"`
-	ScopeNote            string   `json:"scopeNote,omitempty"`
+	Verdict              string     `json:"verdict"` // Healthy | Degraded
+	NodesTotal           int        `json:"nodesTotal"`
+	NodesReady           int        `json:"nodesReady"`
+	NodesStaleHeartbeat  int        `json:"nodesStaleHeartbeat,omitempty"`
+	NodesExpectedAbsent  int        `json:"nodesExpectedAbsent,omitempty"`
+	NodeIssues           []string   `json:"nodeIssues,omitempty"`
+	SystemIssues         []string   `json:"systemIssues,omitempty"`
+	ScopeNote            string     `json:"scopeNote,omitempty"`
+	DownNodes            []DownNode `json:"downNodes,omitempty"`
+}
+
+// DownNode is a node that is effectively down — NotReady, or Ready but its
+// kubelet has stopped heartbeating. Used to attribute workload failures to their
+// node (internal/rootcause).
+type DownNode struct {
+	Name   string `json:"name"`
+	Reason string `json:"reason"` // "NotReady" | "kubelet not heartbeating"
 }
 
 // Heartbeat carries the node-lease inputs for the kubelet-heartbeat-freshness
@@ -51,12 +60,21 @@ func Assess(nodes []corev1.Node, hb Heartbeat, expected []string, workloads []in
 	for _, n := range nodes {
 		present[n.Name] = true
 		ready, issues := nodeHealth(n)
+		if !ready {
+			ch.DownNodes = append(ch.DownNodes, DownNode{Name: n.Name, Reason: "NotReady"})
+		}
 		if ready {
 			ch.NodesReady++
 			if hb.Threshold > 0 {
 				if iss, stale := staleHeartbeat(leaseByNode, n.Name, hb.Now, hb.Threshold); stale {
 					issues = append(issues, iss)
 					ch.NodesStaleHeartbeat++
+					if len(issues) == 1 {
+						// Only treat as hard-down when the sole issue is the stale heartbeat
+						// itself (no pressure, no cordon). A cordoned or pressured node that
+						// also has a missing lease is still just "degraded", not "hard-down".
+						ch.DownNodes = append(ch.DownNodes, DownNode{Name: n.Name, Reason: "kubelet not heartbeating"})
+					}
 				}
 			}
 		}

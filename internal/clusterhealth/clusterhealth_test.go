@@ -324,3 +324,42 @@ func TestAssess_ExpectedCleaningAndOrder(t *testing.T) {
 		t.Errorf("absent issues must be sorted (alpha before zeta): %+v", ch.NodeIssues)
 	}
 }
+
+func TestAssess_DownNodesNotReadyAndStale(t *testing.T) {
+	now := time.Unix(1_000_000, 0)
+	nodes := []corev1.Node{
+		notReadyNode("worker-2", "KubeletNotReady", "runtime down"),
+		hbReadyNode("worker-1"),        // Ready, but lease will be stale
+		node("worker-3", true, nil, true), // Ready + cordoned — NOT hard-down
+		node("worker-4", true, []corev1.NodeConditionType{corev1.NodeMemoryPressure}, false), // Ready + pressure — NOT hard-down
+	}
+	hb := Heartbeat{Leases: []coordinationv1.Lease{hbLease("worker-1", now.Add(-90*time.Second))}, Now: now, Threshold: 40 * time.Second}
+	ch := Assess(nodes, hb, nil, nil)
+
+	got := map[string]string{}
+	for _, d := range ch.DownNodes {
+		got[d.Name] = d.Reason
+	}
+	if got["worker-2"] != "NotReady" {
+		t.Errorf("worker-2 reason = %q, want NotReady", got["worker-2"])
+	}
+	if got["worker-1"] != "kubelet not heartbeating" {
+		t.Errorf("worker-1 reason = %q, want kubelet not heartbeating", got["worker-1"])
+	}
+	if _, ok := got["worker-3"]; ok {
+		t.Error("a cordoned-but-Ready node must not be a DownNode")
+	}
+	if _, ok := got["worker-4"]; ok {
+		t.Error("a pressured-but-Ready node must not be a DownNode")
+	}
+	if len(ch.DownNodes) != 2 {
+		t.Errorf("want exactly 2 down nodes, got %d: %+v", len(ch.DownNodes), ch.DownNodes)
+	}
+}
+
+func TestAssess_NoDownNodesWhenHealthy(t *testing.T) {
+	ch := Assess([]corev1.Node{node("a", true, nil, false)}, Heartbeat{}, nil, nil)
+	if len(ch.DownNodes) != 0 {
+		t.Errorf("healthy cluster must have no down nodes, got %+v", ch.DownNodes)
+	}
+}

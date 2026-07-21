@@ -128,6 +128,10 @@
   correlation); tagged in the report only when not high, always in JSON. See
   [Failure diagnostics](features/diagnostics.md).
 
+- **Stuck-terminating detection** — flags namespaces/pods/PVCs wedged in
+  Terminating past two minutes and names the blocking finalizer or condition. See
+  [Failure diagnostics](features/diagnostics.md).
+
 !!! info "Version history"
     [GitHub Releases](https://github.com/imantaba/kubeagent/releases) and the
     [CHANGELOG](https://github.com/imantaba/kubeagent/blob/main/CHANGELOG.md)

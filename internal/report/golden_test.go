@@ -20,6 +20,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/pvcreclaim"
 	"github.com/imantaba/kubeagent/internal/secscan"
 	"github.com/imantaba/kubeagent/internal/svchealth"
+	"github.com/imantaba/kubeagent/internal/termhealth"
 )
 
 var update = flag.Bool("update", false, "rewrite golden files")
@@ -84,6 +85,9 @@ func goldenInput(now time.Time) Input {
 				NotAfter: "2026-07-18T00:00:00Z", Days: -3, Ingresses: []string{"shop/storefront (shop.example.com)"}}},
 			Expiring: []certhealth.Cert{{Namespace: "infra", Name: "api-tls", CommonName: "api.example.com",
 				NotAfter: "2026-08-02T00:00:00Z", Days: 12}}},
+		StuckTerminating: []termhealth.Issue{
+			{Kind: "Namespace", Name: "legacy-ns", Age: "3h", Reason: "NamespaceFinalizersRemaining — some content has finalizers remaining: kubernetes"},
+			{Kind: "Pod", Namespace: "shop", Name: "api-7c9d5-x2v", Age: "8m", PastGrace: true, Reason: "finalizer example.com/cleanup-hook"}},
 	}
 }
 
@@ -232,7 +236,8 @@ func TestGoldenInputCoversAllSections(t *testing.T) {
 	if in.Cluster.Verdict == "" || len(in.Result.Workloads) < 6 || in.Resources == nil ||
 		in.Platform == nil || len(in.ServiceIssues) == 0 || len(in.CredentialWarnings) == 0 ||
 		len(in.IngressIssues) == 0 || len(in.SecurityIssues) == 0 || in.NodeReserve == nil ||
-		in.PVCReclaim == nil || in.KubeletHealth == nil || len(in.PVCIssues) == 0 || in.Certificates == nil {
+		in.PVCReclaim == nil || in.KubeletHealth == nil || len(in.PVCIssues) == 0 || in.Certificates == nil ||
+		len(in.StuckTerminating) == 0 {
 		t.Fatal("goldenInput must populate every section so the golden stays comprehensive")
 	}
 	// Guard the *distinct* failure modes too, so a fixture regression can't drop one

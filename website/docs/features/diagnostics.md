@@ -103,7 +103,7 @@ with the raw admission message as evidence. A Deployment's event lands on its
 ReplicaSet and is resolved back to the Deployment; StatefulSets and DaemonSets
 are matched directly. Read-only, always-on, no new RBAC.
 
-### Root-cause attribution (node)
+### Root-cause attribution
 
 When a node is **hard-down** — `NotReady`, or Ready but its kubelet has stopped
 heartbeating (a stale `Lease`) — every workload with a pod on it fails at once.
@@ -114,6 +114,15 @@ worker-2)`). The workload's own findings still show — attribution is additive,
 the wording is deliberately "likely" (correlation, not a hard causation claim).
 Read-only, always-on, no new RBAC. Cordoned and node-pressure causes are not yet
 attributed.
+
+The same mechanism names a **shared registry** as the root cause: when two or
+more workloads are failing image pulls (`ImagePullBackOff` / `ErrImagePull`)
+whose images resolve to the same registry host, each is attributed
+`↳ likely caused by registry <host> (<N> workloads failing to pull)` — the
+signature of a registry outage, expired pull credentials, or rate limiting. A
+single workload failing a pull is never blamed on the registry (that is usually a
+typo'd image), and a workload already attributed to a hard-down node keeps the
+node attribution. Docker Hub images (`nginx:...`) group under `docker.io`.
 
 ### Node reservations
 

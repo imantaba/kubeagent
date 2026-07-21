@@ -246,6 +246,18 @@ opt-in, and **advisory** — it appears in the `KUBELET HEALTH` section and JSON
 with `KUBEAGENT_KUBELET_HEALTH=true` and the `nodes/proxy` add-on
 (`deploy/rbac-diskusage.yaml` or Helm `kubeletHealth.enabled=true`).
 
+### Certificate expiry (opt-in)
+
+`scan --certs` reads the cluster's `kubernetes.io/tls` Secrets and flags
+certificates that are **expired** or expiring within the warn window
+(`--cert-warn-days`, default 30) in an advisory `CERTIFICATES` section, with the
+Ingress routes each certificate fronts. Privacy by construction: only the
+**public** certificate (`tls.crt`) is parsed — the private key is never read —
+and only metadata (names and dates) is reported. Off by default: without the
+flag kubeagent makes no Secrets API calls at all. The in-cluster daemon needs
+the secrets add-on grant (`deploy/rbac-certs.yaml` or Helm
+`certs.enabled=true`) and enables the check with `KUBEAGENT_CERTS=true`.
+
 ### Security posture (opt-in)
 
 `scan --security` walks every workload's pod template and each Service and flags

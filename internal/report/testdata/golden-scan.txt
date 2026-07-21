@@ -104,6 +104,11 @@ SECURITY  (advisory — does not affect the cluster verdict)
 
 KUBELET HEALTH  (opt-in)
   ✗ node worker-2 kubelet /healthz unhealthy: [-]syncloop failed
+CERTIFICATES  (advisory — public certificate metadata only)
+  ✗ shop/shop-tls  EXPIRED 3d ago  (CN shop.example.com)
+      — fronts ingress shop/storefront (shop.example.com)
+  ⚠ infra/api-tls  expires in 12d  (CN api.example.com)
+  · 3 certificates checked (warn window 30d)
 NOTES
   • 2 nodes reserve no memory: worker-1, worker-2
       — OS/kubelet memory pressure can destabilize the node

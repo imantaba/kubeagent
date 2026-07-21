@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Certificate-expiry check (opt-in `--certs`).** Flags expired and soon-expiring
+  TLS certificates from `kubernetes.io/tls` Secrets — parsing only the public
+  certificate, never the key — in an advisory CERTIFICATES section with the
+  Ingress routes each cert fronts (`--cert-warn-days`, default 30). Daemon parity
+  via `KUBEAGENT_CERTS` + `kubeagent_certificates_expired`/`_expiring` gauges and
+  a separate secrets RBAC add-on (`deploy/rbac-certs.yaml` / Helm
+  `certs.enabled`); without the flag kubeagent makes no Secrets API calls.
+
 ## [0.31.0] - 2026-07-21
 
 ### Added

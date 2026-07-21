@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/imantaba/kubeagent/internal/certhealth"
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/ingresshealth"
@@ -78,6 +79,11 @@ func goldenInput(now time.Time) Input {
 			{Namespace: "shop", Name: "cache-data", PV: "pvc-abc123", StorageClass: "standard", Capacity: "128Mi"},
 		}},
 		KubeletHealth: &nodehealth.Report{Probed: 3, Unhealthy: []nodehealth.Issue{{Node: "worker-2", Detail: "[-]syncloop failed"}}},
+		Certificates: &certhealth.Report{Checked: 3, WarnDays: 30,
+			Expired: []certhealth.Cert{{Namespace: "shop", Name: "shop-tls", CommonName: "shop.example.com",
+				NotAfter: "2026-07-18T00:00:00Z", Days: -3, Ingresses: []string{"shop/storefront (shop.example.com)"}}},
+			Expiring: []certhealth.Cert{{Namespace: "infra", Name: "api-tls", CommonName: "api.example.com",
+				NotAfter: "2026-08-02T00:00:00Z", Days: 12}}},
 	}
 }
 
@@ -226,7 +232,7 @@ func TestGoldenInputCoversAllSections(t *testing.T) {
 	if in.Cluster.Verdict == "" || len(in.Result.Workloads) < 6 || in.Resources == nil ||
 		in.Platform == nil || len(in.ServiceIssues) == 0 || len(in.CredentialWarnings) == 0 ||
 		len(in.IngressIssues) == 0 || len(in.SecurityIssues) == 0 || in.NodeReserve == nil ||
-		in.PVCReclaim == nil || in.KubeletHealth == nil || len(in.PVCIssues) == 0 {
+		in.PVCReclaim == nil || in.KubeletHealth == nil || len(in.PVCIssues) == 0 || in.Certificates == nil {
 		t.Fatal("goldenInput must populate every section so the golden stays comprehensive")
 	}
 	// Guard the *distinct* failure modes too, so a fixture regression can't drop one

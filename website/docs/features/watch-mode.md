@@ -43,6 +43,8 @@ The daemon serves Prometheus text on `--metrics-addr` (default `:8080`):
 | `kubeagent_nodes_stale_heartbeat` | Number of Ready nodes whose kubelet lease is stale (kubelet not heartbeating) |
 | `kubeagent_nodes_expected_absent` | Number of declared expected nodes that are absent from the cluster (opt-in; requires `--expected-nodes` / `KUBEAGENT_EXPECTED_NODES`) |
 | `kubeagent_kubelet_unhealthy` | Number of nodes whose kubelet /healthz reported unhealthy (opt-in; requires `--kubelet-health` / `KUBEAGENT_KUBELET_HEALTH` and the `nodes/proxy` add-on) |
+| `kubeagent_certificates_expired` | Number of expired TLS certificates (opt-in; requires `--certs` / `KUBEAGENT_CERTS` and the secrets add-on) |
+| `kubeagent_certificates_expiring` | Number of TLS certificates expiring within the warn window (opt-in; requires `--certs` / `KUBEAGENT_CERTS` and the secrets add-on) |
 | `kubeagent_last_scan_timestamp_seconds` / `kubeagent_scan_duration_seconds` | evaluation freshness and cost |
 | `kubeagent_scans_total` / `kubeagent_scan_errors_total` | evaluation counters |
 
@@ -72,7 +74,11 @@ namespaces), `--node-heartbeat-threshold` / `KUBEAGENT_NODE_HEARTBEAT_THRESHOLD`
 unset by default — declares which nodes must be present),
 `--kubelet-health` / `KUBEAGENT_KUBELET_HEALTH` (off by default — probes each
 node's kubelet `/healthz` via the `nodes/proxy` add-on, the same grant
-`--disk-usage` uses; see [Disk-usage check](#disk-usage-check-opt-in)).
+`--disk-usage` uses; see [Disk-usage check](#disk-usage-check-opt-in)),
+`--certs` / `KUBEAGENT_CERTS` (off by default — enables the certificate-expiry
+check; requires the secrets add-on `deploy/rbac-certs.yaml` or Helm
+`certs.enabled=true`), `--cert-warn-days` / `KUBEAGENT_CERT_WARN_DAYS` (default
+`30` — warn window in days).
 
 ### Disk-usage check (opt-in)
 

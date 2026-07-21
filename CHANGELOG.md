@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Node-anchored root-cause attribution.** When a node is hard-down (NotReady, or
+  its kubelet stops heartbeating), `scan` attributes each workload with a pod on it
+  to that node — a hedged "↳ likely caused by node X (reason)" line plus a rollup
+  on the attention line — collapsing a wall of disconnected findings toward the one
+  real cause. Additive (the workload's own findings still show), read-only,
+  always-on, no new RBAC. The first step of the root-cause correlation roadmap.
+
 ## [0.28.2] - 2026-07-20
 
 ### Changed

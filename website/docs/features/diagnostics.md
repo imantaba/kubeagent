@@ -103,6 +103,18 @@ with the raw admission message as evidence. A Deployment's event lands on its
 ReplicaSet and is resolved back to the Deployment; StatefulSets and DaemonSets
 are matched directly. Read-only, always-on, no new RBAC.
 
+### Root-cause attribution (node)
+
+When a node is **hard-down** — `NotReady`, or Ready but its kubelet has stopped
+heartbeating (a stale `Lease`) — every workload with a pod on it fails at once.
+Instead of leaving those as disconnected findings, `scan` attributes each affected
+workload to the node with a hedged `↳ likely caused by node <name> (<reason>)`
+line, and rolls the count up on the attention line (`3 workloads failing (3 ⇐ node
+worker-2)`). The workload's own findings still show — attribution is additive, and
+the wording is deliberately "likely" (correlation, not a hard causation claim).
+Read-only, always-on, no new RBAC. Cordoned and node-pressure causes are not yet
+attributed.
+
 ### Node reservations
 
 `scan` reports each node's aggregate kubelet resource reservation for **memory,

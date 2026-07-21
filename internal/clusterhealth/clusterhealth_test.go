@@ -333,7 +333,11 @@ func TestAssess_DownNodesNotReadyAndStale(t *testing.T) {
 		node("worker-3", true, nil, true), // Ready + cordoned — NOT hard-down
 		node("worker-4", true, []corev1.NodeConditionType{corev1.NodeMemoryPressure}, false), // Ready + pressure — NOT hard-down
 	}
-	hb := Heartbeat{Leases: []coordinationv1.Lease{hbLease("worker-1", now.Add(-90*time.Second))}, Now: now, Threshold: 40 * time.Second}
+	hb := Heartbeat{Leases: []coordinationv1.Lease{
+		hbLease("worker-1", now.Add(-90*time.Second)),
+		hbLease("worker-3", now.Add(-5*time.Second)),
+		hbLease("worker-4", now.Add(-5*time.Second)),
+	}, Now: now, Threshold: 40 * time.Second}
 	ch := Assess(nodes, hb, nil, nil)
 
 	got := map[string]string{}

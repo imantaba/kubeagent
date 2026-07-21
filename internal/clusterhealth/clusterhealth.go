@@ -69,12 +69,7 @@ func Assess(nodes []corev1.Node, hb Heartbeat, expected []string, workloads []in
 				if iss, stale := staleHeartbeat(leaseByNode, n.Name, hb.Now, hb.Threshold); stale {
 					issues = append(issues, iss)
 					ch.NodesStaleHeartbeat++
-					if len(issues) == 1 {
-						// Only treat as hard-down when the sole issue is the stale heartbeat
-						// itself (no pressure, no cordon). A cordoned or pressured node that
-						// also has a missing lease is still just "degraded", not "hard-down".
-						ch.DownNodes = append(ch.DownNodes, DownNode{Name: n.Name, Reason: "kubelet not heartbeating"})
-					}
+					ch.DownNodes = append(ch.DownNodes, DownNode{Name: n.Name, Reason: "kubelet not heartbeating"})
 				}
 			}
 		}

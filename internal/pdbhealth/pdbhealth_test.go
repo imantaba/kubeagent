@@ -97,6 +97,7 @@ func TestAssess_NotFlagged(t *testing.T) {
 	cases := []policyv1.PodDisruptionBudget{
 		pdb("a", "singleton", 1, 1, 1, 1, 0), // single replica → excluded by expectedPods>1 guard
 		pdb("a", "healthy23", 2, 3, 2, 3, 1),  // minAvailable 2 of 3, disruptionsAllowed 1
+		pdb("a", "atfloor", 2, 3, 2, 2, 0), // minAvailable 2 of 3, exactly at floor (current==desired, allowed 0) → benign
 	}
 	if got := Assess(cases); len(got) != 0 {
 		t.Fatalf("expected nothing flagged, got %+v", got)

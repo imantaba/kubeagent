@@ -9,6 +9,7 @@ package certhealth
 import (
 	"crypto/x509"
 	"encoding/pem"
+	"math"
 	"sort"
 	"time"
 
@@ -78,7 +79,7 @@ func Assess(secrets []corev1.Secret, ingresses []networkingv1.Ingress, warnDays 
 			Name:       s.Name,
 			CommonName: name,
 			NotAfter:   cert.NotAfter.UTC().Format(time.RFC3339),
-			Days:       int(cert.NotAfter.Sub(now).Hours() / 24),
+			Days:       int(math.Floor(cert.NotAfter.Sub(now).Hours() / 24)),
 			Ingresses:  fronts[s.Namespace+"/"+s.Name],
 		}
 		switch {

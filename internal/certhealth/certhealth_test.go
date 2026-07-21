@@ -146,3 +146,15 @@ func TestAssess_HealthyOnlyNothingListed(t *testing.T) {
 		t.Errorf("healthy cert: counted only, got %+v", rep)
 	}
 }
+
+func TestAssess_JustExpiredIsExpiredNotExpiring(t *testing.T) {
+	// Expired 6h ago: int() truncation would give Days=0 (EXPIRING); floor gives -1 (EXPIRED).
+	secrets := []corev1.Secret{tlsSecret("shop", "fresh-dead", certPEM(t, "fd.example.com", nil, now.Add(-6*time.Hour)))}
+	rep := Assess(secrets, nil, 30, now)
+	if len(rep.Expired) != 1 || rep.Expired[0].Days != -1 {
+		t.Fatalf("a cert expired <24h ago must be EXPIRED with Days=-1, got expired=%+v expiring=%+v", rep.Expired, rep.Expiring)
+	}
+	if len(rep.Expiring) != 0 {
+		t.Errorf("must not be classified expiring, got %+v", rep.Expiring)
+	}
+}

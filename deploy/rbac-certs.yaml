@@ -3,6 +3,7 @@
 # certificate (tls.crt) of kubernetes.io/tls Secrets. kubeagent never reads
 # tls.key and never prints secret values. Apply alongside deploy/ to enable the
 # check. Without it, kubeagent makes no Secrets API calls at all.
+# Note: Kubernetes RBAC cannot restrict Secret access per-field; the application code is what never accesses tls.key.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:

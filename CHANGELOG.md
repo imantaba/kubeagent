@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **HPA-can't-scale detection.** `scan` flags a HorizontalPodAutoscaler that is
+  stuck — can't fetch metrics (broken autoscaling), can't scale because its
+  target is missing or the scale subresource errors, or is pinned at
+  `maxReplicas` while demand exceeds the cap — naming the target and the reason.
+  Read-only and advisory; the daemon exposes `kubeagent_hpa_scaling_issues`.
+  Adds a base `autoscaling/horizontalpodautoscalers` read grant.
+
 ## [0.35.0] - 2026-07-21
 
 ### Added

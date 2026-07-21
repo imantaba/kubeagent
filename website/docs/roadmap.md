@@ -138,6 +138,12 @@
   `DisruptionsAllowed == 0`). Advisory and read-only; the daemon exposes
   `kubeagent_pdb_blocking_issues`. See [Failure diagnostics](features/diagnostics.md).
 
+- **HPA-can't-scale** — flags a HorizontalPodAutoscaler that is stuck: can't
+  fetch metrics (`metrics` category), can't act on its scale target at all
+  (`unable` category), or is pinned at `maxReplicas` while demand exceeds the
+  cap (`capped` category). Advisory and read-only; the daemon exposes
+  `kubeagent_hpa_scaling_issues`. See [Failure diagnostics](features/diagnostics.md).
+
 !!! info "Version history"
     [GitHub Releases](https://github.com/imantaba/kubeagent/releases) and the
     [CHANGELOG](https://github.com/imantaba/kubeagent/blob/main/CHANGELOG.md)
@@ -176,8 +182,8 @@ These are the north star; every item below is measured against them.
   (Deployment → ReplicaSet → Pod → Node; Service → EndpointSlice → Pod; Ingress →
   Service → backend; PVC → PV → StorageClass) so a wall of red collapses to the one
   thing that's actually wrong, with a confidence score per finding.
-- **B · Deeper & broader diagnosis** — more failure modes: HPAs that can't scale,
-  admission-webhook failure/latency, CoreDNS/DNS health, control-plane & etcd health.
+- **B · Deeper & broader diagnosis** — more failure modes: admission-webhook
+  failure/latency, CoreDNS/DNS health, control-plane & etcd health.
 - **C · Principled intelligence** — `--explain` grows from a summary into ranked,
   deterministic *remediation suggestions* and on-call runbooks; an opt-in read-only
   investigation mode lets the model request bounded, allow-listed follow-up reads

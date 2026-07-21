@@ -292,6 +292,31 @@ Read-only and advisory — it does not change the cluster verdict. The daemon
 exposes `kubeagent_pdb_blocking_issues`. Adds a base
 `policy/poddisruptionbudgets` read grant.
 
+### HPA-can't-scale
+
+`scan` flags a HorizontalPodAutoscaler that is stuck and cannot scale as
+intended, covering three categories:
+
+- **unable** — the HPA's `AbleToScale` condition is `False`, meaning the
+  controller can't act on the scale target at all (the target Deployment or
+  StatefulSet is missing, or the `scale` subresource returned an error).
+- **metrics** — the HPA's `ScalingActive` condition is `False`, meaning metric
+  collection has failed (a custom or external metrics adapter is down, or the
+  metrics server cannot return the resource metric), so the HPA's replica
+  calculation is stuck.
+- **capped** — the workload is pinned at `maxReplicas` while demand exceeds the
+  cap (`TooManyReplicas` reason on `ScalingLimited`), so the autoscaler has run
+  out of headroom and the workload is under-replicated.
+
+Each finding names the HPA, its scale target, and the reason — for example:
+`✗ shop/api-hpa  HorizontalPodAutoscaler  targets Deployment/api` /
+`⚠ HPAStuck: can't fetch metrics — unable to get resource metric cpu: no
+metrics returned`.
+
+Read-only and advisory — it does not change the cluster verdict. The daemon
+exposes `kubeagent_hpa_scaling_issues`. Adds a base
+`autoscaling/horizontalpodautoscalers` read grant.
+
 ### Security posture (opt-in)
 
 `scan --security` walks every workload's pod template and each Service and flags

@@ -77,6 +77,12 @@ kubeagent scan
   already-degraded workload. Advisory and read-only; the daemon exposes
   `kubeagent_pdb_blocking_issues`. Adds a base `policy/poddisruptionbudgets`
   read grant.
+- **HPA-can't-scale detection** — `scan` flags a HorizontalPodAutoscaler that
+  is stuck: can't fetch metrics (broken autoscaling), can't scale because its
+  target is missing or the scale subresource errors, or is pinned at
+  `maxReplicas` while demand exceeds the cap. Advisory and read-only; the daemon
+  exposes `kubeagent_hpa_scaling_issues`. Adds a base
+  `autoscaling/horizontalpodautoscalers` read grant.
 - **Root-cause attribution** — when a node is NotReady or its kubelet stops
   heartbeating, workloads with pods on it are attributed to that node ("↳ likely
   caused by node X"); when several workloads fail image pulls from the same

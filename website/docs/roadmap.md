@@ -132,6 +132,12 @@
   Terminating past two minutes and names the blocking finalizer or condition. See
   [Failure diagnostics](features/diagnostics.md).
 
+- **PDB-blocked drains** — flags a PodDisruptionBudget that will block a node
+  drain: unsatisfiable (requires more healthy pods than exist), stale (selector
+  matches no pods), or blocking (workload already degraded so
+  `DisruptionsAllowed == 0`). Advisory and read-only; the daemon exposes
+  `kubeagent_pdb_blocking_issues`. See [Failure diagnostics](features/diagnostics.md).
+
 !!! info "Version history"
     [GitHub Releases](https://github.com/imantaba/kubeagent/releases) and the
     [CHANGELOG](https://github.com/imantaba/kubeagent/blob/main/CHANGELOG.md)
@@ -170,10 +176,8 @@ These are the north star; every item below is measured against them.
   (Deployment → ReplicaSet → Pod → Node; Service → EndpointSlice → Pod; Ingress →
   Service → backend; PVC → PV → StorageClass) so a wall of red collapses to the one
   thing that's actually wrong, with a confidence score per finding.
-- **B · Deeper & broader diagnosis** — more failure modes: certificate expiry,
-  stuck-terminating (finalizer-deadlocked) resources, PodDisruptionBudgets blocking
-  drains, HPAs that can't scale, admission-webhook failure/latency, CoreDNS/DNS
-  health, control-plane & etcd health.
+- **B · Deeper & broader diagnosis** — more failure modes: HPAs that can't scale,
+  admission-webhook failure/latency, CoreDNS/DNS health, control-plane & etcd health.
 - **C · Principled intelligence** — `--explain` grows from a summary into ranked,
   deterministic *remediation suggestions* and on-call runbooks; an opt-in read-only
   investigation mode lets the model request bounded, allow-listed follow-up reads

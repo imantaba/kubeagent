@@ -17,6 +17,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/nodehealth"
 	"github.com/imantaba/kubeagent/internal/nodereserve"
+	"github.com/imantaba/kubeagent/internal/pdbhealth"
 	"github.com/imantaba/kubeagent/internal/platform"
 	"github.com/imantaba/kubeagent/internal/pvchealth"
 	"github.com/imantaba/kubeagent/internal/pvcreclaim"
@@ -43,6 +44,7 @@ type inventoryReport struct {
 	KubeletHealth      *nodehealth.Report          `json:"kubeletHealth,omitempty"`
 	Certificates       *certhealth.Report          `json:"certificates,omitempty"`
 	StuckTerminating   []termhealth.Issue          `json:"stuckTerminating,omitempty"`
+	PDBIssues          []pdbhealth.Issue           `json:"pdbIssues,omitempty"`
 	Explanation        string                      `json:"explanation,omitempty"`
 }
 
@@ -66,6 +68,7 @@ type Input struct {
 	KubeletHealth      *nodehealth.Report
 	Certificates       *certhealth.Report
 	StuckTerminating   []termhealth.Issue
+	PDBIssues          []pdbhealth.Issue
 	Explanation        string
 	Now                time.Time // clock for relative ages; main sets time.Now(); zero → wall-clock
 }
@@ -92,6 +95,7 @@ func PrintInventory(in Input, format string, w io.Writer) error {
 			KubeletHealth:      in.KubeletHealth,
 			Certificates:       in.Certificates,
 			StuckTerminating:   in.StuckTerminating,
+			PDBIssues:          in.PDBIssues,
 			Explanation:        in.Explanation,
 		})
 	case "text":
@@ -120,7 +124,7 @@ func printInventoryText(in Input, w io.Writer) error {
 	}
 
 	hasDisk := in.DiskUsage != nil && len(in.DiskUsage.Over) > 0
-	hasAttention := len(in.Result.Workloads) > 0 || len(real) > 0 || len(in.CredentialWarnings) > 0 || hasDisk || len(realIng) > 0 || len(in.PVCIssues) > 0 || len(in.StuckTerminating) > 0
+	hasAttention := len(in.Result.Workloads) > 0 || len(real) > 0 || len(in.CredentialWarnings) > 0 || hasDisk || len(realIng) > 0 || len(in.PVCIssues) > 0 || len(in.StuckTerminating) > 0 || len(in.PDBIssues) > 0
 	if hasAttention {
 		if _, err := fmt.Fprintln(w, "NEEDS ATTENTION"); err != nil {
 			return err
@@ -146,6 +150,9 @@ func printInventoryText(in Input, w io.Writer) error {
 			return err
 		}
 		if err := printStuckTerminating(in.StuckTerminating, w); err != nil {
+			return err
+		}
+		if err := printPDBIssues(in.PDBIssues, w); err != nil {
 			return err
 		}
 		if _, err := fmt.Fprintln(w); err != nil {
@@ -297,6 +304,9 @@ func attentionLine(in Input, real []svchealth.Issue, realIng []ingresshealth.Rou
 	}
 	if n := len(in.StuckTerminating); n > 0 {
 		parts = append(parts, fmt.Sprintf("%d %s stuck terminating", n, plural(n, "resource", "resources")))
+	}
+	if n := len(in.PDBIssues); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d %s blocking drains", n, plural(n, "PodDisruptionBudget", "PodDisruptionBudgets")))
 	}
 	return strings.Join(parts, " · ")
 }
@@ -526,6 +536,19 @@ func printStuckTerminating(issues []termhealth.Issue, w io.Writer) error {
 			return err
 		}
 		if _, err := fmt.Fprintf(w, "      ⚠ StuckTerminating: %s\n", is.Reason); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// printPDBIssues lists PodDisruptionBudgets that will block a node drain.
+func printPDBIssues(issues []pdbhealth.Issue, w io.Writer) error {
+	for _, is := range issues {
+		if _, err := fmt.Fprintf(w, "  ✗ %s/%s  PodDisruptionBudget  %s\n", is.Namespace, is.Name, is.Rule); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(w, "      ⚠ PDBBlocked: %s\n", is.Reason); err != nil {
 			return err
 		}
 	}

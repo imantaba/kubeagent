@@ -58,6 +58,7 @@ type metrics struct {
 	ingressIssues       int
 	pvcPendingIssues    int
 	stuckTerminating    int
+	pdbBlockingIssues   int
 	findings            map[string]int
 	lastScanUnix        int64
 	scanSeconds         float64
@@ -100,6 +101,7 @@ func (m *metrics) update(res *scan.Result, dur time.Duration, now time.Time, err
 	m.ingressIssues = realIngressIssues(res.IngressIssues)
 	m.pvcPendingIssues = len(res.PVCIssues)
 	m.stuckTerminating = len(res.StuckTerminating)
+	m.pdbBlockingIssues = len(res.PDBIssues)
 	flagged := 0
 	findings := map[string]int{}
 	for _, w := range res.Inventory.Workloads {
@@ -157,6 +159,7 @@ func (m *metrics) render() string {
 	gauge("kubeagent_ingress_route_issues", "Ingress routes whose backend Service is missing, has no ready endpoints, or does not expose the referenced port", float64(m.ingressIssues))
 	gauge("kubeagent_pvc_pending_issues", "PVCs stuck Pending because provisioning or binding failed", float64(m.pvcPendingIssues))
 	gauge("kubeagent_resources_stuck_terminating", "Resources (namespaces, pods, PVCs) wedged in Terminating past the threshold", float64(m.stuckTerminating))
+	gauge("kubeagent_pdb_blocking_issues", "PodDisruptionBudgets that will block a node drain", float64(m.pdbBlockingIssues))
 	fmt.Fprintf(&b, "# HELP kubeagent_findings Current findings by issue type\n# TYPE kubeagent_findings gauge\n")
 	issues := make([]string, 0, len(m.findings))
 	for k := range m.findings {

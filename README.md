@@ -71,6 +71,12 @@ kubeagent scan
   so the normal `WaitForFirstConsumer` state is never flagged. Advisory and
   read-only; no new RBAC.
 - **Stuck-terminating** — a Namespace, Pod, or PVC wedged in Terminating past two minutes, with the blocking finalizer/condition named.
+- **PodDisruptionBudget-blocked drains** — flags a PDB that will block a node
+  drain: one that can never allow a voluntary eviction (unsatisfiable), whose
+  selector matches no pods (stale), or that is blocking evictions on an
+  already-degraded workload. Advisory and read-only; the daemon exposes
+  `kubeagent_pdb_blocking_issues`. Adds a base `policy/poddisruptionbudgets`
+  read grant.
 - **Root-cause attribution** — when a node is NotReady or its kubelet stops
   heartbeating, workloads with pods on it are attributed to that node ("↳ likely
   caused by node X"); when several workloads fail image pulls from the same

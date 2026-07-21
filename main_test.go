@@ -15,6 +15,7 @@ import (
 
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/pdbhealth"
 	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/termhealth"
 )
@@ -29,6 +30,18 @@ func TestResultInput_CarriesStuckTerminating(t *testing.T) {
 	in := resultInput(res)
 	if len(in.StuckTerminating) != 1 || in.StuckTerminating[0].Name != "web" {
 		t.Fatalf("resultInput must carry StuckTerminating into report.Input, got %+v", in.StuckTerminating)
+	}
+}
+
+func TestResultInput_CarriesPDBIssues(t *testing.T) {
+	// Regression: the scan.Result → report.Input mapping must carry PDBIssues, or
+	// the section never renders in the CLI (the stuck-terminating v0.34.0 bug).
+	res := scan.Result{PDBIssues: []pdbhealth.Issue{
+		{Namespace: "shop", Name: "api", Rule: "minAvailable: 3", Category: "unsatisfiable", Reason: "…"},
+	}}
+	in := resultInput(res)
+	if len(in.PDBIssues) != 1 || in.PDBIssues[0].Name != "api" {
+		t.Fatalf("resultInput must carry PDBIssues into report.Input, got %+v", in.PDBIssues)
 	}
 }
 

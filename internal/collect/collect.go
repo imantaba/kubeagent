@@ -11,6 +11,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -217,6 +218,17 @@ func Namespaces(ctx context.Context, client kubernetes.Interface) ([]corev1.Name
 	list, err := client.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("listing namespaces: %w", err)
+	}
+	return list.Items, nil
+}
+
+// PodDisruptionBudgets lists PDBs in the namespace (empty = all), read-only. Used
+// by the PDB-blocked-drains check. Needs the base policy/poddisruptionbudgets list
+// grant; a forbidden/absent result simply omits the check.
+func PodDisruptionBudgets(ctx context.Context, client kubernetes.Interface, namespace string) ([]policyv1.PodDisruptionBudget, error) {
+	list, err := client.PolicyV1().PodDisruptionBudgets(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("listing poddisruptionbudgets: %w", err)
 	}
 	return list.Items, nil
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/nodehealth"
 	"github.com/imantaba/kubeagent/internal/nodereserve"
+	"github.com/imantaba/kubeagent/internal/pdbhealth"
 	"github.com/imantaba/kubeagent/internal/platform"
 	"github.com/imantaba/kubeagent/internal/pvchealth"
 	"github.com/imantaba/kubeagent/internal/pvcreclaim"
@@ -1621,5 +1622,40 @@ func TestPrintInventory_StuckTerminatingAbsentWhenEmpty(t *testing.T) {
 	_ = PrintInventory(Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1}}, "text", &buf)
 	if strings.Contains(buf.String(), "StuckTerminating") {
 		t.Error("section must be absent when nothing is stuck")
+	}
+}
+
+func TestPrintInventory_PDBIssues(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy"},
+		PDBIssues: []pdbhealth.Issue{
+			{Namespace: "shop", Name: "api", Rule: "minAvailable: 3", Category: "unsatisfiable",
+				Reason: "covers all 3 pods — no voluntary eviction can ever proceed; every node drain will hang"},
+		},
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "✗ shop/api  PodDisruptionBudget  minAvailable: 3") {
+		t.Errorf("missing PDB header line:\n%s", out)
+	}
+	if !strings.Contains(out, "⚠ PDBBlocked: covers all 3 pods") {
+		t.Errorf("missing PDBBlocked reason line:\n%s", out)
+	}
+	if !strings.Contains(out, "1 PodDisruptionBudget blocking drains") {
+		t.Errorf("missing attention-line fragment:\n%s", out)
+	}
+}
+
+func TestPrintInventory_NoPDBSectionWhenEmpty(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy"}}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf.String(), "PDBBlocked") {
+		t.Errorf("no PDB section expected when empty:\n%s", buf.String())
 	}
 }

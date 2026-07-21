@@ -9,10 +9,12 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	intstr "k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 
@@ -778,6 +780,37 @@ func TestEvaluate_ForbiddenNamespacesStillScansPods(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("pod checks must still run when namespaces is forbidden, got %+v", res.StuckTerminating)
+	}
+}
+
+func TestEvaluate_FlagsUnsatisfiablePDB(t *testing.T) {
+	m := intstr.FromInt(3)
+	pdb := &policyv1.PodDisruptionBudget{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "api"},
+		Spec:       policyv1.PodDisruptionBudgetSpec{MinAvailable: &m},
+		Status:     policyv1.PodDisruptionBudgetStatus{ExpectedPods: 3, DesiredHealthy: 3, CurrentHealthy: 3, DisruptionsAllowed: 0},
+	}
+	cli := fake.NewSimpleClientset(pdb)
+	res, err := Evaluate(context.Background(), cli, Options{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(res.PDBIssues) != 1 || res.PDBIssues[0].Category != "unsatisfiable" {
+		t.Fatalf("expected one unsatisfiable PDB issue, got %+v", res.PDBIssues)
+	}
+}
+
+func TestEvaluate_ForbiddenPDBsStillScans(t *testing.T) {
+	cli := fake.NewSimpleClientset()
+	cli.Fake.PrependReactor("list", "poddisruptionbudgets", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewForbidden(schema.GroupResource{Group: "policy", Resource: "poddisruptionbudgets"}, "", nil)
+	})
+	res, err := Evaluate(context.Background(), cli, Options{})
+	if err != nil {
+		t.Fatalf("a forbidden PDB list must not error, got %v", err)
+	}
+	if len(res.PDBIssues) != 0 {
+		t.Fatalf("forbidden PDB list must yield no issues, got %+v", res.PDBIssues)
 	}
 }
 

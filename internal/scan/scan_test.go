@@ -6,6 +6,7 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	batchv1 "k8s.io/api/batch/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -811,6 +812,37 @@ func TestEvaluate_ForbiddenPDBsStillScans(t *testing.T) {
 	}
 	if len(res.PDBIssues) != 0 {
 		t.Fatalf("forbidden PDB list must yield no issues, got %+v", res.PDBIssues)
+	}
+}
+
+func TestEvaluate_FlagsStuckHPA(t *testing.T) {
+	hpa := &autoscalingv2.HorizontalPodAutoscaler{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "api-hpa"},
+		Spec:       autoscalingv2.HorizontalPodAutoscalerSpec{ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{Kind: "Deployment", Name: "api"}, MaxReplicas: 5},
+		Status: autoscalingv2.HorizontalPodAutoscalerStatus{Conditions: []autoscalingv2.HorizontalPodAutoscalerCondition{
+			{Type: autoscalingv2.ScalingActive, Status: corev1.ConditionFalse, Reason: "FailedGetResourceMetric", Message: "no metrics"}}},
+	}
+	cli := fake.NewSimpleClientset(hpa)
+	res, err := Evaluate(context.Background(), cli, Options{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(res.HPAIssues) != 1 || res.HPAIssues[0].Category != "metrics" {
+		t.Fatalf("expected one metrics HPA issue, got %+v", res.HPAIssues)
+	}
+}
+
+func TestEvaluate_ForbiddenHPAsStillScans(t *testing.T) {
+	cli := fake.NewSimpleClientset()
+	cli.Fake.PrependReactor("list", "horizontalpodautoscalers", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewForbidden(schema.GroupResource{Group: "autoscaling", Resource: "horizontalpodautoscalers"}, "", nil)
+	})
+	res, err := Evaluate(context.Background(), cli, Options{})
+	if err != nil {
+		t.Fatalf("a forbidden HPA list must not error, got %v", err)
+	}
+	if len(res.HPAIssues) != 0 {
+		t.Fatalf("forbidden HPA list must yield no issues, got %+v", res.HPAIssues)
 	}
 }
 

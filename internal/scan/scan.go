@@ -14,6 +14,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/imantaba/kubeagent/internal/batchhealth"
+	"github.com/imantaba/kubeagent/internal/hpahealth"
 	"github.com/imantaba/kubeagent/internal/certhealth"
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/collect"
@@ -72,6 +73,7 @@ type Result struct {
 	Certificates      *certhealth.Report
 	StuckTerminating  []termhealth.Issue
 	PDBIssues         []pdbhealth.Issue
+	HPAIssues         []hpahealth.Issue
 }
 
 // systemNamespaces are excluded from the security scan when scanning all
@@ -198,6 +200,8 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	stuckTerminating := termhealth.Assess(namespaces, inputs.Pods, pvcs, 2*time.Minute, time.Now())
 	pdbs, _ := collect.PodDisruptionBudgets(ctx, client, opts.Namespace) // forbidden/absent → nil, check skipped
 	pdbIssues := pdbhealth.Assess(pdbs)
+	hpas, _ := collect.HorizontalPodAutoscalers(ctx, client, opts.Namespace) // forbidden/absent → nil, check skipped
+	hpaIssues := hpahealth.Assess(hpas)
 	pvs, _ := collect.PersistentVolumes(ctx, client)
 	pvcReclaim := pvcreclaim.Assess(pvcs, pvs)
 	pvcEvents, _ := collect.PVCEvents(ctx, client, opts.Namespace)
@@ -251,5 +255,5 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 		kubeletHealth = nodehealth.Assess(probes)
 	}
 
-	return Result{Inputs: inputs, Nodes: nodes, NodeReserve: nodereserve.Assess(nodes), PVCReclaim: pvcReclaim, DiskUsage: diskReport, Health: health, Inventory: result, ServiceIssues: serviceIssues, IngressIssues: ingressIssues, PVCIssues: pvcIssues, SecurityIssues: securityIssues, KubeletHealth: kubeletHealth, Certificates: certReport, StuckTerminating: stuckTerminating, PDBIssues: pdbIssues}, nil
+	return Result{Inputs: inputs, Nodes: nodes, NodeReserve: nodereserve.Assess(nodes), PVCReclaim: pvcReclaim, DiskUsage: diskReport, Health: health, Inventory: result, ServiceIssues: serviceIssues, IngressIssues: ingressIssues, PVCIssues: pvcIssues, SecurityIssues: securityIssues, KubeletHealth: kubeletHealth, Certificates: certReport, StuckTerminating: stuckTerminating, PDBIssues: pdbIssues, HPAIssues: hpaIssues}, nil
 }

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/imantaba/kubeagent/internal/certhealth"
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/credlint"
 	"github.com/imantaba/kubeagent/internal/diagnose"
@@ -1484,5 +1485,58 @@ func TestPrintInventory_SingleRegistryCauseNamed(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "(2 ⇐ registry ghcr.io)") {
 		t.Errorf("single distinct cause should be named:\n%s", buf.String())
+	}
+}
+
+func TestPrintInventory_CertificatesSection(t *testing.T) {
+	rep := &certhealth.Report{Checked: 3, WarnDays: 30,
+		Expired: []certhealth.Cert{{Namespace: "shop", Name: "shop-tls", CommonName: "shop.example.com",
+			NotAfter: "2026-07-18T00:00:00Z", Days: -3, Ingresses: []string{"shop/storefront (shop.example.com)"}}},
+		Expiring: []certhealth.Cert{{Namespace: "infra", Name: "api-tls", CommonName: "api.example.com",
+			NotAfter: "2026-08-02T00:00:00Z", Days: 12}},
+		Invalid: []certhealth.Invalid{{Namespace: "shop", Name: "bad-tls", Detail: "invalid certificate data"}},
+	}
+	var buf bytes.Buffer
+	if err := PrintInventory(Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		Certificates: rep}, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	for _, want := range []string{
+		"CERTIFICATES  (advisory — public certificate metadata only)",
+		"✗ shop/shop-tls  EXPIRED 3d ago  (CN shop.example.com)",
+		"— fronts ingress shop/storefront (shop.example.com)",
+		"⚠ infra/api-tls  expires in 12d  (CN api.example.com)",
+		"⚠ shop/bad-tls  invalid certificate data",
+		"· 3 certificates checked (warn window 30d)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+func TestPrintInventory_CertificatesForbiddenHint(t *testing.T) {
+	var buf bytes.Buffer
+	if err := PrintInventory(Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		Certificates: &certhealth.Report{WarnDays: 30, Forbidden: true}}, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "secrets access denied — apply deploy/rbac-certs.yaml (or Helm certs.enabled=true)") {
+		t.Errorf("missing forbidden hint:\n%s", buf.String())
+	}
+}
+
+func TestPrintInventory_CertificatesAbsentWhenNilOrClean(t *testing.T) {
+	var buf bytes.Buffer
+	_ = PrintInventory(Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1}}, "text", &buf)
+	if strings.Contains(buf.String(), "CERTIFICATES") {
+		t.Error("section must be absent when the check did not run")
+	}
+	buf.Reset()
+	_ = PrintInventory(Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		Certificates: &certhealth.Report{Checked: 5, WarnDays: 30}}, "text", &buf)
+	if strings.Contains(buf.String(), "CERTIFICATES") {
+		t.Error("section must be absent when everything is healthy")
 	}
 }

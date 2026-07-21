@@ -1,0 +1,26 @@
+# Opt-in add-on: grants the kubeagent ServiceAccount LIST access to Secrets so
+# the --certs / KUBEAGENT_CERTS certificate-expiry check can read the PUBLIC
+# certificate (tls.crt) of kubernetes.io/tls Secrets. kubeagent never reads
+# tls.key and never prints secret values. Apply alongside deploy/ to enable the
+# check. Without it, kubeagent makes no Secrets API calls at all.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubeagent-certs
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubeagent-certs
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubeagent-certs
+subjects:
+  - kind: ServiceAccount
+    name: kubeagent
+    namespace: kubeagent

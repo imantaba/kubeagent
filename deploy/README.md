@@ -98,6 +98,16 @@ in the daemon environment. Without this add-on, kubeagent stays strictly
 also exposes `kubeagent_node_fs_usage_ratio{node}` and
 `kubeagent_volumes_over_disk_threshold` as Prometheus gauges.
 
+## Certificate expiry (opt-in)
+
+Applying `deploy/rbac-certs.yaml` (or setting Helm `certs.enabled=true`) grants
+the kubeagent ServiceAccount `list` on Secrets and sets `KUBEAGENT_CERTS=true`
+and `KUBEAGENT_CERT_WARN_DAYS=30` (override via `--set certs.warnDays=<days>`)
+in the daemon environment. Without this add-on, kubeagent makes **no** Secrets
+API calls at all. Only the public certificate (`tls.crt`) of
+`kubernetes.io/tls` Secrets is inspected — `tls.key` is never read and no
+Secret values are ever printed.
+
 ## Crash log root-cause (opt-in)
 
 Applying `deploy/rbac-logs.yaml` grants the `pods/log` `get` subresource needed

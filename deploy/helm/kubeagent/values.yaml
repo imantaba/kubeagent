@@ -66,3 +66,7 @@ diskUsage:
 
 kubeletHealth:
   enabled: false
+
+certs:
+  enabled: false
+  warnDays: "30"

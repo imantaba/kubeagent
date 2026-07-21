@@ -33,6 +33,11 @@ rules:
     resources: [nodes/proxy]
     verbs: [get]
   {{- end }}
+  {{- if .Values.certs.enabled }}
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [list]
+  {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

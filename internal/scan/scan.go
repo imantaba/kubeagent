@@ -17,6 +17,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/certhealth"
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/collect"
+	"github.com/imantaba/kubeagent/internal/confidence"
 	"github.com/imantaba/kubeagent/internal/createhealth"
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/diskusage"
@@ -220,6 +221,7 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	rootcause.Annotate(result.Workloads, health.DownNodes)
 	rootcause.AnnotatePVC(result.Workloads, podPVCs, pvcIssues)
 	rootcause.AnnotateRegistry(result.Workloads)
+	confidence.Annotate(result.Workloads)
 
 	var diskReport diskusage.Report
 	if opts.DiskUsage {

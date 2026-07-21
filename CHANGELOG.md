@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Shared-registry root-cause attribution.** When two or more workloads fail
+  image pulls from the same registry host, `scan` names that registry as the
+  shared root cause on each ("↳ likely caused by registry ghcr.io (2 workloads
+  failing to pull)") — the registry-outage / expired-credentials / rate-limit
+  incident. A lone pull failure is never blamed on the registry, and node
+  attribution takes precedence. The attention-line rollup now reads
+  "(M ⇐ K root causes)" when causes mix. Read-only, always-on, no new RBAC.
+
 ## [0.29.0] - 2026-07-21
 
 ### Added

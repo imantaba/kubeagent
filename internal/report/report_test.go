@@ -1440,7 +1440,49 @@ func TestPrintInventory_RootCauseMultiNodeRollup(t *testing.T) {
 	if err := PrintInventory(in, "text", &buf); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(buf.String(), "(2 ⇐ 2 unhealthy nodes)") {
-		t.Errorf("attention line should report 2 unhealthy nodes:\n%s", buf.String())
+	if !strings.Contains(buf.String(), "(2 ⇐ 2 root causes)") {
+		t.Errorf("attention line should report 2 root causes:\n%s", buf.String())
+	}
+}
+
+func TestPrintInventory_RootCauseMixedNodeAndRegistry(t *testing.T) {
+	ws := []inventory.Workload{
+		{Namespace: "shop", Name: "api", Kind: "Deployment", Desired: 1, Ready: 0, Status: "Degraded",
+			RootCause: "node worker-2 (NotReady)"},
+		{Namespace: "shop", Name: "frontend", Kind: "Deployment", Desired: 1, Ready: 0, Status: "Degraded",
+			RootCause: "registry ghcr.io (2 workloads failing to pull)"},
+		{Namespace: "shop", Name: "search", Kind: "Deployment", Desired: 1, Ready: 0, Status: "Degraded",
+			RootCause: "registry ghcr.io (2 workloads failing to pull)"},
+	}
+	var buf bytes.Buffer
+	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Degraded", NodesReady: 2, NodesTotal: 3},
+		Result: inventory.Result{Workloads: ws}}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "(3 ⇐ 2 root causes)") {
+		t.Errorf("mixed node+registry causes should roll up as 2 root causes:\n%s", out)
+	}
+	if !strings.Contains(out, "↳ likely caused by registry ghcr.io (2 workloads failing to pull)") {
+		t.Errorf("registry cause line should render via the generic path:\n%s", out)
+	}
+}
+
+func TestPrintInventory_SingleRegistryCauseNamed(t *testing.T) {
+	ws := []inventory.Workload{
+		{Namespace: "shop", Name: "frontend", Kind: "Deployment", Desired: 1, Ready: 0, Status: "Degraded",
+			RootCause: "registry ghcr.io (2 workloads failing to pull)"},
+		{Namespace: "shop", Name: "search", Kind: "Deployment", Desired: 1, Ready: 0, Status: "Degraded",
+			RootCause: "registry ghcr.io (2 workloads failing to pull)"},
+	}
+	var buf bytes.Buffer
+	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Degraded", NodesReady: 3, NodesTotal: 3},
+		Result: inventory.Result{Workloads: ws}}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "(2 ⇐ registry ghcr.io)") {
+		t.Errorf("single distinct cause should be named:\n%s", buf.String())
 	}
 }

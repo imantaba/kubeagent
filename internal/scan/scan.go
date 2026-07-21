@@ -190,6 +190,7 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	netpolicy.Annotate(result.Workloads, podLabels, nps)
 	rollout.Annotate(result.Workloads, inputs.ReplicaSets, time.Now())
 	rootcause.Annotate(result.Workloads, health.DownNodes)
+	rootcause.AnnotateRegistry(result.Workloads)
 
 	var diskReport diskusage.Report
 	if opts.DiskUsage {

@@ -239,7 +239,7 @@ func attentionLine(in Input, real []svchealth.Issue, realIng []ingresshealth.Rou
 	failing := 0
 	attributed := 0
 	var causeNodes []string
-	seenNode := map[string]bool{}
+	seenCause := map[string]bool{}
 	for _, wl := range in.Result.Workloads {
 		if wl.Flagged() {
 			failing++
@@ -247,8 +247,8 @@ func attentionLine(in Input, real []svchealth.Issue, realIng []ingresshealth.Rou
 		if wl.RootCause != "" {
 			attributed++
 			n := rootCauseNode(wl.RootCause)
-			if !seenNode[n] {
-				seenNode[n] = true
+			if !seenCause[n] {
+				seenCause[n] = true
 				causeNodes = append(causeNodes, n)
 			}
 		}
@@ -260,7 +260,7 @@ func attentionLine(in Input, real []svchealth.Issue, realIng []ingresshealth.Rou
 			if len(causeNodes) == 1 {
 				s += fmt.Sprintf(" (%d ⇐ %s)", attributed, causeNodes[0])
 			} else {
-				s += fmt.Sprintf(" (%d ⇐ %d unhealthy nodes)", attributed, len(causeNodes))
+				s += fmt.Sprintf(" (%d ⇐ %d root causes)", attributed, len(causeNodes))
 			}
 		}
 		parts = append(parts, s)
@@ -281,8 +281,8 @@ func attentionLine(in Input, real []svchealth.Issue, realIng []ingresshealth.Rou
 	return strings.Join(parts, " · ")
 }
 
-// rootCauseNode extracts the "node X" prefix from a RootCause string of the fixed
-// form "node X (reason)" for the attention-line rollup.
+// rootCauseNode extracts the cause prefix (e.g. "node X" or "registry Y") from a
+// RootCause string of the fixed form "<cause> (<detail>)" for the attention-line dedup rollup.
 func rootCauseNode(rc string) string {
 	return strings.SplitN(rc, " (", 2)[0]
 }

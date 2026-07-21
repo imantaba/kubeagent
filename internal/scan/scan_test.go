@@ -507,6 +507,108 @@ func TestEvaluate_AttributesRootCauseToNotReadyNode(t *testing.T) {
 	}
 }
 
+func TestEvaluate_AttributesSharedRegistryFailure(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}}
+	depA := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "frontend"},
+		Spec: appsv1.DeploymentSpec{Replicas: p32(1)}}
+	depB := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "search"},
+		Spec: appsv1.DeploymentSpec{Replicas: p32(1)}}
+	podA := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "frontend-1",
+		Labels: map[string]string{"app": "frontend"}},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "frontend", Image: "ghcr.io/shop/frontend:2.4"}}},
+		Status: corev1.PodStatus{Phase: corev1.PodPending, ContainerStatuses: []corev1.ContainerStatus{{
+			Name: "frontend", Ready: false, Image: "ghcr.io/shop/frontend:2.4",
+			State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff"}}}}}}
+	podB := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "search-1",
+		Labels: map[string]string{"app": "search"}},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "search", Image: "ghcr.io/shop/search:1.9"}}},
+		Status: corev1.PodStatus{Phase: corev1.PodPending, ContainerStatuses: []corev1.ContainerStatus{{
+			Name: "search", Ready: false, Image: "ghcr.io/shop/search:1.9",
+			State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff"}}}}}}
+	cli := fake.NewSimpleClientset(node, depA, depB, podA, podB)
+	res, err := Evaluate(context.Background(), cli, Options{Namespace: "shop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attributed := 0
+	for _, w := range res.Inventory.Workloads {
+		if w.RootCause == "registry ghcr.io (2 workloads failing to pull)" {
+			attributed++
+		}
+	}
+	if attributed != 2 {
+		t.Errorf("want both workloads attributed to registry ghcr.io, got %d: %+v", attributed, res.Inventory.Workloads)
+	}
+}
+
+// TestEvaluate_NodeAttributionWinsOverRegistry guards the ordering of rootcause.Annotate
+// (node) before rootcause.AnnotateRegistry in scan.Evaluate. It fails if someone swaps
+// those two calls: the node-attributed workload would instead receive the registry string,
+// and the remaining singleton group would still (incorrectly) get attributed.
+func TestEvaluate_NodeAttributionWinsOverRegistry(t *testing.T) {
+	// worker-2 is NotReady.
+	notReadyNode := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "worker-2"},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{
+			{Type: corev1.NodeReady, Status: corev1.ConditionFalse, Reason: "KubeletNotReady"},
+		}},
+	}
+	// Two Deployments both failing ImagePullBackOff from ghcr.io; ReplicaSets chain
+	// pods back to their owning Deployment (required for inventory roll-up).
+	depA := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "api"},
+		Spec: appsv1.DeploymentSpec{Replicas: p32(1)}}
+	rsA := &appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "api-rs",
+		OwnerReferences: []metav1.OwnerReference{{Kind: "Deployment", Name: "api", Controller: boolp(true)}}}}
+	depB := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "worker"},
+		Spec: appsv1.DeploymentSpec{Replicas: p32(1)}}
+	rsB := &appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "worker-rs",
+		OwnerReferences: []metav1.OwnerReference{{Kind: "Deployment", Name: "worker", Controller: boolp(true)}}}}
+
+	// podA is placed on the NotReady node.
+	podA := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "api-1",
+			OwnerReferences: []metav1.OwnerReference{{Kind: "ReplicaSet", Name: "api-rs", Controller: boolp(true)}}},
+		Spec: corev1.PodSpec{
+			NodeName:   "worker-2",
+			Containers: []corev1.Container{{Name: "api", Image: "ghcr.io/shop/api:1.0"}},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodPending, ContainerStatuses: []corev1.ContainerStatus{{
+			Name: "api", Ready: false, Image: "ghcr.io/shop/api:1.0",
+			State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff"}}}}},
+	}
+	// podB is on a healthy (or unscheduled) node.
+	podB := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "worker-1",
+			OwnerReferences: []metav1.OwnerReference{{Kind: "ReplicaSet", Name: "worker-rs", Controller: boolp(true)}}},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "worker", Image: "ghcr.io/shop/worker:2.0"}},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodPending, ContainerStatuses: []corev1.ContainerStatus{{
+			Name: "worker", Ready: false, Image: "ghcr.io/shop/worker:2.0",
+			State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff"}}}}},
+	}
+	cli := fake.NewSimpleClientset(notReadyNode, depA, rsA, depB, rsB, podA, podB)
+	res, err := Evaluate(context.Background(), cli, Options{Namespace: "shop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	causeByName := map[string]string{}
+	for _, w := range res.Inventory.Workloads {
+		causeByName[w.Name] = w.RootCause
+	}
+
+	// api pod is on worker-2 (NotReady) → node attribution must win.
+	if causeByName["api"] != "node worker-2 (NotReady)" {
+		t.Errorf("api workload: want RootCause=%q, got %q", "node worker-2 (NotReady)", causeByName["api"])
+	}
+	// worker pod's registry group shrank to 1 after api was excluded → no registry attribution.
+	if causeByName["worker"] != "" {
+		t.Errorf("worker workload: want RootCause=%q (singleton group), got %q", "", causeByName["worker"])
+	}
+}
+
 func TestEvaluate_KubeletHealthOffByDefault(t *testing.T) {
 	// Mirrors TestEvaluate_DiskUsageOffByDefault: the fake clientset's
 	// RESTClient() is nil, so the nodes/proxy probe cannot be exercised through

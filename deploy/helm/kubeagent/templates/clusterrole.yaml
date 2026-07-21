@@ -31,6 +31,9 @@ rules:
   - apiGroups: ["policy"]
     resources: [poddisruptionbudgets]
     verbs: [get, list, watch]
+  - apiGroups: ["autoscaling"]
+    resources: [horizontalpodautoscalers]
+    verbs: [get, list, watch]
   {{- if or .Values.diskUsage.enabled .Values.kubeletHealth.enabled }}
   - apiGroups: [""]
     resources: [nodes/proxy]

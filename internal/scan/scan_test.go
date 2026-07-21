@@ -507,6 +507,41 @@ func TestEvaluate_AttributesRootCauseToNotReadyNode(t *testing.T) {
 	}
 }
 
+func TestEvaluate_AttributesSharedRegistryFailure(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}}
+	depA := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "frontend"},
+		Spec: appsv1.DeploymentSpec{Replicas: p32(1)}}
+	depB := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "search"},
+		Spec: appsv1.DeploymentSpec{Replicas: p32(1)}}
+	podA := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "frontend-1",
+		Labels: map[string]string{"app": "frontend"}},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "frontend", Image: "ghcr.io/shop/frontend:2.4"}}},
+		Status: corev1.PodStatus{Phase: corev1.PodPending, ContainerStatuses: []corev1.ContainerStatus{{
+			Name: "frontend", Ready: false, Image: "ghcr.io/shop/frontend:2.4",
+			State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff"}}}}}}
+	podB := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "search-1",
+		Labels: map[string]string{"app": "search"}},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "search", Image: "ghcr.io/shop/search:1.9"}}},
+		Status: corev1.PodStatus{Phase: corev1.PodPending, ContainerStatuses: []corev1.ContainerStatus{{
+			Name: "search", Ready: false, Image: "ghcr.io/shop/search:1.9",
+			State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff"}}}}}}
+	cli := fake.NewSimpleClientset(node, depA, depB, podA, podB)
+	res, err := Evaluate(context.Background(), cli, Options{Namespace: "shop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attributed := 0
+	for _, w := range res.Inventory.Workloads {
+		if w.RootCause == "registry ghcr.io (2 workloads failing to pull)" {
+			attributed++
+		}
+	}
+	if attributed != 2 {
+		t.Errorf("want both workloads attributed to registry ghcr.io, got %d: %+v", attributed, res.Inventory.Workloads)
+	}
+}
+
 func TestEvaluate_KubeletHealthOffByDefault(t *testing.T) {
 	// Mirrors TestEvaluate_DiskUsageOffByDefault: the fake clientset's
 	// RESTClient() is nil, so the nodes/proxy probe cannot be exercised through

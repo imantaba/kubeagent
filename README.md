@@ -97,6 +97,9 @@ kubeagent scan
 - **Crash log root-cause (opt-in)** — `scan --logs` reads a crashing container's
   previous logs and names the failure (panic, connection refused, bad entrypoint, …).
   Needs the `pods/log` grant (`deploy/rbac-logs.yaml`).
+- **Finding confidence** — every finding is labelled high (a direct Kubernetes
+  state) or medium (a kubeagent heuristic or correlation); the report tags only
+  the less-certain ones, and JSON always carries it.
 
 It talks to the cluster directly via the official Kubernetes Go client
 (`client-go`) — the same library `kubectl` and operators are built on — and

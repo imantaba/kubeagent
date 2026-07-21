@@ -70,6 +70,7 @@ kubeagent scan
   `FailedBinding` events), naming the cause. Event-based (like `VolumeAttachError`),
   so the normal `WaitForFirstConsumer` state is never flagged. Advisory and
   read-only; no new RBAC.
+- **Stuck-terminating** — a Namespace, Pod, or PVC wedged in Terminating past two minutes, with the blocking finalizer/condition named.
 - **Root-cause attribution** — when a node is NotReady or its kubelet stops
   heartbeating, workloads with pods on it are attributed to that node ("↳ likely
   caused by node X"); when several workloads fail image pulls from the same

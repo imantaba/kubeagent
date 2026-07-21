@@ -23,6 +23,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/resources"
 	"github.com/imantaba/kubeagent/internal/secscan"
 	"github.com/imantaba/kubeagent/internal/svchealth"
+	"github.com/imantaba/kubeagent/internal/termhealth"
 )
 
 // inventoryReport is the JSON shape for the workload inventory.
@@ -41,6 +42,7 @@ type inventoryReport struct {
 	SecurityIssues     []secscan.Finding           `json:"securityIssues,omitempty"`
 	KubeletHealth      *nodehealth.Report          `json:"kubeletHealth,omitempty"`
 	Certificates       *certhealth.Report          `json:"certificates,omitempty"`
+	StuckTerminating   []termhealth.Issue          `json:"stuckTerminating,omitempty"`
 	Explanation        string                      `json:"explanation,omitempty"`
 }
 
@@ -63,6 +65,7 @@ type Input struct {
 	SecurityVerbose    bool
 	KubeletHealth      *nodehealth.Report
 	Certificates       *certhealth.Report
+	StuckTerminating   []termhealth.Issue
 	Explanation        string
 	Now                time.Time // clock for relative ages; main sets time.Now(); zero → wall-clock
 }
@@ -88,6 +91,7 @@ func PrintInventory(in Input, format string, w io.Writer) error {
 			SecurityIssues:     in.SecurityIssues,
 			KubeletHealth:      in.KubeletHealth,
 			Certificates:       in.Certificates,
+			StuckTerminating:   in.StuckTerminating,
 			Explanation:        in.Explanation,
 		})
 	case "text":
@@ -116,7 +120,7 @@ func printInventoryText(in Input, w io.Writer) error {
 	}
 
 	hasDisk := in.DiskUsage != nil && len(in.DiskUsage.Over) > 0
-	hasAttention := len(in.Result.Workloads) > 0 || len(real) > 0 || len(in.CredentialWarnings) > 0 || hasDisk || len(realIng) > 0 || len(in.PVCIssues) > 0
+	hasAttention := len(in.Result.Workloads) > 0 || len(real) > 0 || len(in.CredentialWarnings) > 0 || hasDisk || len(realIng) > 0 || len(in.PVCIssues) > 0 || len(in.StuckTerminating) > 0
 	if hasAttention {
 		if _, err := fmt.Fprintln(w, "NEEDS ATTENTION"); err != nil {
 			return err
@@ -139,6 +143,9 @@ func printInventoryText(in Input, w io.Writer) error {
 			return err
 		}
 		if err := printPVCIssues(in.PVCIssues, w); err != nil {
+			return err
+		}
+		if err := printStuckTerminating(in.StuckTerminating, w); err != nil {
 			return err
 		}
 		if _, err := fmt.Fprintln(w); err != nil {
@@ -287,6 +294,9 @@ func attentionLine(in Input, real []svchealth.Issue, realIng []ingresshealth.Rou
 	}
 	if n := len(in.PVCIssues); n > 0 {
 		parts = append(parts, fmt.Sprintf("%d %s failing to provision", n, plural(n, "PVC", "PVCs")))
+	}
+	if n := len(in.StuckTerminating); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d %s stuck terminating", n, plural(n, "resource", "resources")))
 	}
 	return strings.Join(parts, " · ")
 }
@@ -495,6 +505,27 @@ func printIngressIssues(issues []ingresshealth.RouteIssue, glyph string, w io.Wr
 func printPVCIssues(issues []pvchealth.Issue, w io.Writer) error {
 	for _, iss := range issues {
 		if _, err := fmt.Fprintf(w, "  ✗ %s/%s  PersistentVolumeClaim  %s — %s\n", iss.Namespace, iss.Name, iss.Phase, iss.Detail); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// printStuckTerminating lists resources wedged in Terminating past the threshold.
+func printStuckTerminating(issues []termhealth.Issue, w io.Writer) error {
+	for _, is := range issues {
+		id := is.Name
+		if is.Namespace != "" {
+			id = is.Namespace + "/" + is.Name
+		}
+		grace := ""
+		if is.PastGrace {
+			grace = " (past grace)"
+		}
+		if _, err := fmt.Fprintf(w, "  ✗ %s  %s  Terminating %s%s\n", id, is.Kind, is.Age, grace); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(w, "      ⚠ StuckTerminating: %s\n", is.Reason); err != nil {
 			return err
 		}
 	}

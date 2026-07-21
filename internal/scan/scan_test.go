@@ -733,6 +733,54 @@ func TestEvaluate_StampsFindingConfidence(t *testing.T) {
 	}
 }
 
+func TestEvaluate_FlagsStuckTerminatingNamespace(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}}
+	dt := metav1.NewTime(time.Now().Add(-3 * time.Hour))
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "legacy-ns", DeletionTimestamp: &dt},
+		Status: corev1.NamespaceStatus{Conditions: []corev1.NamespaceCondition{
+			{Type: "NamespaceFinalizersRemaining", Status: corev1.ConditionTrue, Message: "finalizers remaining: kubernetes"}}}}
+	cli := fake.NewSimpleClientset(node, ns)
+	res, err := Evaluate(context.Background(), cli, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, is := range res.StuckTerminating {
+		if is.Kind == "Namespace" && is.Name == "legacy-ns" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a stuck-terminating namespace, got %+v", res.StuckTerminating)
+	}
+}
+
+func TestEvaluate_ForbiddenNamespacesStillScansPods(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}}
+	dt := metav1.NewTime(time.Now().Add(-10 * time.Minute))
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "stuck", DeletionTimestamp: &dt,
+		Finalizers: []string{"example.com/hook"}}}
+	cli := fake.NewSimpleClientset(node, pod)
+	cli.Fake.PrependReactor("list", "namespaces", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "namespaces"}, "", nil)
+	})
+	res, err := Evaluate(context.Background(), cli, Options{})
+	if err != nil {
+		t.Fatalf("a forbidden namespaces list must not fail the scan: %v", err)
+	}
+	found := false
+	for _, is := range res.StuckTerminating {
+		if is.Kind == "Pod" && is.Name == "stuck" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("pod checks must still run when namespaces is forbidden, got %+v", res.StuckTerminating)
+	}
+}
+
 func TestEvaluate_KubeletHealthOffByDefault(t *testing.T) {
 	// Mirrors TestEvaluate_DiskUsageOffByDefault: the fake clientset's
 	// RESTClient() is nil, so the nodes/proxy probe cannot be exercised through

@@ -20,6 +20,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/pvcreclaim"
 	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/svchealth"
+	"github.com/imantaba/kubeagent/internal/termhealth"
 )
 
 func sampleResult() *scan.Result {
@@ -47,6 +48,7 @@ func sampleResult() *scan.Result {
 			{Namespace: "shop", Ingress: "parked", Service: "parked-svc", Problem: "NoEndpoints", Expected: true},
 		},
 		PVCIssues: []pvchealth.Issue{{Namespace: "shop", Name: "data-pvc", Phase: "Pending", Reason: "ProvisioningFailed"}},
+		StuckTerminating: []termhealth.Issue{{Kind: "Namespace", Name: "legacy-ns", Age: "3h", Reason: "NamespaceFinalizersRemaining — x"}},
 		KubeletHealth: nodehealth.Report{Probed: 2, Unhealthy: []nodehealth.Issue{{Node: "w"}}},
 		Certificates: &certhealth.Report{WarnDays: 30, Checked: 4,
 			Expired:  []certhealth.Cert{{Namespace: "shop", Name: "shop-tls", Days: -3}},
@@ -73,6 +75,7 @@ func TestMetrics_RenderReflectsResult(t *testing.T) {
 		"kubeagent_ingress_route_issues 1",
 		"kubeagent_service_issues 1",
 		"kubeagent_pvc_pending_issues 1",
+		"kubeagent_resources_stuck_terminating 1",
 		"kubeagent_nodes_expected_absent 1",
 		"kubeagent_kubelet_unhealthy 1",
 		"kubeagent_certificates_expired 1",

@@ -210,6 +210,17 @@ func PersistentVolumes(ctx context.Context, client kubernetes.Interface) ([]core
 	return pvs.Items, nil
 }
 
+// Namespaces lists all namespaces (cluster-scoped; read-only) for the
+// stuck-terminating check. Needs the base `namespaces` list grant; a forbidden
+// list is handled gracefully by the caller (namespace checks are skipped).
+func Namespaces(ctx context.Context, client kubernetes.Interface) ([]corev1.Namespace, error) {
+	list, err := client.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("listing namespaces: %w", err)
+	}
+	return list.Items, nil
+}
+
 // IngressClasses lists all IngressClasses (cluster-scoped, read-only).
 func IngressClasses(ctx context.Context, client kubernetes.Interface) ([]networkingv1.IngressClass, error) {
 	ics, err := client.NetworkingV1().IngressClasses().List(ctx, metav1.ListOptions{})

@@ -22,6 +22,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/resources"
 	"github.com/imantaba/kubeagent/internal/secscan"
 	"github.com/imantaba/kubeagent/internal/svchealth"
+	"github.com/imantaba/kubeagent/internal/termhealth"
 )
 
 func sampleWorkloads() []inventory.Workload {
@@ -1583,5 +1584,42 @@ func TestPrintInventory_JSONFindingCarriesConfidence(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), `"confidence": "high"`) {
 		t.Errorf("JSON must carry finding confidence:\n%s", buf.String())
+	}
+}
+
+func TestPrintInventory_StuckTerminating(t *testing.T) {
+	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		StuckTerminating: []termhealth.Issue{
+			{Kind: "Namespace", Name: "legacy-ns", Age: "3h", Reason: "NamespaceFinalizersRemaining — kubernetes finalizer remains"},
+			{Kind: "Pod", Namespace: "shop", Name: "api-7c9d5", Age: "8m", PastGrace: true, Reason: "finalizer example.com/cleanup-hook"},
+			{Kind: "PersistentVolumeClaim", Namespace: "shop", Name: "data", Age: "20m", Reason: "pvc-protection — still mounted by pod shop/db-0"},
+		}}
+	var buf bytes.Buffer
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	for _, want := range []string{
+		"✗ legacy-ns  Namespace  Terminating 3h",
+		"⚠ StuckTerminating: NamespaceFinalizersRemaining — kubernetes finalizer remains",
+		"✗ shop/api-7c9d5  Pod  Terminating 8m (past grace)",
+		"✗ shop/data  PersistentVolumeClaim  Terminating 20m",
+		"⚠ StuckTerminating: pvc-protection — still mounted by pod shop/db-0",
+		"3 resources stuck terminating",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "legacy-ns  Namespace  Terminating 3h (past grace)") {
+		t.Error("(past grace) must appear only on pods")
+	}
+}
+
+func TestPrintInventory_StuckTerminatingAbsentWhenEmpty(t *testing.T) {
+	var buf bytes.Buffer
+	_ = PrintInventory(Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1}}, "text", &buf)
+	if strings.Contains(buf.String(), "StuckTerminating") {
+		t.Error("section must be absent when nothing is stuck")
 	}
 }

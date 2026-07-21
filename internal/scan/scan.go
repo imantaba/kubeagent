@@ -33,6 +33,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/rootcause"
 	"github.com/imantaba/kubeagent/internal/secscan"
 	"github.com/imantaba/kubeagent/internal/svchealth"
+	"github.com/imantaba/kubeagent/internal/termhealth"
 )
 
 // Options controls the evaluation scope.
@@ -66,8 +67,9 @@ type Result struct {
 	IngressIssues  []ingresshealth.RouteIssue
 	PVCIssues      []pvchealth.Issue
 	SecurityIssues []secscan.Finding
-	KubeletHealth  nodehealth.Report
-	Certificates   *certhealth.Report
+	KubeletHealth     nodehealth.Report
+	Certificates      *certhealth.Report
+	StuckTerminating  []termhealth.Issue
 }
 
 // systemNamespaces are excluded from the security scan when scanning all
@@ -190,6 +192,8 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	}
 
 	pvcs, _ := collect.PersistentVolumeClaims(ctx, client, opts.Namespace)
+	namespaces, _ := collect.Namespaces(ctx, client) // forbidden/absent → nil, namespace checks skipped
+	stuckTerminating := termhealth.Assess(namespaces, inputs.Pods, pvcs, 2*time.Minute, time.Now())
 	pvs, _ := collect.PersistentVolumes(ctx, client)
 	pvcReclaim := pvcreclaim.Assess(pvcs, pvs)
 	pvcEvents, _ := collect.PVCEvents(ctx, client, opts.Namespace)
@@ -243,5 +247,5 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 		kubeletHealth = nodehealth.Assess(probes)
 	}
 
-	return Result{Inputs: inputs, Nodes: nodes, NodeReserve: nodereserve.Assess(nodes), PVCReclaim: pvcReclaim, DiskUsage: diskReport, Health: health, Inventory: result, ServiceIssues: serviceIssues, IngressIssues: ingressIssues, PVCIssues: pvcIssues, SecurityIssues: securityIssues, KubeletHealth: kubeletHealth, Certificates: certReport}, nil
+	return Result{Inputs: inputs, Nodes: nodes, NodeReserve: nodereserve.Assess(nodes), PVCReclaim: pvcReclaim, DiskUsage: diskReport, Health: health, Inventory: result, ServiceIssues: serviceIssues, IngressIssues: ingressIssues, PVCIssues: pvcIssues, SecurityIssues: securityIssues, KubeletHealth: kubeletHealth, Certificates: certReport, StuckTerminating: stuckTerminating}, nil
 }

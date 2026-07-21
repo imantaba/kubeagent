@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Stuck-terminating / finalizer-deadlock check.** `scan` flags a Namespace, Pod,
+  or PVC wedged in `Terminating` past two minutes and names the blocker — a
+  namespace finalizer/condition, a pod's finalizers (or "deletion not confirmed"
+  when the node is gone), or `pvc-protection` cross-referenced to the pod still
+  mounting the PVC. Read-only and advisory (never removes a finalizer, never
+  changes the verdict); the daemon exposes `kubeagent_resources_stuck_terminating`.
+  Adds a base `namespaces` read grant.
+
 ## [0.33.0] - 2026-07-21
 
 ### Added

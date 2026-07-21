@@ -258,6 +258,18 @@ flag kubeagent makes no Secrets API calls at all. The in-cluster daemon needs
 the secrets add-on grant (`deploy/rbac-certs.yaml` or Helm
 `certs.enabled=true`) and enables the check with `KUBEAGENT_CERTS=true`.
 
+### Stuck-terminating resources
+
+`scan` flags a resource wedged in `Terminating` — deletion pending longer than
+two minutes — and names the blocker: a **Namespace** stuck on a finalizer or a
+downstream condition (`NamespaceFinalizersRemaining` / `NamespaceContentRemaining`
+/ `NamespaceDeletionContentFailure`, message shown as-is), a **Pod** stuck past
+its grace period (its finalizers, or "deletion not confirmed" when the node is
+gone), or a **PVC** held by `pvc-protection` (cross-referenced to a pod still
+mounting it). Read-only and advisory — it never removes a finalizer (that is a
+`--fix` concern) and never changes the cluster verdict. The daemon exposes
+`kubeagent_resources_stuck_terminating`.
+
 ### Security posture (opt-in)
 
 `scan --security` walks every workload's pod template and each Service and flags

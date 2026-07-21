@@ -124,6 +124,16 @@ single workload failing a pull is never blamed on the registry (that is usually 
 typo'd image), and a workload already attributed to a hard-down node keeps the
 node attribution. Docker Hub images (`nginx:...`) group under `docker.io`.
 
+A **broken PersistentVolumeClaim** is joined the same way: when a workload's pod
+mounts a PVC that the [Pending-PVC check](#pending-pvc-storage-provisioning) has
+diagnosed as failing to provision or bind, the workload is attributed
+`↳ likely caused by PVC <name> (ProvisioningFailed)` — connecting a pod stuck in
+`Pending`/`ContainerCreating` (which has no pod-level finding of its own) to the
+storage cause kubeagent already reports. Because the PVC is independently
+diagnosed, a single affected workload is enough — unlike the registry case, this
+is a join against evidence, not an inference. Node attribution still takes
+precedence.
+
 ### Node reservations
 
 `scan` reports each node's aggregate kubelet resource reservation for **memory,

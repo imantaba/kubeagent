@@ -113,11 +113,13 @@
   error) as a one-line `LogCause` on the finding; never sent verbatim to a shared
   service. See [Failure diagnostics](features/diagnostics.md).
 
-- **Root-cause attribution (nodes & registries)** — a hard-down node (NotReady or
-  kubelet-not-heartbeating) becomes the named root cause of the workloads with pods
-  on it, and a registry shared by two-plus failing image pulls becomes the named
-  root cause of those workloads; the first slices of the root-cause correlation
-  theme. See [Failure diagnostics](features/diagnostics.md).
+- **Root-cause attribution (nodes, registries & PVCs)** — a hard-down node
+  (NotReady or kubelet-not-heartbeating) becomes the named root cause of the
+  workloads with pods on it; a registry shared by two-plus failing image pulls
+  becomes the named root cause of those workloads; and a PVC that cannot
+  provision becomes the named root cause of the workloads mounting it; the first
+  slices of the root-cause correlation theme. See
+  [Failure diagnostics](features/diagnostics.md).
 
 !!! info "Version history"
     [GitHub Releases](https://github.com/imantaba/kubeagent/releases) and the

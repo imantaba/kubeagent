@@ -73,8 +73,9 @@ kubeagent scan
 - **Root-cause attribution** — when a node is NotReady or its kubelet stops
   heartbeating, workloads with pods on it are attributed to that node ("↳ likely
   caused by node X"); when several workloads fail image pulls from the same
-  registry, they are attributed to that registry — one shared cause instead of N
-  disconnected findings.
+  registry, they are attributed to that registry; when a workload's pod mounts a
+  PVC that cannot provision, it is attributed to that PVC — one shared cause
+  instead of N disconnected findings.
 - **Workload security posture (opt-in)** — `scan --security` flags PSS-aligned
   hardening problems (privileged/insecure containers, exposed Services) in a
   dedicated `SECURITY` section and JSON `securityIssues`. Advisory and

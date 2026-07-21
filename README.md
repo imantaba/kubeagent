@@ -93,6 +93,7 @@ kubeagent scan
   kubelet `/healthz` via `nodes/proxy` and flags a kubelet that is reachable but
   unhealthy (PLEG/runtime failures), the "alive but sick" case heartbeat and
   NotReady checks miss. Reuses the `nodes/proxy` add-on from `--disk-usage`.
+- **Certificate expiry (--certs)** — flags expired and soon-expiring TLS certificates (public cert metadata only; never reads keys), with the Ingress routes they front.
 - **Crash log root-cause (opt-in)** — `scan --logs` reads a crashing container's
   previous logs and names the failure (panic, connection refused, bad entrypoint, …).
   Needs the `pods/log` grant (`deploy/rbac-logs.yaml`).

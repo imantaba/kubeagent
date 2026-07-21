@@ -10,9 +10,11 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/imantaba/kubeagent/internal/batchhealth"
+	"github.com/imantaba/kubeagent/internal/certhealth"
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/collect"
 	"github.com/imantaba/kubeagent/internal/createhealth"
@@ -39,6 +41,8 @@ type Options struct {
 	IncludeRestarts        bool
 	DiskUsage              bool
 	DiskThreshold          float64
+	Certs                  bool
+	CertWarnDays           int
 	Security               bool
 	NodeHeartbeatThreshold time.Duration
 	ExpectedNodes          []string
@@ -62,6 +66,7 @@ type Result struct {
 	PVCIssues      []pvchealth.Issue
 	SecurityIssues []secscan.Finding
 	KubeletHealth  nodehealth.Report
+	Certificates   *certhealth.Report
 }
 
 // systemNamespaces are excluded from the security scan when scanning all
@@ -159,6 +164,20 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	ings, _ := collect.Ingresses(ctx, client, opts.Namespace)
 	ingressIssues := ingresshealth.Assess(ings, svcs, slices, backends)
 
+	var certReport *certhealth.Report
+	if opts.Certs {
+		warn := opts.CertWarnDays
+		if warn <= 0 {
+			warn = 30
+		}
+		tlsSecrets, tlsErr := collect.TLSSecrets(ctx, client, opts.Namespace)
+		rep := certhealth.Assess(tlsSecrets, ings, warn, time.Now())
+		if apierrors.IsForbidden(tlsErr) {
+			rep.Forbidden = true
+		}
+		certReport = &rep
+	}
+
 	var securityIssues []secscan.Finding
 	if opts.Security {
 		pods, services := inputs.Pods, svcs
@@ -222,5 +241,5 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 		kubeletHealth = nodehealth.Assess(probes)
 	}
 
-	return Result{Inputs: inputs, Nodes: nodes, NodeReserve: nodereserve.Assess(nodes), PVCReclaim: pvcReclaim, DiskUsage: diskReport, Health: health, Inventory: result, ServiceIssues: serviceIssues, IngressIssues: ingressIssues, PVCIssues: pvcIssues, SecurityIssues: securityIssues, KubeletHealth: kubeletHealth}, nil
+	return Result{Inputs: inputs, Nodes: nodes, NodeReserve: nodereserve.Assess(nodes), PVCReclaim: pvcReclaim, DiskUsage: diskReport, Health: health, Inventory: result, ServiceIssues: serviceIssues, IngressIssues: ingressIssues, PVCIssues: pvcIssues, SecurityIssues: securityIssues, KubeletHealth: kubeletHealth, Certificates: certReport}, nil
 }

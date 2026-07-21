@@ -440,3 +440,16 @@ func TestClassifyKubeletHealthz(t *testing.T) {
 		}
 	}
 }
+
+func TestTLSSecrets(t *testing.T) {
+	tls := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "shop-tls"},
+		Type: corev1.SecretTypeTLS, Data: map[string][]byte{"tls.crt": []byte("PEM")}}
+	client := fake.NewSimpleClientset(tls)
+	got, err := TLSSecrets(context.Background(), client, "shop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Name != "shop-tls" {
+		t.Fatalf("want the seeded TLS secret, got %+v", got)
+	}
+}

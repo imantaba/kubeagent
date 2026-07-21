@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imantaba/kubeagent/internal/certhealth"
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/credlint"
 	"github.com/imantaba/kubeagent/internal/diskusage"
@@ -38,6 +39,7 @@ type inventoryReport struct {
 	PVCIssues          []pvchealth.Issue           `json:"pvcIssues,omitempty"`
 	SecurityIssues     []secscan.Finding           `json:"securityIssues,omitempty"`
 	KubeletHealth      *nodehealth.Report          `json:"kubeletHealth,omitempty"`
+	Certificates       *certhealth.Report          `json:"certificates,omitempty"`
 	Explanation        string                      `json:"explanation,omitempty"`
 }
 
@@ -59,6 +61,7 @@ type Input struct {
 	SecurityIssues     []secscan.Finding
 	SecurityVerbose    bool
 	KubeletHealth      *nodehealth.Report
+	Certificates       *certhealth.Report
 	Explanation        string
 	Now                time.Time // clock for relative ages; main sets time.Now(); zero → wall-clock
 }
@@ -83,6 +86,7 @@ func PrintInventory(in Input, format string, w io.Writer) error {
 			PVCIssues:          in.PVCIssues,
 			SecurityIssues:     in.SecurityIssues,
 			KubeletHealth:      in.KubeletHealth,
+			Certificates:       in.Certificates,
 			Explanation:        in.Explanation,
 		})
 	case "text":
@@ -151,6 +155,11 @@ func printInventoryText(in Input, w io.Writer) error {
 		return err
 	}
 
+	hasCerts := certificatesRender(in.Certificates)
+	if err := printCertificates(in.Certificates, w); err != nil {
+		return err
+	}
+
 	if err := printNotes(in, expected, expectedIng, w); err != nil {
 		return err
 	}
@@ -159,7 +168,7 @@ func printInventoryText(in Input, w io.Writer) error {
 		return err
 	}
 
-	if !hasAttention && !hasSecurity && !hasKubeletHealth && in.Cluster.Verdict == "Healthy" {
+	if !hasAttention && !hasSecurity && !hasKubeletHealth && !hasCerts && in.Cluster.Verdict == "Healthy" {
 		if _, err := fmt.Fprintln(w, "No issues found. ✅"); err != nil {
 			return err
 		}
@@ -794,6 +803,56 @@ func printWorkload(wl inventory.Workload, now time.Time, w io.Writer) error {
 		}
 	}
 	return nil
+}
+
+// certificatesRender reports whether the CERTIFICATES section would print
+// anything: expired/expiring/invalid certs, or the missing-grant hint.
+func certificatesRender(rep *certhealth.Report) bool {
+	if rep == nil {
+		return false
+	}
+	return rep.Forbidden || len(rep.Expired) > 0 || len(rep.Expiring) > 0 || len(rep.Invalid) > 0
+}
+
+// printCertificates renders the advisory CERTIFICATES section (opt-in --certs).
+func printCertificates(rep *certhealth.Report, w io.Writer) error {
+	if !certificatesRender(rep) {
+		return nil
+	}
+	if _, err := fmt.Fprintln(w, "CERTIFICATES  (advisory — public certificate metadata only)"); err != nil {
+		return err
+	}
+	if rep.Forbidden {
+		_, err := fmt.Fprintln(w, "  certificates: secrets access denied — apply deploy/rbac-certs.yaml (or Helm certs.enabled=true)")
+		return err
+	}
+	for _, c := range rep.Expired {
+		if _, err := fmt.Fprintf(w, "  ✗ %s/%s  EXPIRED %dd ago  (CN %s)\n", c.Namespace, c.Name, -c.Days, c.CommonName); err != nil {
+			return err
+		}
+		for _, ing := range c.Ingresses {
+			if _, err := fmt.Fprintf(w, "      — fronts ingress %s\n", ing); err != nil {
+				return err
+			}
+		}
+	}
+	for _, c := range rep.Expiring {
+		if _, err := fmt.Fprintf(w, "  ⚠ %s/%s  expires in %dd  (CN %s)\n", c.Namespace, c.Name, c.Days, c.CommonName); err != nil {
+			return err
+		}
+		for _, ing := range c.Ingresses {
+			if _, err := fmt.Fprintf(w, "      — fronts ingress %s\n", ing); err != nil {
+				return err
+			}
+		}
+	}
+	for _, iv := range rep.Invalid {
+		if _, err := fmt.Fprintf(w, "  ⚠ %s/%s  %s\n", iv.Namespace, iv.Name, iv.Detail); err != nil {
+			return err
+		}
+	}
+	_, err := fmt.Fprintf(w, "  · %d certificates checked (warn window %dd)\n", rep.Checked, rep.WarnDays)
+	return err
 }
 
 // kubeletHealthRenders reports whether the KUBELET HEALTH section would print

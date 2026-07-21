@@ -265,6 +265,19 @@ func NetworkPolicies(ctx context.Context, client kubernetes.Interface, namespace
 	return nps.Items, nil
 }
 
+// TLSSecrets lists the kubernetes.io/tls Secrets in the namespace ("" = all) —
+// public certificate material for the opt-in --certs check. The type field
+// selector narrows server-side; certhealth re-filters by type in-code (the fake
+// clientset ignores field selectors). Requires the secrets add-on grant
+// (deploy/rbac-certs.yaml); never called unless --certs is set.
+func TLSSecrets(ctx context.Context, client kubernetes.Interface, namespace string) ([]corev1.Secret, error) {
+	secrets, err := client.CoreV1().Secrets(namespace).List(ctx, metav1.ListOptions{FieldSelector: "type=kubernetes.io/tls"})
+	if err != nil {
+		return nil, fmt.Errorf("listing TLS secrets: %w", err)
+	}
+	return secrets.Items, nil
+}
+
 // ConfigMaps lists ConfigMaps in the namespace (empty = all), read-only.
 func ConfigMaps(ctx context.Context, client kubernetes.Interface, namespace string) ([]corev1.ConfigMap, error) {
 	cms, err := client.CoreV1().ConfigMaps(namespace).List(ctx, metav1.ListOptions{})

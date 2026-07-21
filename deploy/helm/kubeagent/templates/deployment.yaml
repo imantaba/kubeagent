@@ -34,7 +34,7 @@ spec:
             {{- if .Values.watch.namespace }}
             - "--namespace={{ .Values.watch.namespace }}"
             {{- end }}
-          {{- if or .Values.diskUsage.enabled .Values.kubeletHealth.enabled }}
+          {{- if or .Values.diskUsage.enabled .Values.kubeletHealth.enabled .Values.certs.enabled }}
           env:
             {{- if .Values.diskUsage.enabled }}
             - name: KUBEAGENT_DISK_USAGE
@@ -45,6 +45,12 @@ spec:
             {{- if .Values.kubeletHealth.enabled }}
             - name: KUBEAGENT_KUBELET_HEALTH
               value: "true"
+            {{- end }}
+            {{- if .Values.certs.enabled }}
+            - name: KUBEAGENT_CERTS
+              value: "true"
+            - name: KUBEAGENT_CERT_WARN_DAYS
+              value: {{ .Values.certs.warnDays | quote }}
             {{- end }}
           {{- end }}
           ports:

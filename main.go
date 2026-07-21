@@ -58,7 +58,7 @@ func run(args []string) error {
 		return runWatch(args[1:])
 	}
 	if len(args) == 0 || args[0] != "scan" {
-		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--kubelet-health] [--logs] [--node-heartbeat-threshold dur] [--expected-nodes a,b,…] [--fix [--dry-run|--yes]] | kubeagent watch [--kubeconfig path] [--context name] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] | kubeagent version")
+		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--kubelet-health] [--certs [--cert-warn-days n]] [--logs] [--node-heartbeat-threshold dur] [--expected-nodes a,b,…] [--fix [--dry-run|--yes]] | kubeagent watch [--kubeconfig path] [--context name] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] | kubeagent version")
 	}
 
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
@@ -74,6 +74,8 @@ func run(args []string) error {
 	diskUsage := fs.Bool("disk-usage", false, "check node filesystem and PVC usage via the kubelet (needs the nodes/proxy grant)")
 	diskThreshold := fs.Float64("disk-threshold", 0.80, "with --disk-usage: warn at this used ratio (0-1)")
 	kubeletHealth := fs.Bool("kubelet-health", false, "probe each kubelet's /healthz via nodes/proxy and flag unhealthy nodes (needs the nodes/proxy add-on)")
+	certs := fs.Bool("certs", false, "check TLS-secret certificate expiry (public certs only; needs the secrets add-on grant)")
+	certWarnDays := fs.Int("cert-warn-days", 30, "with --certs: warn when a certificate expires within this many days")
 	logs := fs.Bool("logs", false, "read each crashing container's previous logs and classify the failure (needs the pods/log grant)")
 	nodeHeartbeatThreshold := fs.Duration("node-heartbeat-threshold", 40*time.Second, "flag a Ready node whose kubelet lease is stale beyond this (0 disables)")
 	expectedNodes := fs.String("expected-nodes", "", "names of nodes expected in the cluster; a declared name with no Node object is flagged Degraded (comma-separated)")
@@ -113,6 +115,8 @@ func run(args []string) error {
 		NodeHeartbeatThreshold: *nodeHeartbeatThreshold,
 		ExpectedNodes:          splitCSV(*expectedNodes),
 		KubeletHealth:          *kubeletHealth,
+		Certs:                  *certs,
+		CertWarnDays:           *certWarnDays,
 		Logs:                   *logs,
 	})
 	if err != nil {
@@ -186,6 +190,7 @@ func run(args []string) error {
 		PVCIssues:          res.PVCIssues,
 		SecurityIssues:     res.SecurityIssues,
 		SecurityVerbose:    *securityVerbose,
+		Certificates:       res.Certificates,
 		Explanation:        explanation,
 	}, *output, os.Stdout); err != nil {
 		return err
@@ -231,6 +236,8 @@ func runWatch(args []string) error {
 		NodeHeartbeatThreshold: envDur("KUBEAGENT_NODE_HEARTBEAT_THRESHOLD", 40*time.Second),
 		ExpectedNodes:          splitCSV(envOr("KUBEAGENT_EXPECTED_NODES", "")),
 		KubeletHealth:          envBool("KUBEAGENT_KUBELET_HEALTH", false),
+		Certs:                  envBool("KUBEAGENT_CERTS", false),
+		CertWarnDays:           envInt("KUBEAGENT_CERT_WARN_DAYS", 30),
 	})
 }
 
@@ -275,6 +282,16 @@ func envFloat(key string, def float64) float64 {
 	if v := os.Getenv(key); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
 			return f
+		}
+	}
+	return def
+}
+
+// envInt returns the env var parsed as an int, else def.
+func envInt(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
 		}
 	}
 	return def

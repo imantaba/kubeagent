@@ -64,6 +64,9 @@ type metrics struct {
 	scanErrors          int64
 	nodeFSRatio         map[string]float64
 	volumesOverDisk     int
+	certsRan            bool
+	certsExpired        int
+	certsExpiring       int
 }
 
 func newMetrics() *metrics { return &metrics{findings: map[string]int{}} }
@@ -114,6 +117,11 @@ func (m *metrics) update(res *scan.Result, dur time.Duration, now time.Time, err
 		}
 		m.nodeFSRatio = ratios
 		m.volumesOverDisk = len(res.DiskUsage.Over)
+	}
+	if res.Certificates != nil {
+		m.certsRan = true
+		m.certsExpired = len(res.Certificates.Expired)
+		m.certsExpiring = len(res.Certificates.Expiring)
 	}
 }
 
@@ -166,6 +174,10 @@ func (m *metrics) render() string {
 			fmt.Fprintf(&b, "kubeagent_node_fs_usage_ratio{node=%q} %g\n", n, m.nodeFSRatio[n])
 		}
 		gauge("kubeagent_volumes_over_disk_threshold", "Node+PVC volumes at or over the disk-usage threshold", float64(m.volumesOverDisk))
+	}
+	if m.certsRan {
+		gauge("kubeagent_certificates_expired", "TLS certificates already expired (opt-in --certs)", float64(m.certsExpired))
+		gauge("kubeagent_certificates_expiring", "TLS certificates expiring within the warn window (opt-in --certs)", float64(m.certsExpiring))
 	}
 	gauge("kubeagent_last_scan_timestamp_seconds", "Unix time of the last evaluation", float64(m.lastScanUnix))
 	gauge("kubeagent_scan_duration_seconds", "Duration of the last evaluation in seconds", m.scanSeconds)

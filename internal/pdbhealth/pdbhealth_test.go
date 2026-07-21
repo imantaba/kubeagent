@@ -47,13 +47,23 @@ func TestAssess_Unsatisfiable(t *testing.T) {
 
 func TestAssess_Blocking(t *testing.T) {
 	// disruptionsAllowed 0 with only 1/2 guarded pods healthy.
-	got := Assess([]policyv1.PodDisruptionBudget{pdb("shop", "cache", 2, 2, 2, 1, 0)})
+	got := Assess([]policyv1.PodDisruptionBudget{pdb("shop", "cache", 2, 3, 2, 1, 0)})
 	is, ok := find(got, "cache")
 	if !ok || is.Category != "blocking" {
 		t.Fatalf("want blocking, got %+v", got)
 	}
 	if is.Reason != "blocking evictions with only 1/2 guarded pods healthy" {
 		t.Errorf("reason = %q", is.Reason)
+	}
+}
+
+func TestAssess_UnsatisfiableEvenWhenDegraded(t *testing.T) {
+	// minAvailable == replicas is unsatisfiable regardless of current health;
+	// it must NOT be reclassified as "blocking" just because a pod is down.
+	got := Assess([]policyv1.PodDisruptionBudget{pdb("shop", "hot", 2, 2, 2, 1, 0)})
+	is, ok := find(got, "hot")
+	if !ok || is.Category != "unsatisfiable" {
+		t.Fatalf("a degraded minAvailable-of-N PDB must stay unsatisfiable, got %+v", got)
 	}
 }
 

@@ -15,7 +15,22 @@ import (
 
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/scan"
+	"github.com/imantaba/kubeagent/internal/termhealth"
 )
+
+func TestResultInput_CarriesStuckTerminating(t *testing.T) {
+	// Regression: the scan.Result → report.Input mapping must carry every
+	// Result-derived field, StuckTerminating included. This once silently dropped
+	// in the inline literal, so the merged feature never rendered in the CLI.
+	res := scan.Result{StuckTerminating: []termhealth.Issue{
+		{Kind: "Pod", Namespace: "shop", Name: "web", Age: "8m", PastGrace: true, Reason: "finalizer x/y"},
+	}}
+	in := resultInput(res)
+	if len(in.StuckTerminating) != 1 || in.StuckTerminating[0].Name != "web" {
+		t.Fatalf("resultInput must carry StuckTerminating into report.Input, got %+v", in.StuckTerminating)
+	}
+}
 
 func TestRun_NoArgsReturnsUsage(t *testing.T) {
 	if err := run(nil); err == nil {

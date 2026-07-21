@@ -88,15 +88,15 @@ func goldenWorkloads() []inventory.Workload {
 	r := "2025-12-25T00:00:00Z" // ~8d before goldenNow
 	return []inventory.Workload{
 		{Namespace: "shop", Name: "web", Kind: "Deployment", Desired: 1, Ready: 0, Status: "Degraded",
-			Restarts: 8, LastRestart: r, Image: "busybox:1.36",
+			Restarts: 8, LastRestart: r, Image: "busybox:1.36", RootCause: "node worker-1 (kubelet not heartbeating)",
 			Pods:     []inventory.PodRow{{Name: "web-5b8-2wplt", Phase: "Running", Ready: "0/1", Restarts: 8, LastRestart: r, Node: "worker-1", IP: "10.244.2.2", Age: "20d", Image: "busybox:1.36"}},
 			Findings: []diagnose.Finding{{Pod: "shop/web", Issue: "CrashLoopBackOff", Reason: "Container repeatedly crashes after starting", Evidence: `container "web", restartCount=8`, Container: "web", LogExcerpt: "panic: runtime error: invalid memory address", LogCause: "application panic (code bug)"}}},
 		{Namespace: "shop", Name: "api", Kind: "Deployment", Desired: 2, Ready: 0, Status: "Degraded",
-			Image:    "nginx:9.9.9-nope",
+			Image: "nginx:9.9.9-nope", RootCause: "node worker-1 (kubelet not heartbeating)",
 			Pods:     []inventory.PodRow{{Name: "api-864-dxtdh", Phase: "Pending", Ready: "0/1", Restarts: 0, Node: "worker-1", IP: "10.244.2.4", Age: "6d", Image: "nginx:9.9.9-nope"}},
 			Findings: []diagnose.Finding{{Pod: "shop/api", Issue: "ImagePullBackOff", Reason: "Bad image reference or registry authentication", Evidence: `container "api": Back-off pulling image "nginx:9.9.9-nope": not found`}}},
 		{Namespace: "shop", Name: "billing-worker", Kind: "Deployment", Desired: 1, Ready: 0, Status: "Degraded",
-			Restarts: 6, LastRestart: r, Image: "polinux/stress",
+			Restarts: 6, LastRestart: r, Image: "polinux/stress", RootCause: "node worker-2 (NotReady)",
 			Pods: []inventory.PodRow{{Name: "billing-7c7-vbgd7", Phase: "Running", Ready: "0/1", Restarts: 6, LastRestart: r, Node: "worker-2", IP: "10.244.1.2", Age: "18d", Image: "polinux/stress"}},
 			Findings: []diagnose.Finding{
 				{Pod: "shop/billing-worker", Issue: "CrashLoopBackOff", Reason: "Container repeatedly crashes after starting", Evidence: `container "worker", restartCount=6`},
@@ -112,7 +112,7 @@ func goldenWorkloads() []inventory.Workload {
 			Pods:     []inventory.PodRow{{Name: "cache-6d9-abcde", Phase: "Running", Ready: "1/1", Restarts: 5, LastRestart: r, Node: "worker-3", IP: "10.244.3.7", Age: "12d", Image: "redis:7-alpine"}},
 			Findings: []diagnose.Finding{{Pod: "shop/cache", Issue: "RestartLoop", Reason: "Container keeps exiting with a non-OOM error and restarting", Evidence: `container "cache", restartCount=5 (still flapping)`}}},
 		{Namespace: "shop", Name: "data", Kind: "StatefulSet", Desired: 1, Ready: 0, Status: "Degraded",
-			Image:    "postgres:16",
+			Image: "postgres:16", RootCause: "node worker-2 (NotReady)",
 			Pods:     []inventory.PodRow{{Name: "data-0", Phase: "Pending", Ready: "0/1", Restarts: 0, Node: "worker-2", IP: "", Age: "9d", Image: "postgres:16"}},
 			Findings: []diagnose.Finding{{Pod: "shop/data-0", Issue: "VolumeAttachError", Reason: "A ReadWriteOnce volume is still attached to another node (Multi-Attach)", Evidence: "Multi-Attach error for volume \"pvc-data-0\": volume is already used by pod(s) on node worker-1"}}},
 		{Namespace: "shop", Name: "checkout", Kind: "Deployment", Desired: 1, Ready: 0, Status: "Degraded",

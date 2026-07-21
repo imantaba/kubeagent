@@ -13,6 +13,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/confidence"
 	"github.com/imantaba/kubeagent/internal/credlint"
 	"github.com/imantaba/kubeagent/internal/diskusage"
+	"github.com/imantaba/kubeagent/internal/hpahealth"
 	"github.com/imantaba/kubeagent/internal/ingresshealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/nodehealth"
@@ -45,6 +46,7 @@ type inventoryReport struct {
 	Certificates       *certhealth.Report          `json:"certificates,omitempty"`
 	StuckTerminating   []termhealth.Issue          `json:"stuckTerminating,omitempty"`
 	PDBIssues          []pdbhealth.Issue           `json:"pdbIssues,omitempty"`
+	HPAIssues          []hpahealth.Issue           `json:"hpaIssues,omitempty"`
 	Explanation        string                      `json:"explanation,omitempty"`
 }
 
@@ -69,6 +71,7 @@ type Input struct {
 	Certificates       *certhealth.Report
 	StuckTerminating   []termhealth.Issue
 	PDBIssues          []pdbhealth.Issue
+	HPAIssues          []hpahealth.Issue
 	Explanation        string
 	Now                time.Time // clock for relative ages; main sets time.Now(); zero → wall-clock
 }
@@ -96,6 +99,7 @@ func PrintInventory(in Input, format string, w io.Writer) error {
 			Certificates:       in.Certificates,
 			StuckTerminating:   in.StuckTerminating,
 			PDBIssues:          in.PDBIssues,
+			HPAIssues:          in.HPAIssues,
 			Explanation:        in.Explanation,
 		})
 	case "text":
@@ -124,7 +128,7 @@ func printInventoryText(in Input, w io.Writer) error {
 	}
 
 	hasDisk := in.DiskUsage != nil && len(in.DiskUsage.Over) > 0
-	hasAttention := len(in.Result.Workloads) > 0 || len(real) > 0 || len(in.CredentialWarnings) > 0 || hasDisk || len(realIng) > 0 || len(in.PVCIssues) > 0 || len(in.StuckTerminating) > 0 || len(in.PDBIssues) > 0
+	hasAttention := len(in.Result.Workloads) > 0 || len(real) > 0 || len(in.CredentialWarnings) > 0 || hasDisk || len(realIng) > 0 || len(in.PVCIssues) > 0 || len(in.StuckTerminating) > 0 || len(in.PDBIssues) > 0 || len(in.HPAIssues) > 0
 	if hasAttention {
 		if _, err := fmt.Fprintln(w, "NEEDS ATTENTION"); err != nil {
 			return err
@@ -153,6 +157,9 @@ func printInventoryText(in Input, w io.Writer) error {
 			return err
 		}
 		if err := printPDBIssues(in.PDBIssues, w); err != nil {
+			return err
+		}
+		if err := printHPAIssues(in.HPAIssues, w); err != nil {
 			return err
 		}
 		if _, err := fmt.Fprintln(w); err != nil {
@@ -307,6 +314,9 @@ func attentionLine(in Input, real []svchealth.Issue, realIng []ingresshealth.Rou
 	}
 	if n := len(in.PDBIssues); n > 0 {
 		parts = append(parts, fmt.Sprintf("%d %s blocking drains", n, plural(n, "PodDisruptionBudget", "PodDisruptionBudgets")))
+	}
+	if n := len(in.HPAIssues); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d %s can't scale", n, plural(n, "HPA", "HPAs")))
 	}
 	return strings.Join(parts, " · ")
 }
@@ -549,6 +559,19 @@ func printPDBIssues(issues []pdbhealth.Issue, w io.Writer) error {
 			return err
 		}
 		if _, err := fmt.Fprintf(w, "      ⚠ PDBBlocked: %s\n", is.Reason); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// printHPAIssues lists HorizontalPodAutoscalers that cannot scale as intended.
+func printHPAIssues(issues []hpahealth.Issue, w io.Writer) error {
+	for _, is := range issues {
+		if _, err := fmt.Fprintf(w, "  ✗ %s/%s  HorizontalPodAutoscaler  targets %s\n", is.Namespace, is.Name, is.Target); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(w, "      ⚠ HPAStuck: %s\n", is.Reason); err != nil {
 			return err
 		}
 	}

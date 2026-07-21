@@ -12,6 +12,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/credlint"
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/diskusage"
+	"github.com/imantaba/kubeagent/internal/hpahealth"
 	"github.com/imantaba/kubeagent/internal/ingresshealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/nodehealth"
@@ -1657,5 +1658,40 @@ func TestPrintInventory_NoPDBSectionWhenEmpty(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), "PDBBlocked") {
 		t.Errorf("no PDB section expected when empty:\n%s", buf.String())
+	}
+}
+
+func TestPrintInventory_HPAIssues(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy"},
+		HPAIssues: []hpahealth.Issue{
+			{Namespace: "shop", Name: "api-hpa", Target: "Deployment/api", Category: "metrics",
+				Reason: "can't fetch metrics — unable to get resource metric cpu: no metrics returned"},
+		},
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "✗ shop/api-hpa  HorizontalPodAutoscaler  targets Deployment/api") {
+		t.Errorf("missing HPA header line:\n%s", out)
+	}
+	if !strings.Contains(out, "⚠ HPAStuck: can't fetch metrics — unable to get resource metric cpu") {
+		t.Errorf("missing HPAStuck reason line:\n%s", out)
+	}
+	if !strings.Contains(out, "1 HPA can't scale") {
+		t.Errorf("missing attention-line fragment:\n%s", out)
+	}
+}
+
+func TestPrintInventory_NoHPASectionWhenEmpty(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy"}}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf.String(), "HPAStuck") {
+		t.Errorf("no HPA section expected when empty:\n%s", buf.String())
 	}
 }

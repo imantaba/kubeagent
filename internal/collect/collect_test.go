@@ -48,6 +48,18 @@ func TestCollectInventory_ScopesToNamespace(t *testing.T) {
 	}
 }
 
+func TestNamespaces(t *testing.T) {
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "legacy-ns"}}
+	client := fake.NewSimpleClientset(ns)
+	got, err := Namespaces(context.Background(), client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Name != "legacy-ns" {
+		t.Fatalf("want the seeded namespace, got %+v", got)
+	}
+}
+
 func TestNodes_ListsAllNodes(t *testing.T) {
 	client := fake.NewSimpleClientset(
 		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"}},

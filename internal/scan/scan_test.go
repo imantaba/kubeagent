@@ -483,6 +483,30 @@ func TestEvaluate_FlagsFailedCreate(t *testing.T) {
 	}
 }
 
+func TestEvaluate_AttributesRootCauseToNotReadyNode(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-2"},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionFalse, Reason: "KubeletNotReady"}}}}
+	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "api"},
+		Spec: appsv1.DeploymentSpec{Replicas: p32(1)}}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "api-1", Labels: map[string]string{"app": "api"}},
+		Spec:   corev1.PodSpec{NodeName: "worker-2"},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{Name: "api", Ready: false}}}}
+	cli := fake.NewSimpleClientset(node, dep, pod)
+	res, err := Evaluate(context.Background(), cli, Options{Namespace: "shop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, w := range res.Inventory.Workloads {
+		if w.RootCause == "node worker-2 (NotReady)" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a workload attributed to node worker-2, got %+v", res.Inventory.Workloads)
+	}
+}
+
 func TestEvaluate_KubeletHealthOffByDefault(t *testing.T) {
 	// Mirrors TestEvaluate_DiskUsageOffByDefault: the fake clientset's
 	// RESTClient() is nil, so the nodes/proxy probe cannot be exercised through

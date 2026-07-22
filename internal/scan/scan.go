@@ -126,6 +126,7 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 		diagnose.RestartLoopDetector{Now: time.Now()},
 		diagnose.InitContainerDetector{},
 		diagnose.ProbeFailureDetector{},
+		diagnose.ConfigErrorDetector{},
 	}
 	attachEvents, _ := collect.VolumeAttachEvents(ctx, client, opts.Namespace)
 	unhealthyEvents, _ := collect.UnhealthyEvents(ctx, client, opts.Namespace)

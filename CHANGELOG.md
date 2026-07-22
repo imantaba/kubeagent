@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Missing-config detection (`CreateContainerConfigError`).** `scan` now flags a
+  container (main or init) that can't start because a referenced ConfigMap or
+  Secret is missing, or a required key is absent — naming the object from the
+  kubelet message. Previously such a workload showed only as degraded with no
+  explaining finding. Read-only (no new flag or metric).
+
 ## [0.40.0] - 2026-07-22
 
 ### Added

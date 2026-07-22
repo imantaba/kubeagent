@@ -50,6 +50,9 @@ kubeagent scan
   deadline); a failing CronJob is shown even without `--include-cron`.
 - **FailedCreate** — a workload whose controller cannot create pods because a
   ResourceQuota, LimitRange, or admission webhook is rejecting them.
+- **CreateContainerConfigError** — a container (main or init) that cannot start
+  because a referenced ConfigMap or Secret is missing, or a required key is
+  absent; the finding names the object from the kubelet message.
 - **Node reservation check** — warns when a node's kubelet reserves no memory
   (allocatable == capacity), meaning OS or kubelet memory pressure can destabilise
   the node. Advisory and read-only; no new RBAC.

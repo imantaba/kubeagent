@@ -179,6 +179,15 @@
   is absent — naming the object directly from the kubelet event message. Read-only;
   no new flag, metric, or RBAC. See [Failure diagnostics](features/diagnostics.md).
 
+- **`--suggest` next steps** (first Theme-C / principled intelligence slice) —
+  opt-in `scan --suggest` prints a deterministic, reviewed next-step suggestion
+  and a read-only `kubectl` investigation command under each pod finding. Offline
+  (no API key), never LLM-decided, and read-only — it prints the command, it
+  never runs it. This is the deterministic remediation core that a later
+  Theme-C slice will hand to `--explain` for LLM ranking and phrasing (the LLM
+  ranks; it never invents the remediation). See
+  [Failure diagnostics](features/diagnostics.md).
+
 !!! info "Version history"
     [GitHub Releases](https://github.com/imantaba/kubeagent/releases) and the
     [CHANGELOG](https://github.com/imantaba/kubeagent/blob/main/CHANGELOG.md)

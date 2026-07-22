@@ -130,6 +130,11 @@ kubeagent scan
 - **Finding confidence** — every finding is labelled high (a direct Kubernetes
   state) or medium (a kubeagent heuristic or correlation); the report tags only
   the less-certain ones, and JSON always carries it.
+- **Next-step suggestions (opt-in)** — `scan --suggest` prints a deterministic,
+  reviewed next-step suggestion and a read-only `kubectl` investigation command
+  under each finding (CrashLoopBackOff → check the previous logs,
+  ImagePullBackOff → verify the tag/credentials, …). Offline (no API key),
+  never LLM-decided, and read-only — it prints the command, it never runs it.
 
 It talks to the cluster directly via the official Kubernetes Go client
 (`client-go`) — the same library `kubectl` and operators are built on — and
@@ -173,6 +178,9 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 # choose the model (default: claude-opus-4-8; or set KUBEAGENT_MODEL)
 ./kubeagent scan --explain --model claude-sonnet-4-6
+
+# print a deterministic next-step suggestion (and a read-only kubectl command) under each finding
+./kubeagent scan --suggest
 ```
 
 > `--explain` sends **only** a structured summary to the Claude API: the

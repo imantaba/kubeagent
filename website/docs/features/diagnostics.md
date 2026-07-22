@@ -298,6 +298,31 @@ flag kubeagent makes no Secrets API calls at all. The in-cluster daemon needs
 the secrets add-on grant (`deploy/rbac-certs.yaml` or Helm
 `certs.enabled=true`) and enables the check with `KUBEAGENT_CERTS=true`.
 
+### Next-step suggestions (opt-in)
+
+`scan --suggest` prints a deterministic, reviewed next-step suggestion and a
+read-only `kubectl` investigation command directly under each pod finding.
+It works **offline** (no API key required) and is **read-only** — kubeagent
+prints the command, it never runs it.
+
+```text
+✗ shop/web  Deployment  0/2 Degraded
+    ⚠ CrashLoopBackOff: Container repeatedly crashes after starting
+      ↳ container "web": restartCount=8
+      ↳ next step: starts then crashes — inspect the crash output
+      ↳ try: kubectl -n shop logs web-abc -c web --previous
+```
+
+Each finding maps to a single focused next step — for example,
+`CrashLoopBackOff` → check the previous logs; `ImagePullBackOff` → verify the
+tag and credentials; `OOMKilled` → inspect the memory limits. The suggestions
+are deterministic and never model-decided: no finding is paraphrased or
+reordered by an LLM.
+
+This is the first **Theme C** (principled intelligence) slice — the
+deterministic remediation core that a later slice will hand to `--explain` for
+LLM ranking and phrasing (the LLM ranks; it never invents the remediation).
+
 ### Stuck-terminating resources
 
 `scan` flags a resource wedged in `Terminating` — deletion pending longer than
@@ -493,6 +518,10 @@ schema are unchanged.
 `kubeagent scan` performs a read-only, whole-cluster scan and reports
 CrashLoopBackOff, ImagePullBackOff/ErrImagePull, OOMKilled,
 Pending/Unschedulable, VolumeAttachError (Multi-Attach), RestartLoop, ProbeFailure, init-container failures, failed Jobs/CronJobs, controllers that cannot create pods (FailedCreate), and containers blocked by a missing ConfigMap or Secret (CreateContainerConfigError), in text or JSON.
+
+The optional `--suggest` flag prints a deterministic next-step suggestion and
+a read-only `kubectl` investigation command under each finding — offline, no
+API key required.
 
 The optional `--explain` flag makes a single Claude API call to summarize
 findings in plain English. The deterministic core still works offline with no

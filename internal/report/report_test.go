@@ -25,6 +25,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/secscan"
 	"github.com/imantaba/kubeagent/internal/svchealth"
 	"github.com/imantaba/kubeagent/internal/termhealth"
+	"github.com/imantaba/kubeagent/internal/webhookhealth"
 )
 
 func sampleWorkloads() []inventory.Workload {
@@ -1693,5 +1694,41 @@ func TestPrintInventory_NoHPASectionWhenEmpty(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), "HPAStuck") {
 		t.Errorf("no HPA section expected when empty:\n%s", buf.String())
+	}
+}
+
+func TestPrintInventory_WebhookIssues(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy"},
+		WebhookIssues: []webhookhealth.Issue{
+			{Kind: "ValidatingWebhookConfiguration", Config: "policy-webhook", Webhook: "validate.policy.io",
+				Service: "kube-system/policy-svc", Problem: "no-endpoints",
+				Reason: "backend Service kube-system/policy-svc has no ready endpoints — failurePolicy Fail rejects every intercepted create/update"},
+		},
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "✗ policy-webhook  ValidatingWebhookConfiguration  webhook validate.policy.io") {
+		t.Errorf("missing webhook header line:\n%s", out)
+	}
+	if !strings.Contains(out, "⚠ WebhookDown: backend Service kube-system/policy-svc has no ready endpoints") {
+		t.Errorf("missing WebhookDown reason line:\n%s", out)
+	}
+	if !strings.Contains(out, "1 admission webhook failing") {
+		t.Errorf("missing attention-line fragment:\n%s", out)
+	}
+}
+
+func TestPrintInventory_NoWebhookSectionWhenEmpty(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy"}}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf.String(), "WebhookDown") {
+		t.Errorf("no webhook section expected when empty:\n%s", buf.String())
 	}
 }

@@ -214,6 +214,7 @@ func resultInput(res scan.Result) report.Input {
 		StuckTerminating: res.StuckTerminating,
 		PDBIssues:        res.PDBIssues,
 		HPAIssues:        res.HPAIssues,
+		WebhookIssues:    res.WebhookIssues,
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	admissionv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	batchv1 "k8s.io/api/batch/v1"
@@ -489,5 +490,19 @@ func TestHorizontalPodAutoscalers(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].Name != "api-hpa" {
 		t.Fatalf("expected the seeded HPA, got %+v", got)
+	}
+}
+
+func TestWebhookConfigurations(t *testing.T) {
+	vwc := &admissionv1.ValidatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: "vw"}}
+	mwc := &admissionv1.MutatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: "mw"}}
+	client := fake.NewSimpleClientset(vwc, mwc)
+	v, err := ValidatingWebhookConfigurations(context.Background(), client)
+	if err != nil || len(v) != 1 || v[0].Name != "vw" {
+		t.Fatalf("validating: got %+v err %v", v, err)
+	}
+	m, err := MutatingWebhookConfigurations(context.Background(), client)
+	if err != nil || len(m) != 1 || m[0].Name != "mw" {
+		t.Fatalf("mutating: got %+v err %v", m, err)
 	}
 }

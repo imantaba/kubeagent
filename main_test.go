@@ -19,6 +19,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/pdbhealth"
 	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/termhealth"
+	"github.com/imantaba/kubeagent/internal/webhookhealth"
 )
 
 func TestResultInput_CarriesStuckTerminating(t *testing.T) {
@@ -55,6 +56,18 @@ func TestResultInput_CarriesHPAIssues(t *testing.T) {
 	in := resultInput(res)
 	if len(in.HPAIssues) != 1 || in.HPAIssues[0].Name != "api-hpa" {
 		t.Fatalf("resultInput must carry HPAIssues into report.Input, got %+v", in.HPAIssues)
+	}
+}
+
+func TestResultInput_CarriesWebhookIssues(t *testing.T) {
+	// Regression: the scan.Result → report.Input mapping must carry WebhookIssues,
+	// or the section never renders in the CLI (the stuck-terminating v0.34.0 bug).
+	res := scan.Result{WebhookIssues: []webhookhealth.Issue{
+		{Kind: "ValidatingWebhookConfiguration", Config: "policy-webhook", Webhook: "validate.policy.io", Problem: "no-endpoints", Reason: "…"},
+	}}
+	in := resultInput(res)
+	if len(in.WebhookIssues) != 1 || in.WebhookIssues[0].Config != "policy-webhook" {
+		t.Fatalf("resultInput must carry WebhookIssues into report.Input, got %+v", in.WebhookIssues)
 	}
 }
 

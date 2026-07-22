@@ -60,6 +60,7 @@ type metrics struct {
 	stuckTerminating    int
 	pdbBlockingIssues   int
 	hpaScalingIssues    int
+	webhooksFailing     int
 	findings            map[string]int
 	lastScanUnix        int64
 	scanSeconds         float64
@@ -104,6 +105,7 @@ func (m *metrics) update(res *scan.Result, dur time.Duration, now time.Time, err
 	m.stuckTerminating = len(res.StuckTerminating)
 	m.pdbBlockingIssues = len(res.PDBIssues)
 	m.hpaScalingIssues = len(res.HPAIssues)
+	m.webhooksFailing = len(res.WebhookIssues)
 	flagged := 0
 	findings := map[string]int{}
 	for _, w := range res.Inventory.Workloads {
@@ -163,6 +165,7 @@ func (m *metrics) render() string {
 	gauge("kubeagent_resources_stuck_terminating", "Resources (namespaces, pods, PVCs) wedged in Terminating past the threshold", float64(m.stuckTerminating))
 	gauge("kubeagent_pdb_blocking_issues", "PodDisruptionBudgets that will block a node drain", float64(m.pdbBlockingIssues))
 	gauge("kubeagent_hpa_scaling_issues", "HorizontalPodAutoscalers that cannot scale as intended", float64(m.hpaScalingIssues))
+	gauge("kubeagent_admission_webhooks_failing", "Fail-policy admission webhooks whose backend is missing or has no ready endpoints", float64(m.webhooksFailing))
 	fmt.Fprintf(&b, "# HELP kubeagent_findings Current findings by issue type\n# TYPE kubeagent_findings gauge\n")
 	issues := make([]string, 0, len(m.findings))
 	for k := range m.findings {

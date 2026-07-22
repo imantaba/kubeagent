@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **PVC provisioning root cause.** The Pending-PVC check now names *why* a claim
+  is stuck by correlating it against the cluster's StorageClasses and PVs — it
+  references a StorageClass that does not exist, or (for a static claim) no
+  available PersistentVolume matches its size and access modes — and flags these
+  even when no `ProvisioningFailed` event is present (catching a PVC whose event
+  has expired). Read-only; reuses collected objects (no new flag or metric).
+
 ## [0.39.0] - 2026-07-22
 
 ### Added

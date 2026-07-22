@@ -165,6 +165,14 @@
   Read-only; no new flag, metric, or RBAC. See
   [Failure diagnostics](features/diagnostics.md).
 
+- **PVC provisioning root cause** (completes the Theme-A root-cause chain with
+  PVC → StorageClass → PV) — a Pending PVC now names the structural cause: it
+  references a StorageClass that does not exist, or (for a static claim) no
+  available PersistentVolume matches its size and access modes. Fires even when no
+  `ProvisioningFailed` event is present (long-stuck PVC with expired events).
+  Read-only; correlates against collected StorageClasses and PVs; no new flag,
+  metric, or RBAC. See [Failure diagnostics](features/diagnostics.md).
+
 !!! info "Version history"
     [GitHub Releases](https://github.com/imantaba/kubeagent/releases) and the
     [CHANGELOG](https://github.com/imantaba/kubeagent/blob/main/CHANGELOG.md)

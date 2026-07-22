@@ -52,7 +52,7 @@ func goldenInput(now time.Time) Input {
 		Result: inventory.Result{Workloads: goldenWorkloads()},
 		PVCIssues: []pvchealth.Issue{{
 			Namespace: "shop", Name: "reports-data", Phase: "Pending",
-			Reason: "ProvisioningFailed", Detail: `storageclass "fast-ssd" not found`, StorageClass: "fast-ssd",
+			Reason: "MissingStorageClass", Detail: `references StorageClass "fast-ssd" which does not exist`, StorageClass: "fast-ssd",
 		}},
 		Resources:          sampleSummary(),
 		Platform:           sampleFacts(),

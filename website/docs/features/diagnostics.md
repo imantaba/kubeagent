@@ -127,7 +127,7 @@ node attribution. Docker Hub images (`nginx:...`) group under `docker.io`.
 A **broken PersistentVolumeClaim** is joined the same way: when a workload's pod
 mounts a PVC that the [Pending-PVC check](#pending-pvc-storage-provisioning) has
 diagnosed as failing to provision or bind, the workload is attributed
-`↳ likely caused by PVC <name> (ProvisioningFailed)` — connecting a pod stuck in
+`↳ likely caused by PVC <name> (MissingStorageClass)` — the parenthetical is the PVC's failure reason and can be `MissingStorageClass`, `NoMatchingPV`, `ProvisioningFailed`, or `FailedBinding` depending on what the cluster reports — connecting a pod stuck in
 `Pending`/`ContainerCreating` (which has no pod-level finding of its own) to the
 storage cause kubeagent already reports. Because the PVC is independently
 diagnosed, a single affected workload is enough — unlike the registry case, this
@@ -213,15 +213,25 @@ metadata:
 
 ### Pending PVC (storage provisioning)
 
-`scan` flags a PersistentVolumeClaim stuck **Pending** because provisioning or binding
-failed, reading the PVC's `ProvisioningFailed` / `FailedBinding` events and naming the
-cause — e.g. `✗ shop/data-pvc  PersistentVolumeClaim  Pending — storageclass "fast" not
-found`. It is the provision-time complement to `VolumeAttachError` (attach-time). Like
-that check it is **event-based**, so a PVC that is merely Pending under
-`WaitForFirstConsumer` (waiting for a pod to consume it) — which emits no failure event
-— is never flagged. It appears in **NEEDS ATTENTION** and JSON `pvcIssues` but is advisory
-(it does not change the cluster verdict). Read-only; listing PVCs and events needs no
-extra permission.
+`scan` flags a PersistentVolumeClaim stuck **Pending** and names a structural root cause
+by correlating the PVC against the cluster's StorageClasses and PVs:
+
+- **Missing StorageClass** — the PVC references a StorageClass that does not exist:
+  `✗ shop/reports-data  PersistentVolumeClaim  Pending — references StorageClass "fast-ssd" which does not exist`
+- **No matching PV** — for a static (non-dynamic) claim, no available PersistentVolume
+  matches its request:
+  `✗ shop/data-pvc  PersistentVolumeClaim  Pending — no available PersistentVolume matches its request (10Gi, ReadWriteOnce)`
+
+These structural checks fire **even when no `ProvisioningFailed` event is present** — catching
+a PVC that has been stuck long enough for its events to expire. When no structural cause is
+found, kubeagent falls back to reading the PVC's `ProvisioningFailed` / `FailedBinding`
+events for an event-based reason.
+
+`WaitForFirstConsumer` PVCs that are simply waiting for a pod to consume them — which emit
+no failure event and have a schedulable StorageClass — are never flagged. It is the
+provision-time complement to `VolumeAttachError` (attach-time). It appears in **NEEDS
+ATTENTION** and JSON `pvcIssues` but is advisory (it does not change the cluster verdict).
+Read-only; correlates against collected StorageClasses and PVs (no new flag or metric).
 
 ### Node heartbeat freshness
 

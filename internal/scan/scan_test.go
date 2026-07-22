@@ -14,6 +14,7 @@ import (
 	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -648,7 +649,10 @@ func TestEvaluate_AttributesRootCauseToBrokenPVC(t *testing.T) {
 		Status: corev1.PodStatus{Phase: corev1.PodPending, ContainerStatuses: []corev1.ContainerStatus{{
 			Name: "reports", Ready: false,
 			State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ContainerCreating"}}}}}}
-	cli := fake.NewSimpleClientset(node, pvc, ev, dep, pod)
+	// SC "fast" exists so the structural MissingStorageClass path is bypassed;
+	// the ProvisioningFailed event surfaces as the root cause instead.
+	fastSC := &storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: "fast"}}
+	cli := fake.NewSimpleClientset(node, pvc, ev, dep, pod, fastSC)
 	res, err := Evaluate(context.Background(), cli, Options{Namespace: "shop"})
 	if err != nil {
 		t.Fatal(err)
@@ -947,6 +951,35 @@ func TestEvaluate_KubeletHealthOffByDefault(t *testing.T) {
 	}
 	if res.KubeletHealth.Probed != 0 || len(res.KubeletHealth.Unhealthy) != 0 {
 		t.Errorf("kubelet health must be empty when not enabled, got %+v", res.KubeletHealth)
+	}
+}
+
+func TestEvaluate_PVCMissingStorageClass_NoEvent(t *testing.T) {
+	// A Pending PVC referencing a StorageClass that does not exist, with NO event,
+	// is flagged structurally (proves the wiring passes StorageClasses + PVs and
+	// that flagging no longer requires an event).
+	sc := "fast-ssd"
+	pvc := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "data"},
+		Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: &sc},
+		Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimPending},
+	}
+	cli := fake.NewSimpleClientset(pvc)
+	res, err := Evaluate(context.Background(), cli, Options{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var found bool
+	for _, is := range res.PVCIssues {
+		if is.Namespace == "shop" && is.Name == "data" {
+			found = true
+			if is.Reason != "MissingStorageClass" || is.Detail != `references StorageClass "fast-ssd" which does not exist` {
+				t.Fatalf("issue = %+v", is)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected a shop/data PVC issue, got %+v", res.PVCIssues)
 	}
 }
 

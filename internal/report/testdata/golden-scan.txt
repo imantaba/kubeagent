@@ -87,7 +87,7 @@ NEEDS ATTENTION
   ✗ default/app-config  ConfigMap[DB_PASSWORD]  credential-like name with a literal value
   ✗ default/web  Pod[app/AWS_SECRET]  AWS access key
   ✗ ingress shop/storefront  shop.example.com/  backend Service payments:80 has no ready endpoints (likely 502/503) — 3 matching pods, 0 ready
-  ✗ shop/reports-data  PersistentVolumeClaim  Pending — storageclass "fast-ssd" not found
+  ✗ shop/reports-data  PersistentVolumeClaim  Pending — references StorageClass "fast-ssd" which does not exist
   ✗ legacy-ns  Namespace  Terminating 3h
       ⚠ StuckTerminating: NamespaceFinalizersRemaining — some content has finalizers remaining: kubernetes
   ✗ shop/api-7c9d5-x2v  Pod  Terminating 8m (past grace)

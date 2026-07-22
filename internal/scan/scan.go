@@ -214,7 +214,8 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	pvs, _ := collect.PersistentVolumes(ctx, client)
 	pvcReclaim := pvcreclaim.Assess(pvcs, pvs)
 	pvcEvents, _ := collect.PVCEvents(ctx, client, opts.Namespace)
-	pvcIssues := pvchealth.Assess(pvcs, pvcEvents)
+	storageClasses, _ := collect.StorageClasses(ctx, client)
+	pvcIssues := pvchealth.Assess(pvcs, pvcEvents, storageClasses, pvs)
 
 	result := inventory.Prioritize(workloads, inventory.Opts{
 		IncludeRestarts: opts.IncludeRestarts,

@@ -111,3 +111,13 @@ func TestAssess_SortedAndPerWebhook(t *testing.T) {
 		t.Fatalf("want two issues sorted by webhook, got %+v", got)
 	}
 }
+
+func TestAssess_SortsMutatingBeforeValidating(t *testing.T) {
+	// Cross-kind ordering: "MutatingWebhookConfiguration" < "ValidatingWebhookConfiguration".
+	v := vwc("vcfg", vhook("vw", failP(), admissionv1.WebhookClientConfig{Service: svcRef("ns", "gone")}))
+	m := mwc("mcfg", mhook("mw", failP(), admissionv1.WebhookClientConfig{Service: svcRef("ns", "gone")}))
+	got := Assess([]admissionv1.ValidatingWebhookConfiguration{v}, []admissionv1.MutatingWebhookConfiguration{m}, nil, nil)
+	if len(got) != 2 || got[0].Kind != "MutatingWebhookConfiguration" || got[1].Kind != "ValidatingWebhookConfiguration" {
+		t.Fatalf("want Mutating sorted before Validating, got %+v", got)
+	}
+}

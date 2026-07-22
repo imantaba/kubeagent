@@ -337,8 +337,10 @@ The check only flags webhooks under `failurePolicy: Fail` (the default in
 falls through silently, which is by design.
 
 The check is **cluster-wide only**: it is skipped when `--namespace`/`-n` is
-set, because webhook configurations are cluster-scoped resources and restricting
-to one namespace would give an incomplete view.
+set, because the check cross-references each webhook's backend Service against
+the collected Services — a namespace-scoped scan only collects that namespace's
+Services, so a backend in any other namespace would appear missing and produce
+false positives.
 
 Findings appear in **NEEDS ATTENTION** with the configuration name, kind, and
 the webhook name, followed by the reason — for example:

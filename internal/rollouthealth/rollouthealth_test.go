@@ -89,6 +89,10 @@ func TestAnnotate_ReplicaFailureWinsOverProgressing(t *testing.T) {
 	}
 }
 
+// TestAnnotate_NotFlaggedCases covers Deployments that ARE flagged (degraded)
+// but whose status condition is not a stuck-rollout signal — so no finding is
+// added. It pins that the Deployment condition, not the workload status, is what
+// gates the finding.
 func TestAnnotate_NotFlaggedCases(t *testing.T) {
 	cases := []struct {
 		name string

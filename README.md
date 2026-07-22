@@ -83,6 +83,12 @@ kubeagent scan
   `maxReplicas` while demand exceeds the cap. Advisory and read-only; the daemon
   exposes `kubeagent_hpa_scaling_issues`. Adds a base
   `autoscaling/horizontalpodautoscalers` read grant.
+- **Admission-webhook-failure detection** — `scan` flags a Validating/Mutating
+  webhook whose `failurePolicy` is `Fail` and whose backing Service is missing
+  or has no ready endpoints — it would reject every create/update it intercepts.
+  Read-only, advisory, and cluster-wide only (skipped under `--namespace`); the
+  daemon exposes `kubeagent_admission_webhooks_failing`. Adds a base
+  `admissionregistration.k8s.io` read grant.
 - **Root-cause attribution** — when a node is NotReady or its kubelet stops
   heartbeating, workloads with pods on it are attributed to that node ("↳ likely
   caused by node X"); when several workloads fail image pulls from the same

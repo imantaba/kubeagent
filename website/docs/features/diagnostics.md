@@ -317,6 +317,42 @@ Read-only and advisory — it does not change the cluster verdict. The daemon
 exposes `kubeagent_hpa_scaling_issues`. Adds a base
 `autoscaling/horizontalpodautoscalers` read grant.
 
+### Admission-webhook failure
+
+`scan` flags a Validating or Mutating webhook whose `failurePolicy` is `Fail`
+and whose backing Service is **missing** (`missing-service`) or **has no ready
+endpoints** (`no-endpoints`). Either condition means the webhook will reject
+every `create`/`update` it intercepts — making the cluster effectively read-only
+for the affected resource kinds without any obvious error at the workload level.
+
+Two problems are detected:
+
+- **missing-service** — the Service referenced in the webhook's `clientConfig`
+  does not exist in the cluster.
+- **no-endpoints** — the Service exists but has no ready Pod endpoints behind it.
+
+The check only flags webhooks under `failurePolicy: Fail` (the default in
+`admissionregistration.k8s.io/v1` when the field is omitted). Webhooks with
+`failurePolicy: Ignore` are skipped — if their backend is down the API server
+falls through silently, which is by design.
+
+The check is **cluster-wide only**: it is skipped when `--namespace`/`-n` is
+set, because webhook configurations are cluster-scoped resources and restricting
+to one namespace would give an incomplete view.
+
+Findings appear in **NEEDS ATTENTION** with the configuration name, kind, and
+the webhook name, followed by the reason — for example:
+
+```text
+✗ policy-webhook  ValidatingWebhookConfiguration  webhook validate.policy.io
+    ⚠ WebhookDown: backend Service kube-system/policy-svc has no ready
+      endpoints — failurePolicy Fail rejects every intercepted create/update
+```
+
+Read-only and advisory — it never changes the cluster verdict. The daemon
+exposes `kubeagent_admission_webhooks_failing`. Adds a base
+`admissionregistration.k8s.io` read grant.
+
 ### Security posture (opt-in)
 
 `scan --security` walks every workload's pod template and each Service and flags

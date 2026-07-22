@@ -23,6 +23,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/secscan"
 	"github.com/imantaba/kubeagent/internal/svchealth"
 	"github.com/imantaba/kubeagent/internal/termhealth"
+	"github.com/imantaba/kubeagent/internal/webhookhealth"
 )
 
 var update = flag.Bool("update", false, "rewrite golden files")
@@ -97,6 +98,11 @@ func goldenInput(now time.Time) Input {
 		HPAIssues: []hpahealth.Issue{
 			{Namespace: "shop", Name: "api-hpa", Target: "Deployment/api", Category: "metrics",
 				Reason: "can't fetch metrics — unable to get resource metric cpu: no metrics returned"},
+		},
+		WebhookIssues: []webhookhealth.Issue{
+			{Kind: "ValidatingWebhookConfiguration", Config: "policy-webhook", Webhook: "validate.policy.io",
+				Service: "kube-system/policy-svc", Problem: "no-endpoints",
+				Reason: "backend Service kube-system/policy-svc has no ready endpoints — failurePolicy Fail rejects every intercepted create/update"},
 		},
 	}
 }
@@ -247,7 +253,7 @@ func TestGoldenInputCoversAllSections(t *testing.T) {
 		in.Platform == nil || len(in.ServiceIssues) == 0 || len(in.CredentialWarnings) == 0 ||
 		len(in.IngressIssues) == 0 || len(in.SecurityIssues) == 0 || in.NodeReserve == nil ||
 		in.PVCReclaim == nil || in.KubeletHealth == nil || len(in.PVCIssues) == 0 || in.Certificates == nil ||
-		len(in.StuckTerminating) == 0 || len(in.PDBIssues) == 0 || len(in.HPAIssues) == 0 {
+		len(in.StuckTerminating) == 0 || len(in.PDBIssues) == 0 || len(in.HPAIssues) == 0 || len(in.WebhookIssues) == 0 {
 		t.Fatal("goldenInput must populate every section so the golden stays comprehensive")
 	}
 	// Guard the *distinct* failure modes too, so a fixture regression can't drop one

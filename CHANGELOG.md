@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Admission-webhook-failure detection.** `scan` flags a Validating/Mutating
+  webhook whose `failurePolicy` is `Fail` and whose backing Service is missing
+  or has no ready endpoints — it would reject every create/update it intercepts.
+  Read-only, advisory, and cluster-wide only (skipped under `--namespace`); the
+  daemon exposes `kubeagent_admission_webhooks_failing`. Adds a base
+  `admissionregistration.k8s.io` read grant.
+
 ## [0.36.0] - 2026-07-21
 
 ### Added

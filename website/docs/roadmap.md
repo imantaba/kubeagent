@@ -144,6 +144,13 @@
   cap (`capped` category). Advisory and read-only; the daemon exposes
   `kubeagent_hpa_scaling_issues`. See [Failure diagnostics](features/diagnostics.md).
 
+- **Admission-webhook failure** — `scan` flags a Validating/Mutating webhook
+  whose `failurePolicy` is `Fail` and whose backing Service is missing or has no
+  ready endpoints — it would silently reject every intercepted create/update.
+  Cluster-wide only (skipped under `--namespace`); advisory and read-only; the
+  daemon exposes `kubeagent_admission_webhooks_failing`. See
+  [Failure diagnostics](features/diagnostics.md).
+
 !!! info "Version history"
     [GitHub Releases](https://github.com/imantaba/kubeagent/releases) and the
     [CHANGELOG](https://github.com/imantaba/kubeagent/blob/main/CHANGELOG.md)
@@ -183,7 +190,7 @@ These are the north star; every item below is measured against them.
   Service → backend; PVC → PV → StorageClass) so a wall of red collapses to the one
   thing that's actually wrong, with a confidence score per finding.
 - **B · Deeper & broader diagnosis** — more failure modes: admission-webhook
-  failure/latency, CoreDNS/DNS health, control-plane & etcd health.
+  latency, CoreDNS/DNS health, control-plane & etcd health.
 - **C · Principled intelligence** — `--explain` grows from a summary into ranked,
   deterministic *remediation suggestions* and on-call runbooks; an opt-in read-only
   investigation mode lets the model request bounded, allow-listed follow-up reads

@@ -48,6 +48,7 @@ The daemon serves Prometheus text on `--metrics-addr` (default `:8080`):
 | `kubeagent_resources_stuck_terminating` | Number of Namespaces, Pods, and PVCs wedged in Terminating past two minutes |
 | `kubeagent_pdb_blocking_issues` | Number of PodDisruptionBudgets that will block a node drain (unsatisfiable, stale, or blocking) |
 | `kubeagent_hpa_scaling_issues` | Number of HorizontalPodAutoscalers that cannot scale as intended (unable, metrics, or capped) |
+| `kubeagent_admission_webhooks_failing` | Number of Validating/Mutating webhooks with `failurePolicy: Fail` whose backing Service is missing or has no ready endpoints |
 | `kubeagent_last_scan_timestamp_seconds` / `kubeagent_scan_duration_seconds` | evaluation freshness and cost |
 | `kubeagent_scans_total` / `kubeagent_scan_errors_total` | evaluation counters |
 

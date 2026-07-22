@@ -281,3 +281,29 @@ func TestAssess_NoServiceRoute_NotEnriched(t *testing.T) {
 		t.Fatalf("NoService route must not be enriched, got %q", got)
 	}
 }
+
+// TestAssess_ParkedRoute_NotEnrichedEvenWithPods pins that a parked route
+// (scaled-to-zero backend → svchealth.ExpectedEmpty returns ok) returns
+// Expected=true and a "route parked" Detail even when matching unready pods
+// exist that would otherwise produce a "N matching pods, 0 ready" cause suffix
+// on a genuinely broken route.
+func TestAssess_ParkedRoute_NotEnrichedEvenWithPods(t *testing.T) {
+	svcs := []corev1.Service{svc("shop", "web", 80)}
+	svcs[0].Spec.Selector = map[string]string{"app": "web"}
+	backends := []svchealth.Backend{{Kind: "Deployment", Namespace: "shop", TemplateLabels: map[string]string{"app": "web"}, Desired: 0}}
+	pods := []corev1.Pod{
+		podLabeled("shop", "web-1", "worker-1", map[string]string{"app": "web"}, false),
+		podLabeled("shop", "web-2", "worker-1", map[string]string{"app": "web"}, false),
+	}
+	got := Assess([]networkingv1.Ingress{ing("shop", "site", "x.io", "/", "web", 80)}, svcs, nil, backends, pods, nil)
+	if len(got) != 1 || !got[0].Expected {
+		t.Fatalf("parked route must be Expected even with matching pods, got %+v", got)
+	}
+	detail := got[0].Detail
+	if !strings.Contains(detail, "route parked") {
+		t.Errorf("expected 'route parked' in detail, got %q", detail)
+	}
+	if strings.Contains(detail, "0 ready") {
+		t.Errorf("parked route must not be enriched with pod cause, got %q", detail)
+	}
+}

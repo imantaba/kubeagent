@@ -44,6 +44,8 @@ func For(f diagnose.Finding) Suggestion {
 		return Suggestion{"the controller can't create pods — check for quota, LimitRange, or a rejecting admission webhook", eventsCmd(ns, "FailedCreate")}
 	case "JobFailed":
 		return Suggestion{"the Job exhausted its retries — inspect the failed pod's logs", logsCmd(ns, pod, "")}
+	case "RolloutStuck":
+		return Suggestion{"the rollout is wedged — inspect the new ReplicaSet's pods and events", describeDeployCmd(ns, pod)}
 	default:
 		return Suggestion{"inspect the object for details", describeCmd(ns, pod)}
 	}
@@ -66,6 +68,10 @@ func logsCmd(ns, pod, container string) string {
 
 func describeCmd(ns, pod string) string {
 	return fmt.Sprintf("kubectl -n %s describe pod %s", ns, pod)
+}
+
+func describeDeployCmd(ns, deploy string) string {
+	return fmt.Sprintf("kubectl -n %s describe deployment %s", ns, deploy)
 }
 
 func eventsCmd(ns, reason string) string {

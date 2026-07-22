@@ -180,6 +180,10 @@ func goldenWorkloads() []inventory.Workload {
 			Findings: []diagnose.Finding{{Pod: "shop/worker-7c9f-x", Issue: "CreateContainerConfigError",
 				Reason:   "a referenced ConfigMap or Secret is missing, or a required key is absent — the container cannot start",
 				Evidence: `container "worker": configmap "worker-config" not found`, Container: "worker"}}},
+		{Namespace: "shop", Name: "payments", Kind: "Deployment", Desired: 3, Ready: 2, Status: "Degraded",
+			Findings: []diagnose.Finding{{Pod: "shop/payments", Issue: "RolloutStuck",
+				Reason:   "the Deployment's rollout cannot complete — the new pods are not becoming available",
+				Evidence: `Progressing (ProgressDeadlineExceeded): ReplicaSet "payments-7f9c" has timed out progressing.`}}},
 	}
 }
 

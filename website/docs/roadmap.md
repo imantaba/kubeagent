@@ -179,6 +179,14 @@
   is absent — naming the object directly from the kubelet event message. Read-only;
   no new flag, metric, or RBAC. See [Failure diagnostics](features/diagnostics.md).
 
+- **Stuck-rollout detection (`RolloutStuck`)** (Theme-B deeper diagnosis) —
+  `scan` flags a Deployment whose rollout has wedged, naming it distinctly from
+  any underlying pod crash: its `Progressing` condition is
+  `ProgressDeadlineExceeded`, or it carries a `ReplicaFailure` condition, and the
+  new pods are not becoming available. Surfaced only when no pod-level finding
+  already explains the failure (zero redundancy). Read-only, always-on; no new
+  flag, metric, or RBAC. See [Failure diagnostics](features/diagnostics.md).
+
 - **`--suggest` next steps** (first Theme-C / principled intelligence slice) —
   opt-in `scan --suggest` prints a deterministic, reviewed next-step suggestion
   and a read-only `kubectl` investigation command under each pod finding. Offline

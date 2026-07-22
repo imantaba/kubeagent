@@ -119,6 +119,7 @@ func run(args []string) error {
 		Certs:                  *certs,
 		CertWarnDays:           *certWarnDays,
 		Logs:                   *logs,
+		QuotaThreshold:         envFloat("KUBEAGENT_QUOTA_THRESHOLD", 0.90),
 	})
 	if err != nil {
 		if diag, ok := connectivity.Diagnose(err); ok {
@@ -217,6 +218,7 @@ func resultInput(res scan.Result) report.Input {
 		PDBIssues:        res.PDBIssues,
 		HPAIssues:        res.HPAIssues,
 		WebhookIssues:    res.WebhookIssues,
+		QuotaIssues:      res.QuotaIssues,
 	}
 }
 

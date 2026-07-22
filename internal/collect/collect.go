@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	admissionv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	coordinationv1 "k8s.io/api/coordination/v1"
@@ -241,6 +242,27 @@ func HorizontalPodAutoscalers(ctx context.Context, client kubernetes.Interface, 
 	list, err := client.AutoscalingV2().HorizontalPodAutoscalers(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("listing horizontalpodautoscalers: %w", err)
+	}
+	return list.Items, nil
+}
+
+// ValidatingWebhookConfigurations lists all validating admission webhook configs
+// (cluster-scoped; read-only). Used by the admission-webhook-failure check. Needs
+// the base admissionregistration.k8s.io grant; a forbidden/absent result omits it.
+func ValidatingWebhookConfigurations(ctx context.Context, client kubernetes.Interface) ([]admissionv1.ValidatingWebhookConfiguration, error) {
+	list, err := client.AdmissionregistrationV1().ValidatingWebhookConfigurations().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("listing validatingwebhookconfigurations: %w", err)
+	}
+	return list.Items, nil
+}
+
+// MutatingWebhookConfigurations lists all mutating admission webhook configs
+// (cluster-scoped; read-only).
+func MutatingWebhookConfigurations(ctx context.Context, client kubernetes.Interface) ([]admissionv1.MutatingWebhookConfiguration, error) {
+	list, err := client.AdmissionregistrationV1().MutatingWebhookConfigurations().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("listing mutatingwebhookconfigurations: %w", err)
 	}
 	return list.Items, nil
 }

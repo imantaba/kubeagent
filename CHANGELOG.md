@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`--suggest` next steps.** An opt-in flag prints a deterministic, reviewed
+  next-step suggestion and a read-only `kubectl` investigation command under each
+  pod finding (CrashLoopBackOff → check the previous logs, ImagePullBackOff →
+  verify the tag/credentials, …). Offline (no API key), never LLM-decided, and
+  read-only — it prints the command, it never runs it.
+
 ## [0.41.0] - 2026-07-22
 
 ### Added

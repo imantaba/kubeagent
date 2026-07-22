@@ -22,6 +22,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/platform"
 	"github.com/imantaba/kubeagent/internal/pvchealth"
 	"github.com/imantaba/kubeagent/internal/pvcreclaim"
+	"github.com/imantaba/kubeagent/internal/remediation"
 	"github.com/imantaba/kubeagent/internal/resources"
 	"github.com/imantaba/kubeagent/internal/secscan"
 	"github.com/imantaba/kubeagent/internal/svchealth"
@@ -69,6 +70,7 @@ type Input struct {
 	PVCIssues          []pvchealth.Issue
 	SecurityIssues     []secscan.Finding
 	SecurityVerbose    bool
+	Suggest            bool
 	KubeletHealth      *nodehealth.Report
 	Certificates       *certhealth.Report
 	StuckTerminating   []termhealth.Issue
@@ -138,7 +140,7 @@ func printInventoryText(in Input, w io.Writer) error {
 			return err
 		}
 		for _, wl := range in.Result.Workloads {
-			if err := printWorkload(wl, now, w); err != nil {
+			if err := printWorkload(wl, now, in.Suggest, w); err != nil {
 				return err
 			}
 		}
@@ -819,7 +821,7 @@ func printCredentialWarnings(findings []credlint.Finding, w io.Writer) error {
 	return nil
 }
 
-func printWorkload(wl inventory.Workload, now time.Time, w io.Writer) error {
+func printWorkload(wl inventory.Workload, now time.Time, suggest bool, w io.Writer) error {
 	flag := "  "
 	if wl.Flagged() {
 		flag = "✗ "
@@ -879,6 +881,19 @@ func printWorkload(wl inventory.Workload, now time.Time, w io.Writer) error {
 		if f.LogExcerpt != "" {
 			if _, err := fmt.Fprintf(w, "      logs (previous container):\n        %s\n        → %s\n", f.LogExcerpt, f.LogCause); err != nil {
 				return err
+			}
+		}
+		if suggest {
+			s := remediation.For(f)
+			if s.NextStep != "" {
+				if _, err := fmt.Fprintf(w, "      ↳ next step: %s\n", s.NextStep); err != nil {
+					return err
+				}
+			}
+			if s.Command != "" {
+				if _, err := fmt.Fprintf(w, "      ↳ try: %s\n", s.Command); err != nil {
+					return err
+				}
 			}
 		}
 	}

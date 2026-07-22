@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Stuck-rollout detection (`RolloutStuck`).** `scan` flags a Deployment whose
+  rollout has wedged — its `Progressing` condition is
+  `ProgressDeadlineExceeded`, or it carries a `ReplicaFailure` condition — so
+  the new pods are not becoming available. Surfaced only when no pod-level
+  finding already explains the failure (zero redundancy). Read-only, always-on;
+  no new flag, metric, or RBAC.
+
 ## [0.42.0] - 2026-07-22
 
 ### Added

@@ -116,6 +116,30 @@ main and init containers. Unlike pod events (which expire after ~1 h), the
 waiting state persists as long as the container is stuck — read-only, no new
 RBAC.
 
+### RolloutStuck (Deployment rollout wedged)
+
+A **Deployment** whose rollout has stalled and the new pods are not becoming
+available. `kubeagent` checks two signals on the Deployment's conditions:
+
+- **`ProgressDeadlineExceeded`** — the `Progressing` condition has flipped to
+  `status: False` with reason `ProgressDeadlineExceeded`, meaning the rollout did
+  not finish within `spec.progressDeadlineSeconds`.
+- **`ReplicaFailure`** — the ReplicaSet controller reports it cannot create the
+  new pods (e.g. a quota or admission block), so the Deployment is wedged at the
+  controller level.
+
+The finding is surfaced **only when no pod-level detector already explains the
+failure** — zero redundancy. If `ImagePullBackOff` or `CrashLoopBackOff` already
+names the cause on the pods, `RolloutStuck` stays silent.
+
+Read-only, always-on, no new flag, metric, or RBAC. Example output:
+
+```text
+✗ shop/api  Deployment  2/3 Degraded
+    ⚠ RolloutStuck: the Deployment's rollout cannot complete — the new pods are not becoming available
+      ↳ Progressing (ProgressDeadlineExceeded): ReplicaSet "api-7f9c" has timed out progressing.
+```
+
 ### Root-cause attribution
 
 When a node is **hard-down** — `NotReady`, or Ready but its kubelet has stopped
@@ -517,7 +541,7 @@ schema are unchanged.
 
 `kubeagent scan` performs a read-only, whole-cluster scan and reports
 CrashLoopBackOff, ImagePullBackOff/ErrImagePull, OOMKilled,
-Pending/Unschedulable, VolumeAttachError (Multi-Attach), RestartLoop, ProbeFailure, init-container failures, failed Jobs/CronJobs, controllers that cannot create pods (FailedCreate), and containers blocked by a missing ConfigMap or Secret (CreateContainerConfigError), in text or JSON.
+Pending/Unschedulable, VolumeAttachError (Multi-Attach), RestartLoop, ProbeFailure, init-container failures, failed Jobs/CronJobs, controllers that cannot create pods (FailedCreate), containers blocked by a missing ConfigMap or Secret (CreateContainerConfigError), and Deployments whose rollout has wedged (RolloutStuck), in text or JSON.
 
 The optional `--suggest` flag prints a deterministic next-step suggestion and
 a read-only `kubectl` investigation command under each finding — offline, no

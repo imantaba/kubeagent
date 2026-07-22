@@ -905,6 +905,32 @@ func TestEvaluate_ForbiddenWebhooksStillScans(t *testing.T) {
 	}
 }
 
+func TestEvaluate_ServiceNoEndpointsRootCause(t *testing.T) {
+	// A selector-based Service with no matching pods and no endpoints → the
+	// service issue's Detail is enriched with the no-pods cause.
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web"},
+		Spec:       corev1.ServiceSpec{Type: corev1.ServiceTypeClusterIP, Selector: map[string]string{"app": "web"}},
+	}
+	cli := fake.NewSimpleClientset(svc)
+	res, err := Evaluate(context.Background(), cli, Options{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var found bool
+	for _, is := range res.ServiceIssues {
+		if is.Namespace == "shop" && is.Name == "web" {
+			found = true
+			if is.Detail != "no ready endpoints — the selector matches no pods" {
+				t.Fatalf("detail = %q", is.Detail)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected a shop/web service issue, got %+v", res.ServiceIssues)
+	}
+}
+
 func TestEvaluate_KubeletHealthOffByDefault(t *testing.T) {
 	// Mirrors TestEvaluate_DiskUsageOffByDefault: the fake clientset's
 	// RESTClient() is nil, so the nodes/proxy probe cannot be exercised through

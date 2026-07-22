@@ -158,6 +158,13 @@
   collected pods and node health; enriches the existing service finding with no
   new flag, metric, or RBAC. See [Service health](features/service-health.md).
 
+- **Ingress-route root cause** (extends the Theme-A chain to Ingress → Service →
+  Pod → Node) — a broken ingress route now names *why* its backend Service is
+  empty using the same endpoint-cause logic, one hop up the graph — so the 502 is
+  explained on the route itself without cross-referencing the Service finding.
+  Read-only; no new flag, metric, or RBAC. See
+  [Failure diagnostics](features/diagnostics.md).
+
 !!! info "Version history"
     [GitHub Releases](https://github.com/imantaba/kubeagent/releases) and the
     [CHANGELOG](https://github.com/imantaba/kubeagent/blob/main/CHANGELOG.md)

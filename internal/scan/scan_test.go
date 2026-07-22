@@ -1048,3 +1048,32 @@ func TestEvaluate_IngressRouteRootCause(t *testing.T) {
 		t.Fatalf("expected a shop/web-ing route issue, got %+v", res.IngressIssues)
 	}
 }
+
+func TestEvaluate_FlagsStuckRollout(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}}
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "api"},
+		Spec:       appsv1.DeploymentSpec{Replicas: p32(3)},
+		Status: appsv1.DeploymentStatus{Conditions: []appsv1.DeploymentCondition{
+			{Type: appsv1.DeploymentProgressing, Status: corev1.ConditionFalse, Reason: "ProgressDeadlineExceeded",
+				Message: `ReplicaSet "api-7f9c" has timed out progressing.`},
+		}},
+	}
+	cli := fake.NewSimpleClientset(node, dep)
+	res, err := Evaluate(context.Background(), cli, Options{Namespace: "shop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, w := range res.Inventory.Workloads {
+		for _, f := range w.Findings {
+			if f.Issue == "RolloutStuck" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected a RolloutStuck finding, got %+v", res.Inventory.Workloads)
+	}
+}

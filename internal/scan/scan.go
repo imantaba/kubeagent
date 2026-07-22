@@ -19,6 +19,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/collect"
 	"github.com/imantaba/kubeagent/internal/confidence"
 	"github.com/imantaba/kubeagent/internal/createhealth"
+	"github.com/imantaba/kubeagent/internal/rollouthealth"
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/diskusage"
 	"github.com/imantaba/kubeagent/internal/hpahealth"
@@ -239,6 +240,7 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	}
 	failedCreateEvents, _ := collect.FailedCreateEvents(ctx, client, opts.Namespace)
 	createhealth.Annotate(result.Workloads, inputs.ReplicaSets, failedCreateEvents)
+	rollouthealth.Annotate(result.Workloads, inputs.Deployments)
 	netpolicy.Annotate(result.Workloads, podLabels, nps)
 	rollout.Annotate(result.Workloads, inputs.ReplicaSets, time.Now())
 	rootcause.Annotate(result.Workloads, health.DownNodes)

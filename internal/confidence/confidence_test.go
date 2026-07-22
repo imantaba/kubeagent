@@ -11,7 +11,7 @@ func TestForIssue(t *testing.T) {
 	medium := []string{"RestartLoop", "ProbeFailure"}
 	high := []string{"CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull", "OOMKilled",
 		"Unschedulable", "VolumeAttachError", "Init:CrashLoopBackOff", "Init:ImagePullBackOff",
-		"Init:OOMKilled", "FailedCreate", "JobFailed", "CreateContainerConfigError", "SomeFutureDirectDetector"}
+		"Init:OOMKilled", "FailedCreate", "JobFailed", "CreateContainerConfigError", "RolloutStuck", "SomeFutureDirectDetector"}
 	for _, iss := range medium {
 		if got := ForIssue(iss); got != "medium" {
 			t.Errorf("ForIssue(%q) = %q, want medium", iss, got)

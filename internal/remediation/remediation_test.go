@@ -25,6 +25,7 @@ func TestFor_TableAndCommands(t *testing.T) {
 		{"Init:ImagePullBackOff", "wait-db", "init container's image can't be pulled", "kubectl -n shop describe pod web-abc"},
 		{"FailedCreate", "", "the controller can't create pods", "kubectl -n shop get events --field-selector reason=FailedCreate"},
 		{"JobFailed", "", "exhausted its retries", "kubectl -n shop logs web-abc --previous"},
+		{"RolloutStuck", "", "the rollout is wedged", "kubectl -n shop describe deployment web-abc"},
 		{"SomethingNew", "", "inspect the object for details", "kubectl -n shop describe pod web-abc"},
 	}
 	for _, tc := range cases {
@@ -50,7 +51,7 @@ func TestFor_CommandsAreNeverMutating(t *testing.T) {
 	bad := []string{"delete", "apply", "edit", "patch", "scale", "rollout", "cordon", "drain", "create ", "replace"}
 	issues := []string{"CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull", "OOMKilled", "Unschedulable",
 		"CreateContainerConfigError", "ProbeFailure", "VolumeAttachError", "Init:CrashLoopBackOff", "Init:OOMKilled",
-		"Init:ImagePullBackOff", "FailedCreate", "JobFailed", "RestartLoop", "whatever-default"}
+		"Init:ImagePullBackOff", "FailedCreate", "JobFailed", "RestartLoop", "RolloutStuck", "whatever-default"}
 	for _, iss := range issues {
 		cmd := For(diagnose.Finding{Issue: iss, Pod: "ns/pod", Container: "c"}).Command
 		for _, b := range bad {

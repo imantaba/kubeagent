@@ -63,7 +63,7 @@ kubeagent scan
   Service and flags routes whose Service is missing, has no ready endpoints
   (`NoEndpoints` — the classic 502/503), or does not expose the referenced port
   (`PortNotExposed`). Advisory and read-only; adds Ingress read RBAC.
-- For a broken Service (not expected-empty), `scan` names the root cause in the
+- **Service root-cause** — For a broken Service (not expected-empty), `scan` names the root cause in the
   Detail line: the selector matches no pods, the matching pods are on a down node,
   or they exist but none are Ready. Read-only correlation over collected pods and
   node health — no new RBAC.

@@ -51,9 +51,10 @@ and node health:
 Example Detail values:
 
 ```text
-no ready endpoints — selector matches no pods
-no ready endpoints — 2 matching pods on a down node (worker-2)
-no ready endpoints — 2 matching pods, 0 ready
+no ready endpoints — the selector matches no pods
+no ready endpoints — matching pods on down node worker-2 (NotReady)
+no ready endpoints — matching pods on 2 down nodes
+no ready endpoints — 3 matching pods, 0 ready
 ```
 
 This is a read-only enrichment; `scan` never writes to the cluster.
@@ -64,10 +65,14 @@ This is a read-only enrichment; `scan` never writes to the cluster.
 Service issues
 
   NAMESPACE   SERVICE         PROBLEM
-  staging     api-gateway     no ready endpoints
+  staging     api-gateway     no ready endpoints — the selector matches no pods
   staging     cron-svc        no ready endpoints (backs CronJob — expected between runs)
   production  public-lb       no external address (waiting 18m)
 ```
+
+> Services where the cause cannot be determined (e.g. a matching pod is Ready but
+> the endpoint object hasn't caught up yet) still show the bare
+> `no ready endpoints` form.
 
 ## Interaction with `--explain`
 

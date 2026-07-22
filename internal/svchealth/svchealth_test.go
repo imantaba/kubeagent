@@ -456,6 +456,19 @@ func TestAnnotateEndpointCause_LeavesExpectedAndReadyAndOtherProblems(t *testing
 	}
 }
 
+func TestAnnotateEndpointCause_UnscheduledPodNotNodeDown(t *testing.T) {
+	// A matching pod with no nodeName (Pending) must fall through to pods-not-ready,
+	// never node-down — even when down nodes exist.
+	issues := []Issue{brokenNoEndpoints("shop", "api")}
+	services := []corev1.Service{svc("shop", "api", corev1.ServiceTypeClusterIP, map[string]string{"app": "api"}, 0)}
+	pods := []corev1.Pod{pod("shop", "api-1", "", map[string]string{"app": "api"}, false)} // empty nodeName
+	down := []clusterhealth.DownNode{{Name: "worker-2", Reason: "NotReady"}}
+	AnnotateEndpointCause(issues, services, pods, down)
+	if issues[0].Detail != "no ready endpoints — 1 matching pod, 0 ready" {
+		t.Fatalf("an unscheduled pod must not be node-down, got %q", issues[0].Detail)
+	}
+}
+
 func TestAnnotateEndpointCause_Idempotent(t *testing.T) {
 	issues := []Issue{brokenNoEndpoints("shop", "web")}
 	services := []corev1.Service{svc("shop", "web", corev1.ServiceTypeClusterIP, map[string]string{"app": "web"}, 0)}

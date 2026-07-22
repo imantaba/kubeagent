@@ -31,6 +31,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/pdbhealth"
 	"github.com/imantaba/kubeagent/internal/pvchealth"
 	"github.com/imantaba/kubeagent/internal/pvcreclaim"
+	"github.com/imantaba/kubeagent/internal/quotahealth"
 	"github.com/imantaba/kubeagent/internal/rollout"
 	"github.com/imantaba/kubeagent/internal/rollouthealth"
 	"github.com/imantaba/kubeagent/internal/rootcause"
@@ -47,6 +48,7 @@ type Options struct {
 	IncludeRestarts        bool
 	DiskUsage              bool
 	DiskThreshold          float64
+	QuotaThreshold         float64
 	Certs                  bool
 	CertWarnDays           int
 	Security               bool
@@ -77,6 +79,7 @@ type Result struct {
 	PDBIssues        []pdbhealth.Issue
 	HPAIssues        []hpahealth.Issue
 	WebhookIssues    []webhookhealth.Issue
+	QuotaIssues      []quotahealth.Issue
 }
 
 // systemNamespaces are excluded from the security scan when scanning all
@@ -219,6 +222,13 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	storageClasses, _ := collect.StorageClasses(ctx, client)
 	pvcIssues := pvchealth.Assess(pvcs, pvcEvents, storageClasses, pvs)
 
+	quotaThreshold := opts.QuotaThreshold
+	if quotaThreshold <= 0 || quotaThreshold > 1 {
+		quotaThreshold = 0.90
+	}
+	quotas, _ := collect.ResourceQuotas(ctx, client, opts.Namespace)
+	quotaIssues := quotahealth.Assess(quotas, quotaThreshold)
+
 	result := inventory.Prioritize(workloads, inventory.Opts{
 		IncludeRestarts: opts.IncludeRestarts,
 		IncludeCron:     opts.IncludeCron,
@@ -268,5 +278,5 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 		kubeletHealth = nodehealth.Assess(probes)
 	}
 
-	return Result{Inputs: inputs, Nodes: nodes, NodeReserve: nodereserve.Assess(nodes), PVCReclaim: pvcReclaim, DiskUsage: diskReport, Health: health, Inventory: result, ServiceIssues: serviceIssues, IngressIssues: ingressIssues, PVCIssues: pvcIssues, SecurityIssues: securityIssues, KubeletHealth: kubeletHealth, Certificates: certReport, StuckTerminating: stuckTerminating, PDBIssues: pdbIssues, HPAIssues: hpaIssues, WebhookIssues: webhookIssues}, nil
+	return Result{Inputs: inputs, Nodes: nodes, NodeReserve: nodereserve.Assess(nodes), PVCReclaim: pvcReclaim, DiskUsage: diskReport, Health: health, Inventory: result, ServiceIssues: serviceIssues, IngressIssues: ingressIssues, PVCIssues: pvcIssues, SecurityIssues: securityIssues, KubeletHealth: kubeletHealth, Certificates: certReport, StuckTerminating: stuckTerminating, PDBIssues: pdbIssues, HPAIssues: hpaIssues, WebhookIssues: webhookIssues, QuotaIssues: quotaIssues}, nil
 }

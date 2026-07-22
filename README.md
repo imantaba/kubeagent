@@ -105,6 +105,13 @@ kubeagent scan
   Read-only, advisory, and cluster-wide only (skipped under `--namespace`); the
   daemon exposes `kubeagent_admission_webhooks_failing`. Adds a base
   `admissionregistration.k8s.io` read grant.
+- **ResourceQuota near-exhaustion** — `scan` flags a namespace's ResourceQuota
+  entry whose `used/hard` ratio is at or over 90%, labelled `exhausted` (100%,
+  blocking new objects now) or `near limit` — the proactive complement to the
+  reactive `FailedCreate` detector. Every quota resource is evaluated generically.
+  Threshold tunable via `KUBEAGENT_QUOTA_THRESHOLD` (default `0.90`). Read-only,
+  always-on; the daemon exposes `kubeagent_resourcequota_issues`. Adds a
+  `resourcequotas` read grant.
 - **Root-cause attribution** — when a node is NotReady or its kubelet stops
   heartbeating, workloads with pods on it are attributed to that node ("↳ likely
   caused by node X"); when several workloads fail image pulls from the same

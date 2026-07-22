@@ -22,6 +22,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/platform"
 	"github.com/imantaba/kubeagent/internal/pvchealth"
 	"github.com/imantaba/kubeagent/internal/pvcreclaim"
+	"github.com/imantaba/kubeagent/internal/quotahealth"
 	"github.com/imantaba/kubeagent/internal/remediation"
 	"github.com/imantaba/kubeagent/internal/resources"
 	"github.com/imantaba/kubeagent/internal/secscan"
@@ -50,6 +51,7 @@ type inventoryReport struct {
 	PDBIssues          []pdbhealth.Issue           `json:"pdbIssues,omitempty"`
 	HPAIssues          []hpahealth.Issue           `json:"hpaIssues,omitempty"`
 	WebhookIssues      []webhookhealth.Issue       `json:"webhookIssues,omitempty"`
+	QuotaIssues        []quotahealth.Issue         `json:"quotaIssues,omitempty"`
 	Explanation        string                      `json:"explanation,omitempty"`
 }
 
@@ -77,6 +79,7 @@ type Input struct {
 	PDBIssues          []pdbhealth.Issue
 	HPAIssues          []hpahealth.Issue
 	WebhookIssues      []webhookhealth.Issue
+	QuotaIssues        []quotahealth.Issue
 	Explanation        string
 	Now                time.Time // clock for relative ages; main sets time.Now(); zero → wall-clock
 }
@@ -106,6 +109,7 @@ func PrintInventory(in Input, format string, w io.Writer) error {
 			PDBIssues:          in.PDBIssues,
 			HPAIssues:          in.HPAIssues,
 			WebhookIssues:      in.WebhookIssues,
+			QuotaIssues:        in.QuotaIssues,
 			Explanation:        in.Explanation,
 		})
 	case "text":
@@ -134,7 +138,7 @@ func printInventoryText(in Input, w io.Writer) error {
 	}
 
 	hasDisk := in.DiskUsage != nil && len(in.DiskUsage.Over) > 0
-	hasAttention := len(in.Result.Workloads) > 0 || len(real) > 0 || len(in.CredentialWarnings) > 0 || hasDisk || len(realIng) > 0 || len(in.PVCIssues) > 0 || len(in.StuckTerminating) > 0 || len(in.PDBIssues) > 0 || len(in.HPAIssues) > 0 || len(in.WebhookIssues) > 0
+	hasAttention := len(in.Result.Workloads) > 0 || len(real) > 0 || len(in.CredentialWarnings) > 0 || hasDisk || len(realIng) > 0 || len(in.PVCIssues) > 0 || len(in.StuckTerminating) > 0 || len(in.PDBIssues) > 0 || len(in.HPAIssues) > 0 || len(in.WebhookIssues) > 0 || len(in.QuotaIssues) > 0
 	if hasAttention {
 		if _, err := fmt.Fprintln(w, "NEEDS ATTENTION"); err != nil {
 			return err
@@ -169,6 +173,9 @@ func printInventoryText(in Input, w io.Writer) error {
 			return err
 		}
 		if err := printWebhookIssues(in.WebhookIssues, w); err != nil {
+			return err
+		}
+		if err := printQuotaIssues(in.QuotaIssues, w); err != nil {
 			return err
 		}
 		if _, err := fmt.Fprintln(w); err != nil {
@@ -329,6 +336,9 @@ func attentionLine(in Input, real []svchealth.Issue, realIng []ingresshealth.Rou
 	}
 	if n := len(in.WebhookIssues); n > 0 {
 		parts = append(parts, fmt.Sprintf("%d %s failing", n, plural(n, "admission webhook", "admission webhooks")))
+	}
+	if n := len(in.QuotaIssues); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d %s near/over quota", n, plural(n, "ResourceQuota", "ResourceQuotas")))
 	}
 	return strings.Join(parts, " · ")
 }
@@ -584,6 +594,24 @@ func printHPAIssues(issues []hpahealth.Issue, w io.Writer) error {
 			return err
 		}
 		if _, err := fmt.Fprintf(w, "      ⚠ HPAStuck: %s\n", is.Reason); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// printQuotaIssues lists ResourceQuota entries at or over the usage threshold.
+func printQuotaIssues(issues []quotahealth.Issue, w io.Writer) error {
+	for _, is := range issues {
+		if _, err := fmt.Fprintf(w, "  ✗ %s/%s  ResourceQuota  %s\n", is.Namespace, is.Quota, is.Resource); err != nil {
+			return err
+		}
+		label := "QuotaNearLimit"
+		if is.Severity == "exhausted" {
+			label = "QuotaExhausted"
+		}
+		pct := int(is.Ratio*100 + 0.5)
+		if _, err := fmt.Fprintf(w, "      ⚠ %s: used %s / hard %s (%d%%)\n", label, is.Used, is.Hard, pct); err != nil {
 			return err
 		}
 	}

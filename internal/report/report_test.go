@@ -21,6 +21,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/platform"
 	"github.com/imantaba/kubeagent/internal/pvchealth"
 	"github.com/imantaba/kubeagent/internal/pvcreclaim"
+	"github.com/imantaba/kubeagent/internal/quotahealth"
 	"github.com/imantaba/kubeagent/internal/resources"
 	"github.com/imantaba/kubeagent/internal/secscan"
 	"github.com/imantaba/kubeagent/internal/svchealth"
@@ -1761,5 +1762,41 @@ func TestPrintInventory_SuggestLines(t *testing.T) {
 	off := build(false)
 	if strings.Contains(off, "next step:") || strings.Contains(off, "↳ try:") {
 		t.Errorf("no suggest lines expected by default:\n%s", off)
+	}
+}
+
+func TestPrintQuotaIssues(t *testing.T) {
+	in := Input{
+		Result: inventory.Result{}, // no workloads
+		QuotaIssues: []quotahealth.Issue{
+			{Namespace: "shop", Quota: "compute", Resource: "requests.cpu", Used: "4", Hard: "4", Ratio: 1.0, Severity: "exhausted"},
+			{Namespace: "web", Quota: "compute", Resource: "pods", Used: "47", Hard: "50", Ratio: 0.94, Severity: "near"},
+		},
+	}
+	var buf bytes.Buffer
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "✗ shop/compute  ResourceQuota  requests.cpu") {
+		t.Errorf("missing exhausted quota row:\n%s", out)
+	}
+	if !strings.Contains(out, "⚠ QuotaExhausted: used 4 / hard 4 (100%)") {
+		t.Errorf("missing exhausted detail:\n%s", out)
+	}
+	if !strings.Contains(out, "✗ web/compute  ResourceQuota  pods") {
+		t.Errorf("missing near quota row:\n%s", out)
+	}
+	if !strings.Contains(out, "⚠ QuotaNearLimit: used 47 / hard 50 (94%)") {
+		t.Errorf("missing near detail:\n%s", out)
+	}
+
+	// Empty QuotaIssues renders no ResourceQuota rows.
+	var buf2 bytes.Buffer
+	if err := PrintInventory(Input{Result: inventory.Result{}}, "text", &buf2); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf2.String(), "ResourceQuota") {
+		t.Errorf("empty QuotaIssues should render nothing, got:\n%s", buf2.String())
 	}
 }

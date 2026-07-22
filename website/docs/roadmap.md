@@ -187,6 +187,15 @@
   already explains the failure (zero redundancy). Read-only, always-on; no new
   flag, metric, or RBAC. See [Failure diagnostics](features/diagnostics.md).
 
+- **ResourceQuota near-exhaustion** (Theme-B deeper diagnosis) — `scan` flags a
+  namespace's ResourceQuota entry whose `used/hard` ratio is at or over 90%,
+  labelled `exhausted` (100%, blocking new objects now) or `near limit` — the
+  proactive early-warning half of quota diagnosis, complementing the reactive
+  `FailedCreate` detector that fires only after creation is already being denied.
+  Threshold tunable via `KUBEAGENT_QUOTA_THRESHOLD`; the daemon exposes
+  `kubeagent_resourcequota_issues`; adds a `resourcequotas` read grant. See
+  [Failure diagnostics](features/diagnostics.md).
+
 - **`--suggest` next steps** (first Theme-C / principled intelligence slice) —
   opt-in `scan --suggest` prints a deterministic, reviewed next-step suggestion
   and a read-only `kubectl` investigation command under each pod finding. Offline

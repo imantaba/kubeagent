@@ -20,6 +20,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/pdbhealth"
 	"github.com/imantaba/kubeagent/internal/pvchealth"
 	"github.com/imantaba/kubeagent/internal/pvcreclaim"
+	"github.com/imantaba/kubeagent/internal/quotahealth"
 	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/svchealth"
 	"github.com/imantaba/kubeagent/internal/termhealth"
@@ -55,6 +56,7 @@ func sampleResult() *scan.Result {
 		PDBIssues:        []pdbhealth.Issue{{Namespace: "shop", Name: "api"}},
 		HPAIssues:        []hpahealth.Issue{{Namespace: "shop", Name: "api-hpa"}},
 		WebhookIssues:    []webhookhealth.Issue{{Config: "policy-webhook", Webhook: "w"}},
+		QuotaIssues:      []quotahealth.Issue{{Namespace: "shop", Quota: "compute", Resource: "pods", Severity: "near"}},
 		KubeletHealth:    nodehealth.Report{Probed: 2, Unhealthy: []nodehealth.Issue{{Node: "w"}}},
 		Certificates: &certhealth.Report{WarnDays: 30, Checked: 4,
 			Expired:  []certhealth.Cert{{Namespace: "shop", Name: "shop-tls", Days: -3}},
@@ -85,6 +87,7 @@ func TestMetrics_RenderReflectsResult(t *testing.T) {
 		"kubeagent_pdb_blocking_issues 1",
 		"kubeagent_hpa_scaling_issues 1",
 		"kubeagent_admission_webhooks_failing 1",
+		"kubeagent_resourcequota_issues 1",
 		"kubeagent_nodes_expected_absent 1",
 		"kubeagent_kubelet_unhealthy 1",
 		"kubeagent_certificates_expired 1",

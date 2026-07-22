@@ -16,6 +16,7 @@ import (
 	policyv1 "k8s.io/api/policy/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -1075,5 +1076,25 @@ func TestEvaluate_FlagsStuckRollout(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected a RolloutStuck finding, got %+v", res.Inventory.Workloads)
+	}
+}
+
+func TestEvaluate_FlagsNearFullQuota(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}}
+	rq := &corev1.ResourceQuota{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "compute"},
+		Status: corev1.ResourceQuotaStatus{
+			Hard: corev1.ResourceList{"pods": resource.MustParse("50")},
+			Used: corev1.ResourceList{"pods": resource.MustParse("47")},
+		},
+	}
+	cli := fake.NewSimpleClientset(node, rq)
+	res, err := Evaluate(context.Background(), cli, Options{Namespace: "shop", QuotaThreshold: 0.90})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.QuotaIssues) != 1 || res.QuotaIssues[0].Severity != "near" || res.QuotaIssues[0].Resource != "pods" {
+		t.Errorf("want one near pods quota issue, got %+v", res.QuotaIssues)
 	}
 }

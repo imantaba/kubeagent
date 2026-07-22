@@ -235,6 +235,17 @@ func PodDisruptionBudgets(ctx context.Context, client kubernetes.Interface, name
 	return list.Items, nil
 }
 
+// ResourceQuotas lists ResourceQuotas in the namespace (empty = all namespaces),
+// read-only. Used by the ResourceQuota near-exhaustion check. Needs the core-group
+// resourcequotas list grant; a forbidden/absent result simply omits the check.
+func ResourceQuotas(ctx context.Context, client kubernetes.Interface, namespace string) ([]corev1.ResourceQuota, error) {
+	list, err := client.CoreV1().ResourceQuotas(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("listing resourcequotas: %w", err)
+	}
+	return list.Items, nil
+}
+
 // HorizontalPodAutoscalers lists HPAs in the namespace (empty = all), read-only.
 // Used by the HPA-can't-scale check. Needs the base autoscaling/horizontalpodautoscalers
 // list grant; a forbidden/absent result simply omits the check.

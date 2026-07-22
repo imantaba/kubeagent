@@ -140,6 +140,37 @@ Read-only, always-on, no new flag, metric, or RBAC. Example output:
       ↳ Progressing (ProgressDeadlineExceeded): ReplicaSet "api-7f9c" has timed out progressing.
 ```
 
+### ResourceQuota near-exhaustion
+
+`scan` flags a namespace's ResourceQuota entry whose `used/hard` ratio is at or
+over **90%** — catching a quota that is about to block new objects before the
+controller starts emitting `FailedCreate` events. Every resource in every
+ResourceQuota is evaluated generically (CPU, memory, pods, storage, …). Two
+severity levels are distinguished:
+
+- **exhausted** (`used == hard`, 100%) — the quota is fully consumed; new
+  objects are being **blocked right now**.
+- **near limit** (90–99%) — the quota is nearly full; a burst of new pods,
+  requests, or storage claims will hit the wall.
+
+This is the **proactive** complement to the reactive `FailedCreate` detector:
+`FailedCreate` fires after the controller is already being denied; the quota
+check fires while there is still headroom to act.
+
+The threshold defaults to `0.90` and is tunable via the environment variable
+`KUBEAGENT_QUOTA_THRESHOLD` (e.g. `KUBEAGENT_QUOTA_THRESHOLD=0.80` to warn
+earlier). Read-only, always-on, no CLI flag required. The daemon exposes the
+gauge `kubeagent_resourcequota_issues`. Adds a `resourcequotas` read grant.
+
+Example output:
+
+```text
+✗ shop/compute  ResourceQuota  requests.cpu
+    ⚠ QuotaExhausted: used 4 / hard 4 (100%)
+✗ web/compute  ResourceQuota  pods
+    ⚠ QuotaNearLimit: used 47 / hard 50 (94%)
+```
+
 ### Root-cause attribution
 
 When a node is **hard-down** — `NotReady`, or Ready but its kubelet has stopped

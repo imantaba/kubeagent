@@ -17,6 +17,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/hpahealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/pdbhealth"
+	"github.com/imantaba/kubeagent/internal/quotahealth"
 	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/termhealth"
 	"github.com/imantaba/kubeagent/internal/webhookhealth"
@@ -68,6 +69,16 @@ func TestResultInput_CarriesWebhookIssues(t *testing.T) {
 	in := resultInput(res)
 	if len(in.WebhookIssues) != 1 || in.WebhookIssues[0].Config != "policy-webhook" {
 		t.Fatalf("resultInput must carry WebhookIssues into report.Input, got %+v", in.WebhookIssues)
+	}
+}
+
+func TestResultInput_MapsQuotaIssues(t *testing.T) {
+	res := scan.Result{QuotaIssues: []quotahealth.Issue{
+		{Namespace: "shop", Quota: "compute", Resource: "pods", Used: "47", Hard: "50", Ratio: 0.94, Severity: "near"},
+	}}
+	in := resultInput(res)
+	if len(in.QuotaIssues) != 1 || in.QuotaIssues[0].Resource != "pods" {
+		t.Errorf("resultInput dropped QuotaIssues: got %+v", in.QuotaIssues)
 	}
 }
 

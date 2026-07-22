@@ -506,3 +506,26 @@ func TestWebhookConfigurations(t *testing.T) {
 		t.Fatalf("mutating: got %+v err %v", m, err)
 	}
 }
+
+func TestResourceQuotas(t *testing.T) {
+	q1 := &corev1.ResourceQuota{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "compute"}}
+	q2 := &corev1.ResourceQuota{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "objects"}}
+	other := &corev1.ResourceQuota{ObjectMeta: metav1.ObjectMeta{Namespace: "other", Name: "compute"}}
+	client := fake.NewSimpleClientset(q1, q2, other)
+
+	got, err := ResourceQuotas(context.Background(), client, "shop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 quotas in shop, got %d", len(got))
+	}
+
+	all, err := ResourceQuotas(context.Background(), client, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("want 3 quotas across all namespaces, got %d", len(all))
+	}
+}

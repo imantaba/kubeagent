@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.37.0] - 2026-07-22
+
 ### Added
 
 - **Admission-webhook-failure detection.** `scan` flags a Validating/Mutating
@@ -551,7 +553,8 @@ infrastructure (a documentation site and a pre-release chaos-test harness).
 - CI (vet/test/build on push & PR) and a release workflow publishing a
   linux/amd64 tarball + `SHA256SUMS` to a GitHub Release.
 
-[Unreleased]: https://github.com/imantaba/kubeagent/compare/v0.36.0...HEAD
+[Unreleased]: https://github.com/imantaba/kubeagent/compare/v0.37.0...HEAD
+[0.37.0]: https://github.com/imantaba/kubeagent/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/imantaba/kubeagent/compare/v0.35.0...v0.36.0
 [0.35.0]: https://github.com/imantaba/kubeagent/compare/v0.34.0...v0.35.0
 [0.34.0]: https://github.com/imantaba/kubeagent/compare/v0.33.0...v0.34.0

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **ResourceQuota near-exhaustion.** `scan` flags a namespace's ResourceQuota
+  entry whose usage is at or over 90% of its hard limit (env
+  `KUBEAGENT_QUOTA_THRESHOLD` to tune), labelled `exhausted` (blocking new
+  objects now) or `near limit` — the proactive complement to the reactive
+  `FailedCreate` detector. Read-only, always-on; the daemon exposes
+  `kubeagent_resourcequota_issues`. Adds a `resourcequotas` read grant.
+
 ## [0.43.0] - 2026-07-22
 
 ### Added

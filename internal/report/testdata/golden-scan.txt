@@ -4,7 +4,7 @@ Cluster: Degraded — 2/4 nodes Ready
   ✗ node worker-1 kubelet not heartbeating (lease 95s stale)
   ✗ node db-01 expected but absent from the cluster
   ✗ system kube-system/coredns Degraded 1/2
-  Needs attention: 15 workloads failing (7 ⇐ 4 root causes) · 2 services without endpoints · 1 ingress route broken · 1 PVC failing to provision · 2 resources stuck terminating · 1 PodDisruptionBudget blocking drains · 1 HPA can't scale · 1 admission webhook failing
+  Needs attention: 16 workloads failing (7 ⇐ 4 root causes) · 2 services without endpoints · 1 ingress route broken · 1 PVC failing to provision · 2 resources stuck terminating · 1 PodDisruptionBudget blocking drains · 1 HPA can't scale · 1 admission webhook failing
 
 NEEDS ATTENTION
 ✗ shop/web  Deployment  0/1 Degraded  · 8 restarts, last 205d ago
@@ -85,6 +85,9 @@ NEEDS ATTENTION
 ✗ shop/worker  Deployment  0/2 Degraded
     ⚠ CreateContainerConfigError: a referenced ConfigMap or Secret is missing, or a required key is absent — the container cannot start
       ↳ container "worker": configmap "worker-config" not found
+✗ shop/payments  Deployment  2/3 Degraded
+    ⚠ RolloutStuck: the Deployment's rollout cannot complete — the new pods are not becoming available
+      ↳ Progressing (ProgressDeadlineExceeded): ReplicaSet "payments-7f9c" has timed out progressing.
   ✗ default/web  ClusterIP  no ready endpoints — 2 matching pods, 0 ready
   ✗ default/api-lb  LoadBalancer  no external address · 19d ago
   ✗ default/app-config  ConfigMap[DB_PASSWORD]  credential-like name with a literal value

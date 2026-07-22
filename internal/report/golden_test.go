@@ -20,6 +20,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/pdbhealth"
 	"github.com/imantaba/kubeagent/internal/pvchealth"
 	"github.com/imantaba/kubeagent/internal/pvcreclaim"
+	"github.com/imantaba/kubeagent/internal/quotahealth"
 	"github.com/imantaba/kubeagent/internal/secscan"
 	"github.com/imantaba/kubeagent/internal/svchealth"
 	"github.com/imantaba/kubeagent/internal/termhealth"
@@ -103,6 +104,9 @@ func goldenInput(now time.Time) Input {
 			{Kind: "ValidatingWebhookConfiguration", Config: "policy-webhook", Webhook: "validate.policy.io",
 				Service: "kube-system/policy-svc", Problem: "no-endpoints",
 				Reason: "backend Service kube-system/policy-svc has no ready endpoints — failurePolicy Fail rejects every intercepted create/update"},
+		},
+		QuotaIssues: []quotahealth.Issue{
+			{Namespace: "shop", Quota: "compute", Resource: "requests.cpu", Used: "4", Hard: "4", Ratio: 1.0, Severity: "exhausted"},
 		},
 	}
 }
@@ -261,7 +265,7 @@ func TestGoldenInputCoversAllSections(t *testing.T) {
 		in.Platform == nil || len(in.ServiceIssues) == 0 || len(in.CredentialWarnings) == 0 ||
 		len(in.IngressIssues) == 0 || len(in.SecurityIssues) == 0 || in.NodeReserve == nil ||
 		in.PVCReclaim == nil || in.KubeletHealth == nil || len(in.PVCIssues) == 0 || in.Certificates == nil ||
-		len(in.StuckTerminating) == 0 || len(in.PDBIssues) == 0 || len(in.HPAIssues) == 0 || len(in.WebhookIssues) == 0 {
+		len(in.StuckTerminating) == 0 || len(in.PDBIssues) == 0 || len(in.HPAIssues) == 0 || len(in.WebhookIssues) == 0 || len(in.QuotaIssues) == 0 {
 		t.Fatal("goldenInput must populate every section so the golden stays comprehensive")
 	}
 	// Guard the *distinct* failure modes too, so a fixture regression can't drop one

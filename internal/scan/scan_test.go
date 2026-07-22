@@ -5,16 +5,18 @@ import (
 	"testing"
 	"time"
 
+	admissionv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	batchv1 "k8s.io/api/batch/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	policyv1 "k8s.io/api/policy/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	intstr "k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
@@ -843,6 +845,63 @@ func TestEvaluate_ForbiddenHPAsStillScans(t *testing.T) {
 	}
 	if len(res.HPAIssues) != 0 {
 		t.Fatalf("forbidden HPA list must yield no issues, got %+v", res.HPAIssues)
+	}
+}
+
+// downWebhookObjects builds a Fail validating webhook whose backend Service exists but
+// has no ready endpoints, plus that Service and a not-ready EndpointSlice.
+func downWebhookObjects() []runtime.Object {
+	fail := admissionv1.Fail
+	notReady := false
+	vwc := &admissionv1.ValidatingWebhookConfiguration{
+		ObjectMeta: metav1.ObjectMeta{Name: "policy-webhook"},
+		Webhooks: []admissionv1.ValidatingWebhook{{
+			Name:          "validate.policy.io",
+			FailurePolicy: &fail,
+			ClientConfig:  admissionv1.WebhookClientConfig{Service: &admissionv1.ServiceReference{Namespace: "kube-system", Name: "policy-svc"}},
+		}},
+	}
+	svc := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: "kube-system", Name: "policy-svc"}}
+	slice := &discoveryv1.EndpointSlice{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "kube-system", Name: "policy-svc-x", Labels: map[string]string{discoveryv1.LabelServiceName: "policy-svc"}},
+		Endpoints:  []discoveryv1.Endpoint{{Addresses: []string{"10.0.0.1"}, Conditions: discoveryv1.EndpointConditions{Ready: &notReady}}},
+	}
+	return []runtime.Object{vwc, svc, slice}
+}
+
+func TestEvaluate_FlagsDownWebhook(t *testing.T) {
+	cli := fake.NewSimpleClientset(downWebhookObjects()...)
+	res, err := Evaluate(context.Background(), cli, Options{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(res.WebhookIssues) != 1 || res.WebhookIssues[0].Problem != "no-endpoints" {
+		t.Fatalf("expected one no-endpoints webhook issue, got %+v", res.WebhookIssues)
+	}
+}
+
+func TestEvaluate_WebhookCheckSkippedWhenNamespaceScoped(t *testing.T) {
+	cli := fake.NewSimpleClientset(downWebhookObjects()...)
+	res, err := Evaluate(context.Background(), cli, Options{Namespace: "kube-system"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(res.WebhookIssues) != 0 {
+		t.Fatalf("the webhook check must be skipped under --namespace, got %+v", res.WebhookIssues)
+	}
+}
+
+func TestEvaluate_ForbiddenWebhooksStillScans(t *testing.T) {
+	cli := fake.NewSimpleClientset()
+	cli.Fake.PrependReactor("list", "validatingwebhookconfigurations", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewForbidden(schema.GroupResource{Group: "admissionregistration.k8s.io", Resource: "validatingwebhookconfigurations"}, "", nil)
+	})
+	res, err := Evaluate(context.Background(), cli, Options{})
+	if err != nil {
+		t.Fatalf("a forbidden webhook list must not error, got %v", err)
+	}
+	if len(res.WebhookIssues) != 0 {
+		t.Fatalf("forbidden webhook list must yield no issues, got %+v", res.WebhookIssues)
 	}
 }
 

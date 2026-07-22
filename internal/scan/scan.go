@@ -16,6 +16,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/batchhealth"
 	"github.com/imantaba/kubeagent/internal/hpahealth"
 	"github.com/imantaba/kubeagent/internal/certhealth"
+	"github.com/imantaba/kubeagent/internal/webhookhealth"
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/collect"
 	"github.com/imantaba/kubeagent/internal/confidence"
@@ -74,6 +75,7 @@ type Result struct {
 	StuckTerminating  []termhealth.Issue
 	PDBIssues         []pdbhealth.Issue
 	HPAIssues         []hpahealth.Issue
+	WebhookIssues     []webhookhealth.Issue
 }
 
 // systemNamespaces are excluded from the security scan when scanning all
@@ -202,6 +204,12 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	pdbIssues := pdbhealth.Assess(pdbs)
 	hpas, _ := collect.HorizontalPodAutoscalers(ctx, client, opts.Namespace) // forbidden/absent → nil, check skipped
 	hpaIssues := hpahealth.Assess(hpas)
+	var webhookIssues []webhookhealth.Issue
+	if opts.Namespace == "" { // webhook backends can live in any namespace; only sound cluster-wide
+		vwc, _ := collect.ValidatingWebhookConfigurations(ctx, client)
+		mwc, _ := collect.MutatingWebhookConfigurations(ctx, client)
+		webhookIssues = webhookhealth.Assess(vwc, mwc, svcs, slices)
+	}
 	pvs, _ := collect.PersistentVolumes(ctx, client)
 	pvcReclaim := pvcreclaim.Assess(pvcs, pvs)
 	pvcEvents, _ := collect.PVCEvents(ctx, client, opts.Namespace)
@@ -255,5 +263,5 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 		kubeletHealth = nodehealth.Assess(probes)
 	}
 
-	return Result{Inputs: inputs, Nodes: nodes, NodeReserve: nodereserve.Assess(nodes), PVCReclaim: pvcReclaim, DiskUsage: diskReport, Health: health, Inventory: result, ServiceIssues: serviceIssues, IngressIssues: ingressIssues, PVCIssues: pvcIssues, SecurityIssues: securityIssues, KubeletHealth: kubeletHealth, Certificates: certReport, StuckTerminating: stuckTerminating, PDBIssues: pdbIssues, HPAIssues: hpaIssues}, nil
+	return Result{Inputs: inputs, Nodes: nodes, NodeReserve: nodereserve.Assess(nodes), PVCReclaim: pvcReclaim, DiskUsage: diskReport, Health: health, Inventory: result, ServiceIssues: serviceIssues, IngressIssues: ingressIssues, PVCIssues: pvcIssues, SecurityIssues: securityIssues, KubeletHealth: kubeletHealth, Certificates: certReport, StuckTerminating: stuckTerminating, PDBIssues: pdbIssues, HPAIssues: hpaIssues, WebhookIssues: webhookIssues}, nil
 }

@@ -84,14 +84,15 @@ or `"?"` when absent), `modeList` (join `pvc.Spec.AccessModes`, e.g.
 
 ### 2. `scan.Evaluate` — pass the two collected slices
 
-The single caller changes from `pvchealth.Assess(pvcs, pvcEvents)` to:
+`pvs` (`collect.PersistentVolumes`) is already collected in `Evaluate`; StorageClasses
+are **not** yet collected there (platform-fact detection runs elsewhere), so add a
+`collect.StorageClasses` call (the collector and the `storageclasses` RBAC grant
+already exist — no new grant), then:
 
 ```go
+	scs, _ := collect.StorageClasses(ctx, client)
 	pvcIssues := pvchealth.Assess(pvcs, pvcEvents, scs, pvs)
 ```
-
-`scs` (`collect.StorageClasses`, already collected for `platform.Detect`) and
-`pvs` (`collect.PersistentVolumes`) are already in scope in `Evaluate`.
 
 ### 3. `report` — no change
 

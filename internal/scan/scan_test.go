@@ -954,6 +954,35 @@ func TestEvaluate_KubeletHealthOffByDefault(t *testing.T) {
 	}
 }
 
+func TestEvaluate_PVCMissingStorageClass_NoEvent(t *testing.T) {
+	// A Pending PVC referencing a StorageClass that does not exist, with NO event,
+	// is flagged structurally (proves the wiring passes StorageClasses + PVs and
+	// that flagging no longer requires an event).
+	sc := "fast-ssd"
+	pvc := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "data"},
+		Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: &sc},
+		Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimPending},
+	}
+	cli := fake.NewSimpleClientset(pvc)
+	res, err := Evaluate(context.Background(), cli, Options{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var found bool
+	for _, is := range res.PVCIssues {
+		if is.Namespace == "shop" && is.Name == "data" {
+			found = true
+			if is.Reason != "MissingStorageClass" || is.Detail != `references StorageClass "fast-ssd" which does not exist` {
+				t.Fatalf("issue = %+v", is)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected a shop/data PVC issue, got %+v", res.PVCIssues)
+	}
+}
+
 func TestEvaluate_IngressRouteRootCause(t *testing.T) {
 	// A broken ingress route whose backend Service selector matches no pods →
 	// the route Detail is enriched with the no-pods cause.

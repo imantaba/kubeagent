@@ -12,6 +12,7 @@ import (
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -946,5 +947,45 @@ func TestEvaluate_KubeletHealthOffByDefault(t *testing.T) {
 	}
 	if res.KubeletHealth.Probed != 0 || len(res.KubeletHealth.Unhealthy) != 0 {
 		t.Errorf("kubelet health must be empty when not enabled, got %+v", res.KubeletHealth)
+	}
+}
+
+func TestEvaluate_IngressRouteRootCause(t *testing.T) {
+	// A broken ingress route whose backend Service selector matches no pods →
+	// the route Detail is enriched with the no-pods cause.
+	svcObj := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web"},
+		Spec:       corev1.ServiceSpec{Selector: map[string]string{"app": "web"}, Ports: []corev1.ServicePort{{Port: 80}}},
+	}
+	ing := &networkingv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web-ing"},
+		Spec: networkingv1.IngressSpec{Rules: []networkingv1.IngressRule{{
+			Host: "web.example.com",
+			IngressRuleValue: networkingv1.IngressRuleValue{HTTP: &networkingv1.HTTPIngressRuleValue{
+				Paths: []networkingv1.HTTPIngressPath{{
+					Path: "/",
+					Backend: networkingv1.IngressBackend{Service: &networkingv1.IngressServiceBackend{
+						Name: "web", Port: networkingv1.ServiceBackendPort{Number: 80},
+					}},
+				}},
+			}},
+		}}},
+	}
+	cli := fake.NewSimpleClientset(svcObj, ing)
+	res, err := Evaluate(context.Background(), cli, Options{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var found bool
+	for _, r := range res.IngressIssues {
+		if r.Namespace == "shop" && r.Ingress == "web-ing" {
+			found = true
+			if r.Detail != "backend Service web:80 has no ready endpoints (likely 502/503) — the selector matches no pods" {
+				t.Fatalf("detail = %q", r.Detail)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected a shop/web-ing route issue, got %+v", res.IngressIssues)
 	}
 }

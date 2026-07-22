@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Ingress-route root cause.** A broken ingress route (`… has no ready
+  endpoints (likely 502/503)`) now names *why* its backend Service is empty —
+  the selector matches no pods, the matching pods are on a down node, or none
+  are Ready — so the 502 is explained on the route itself. Read-only; reuses the
+  Service endpoint-cause logic (no new flag or metric).
+
 ## [0.38.0] - 2026-07-22
 
 ### Added

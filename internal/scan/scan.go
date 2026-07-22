@@ -172,7 +172,7 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	serviceIssues := svchealth.Assess(svcs, slices, backends)
 	svchealth.AnnotateEndpointCause(serviceIssues, svcs, inputs.Pods, health.DownNodes)
 	ings, _ := collect.Ingresses(ctx, client, opts.Namespace)
-	ingressIssues := ingresshealth.Assess(ings, svcs, slices, backends)
+	ingressIssues := ingresshealth.Assess(ings, svcs, slices, backends, inputs.Pods, health.DownNodes)
 
 	var certReport *certhealth.Report
 	if opts.Certs {

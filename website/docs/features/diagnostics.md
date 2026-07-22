@@ -186,6 +186,23 @@ routes resolve within the Ingress's own namespace. It is read-only and advisory:
 it appears in **NEEDS ATTENTION** and JSON `ingressIssues` but does not change
 the cluster verdict.
 
+When a broken route's backend Service has no ready endpoints, the Detail also
+names *why* — the same root cause the [Service check](service-health.md) reports,
+one hop up the graph:
+
+- **the selector matches no pods** — `backend Service payments:80 has no ready
+  endpoints (likely 502/503) — the selector matches no pods`
+- **matching pods are on a down node** — `backend Service payments:80 has no
+  ready endpoints (likely 502/503) — matching pods on down node worker-2
+  (NotReady)`
+- **matching pods exist but none are Ready** — `backend Service payments:80 has
+  no ready endpoints (likely 502/503) — 3 matching pods, 0 ready`
+
+This means the 502 is explained on the route itself — you do not have to cross-
+reference the Service finding to understand why. The enrichment is read-only and
+reuses the endpoint-cause logic from the Service check (no new flag, metric, or
+RBAC).
+
 A route whose backend Service is **intentionally empty** — the backing workload is scaled to zero (or a Job/CronJob between runs), or the Service is explicitly annotated `kubeagent.io/expected-empty: "true"` — is treated as **parked**: it moves to the quiet NOTES section instead of NEEDS ATTENTION, so a deliberately-idle app or an operator-managed role-split Service (e.g. a CloudNativePG `-ro` service on a single-instance cluster) does not read as a 502/503 outage. Set the annotation on the **Service** to silence a route (or the bare Service finding) kubeagent cannot infer is empty by design:
 
 ```yaml

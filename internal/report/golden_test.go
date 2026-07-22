@@ -66,7 +66,7 @@ func goldenInput(now time.Time) Input {
 		IngressIssues: []ingresshealth.RouteIssue{
 			{Namespace: "shop", Ingress: "storefront", Host: "shop.example.com", Path: "/",
 				Service: "payments", Port: "80", Problem: "NoEndpoints",
-				Detail: "backend Service payments:80 has no ready endpoints (likely 502/503)"},
+				Detail: "backend Service payments:80 has no ready endpoints (likely 502/503) — 3 matching pods, 0 ready"},
 			{Namespace: "shop", Ingress: "dashboard", Host: "dash.example.com", Path: "/",
 				Service: "grafana", Problem: "NoEndpoints", Expected: true,
 				Detail: "backend Service grafana is intentionally empty (scaled to 0) — route parked"},

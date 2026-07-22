@@ -26,6 +26,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/secscan"
 	"github.com/imantaba/kubeagent/internal/svchealth"
 	"github.com/imantaba/kubeagent/internal/termhealth"
+	"github.com/imantaba/kubeagent/internal/webhookhealth"
 )
 
 // inventoryReport is the JSON shape for the workload inventory.
@@ -47,6 +48,7 @@ type inventoryReport struct {
 	StuckTerminating   []termhealth.Issue          `json:"stuckTerminating,omitempty"`
 	PDBIssues          []pdbhealth.Issue           `json:"pdbIssues,omitempty"`
 	HPAIssues          []hpahealth.Issue           `json:"hpaIssues,omitempty"`
+	WebhookIssues      []webhookhealth.Issue       `json:"webhookIssues,omitempty"`
 	Explanation        string                      `json:"explanation,omitempty"`
 }
 
@@ -72,6 +74,7 @@ type Input struct {
 	StuckTerminating   []termhealth.Issue
 	PDBIssues          []pdbhealth.Issue
 	HPAIssues          []hpahealth.Issue
+	WebhookIssues      []webhookhealth.Issue
 	Explanation        string
 	Now                time.Time // clock for relative ages; main sets time.Now(); zero → wall-clock
 }
@@ -100,6 +103,7 @@ func PrintInventory(in Input, format string, w io.Writer) error {
 			StuckTerminating:   in.StuckTerminating,
 			PDBIssues:          in.PDBIssues,
 			HPAIssues:          in.HPAIssues,
+			WebhookIssues:      in.WebhookIssues,
 			Explanation:        in.Explanation,
 		})
 	case "text":
@@ -128,7 +132,7 @@ func printInventoryText(in Input, w io.Writer) error {
 	}
 
 	hasDisk := in.DiskUsage != nil && len(in.DiskUsage.Over) > 0
-	hasAttention := len(in.Result.Workloads) > 0 || len(real) > 0 || len(in.CredentialWarnings) > 0 || hasDisk || len(realIng) > 0 || len(in.PVCIssues) > 0 || len(in.StuckTerminating) > 0 || len(in.PDBIssues) > 0 || len(in.HPAIssues) > 0
+	hasAttention := len(in.Result.Workloads) > 0 || len(real) > 0 || len(in.CredentialWarnings) > 0 || hasDisk || len(realIng) > 0 || len(in.PVCIssues) > 0 || len(in.StuckTerminating) > 0 || len(in.PDBIssues) > 0 || len(in.HPAIssues) > 0 || len(in.WebhookIssues) > 0
 	if hasAttention {
 		if _, err := fmt.Fprintln(w, "NEEDS ATTENTION"); err != nil {
 			return err
@@ -160,6 +164,9 @@ func printInventoryText(in Input, w io.Writer) error {
 			return err
 		}
 		if err := printHPAIssues(in.HPAIssues, w); err != nil {
+			return err
+		}
+		if err := printWebhookIssues(in.WebhookIssues, w); err != nil {
 			return err
 		}
 		if _, err := fmt.Fprintln(w); err != nil {
@@ -317,6 +324,9 @@ func attentionLine(in Input, real []svchealth.Issue, realIng []ingresshealth.Rou
 	}
 	if n := len(in.HPAIssues); n > 0 {
 		parts = append(parts, fmt.Sprintf("%d %s can't scale", n, plural(n, "HPA", "HPAs")))
+	}
+	if n := len(in.WebhookIssues); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d %s failing", n, plural(n, "admission webhook", "admission webhooks")))
 	}
 	return strings.Join(parts, " · ")
 }
@@ -572,6 +582,19 @@ func printHPAIssues(issues []hpahealth.Issue, w io.Writer) error {
 			return err
 		}
 		if _, err := fmt.Fprintf(w, "      ⚠ HPAStuck: %s\n", is.Reason); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// printWebhookIssues lists admission webhooks that will reject every intercepted request.
+func printWebhookIssues(issues []webhookhealth.Issue, w io.Writer) error {
+	for _, is := range issues {
+		if _, err := fmt.Fprintf(w, "  ✗ %s  %s  webhook %s\n", is.Config, is.Kind, is.Webhook); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(w, "      ⚠ WebhookDown: %s\n", is.Reason); err != nil {
 			return err
 		}
 	}

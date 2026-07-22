@@ -80,6 +80,13 @@ func TestAssess_Exhausted(t *testing.T) {
 	if !approxEq(got[0].Ratio, 1.0) {
 		t.Errorf("Ratio = %v, want 1.0", got[0].Ratio)
 	}
+	is := got[0]
+	if is.Used != "4" || is.Hard != "4" {
+		t.Errorf("Used/Hard = %q/%q, want 4/4", is.Used, is.Hard)
+	}
+	if is.Namespace != "shop" || is.Quota != "compute" || is.Resource != "requests.cpu" {
+		t.Errorf("identity = %s/%s %s, want shop/compute requests.cpu", is.Namespace, is.Quota, is.Resource)
+	}
 }
 
 func TestAssess_SubThresholdNotFlagged(t *testing.T) {

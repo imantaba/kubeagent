@@ -5,6 +5,7 @@
 package svchealth
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -13,6 +14,8 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
+
+	"github.com/imantaba/kubeagent/internal/clusterhealth"
 )
 
 // Issue is one Service-level problem.
@@ -237,4 +240,90 @@ func backingDetail(b Backend) string {
 		return "no ready endpoints (backs StatefulSet — scaled to 0)"
 	}
 	return "no ready endpoints"
+}
+
+// AnnotateEndpointCause enriches the Detail of every broken NoEndpoints issue with
+// the reason its Service has no ready endpoints, correlating the Service selector
+// against pods and the down-node list. Pure and read-only; mutates the issues in
+// place. Expected-empty and non-NoEndpoints issues are left untouched.
+func AnnotateEndpointCause(issues []Issue, services []corev1.Service, pods []corev1.Pod, downNodes []clusterhealth.DownNode) {
+	down := make(map[string]string, len(downNodes))
+	for _, d := range downNodes {
+		down[d.Name] = d.Reason
+	}
+	svcByID := make(map[string]corev1.Service, len(services))
+	for _, s := range services {
+		svcByID[s.Namespace+"/"+s.Name] = s
+	}
+	for i := range issues {
+		if issues[i].Problem != "NoEndpoints" || issues[i].Expected {
+			continue
+		}
+		svc, ok := svcByID[issues[i].Namespace+"/"+issues[i].Name]
+		if !ok {
+			continue
+		}
+		if cause := endpointCause(svc, pods, down); cause != "" {
+			issues[i].Detail = "no ready endpoints — " + cause
+		}
+	}
+}
+
+// endpointCause returns the reason a Service has no ready endpoints (no-pods →
+// node-down → pods-not-ready, first match), or "" when inconclusive.
+func endpointCause(svc corev1.Service, pods []corev1.Pod, down map[string]string) string {
+	var matching []corev1.Pod
+	for _, p := range pods {
+		if p.Namespace == svc.Namespace && selectorMatches(svc.Spec.Selector, p.Labels) {
+			matching = append(matching, p)
+		}
+	}
+	if len(matching) == 0 {
+		return "the selector matches no pods"
+	}
+
+	var downHit []string
+	seen := map[string]bool{}
+	for _, p := range matching {
+		n := p.Spec.NodeName
+		if n == "" || seen[n] {
+			continue
+		}
+		if reason, isDown := down[n]; isDown {
+			seen[n] = true
+			downHit = append(downHit, n+" ("+reason+")")
+		}
+	}
+	if len(downHit) == 1 {
+		return "matching pods on down node " + downHit[0]
+	}
+	if len(downHit) > 1 {
+		return fmt.Sprintf("matching pods on %d down nodes", len(downHit))
+	}
+
+	ready := 0
+	for _, p := range matching {
+		if podReady(p) {
+			ready++
+		}
+	}
+	if ready == 0 {
+		noun := "pods"
+		if len(matching) == 1 {
+			noun = "pod"
+		}
+		return fmt.Sprintf("%d matching %s, 0 ready", len(matching), noun)
+	}
+	return ""
+}
+
+// podReady reports whether the pod's Ready condition is true (endpoint-membership
+// semantics).
+func podReady(p corev1.Pod) bool {
+	for _, c := range p.Status.Conditions {
+		if c.Type == corev1.PodReady {
+			return c.Status == corev1.ConditionTrue
+		}
+	}
+	return false
 }

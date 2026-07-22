@@ -170,6 +170,7 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	slices, _ := collect.EndpointSlices(ctx, client, opts.Namespace)
 	backends := svchealth.BackendsFrom(inputs.Deployments, inputs.StatefulSets, inputs.DaemonSets, inputs.Jobs, inputs.CronJobs)
 	serviceIssues := svchealth.Assess(svcs, slices, backends)
+	svchealth.AnnotateEndpointCause(serviceIssues, svcs, inputs.Pods, health.DownNodes)
 	ings, _ := collect.Ingresses(ctx, client, opts.Namespace)
 	ingressIssues := ingresshealth.Assess(ings, svcs, slices, backends)
 

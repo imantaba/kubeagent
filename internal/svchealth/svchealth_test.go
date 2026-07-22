@@ -11,6 +11,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/imantaba/kubeagent/internal/clusterhealth"
 )
 
 func svc(ns, name string, t corev1.ServiceType, selector map[string]string, lbIngress int) corev1.Service {
@@ -352,5 +354,128 @@ func TestExpectedEmpty_ScaledToZeroBacking(t *testing.T) {
 	reason, ok := ExpectedEmpty(s, backends)
 	if !ok || !strings.Contains(reason, "scaled to 0") {
 		t.Fatalf("scaled-to-0 Deployment backing should be expected with 'scaled to 0', got %q ok=%v", reason, ok)
+	}
+}
+
+func pod(ns, name, node string, labels map[string]string, ready bool) corev1.Pod {
+	st := corev1.ConditionFalse
+	if ready {
+		st = corev1.ConditionTrue
+	}
+	p := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name, Labels: labels}}
+	p.Spec.NodeName = node
+	p.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: st}}
+	return p
+}
+
+func brokenNoEndpoints(ns, name string) Issue {
+	return Issue{Namespace: ns, Name: name, Type: "ClusterIP", Problem: "NoEndpoints", Detail: "no ready endpoints"}
+}
+
+func TestAnnotateEndpointCause_NoPods(t *testing.T) {
+	issues := []Issue{brokenNoEndpoints("shop", "web")}
+	services := []corev1.Service{svc("shop", "web", corev1.ServiceTypeClusterIP, map[string]string{"app": "web"}, 0)}
+	AnnotateEndpointCause(issues, services, nil, nil)
+	if issues[0].Detail != "no ready endpoints — the selector matches no pods" {
+		t.Fatalf("detail = %q", issues[0].Detail)
+	}
+}
+
+func TestAnnotateEndpointCause_NodeDownSingle(t *testing.T) {
+	issues := []Issue{brokenNoEndpoints("shop", "cache")}
+	services := []corev1.Service{svc("shop", "cache", corev1.ServiceTypeClusterIP, map[string]string{"app": "cache"}, 0)}
+	pods := []corev1.Pod{
+		pod("shop", "cache-1", "worker-2", map[string]string{"app": "cache"}, false),
+		pod("shop", "cache-2", "worker-2", map[string]string{"app": "cache"}, false),
+	}
+	down := []clusterhealth.DownNode{{Name: "worker-2", Reason: "NotReady"}}
+	AnnotateEndpointCause(issues, services, pods, down)
+	if issues[0].Detail != "no ready endpoints — matching pods on down node worker-2 (NotReady)" {
+		t.Fatalf("detail = %q", issues[0].Detail)
+	}
+}
+
+func TestAnnotateEndpointCause_NodeDownMultiple(t *testing.T) {
+	issues := []Issue{brokenNoEndpoints("shop", "cache")}
+	services := []corev1.Service{svc("shop", "cache", corev1.ServiceTypeClusterIP, map[string]string{"app": "cache"}, 0)}
+	pods := []corev1.Pod{
+		pod("shop", "cache-1", "worker-2", map[string]string{"app": "cache"}, false),
+		pod("shop", "cache-2", "worker-3", map[string]string{"app": "cache"}, false),
+	}
+	down := []clusterhealth.DownNode{{Name: "worker-2", Reason: "NotReady"}, {Name: "worker-3", Reason: "NotReady"}}
+	AnnotateEndpointCause(issues, services, pods, down)
+	if issues[0].Detail != "no ready endpoints — matching pods on 2 down nodes" {
+		t.Fatalf("detail = %q", issues[0].Detail)
+	}
+}
+
+func TestAnnotateEndpointCause_PodsNotReady(t *testing.T) {
+	issues := []Issue{brokenNoEndpoints("shop", "api")}
+	services := []corev1.Service{svc("shop", "api", corev1.ServiceTypeClusterIP, map[string]string{"app": "api"}, 0)}
+	pods := []corev1.Pod{
+		pod("shop", "api-1", "worker-1", map[string]string{"app": "api"}, false),
+		pod("shop", "api-2", "worker-1", map[string]string{"app": "api"}, false),
+		pod("shop", "api-3", "worker-1", map[string]string{"app": "api"}, false),
+	}
+	AnnotateEndpointCause(issues, services, pods, nil) // worker-1 not down
+	if issues[0].Detail != "no ready endpoints — 3 matching pods, 0 ready" {
+		t.Fatalf("detail = %q", issues[0].Detail)
+	}
+}
+
+func TestAnnotateEndpointCause_SinglePodNounSingular(t *testing.T) {
+	issues := []Issue{brokenNoEndpoints("shop", "api")}
+	services := []corev1.Service{svc("shop", "api", corev1.ServiceTypeClusterIP, map[string]string{"app": "api"}, 0)}
+	pods := []corev1.Pod{pod("shop", "api-1", "worker-1", map[string]string{"app": "api"}, false)}
+	AnnotateEndpointCause(issues, services, pods, nil)
+	if issues[0].Detail != "no ready endpoints — 1 matching pod, 0 ready" {
+		t.Fatalf("detail = %q", issues[0].Detail)
+	}
+}
+
+func TestAnnotateEndpointCause_LeavesExpectedAndReadyAndOtherProblems(t *testing.T) {
+	services := []corev1.Service{
+		svc("shop", "sched-zero", corev1.ServiceTypeClusterIP, map[string]string{"app": "sz"}, 0),
+		svc("shop", "healthy", corev1.ServiceTypeClusterIP, map[string]string{"app": "h"}, 0),
+	}
+	pods := []corev1.Pod{pod("shop", "h-1", "worker-1", map[string]string{"app": "h"}, true)} // ready
+	issues := []Issue{
+		{Namespace: "shop", Name: "sched-zero", Type: "ClusterIP", Problem: "NoEndpoints", Detail: "no ready endpoints — declared via …", Expected: true},
+		{Namespace: "shop", Name: "healthy", Type: "ClusterIP", Problem: "NoEndpoints", Detail: "no ready endpoints"}, // has a ready matching pod → inconclusive, leave
+		{Namespace: "shop", Name: "lb", Type: "LoadBalancer", Problem: "NoExternalAddress", Detail: "no external address"},
+	}
+	AnnotateEndpointCause(issues, services, pods, nil)
+	if issues[0].Detail != "no ready endpoints — declared via …" {
+		t.Errorf("expected-empty must be untouched, got %q", issues[0].Detail)
+	}
+	if issues[1].Detail != "no ready endpoints" {
+		t.Errorf("a ready matching pod is inconclusive; leave detail, got %q", issues[1].Detail)
+	}
+	if issues[2].Detail != "no external address" {
+		t.Errorf("NoExternalAddress must be untouched, got %q", issues[2].Detail)
+	}
+}
+
+func TestAnnotateEndpointCause_UnscheduledPodNotNodeDown(t *testing.T) {
+	// A matching pod with no nodeName (Pending) must fall through to pods-not-ready,
+	// never node-down — even when down nodes exist.
+	issues := []Issue{brokenNoEndpoints("shop", "api")}
+	services := []corev1.Service{svc("shop", "api", corev1.ServiceTypeClusterIP, map[string]string{"app": "api"}, 0)}
+	pods := []corev1.Pod{pod("shop", "api-1", "", map[string]string{"app": "api"}, false)} // empty nodeName
+	down := []clusterhealth.DownNode{{Name: "worker-2", Reason: "NotReady"}}
+	AnnotateEndpointCause(issues, services, pods, down)
+	if issues[0].Detail != "no ready endpoints — 1 matching pod, 0 ready" {
+		t.Fatalf("an unscheduled pod must not be node-down, got %q", issues[0].Detail)
+	}
+}
+
+func TestAnnotateEndpointCause_Idempotent(t *testing.T) {
+	issues := []Issue{brokenNoEndpoints("shop", "web")}
+	services := []corev1.Service{svc("shop", "web", corev1.ServiceTypeClusterIP, map[string]string{"app": "web"}, 0)}
+	AnnotateEndpointCause(issues, services, nil, nil)
+	first := issues[0].Detail
+	AnnotateEndpointCause(issues, services, nil, nil)
+	if issues[0].Detail != first {
+		t.Fatalf("not idempotent: %q -> %q", first, issues[0].Detail)
 	}
 }

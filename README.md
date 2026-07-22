@@ -73,10 +73,11 @@ kubeagent scan
 - A Service (or Ingress route) that is empty on purpose — its backend is scaled to zero, or
   it carries `kubeagent.io/expected-empty: "true"` — is shown as a quiet note, not an alert.
 - **Pending-PVC provisioning check** — `scan` flags a PersistentVolumeClaim stuck
-  `Pending` because provisioning/binding failed (`ProvisioningFailed` /
-  `FailedBinding` events), naming the cause. Event-based (like `VolumeAttachError`),
-  so the normal `WaitForFirstConsumer` state is never flagged. Advisory and
-  read-only; no new RBAC.
+  `Pending` and names the structural root cause: the PVC references a StorageClass
+  that does not exist, or (for a static claim) no available PersistentVolume matches
+  its size and access modes. These checks fire even when no `ProvisioningFailed` event
+  is present (catching a long-stuck PVC whose event expired), by correlating against
+  collected StorageClasses and PVs. Advisory and read-only; no new RBAC.
 - **Stuck-terminating** — a Namespace, Pod, or PVC wedged in Terminating past two minutes, with the blocking finalizer/condition named.
 - **PodDisruptionBudget-blocked drains** — flags a PDB that will block a node
   drain: one that can never allow a voluntary eviction (unsatisfiable), whose

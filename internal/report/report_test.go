@@ -1732,3 +1732,34 @@ func TestPrintInventory_NoWebhookSectionWhenEmpty(t *testing.T) {
 		t.Errorf("no webhook section expected when empty:\n%s", buf.String())
 	}
 }
+
+func TestPrintInventory_SuggestLines(t *testing.T) {
+	build := func(suggest bool) string {
+		var buf bytes.Buffer
+		in := Input{
+			Cluster: clusterhealth.ClusterHealth{Verdict: "Degraded"},
+			Result: inventory.Result{Workloads: []inventory.Workload{{
+				Namespace: "shop", Name: "web", Kind: "Deployment", Desired: 2, Ready: 0, Status: "Degraded",
+				Findings: []diagnose.Finding{{Pod: "shop/web-abc", Issue: "CrashLoopBackOff", Reason: "keeps crashing", Container: "web"}},
+			}}},
+			Suggest: suggest,
+		}
+		if err := PrintInventory(in, "text", &buf); err != nil {
+			t.Fatal(err)
+		}
+		return buf.String()
+	}
+
+	on := build(true)
+	if !strings.Contains(on, "↳ next step: starts then crashes — inspect the crash output") {
+		t.Errorf("missing next-step line:\n%s", on)
+	}
+	if !strings.Contains(on, "↳ try: kubectl -n shop logs web-abc -c web --previous") {
+		t.Errorf("missing try line:\n%s", on)
+	}
+
+	off := build(false)
+	if strings.Contains(off, "next step:") || strings.Contains(off, "↳ try:") {
+		t.Errorf("no suggest lines expected by default:\n%s", off)
+	}
+}

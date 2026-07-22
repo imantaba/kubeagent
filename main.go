@@ -81,6 +81,7 @@ func run(args []string) error {
 	expectedNodes := fs.String("expected-nodes", "", "names of nodes expected in the cluster; a declared name with no Node object is flagged Degraded (comma-separated)")
 	security := fs.Bool("security", false, "flag insecure workloads and exposed Services (read-only, advisory)")
 	securityVerbose := fs.Bool("security-verbose", false, "with --security: list every finding per workload (default: dangerous findings in full, restricted gaps aggregated)")
+	suggest := fs.Bool("suggest", false, "print a deterministic next-step suggestion (and a read-only kubectl command) under each finding")
 	fix := fs.Bool("fix", false, "propose and (after confirmation) apply safe, reversible remediations (opt-in writes)")
 	dryRun := fs.Bool("dry-run", false, "with --fix: print proposed remediations only; never prompt or write")
 	assumeYes := fs.Bool("yes", false, "with --fix: apply all proposed remediations without prompting")
@@ -184,6 +185,7 @@ func run(args []string) error {
 	in.DiskUsage = diskRep
 	in.KubeletHealth = kubeletRep
 	in.SecurityVerbose = *securityVerbose
+	in.Suggest = *suggest
 	in.Explanation = explanation
 	if err := report.PrintInventory(in, *output, os.Stdout); err != nil {
 		return err

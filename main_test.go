@@ -230,6 +230,15 @@ func TestRun_FixFlagsAccepted(t *testing.T) {
 	}
 }
 
+func TestRun_SuggestFlagAccepted(t *testing.T) {
+	// --suggest must be a defined flag: this fails on output-format validation
+	// (before any cluster call), proving the flag parsed.
+	err := run([]string{"scan", "--suggest", "--output", "bogus"})
+	if err == nil || !strings.Contains(err.Error(), "unknown output format") {
+		t.Fatalf("expected the output-format error (flag accepted), got: %v", err)
+	}
+}
+
 func fixWorkload() []inventory.Workload {
 	return []inventory.Workload{{Namespace: "shop", Name: "web", Kind: "Deployment",
 		Desired: 1, Ready: 0, // degraded, so RolloutUndo is proposed under the Ready < Desired gate

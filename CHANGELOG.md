@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.41.0] - 2026-07-22
+
 ### Added
 
 - **Missing-config detection (`CreateContainerConfigError`).** `scan` now flags a
@@ -592,7 +594,8 @@ infrastructure (a documentation site and a pre-release chaos-test harness).
 - CI (vet/test/build on push & PR) and a release workflow publishing a
   linux/amd64 tarball + `SHA256SUMS` to a GitHub Release.
 
-[Unreleased]: https://github.com/imantaba/kubeagent/compare/v0.40.0...HEAD
+[Unreleased]: https://github.com/imantaba/kubeagent/compare/v0.41.0...HEAD
+[0.41.0]: https://github.com/imantaba/kubeagent/compare/v0.40.0...v0.41.0
 [0.40.0]: https://github.com/imantaba/kubeagent/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/imantaba/kubeagent/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/imantaba/kubeagent/compare/v0.37.0...v0.38.0

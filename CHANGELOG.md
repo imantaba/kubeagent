@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.0] - 2026-07-22
+
 ### Added
 
 - **Stuck-rollout detection (`RolloutStuck`).** `scan` flags a Deployment whose
@@ -613,7 +615,8 @@ infrastructure (a documentation site and a pre-release chaos-test harness).
 - CI (vet/test/build on push & PR) and a release workflow publishing a
   linux/amd64 tarball + `SHA256SUMS` to a GitHub Release.
 
-[Unreleased]: https://github.com/imantaba/kubeagent/compare/v0.42.0...HEAD
+[Unreleased]: https://github.com/imantaba/kubeagent/compare/v0.43.0...HEAD
+[0.43.0]: https://github.com/imantaba/kubeagent/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/imantaba/kubeagent/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/imantaba/kubeagent/compare/v0.40.0...v0.41.0
 [0.40.0]: https://github.com/imantaba/kubeagent/compare/v0.39.0...v0.40.0

@@ -983,6 +983,32 @@ func TestEvaluate_PVCMissingStorageClass_NoEvent(t *testing.T) {
 	}
 }
 
+func TestEvaluate_ConfigErrorDetected(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "api-abc"},
+		Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
+			Name:  "app",
+			State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CreateContainerConfigError", Message: `configmap "app-config" not found`}},
+		}}},
+	}
+	cli := fake.NewSimpleClientset(pod)
+	res, err := Evaluate(context.Background(), cli, Options{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var found bool
+	for _, w := range res.Inventory.Workloads {
+		for _, f := range w.Findings {
+			if f.Issue == "CreateContainerConfigError" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected a CreateContainerConfigError finding, got workloads %+v", res.Inventory.Workloads)
+	}
+}
+
 func TestEvaluate_IngressRouteRootCause(t *testing.T) {
 	// A broken ingress route whose backend Service selector matches no pods →
 	// the route Detail is enriched with the no-pods cause.

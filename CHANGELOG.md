@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Service-no-endpoints root cause.** For a broken Service with no ready
+  endpoints, `scan` now names *why* — the selector matches no pods, the matching
+  pods are on a down node, or they exist but none are Ready — by correlating the
+  selector against the collected pods and node health. Read-only; enriches the
+  existing service finding (no new flag or metric).
+
 ## [0.37.0] - 2026-07-22
 
 ### Added

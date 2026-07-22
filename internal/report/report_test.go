@@ -427,7 +427,7 @@ func TestPrintInventory_JSONIncludesPlatform(t *testing.T) {
 
 func sampleServiceIssues() []svchealth.Issue {
 	return []svchealth.Issue{
-		{Namespace: "default", Name: "web", Type: "ClusterIP", Problem: "NoEndpoints", Detail: "no ready endpoints"},
+		{Namespace: "default", Name: "web", Type: "ClusterIP", Problem: "NoEndpoints", Detail: "no ready endpoints — 2 matching pods, 0 ready"},
 		{Namespace: "default", Name: "api-lb", Type: "LoadBalancer", Problem: "NoExternalAddress", Detail: "no external address", Since: "2026-06-29T00:00:00Z"},
 	}
 }

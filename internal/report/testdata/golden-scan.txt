@@ -82,7 +82,7 @@ NEEDS ATTENTION
 ✗ shop/storefront  Deployment  0/3 Degraded
     ⚠ FailedCreate: the controller cannot create pods — blocked by a ResourceQuota
       ↳ pods "storefront-7c9f-" is forbidden: exceeded quota: compute, requested: requests.cpu=2, used: requests.cpu=4, limited: requests.cpu=4
-  ✗ default/web  ClusterIP  no ready endpoints
+  ✗ default/web  ClusterIP  no ready endpoints — 2 matching pods, 0 ready
   ✗ default/api-lb  LoadBalancer  no external address · 19d ago
   ✗ default/app-config  ConfigMap[DB_PASSWORD]  credential-like name with a literal value
   ✗ default/web  Pod[app/AWS_SECRET]  AWS access key

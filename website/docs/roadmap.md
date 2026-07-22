@@ -151,6 +151,13 @@
   daemon exposes `kubeagent_admission_webhooks_failing`. See
   [Failure diagnostics](features/diagnostics.md).
 
+- **Service-no-endpoints root cause** (first Theme-A / root-cause step for the
+  Service → Pod → Node graph) — for a broken Service with no ready endpoints,
+  `scan` names *why*: the selector matches no pods, the matching pods are on a
+  down node, or they exist but none are Ready. Read-only correlation over
+  collected pods and node health; enriches the existing service finding with no
+  new flag, metric, or RBAC. See [Service health](features/service-health.md).
+
 !!! info "Version history"
     [GitHub Releases](https://github.com/imantaba/kubeagent/releases) and the
     [CHANGELOG](https://github.com/imantaba/kubeagent/blob/main/CHANGELOG.md)

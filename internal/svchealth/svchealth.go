@@ -269,6 +269,18 @@ func AnnotateEndpointCause(issues []Issue, services []corev1.Service, pods []cor
 	}
 }
 
+// EndpointCause returns the reason a Service has no ready endpoints (the selector
+// matches no pods, its matching pods are on a down node, or none are Ready), or ""
+// when inconclusive. Pure; the single-call entry point shared by the Service and
+// Ingress root-cause views.
+func EndpointCause(svc corev1.Service, pods []corev1.Pod, downNodes []clusterhealth.DownNode) string {
+	down := make(map[string]string, len(downNodes))
+	for _, d := range downNodes {
+		down[d.Name] = d.Reason
+	}
+	return endpointCause(svc, pods, down)
+}
+
 // endpointCause returns the reason a Service has no ready endpoints (no-pods →
 // node-down → pods-not-ready, first match), or "" when inconclusive.
 func endpointCause(svc corev1.Service, pods []corev1.Pod, down map[string]string) string {

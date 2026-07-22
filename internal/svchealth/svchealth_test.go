@@ -479,3 +479,27 @@ func TestAnnotateEndpointCause_Idempotent(t *testing.T) {
 		t.Fatalf("not idempotent: %q -> %q", first, issues[0].Detail)
 	}
 }
+
+func TestEndpointCause_NoPods(t *testing.T) {
+	s := svc("shop", "web", corev1.ServiceTypeClusterIP, map[string]string{"app": "web"}, 0)
+	if got := EndpointCause(s, nil, nil); got != "the selector matches no pods" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestEndpointCause_NodeDown(t *testing.T) {
+	s := svc("shop", "web", corev1.ServiceTypeClusterIP, map[string]string{"app": "web"}, 0)
+	pods := []corev1.Pod{pod("shop", "web-1", "worker-2", map[string]string{"app": "web"}, false)}
+	down := []clusterhealth.DownNode{{Name: "worker-2", Reason: "NotReady"}}
+	if got := EndpointCause(s, pods, down); got != "matching pods on down node worker-2 (NotReady)" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestEndpointCause_Inconclusive(t *testing.T) {
+	s := svc("shop", "web", corev1.ServiceTypeClusterIP, map[string]string{"app": "web"}, 0)
+	pods := []corev1.Pod{pod("shop", "web-1", "worker-1", map[string]string{"app": "web"}, true)} // ready
+	if got := EndpointCause(s, pods, nil); got != "" {
+		t.Fatalf("want empty, got %q", got)
+	}
+}

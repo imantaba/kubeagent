@@ -34,6 +34,9 @@ rules:
   - apiGroups: ["autoscaling"]
     resources: [horizontalpodautoscalers]
     verbs: [get, list, watch]
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: [validatingwebhookconfigurations, mutatingwebhookconfigurations]
+    verbs: [get, list, watch]
   {{- if or .Values.diskUsage.enabled .Values.kubeletHealth.enabled }}
   - apiGroups: [""]
     resources: [nodes/proxy]

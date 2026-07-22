@@ -9,7 +9,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func failP() *admissionv1.FailurePolicyType  { f := admissionv1.Fail; return &f }
+func failP() *admissionv1.FailurePolicyType   { f := admissionv1.Fail; return &f }
 func ignoreP() *admissionv1.FailurePolicyType { f := admissionv1.Ignore; return &f }
 func svcRef(ns, name string) *admissionv1.ServiceReference {
 	return &admissionv1.ServiceReference{Namespace: ns, Name: name}
@@ -93,8 +93,8 @@ func TestAssess_NotFlagged(t *testing.T) {
 	url := "https://external.example.com/hook"
 	cases := []admissionv1.ValidatingWebhookConfiguration{
 		vwc("ignore", vhook("ig", ignoreP(), admissionv1.WebhookClientConfig{Service: svcRef("ns", "gone")})), // Ignore → not blocking
-		vwc("urlhook", vhook("u", failP(), admissionv1.WebhookClientConfig{URL: &url})),                        // URL → can't check
-		vwc("healthy", vhook("h", failP(), admissionv1.WebhookClientConfig{Service: svcRef("ns", "up")})),      // ready backend
+		vwc("urlhook", vhook("u", failP(), admissionv1.WebhookClientConfig{URL: &url})),                       // URL → can't check
+		vwc("healthy", vhook("h", failP(), admissionv1.WebhookClientConfig{Service: svcRef("ns", "up")})),     // ready backend
 	}
 	if got := Assess(cases, nil, services, slices); len(got) != 0 {
 		t.Fatalf("expected nothing flagged, got %+v", got)

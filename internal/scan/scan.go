@@ -14,15 +14,14 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/imantaba/kubeagent/internal/batchhealth"
-	"github.com/imantaba/kubeagent/internal/hpahealth"
 	"github.com/imantaba/kubeagent/internal/certhealth"
-	"github.com/imantaba/kubeagent/internal/webhookhealth"
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/collect"
 	"github.com/imantaba/kubeagent/internal/confidence"
 	"github.com/imantaba/kubeagent/internal/createhealth"
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/diskusage"
+	"github.com/imantaba/kubeagent/internal/hpahealth"
 	"github.com/imantaba/kubeagent/internal/ingresshealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/logscan"
@@ -37,6 +36,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/secscan"
 	"github.com/imantaba/kubeagent/internal/svchealth"
 	"github.com/imantaba/kubeagent/internal/termhealth"
+	"github.com/imantaba/kubeagent/internal/webhookhealth"
 )
 
 // Options controls the evaluation scope.
@@ -59,23 +59,23 @@ type Options struct {
 // CLI can compose its extra views (resource summary, platform facts, credential
 // lint, --fix) without re-collecting.
 type Result struct {
-	Inputs         inventory.Inputs
-	Nodes          []corev1.Node
-	NodeReserve    nodereserve.Report
-	PVCReclaim     pvcreclaim.Report
-	DiskUsage      diskusage.Report
-	Health         clusterhealth.ClusterHealth
-	Inventory      inventory.Result
-	ServiceIssues  []svchealth.Issue
-	IngressIssues  []ingresshealth.RouteIssue
-	PVCIssues      []pvchealth.Issue
-	SecurityIssues []secscan.Finding
-	KubeletHealth     nodehealth.Report
-	Certificates      *certhealth.Report
-	StuckTerminating  []termhealth.Issue
-	PDBIssues         []pdbhealth.Issue
-	HPAIssues         []hpahealth.Issue
-	WebhookIssues     []webhookhealth.Issue
+	Inputs           inventory.Inputs
+	Nodes            []corev1.Node
+	NodeReserve      nodereserve.Report
+	PVCReclaim       pvcreclaim.Report
+	DiskUsage        diskusage.Report
+	Health           clusterhealth.ClusterHealth
+	Inventory        inventory.Result
+	ServiceIssues    []svchealth.Issue
+	IngressIssues    []ingresshealth.RouteIssue
+	PVCIssues        []pvchealth.Issue
+	SecurityIssues   []secscan.Finding
+	KubeletHealth    nodehealth.Report
+	Certificates     *certhealth.Report
+	StuckTerminating []termhealth.Issue
+	PDBIssues        []pdbhealth.Issue
+	HPAIssues        []hpahealth.Issue
+	WebhookIssues    []webhookhealth.Issue
 }
 
 // systemNamespaces are excluded from the security scan when scanning all

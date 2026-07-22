@@ -107,12 +107,14 @@ are matched directly. Read-only, always-on, no new RBAC.
 
 A container (main or init) that cannot start because a referenced ConfigMap or
 Secret is **missing from the cluster**, or a **required key is absent** from an
-existing object. Kubernetes surfaces this as a `CreateContainerConfigError` event
-on the pod — the container never reaches `Running`. `kubeagent` reads the
-kubelet's event message and names the missing object directly, for example:
-`container "worker": configmap "worker-config" not found`. Because the error
-fires at container creation rather than at runtime, it is detected by reading pod
-events already collected during a scan — read-only, no new RBAC.
+existing object. Kubernetes surfaces this as a `CreateContainerConfigError`
+**waiting state** on the container — the container never reaches `Running`.
+`kubeagent` reads the kubelet's message directly from the pod's container status
+(`containerStatuses[*].state.waiting.message`) and names the missing object, for
+example: `container "worker": configmap "worker-config" not found`. It covers
+main and init containers. Unlike pod events (which expire after ~1 h), the
+waiting state persists as long as the container is stuck — read-only, no new
+RBAC.
 
 ### Root-cause attribution
 

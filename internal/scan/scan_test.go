@@ -14,6 +14,7 @@ import (
 	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -648,7 +649,10 @@ func TestEvaluate_AttributesRootCauseToBrokenPVC(t *testing.T) {
 		Status: corev1.PodStatus{Phase: corev1.PodPending, ContainerStatuses: []corev1.ContainerStatus{{
 			Name: "reports", Ready: false,
 			State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ContainerCreating"}}}}}}
-	cli := fake.NewSimpleClientset(node, pvc, ev, dep, pod)
+	// SC "fast" exists so the structural MissingStorageClass path is bypassed;
+	// the ProvisioningFailed event surfaces as the root cause instead.
+	fastSC := &storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: "fast"}}
+	cli := fake.NewSimpleClientset(node, pvc, ev, dep, pod, fastSC)
 	res, err := Evaluate(context.Background(), cli, Options{Namespace: "shop"})
 	if err != nil {
 		t.Fatal(err)

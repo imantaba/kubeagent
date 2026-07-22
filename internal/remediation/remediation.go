@@ -35,7 +35,10 @@ func For(f diagnose.Finding) Suggestion {
 		return Suggestion{"the probe keeps failing — check the probe config and the app's health endpoint", describeCmd(ns, pod)}
 	case "VolumeAttachError":
 		return Suggestion{"the volume can't attach — check the PVC/PV binding and the CSI driver", describeCmd(ns, pod)}
-	case "Init:CrashLoopBackOff", "Init:ImagePullBackOff", "Init:OOMKilled":
+	case "Init:ImagePullBackOff":
+		// The image never pulled, so there are no logs — describe shows the pull event.
+		return Suggestion{"an init container's image can't be pulled — the pod cannot start; verify the tag and registry credentials", describeCmd(ns, pod)}
+	case "Init:CrashLoopBackOff", "Init:OOMKilled":
 		return Suggestion{"an init container is failing — the pod cannot start until it succeeds", logsCmd(ns, pod, f.Container)}
 	case "FailedCreate":
 		return Suggestion{"the controller can't create pods — check for quota, LimitRange, or a rejecting admission webhook", eventsCmd(ns, "FailedCreate")}

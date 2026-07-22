@@ -22,6 +22,7 @@ func TestFor_TableAndCommands(t *testing.T) {
 		{"VolumeAttachError", "", "the volume can't attach", "kubectl -n shop describe pod web-abc"},
 		{"Init:CrashLoopBackOff", "wait-db", "an init container is failing", "kubectl -n shop logs web-abc -c wait-db --previous"},
 		{"Init:OOMKilled", "wait-db", "an init container is failing", "kubectl -n shop logs web-abc -c wait-db --previous"},
+		{"Init:ImagePullBackOff", "wait-db", "init container's image can't be pulled", "kubectl -n shop describe pod web-abc"},
 		{"FailedCreate", "", "the controller can't create pods", "kubectl -n shop get events --field-selector reason=FailedCreate"},
 		{"JobFailed", "", "exhausted its retries", "kubectl -n shop logs web-abc --previous"},
 		{"SomethingNew", "", "inspect the object for details", "kubectl -n shop describe pod web-abc"},
@@ -49,7 +50,7 @@ func TestFor_CommandsAreNeverMutating(t *testing.T) {
 	bad := []string{"delete", "apply", "edit", "patch", "scale", "rollout", "cordon", "drain", "create ", "replace"}
 	issues := []string{"CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull", "OOMKilled", "Unschedulable",
 		"CreateContainerConfigError", "ProbeFailure", "VolumeAttachError", "Init:CrashLoopBackOff", "Init:OOMKilled",
-		"FailedCreate", "JobFailed", "RestartLoop", "whatever-default"}
+		"Init:ImagePullBackOff", "FailedCreate", "JobFailed", "RestartLoop", "whatever-default"}
 	for _, iss := range issues {
 		cmd := For(diagnose.Finding{Issue: iss, Pod: "ns/pod", Container: "c"}).Command
 		for _, b := range bad {

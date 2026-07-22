@@ -225,7 +225,7 @@ func exposedService(svc corev1.Service) (Finding, bool) {
 	return Finding{
 		Namespace: svc.Namespace, Workload: svc.Name, Kind: "Service",
 		Profile: profileKubeagent, Check: "ExposedService",
-		Detail:  fmt.Sprintf("%s exposes %s externally", reason, servicePorts(svc)),
+		Detail: fmt.Sprintf("%s exposes %s externally", reason, servicePorts(svc)),
 	}, true
 }
 

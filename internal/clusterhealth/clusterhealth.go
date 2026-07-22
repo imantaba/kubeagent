@@ -18,15 +18,15 @@ const systemNamespace = "kube-system"
 
 // ClusterHealth is the first-line cluster verdict.
 type ClusterHealth struct {
-	Verdict              string     `json:"verdict"` // Healthy | Degraded
-	NodesTotal           int        `json:"nodesTotal"`
-	NodesReady           int        `json:"nodesReady"`
-	NodesStaleHeartbeat  int        `json:"nodesStaleHeartbeat,omitempty"`
-	NodesExpectedAbsent  int        `json:"nodesExpectedAbsent,omitempty"`
-	NodeIssues           []string   `json:"nodeIssues,omitempty"`
-	SystemIssues         []string   `json:"systemIssues,omitempty"`
-	ScopeNote            string     `json:"scopeNote,omitempty"`
-	DownNodes            []DownNode `json:"downNodes,omitempty"`
+	Verdict             string     `json:"verdict"` // Healthy | Degraded
+	NodesTotal          int        `json:"nodesTotal"`
+	NodesReady          int        `json:"nodesReady"`
+	NodesStaleHeartbeat int        `json:"nodesStaleHeartbeat,omitempty"`
+	NodesExpectedAbsent int        `json:"nodesExpectedAbsent,omitempty"`
+	NodeIssues          []string   `json:"nodeIssues,omitempty"`
+	SystemIssues        []string   `json:"systemIssues,omitempty"`
+	ScopeNote           string     `json:"scopeNote,omitempty"`
+	DownNodes           []DownNode `json:"downNodes,omitempty"`
 }
 
 // DownNode is a node that is effectively down — NotReady, or Ready but its

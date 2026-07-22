@@ -61,9 +61,9 @@ func ingTLS(ns, name, host, secretName string) networkingv1.Ingress {
 
 func TestAssess_ExpiredAndExpiringAndHealthy(t *testing.T) {
 	secrets := []corev1.Secret{
-		tlsSecret("shop", "shop-tls", certPEM(t, "shop.example.com", nil, now.Add(-3*24*time.Hour))),   // expired 3d
-		tlsSecret("infra", "api-tls", certPEM(t, "api.example.com", nil, now.Add(12*24*time.Hour))),    // expires 12d
-		tlsSecret("infra", "ok-tls", certPEM(t, "ok.example.com", nil, now.Add(200*24*time.Hour))),     // healthy
+		tlsSecret("shop", "shop-tls", certPEM(t, "shop.example.com", nil, now.Add(-3*24*time.Hour))), // expired 3d
+		tlsSecret("infra", "api-tls", certPEM(t, "api.example.com", nil, now.Add(12*24*time.Hour))),  // expires 12d
+		tlsSecret("infra", "ok-tls", certPEM(t, "ok.example.com", nil, now.Add(200*24*time.Hour))),   // healthy
 	}
 	rep := Assess(secrets, nil, 30, now)
 	if rep.Checked != 3 {

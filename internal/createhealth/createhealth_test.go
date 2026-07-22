@@ -126,11 +126,11 @@ func TestAnnotate_NewestEventWins(t *testing.T) {
 
 func TestClassifyCreateFailure(t *testing.T) {
 	cases := map[string]string{
-		quotaMsg:                                   "blocked by a ResourceQuota",
+		quotaMsg: "blocked by a ResourceQuota",
 		`admission webhook "x" denied the request`: "rejected by an admission webhook",
-		`maximum cpu usage per Container is 1`:      "violates a LimitRange",
-		`is forbidden: some other policy`:           "forbidden by admission",
-		`internal server error creating pod`:        "pod creation is failing",
+		`maximum cpu usage per Container is 1`:     "violates a LimitRange",
+		`is forbidden: some other policy`:          "forbidden by admission",
+		`internal server error creating pod`:       "pod creation is failing",
 	}
 	for msg, want := range cases {
 		if got := classifyCreateFailure(msg); got != want {

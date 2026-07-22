@@ -26,11 +26,11 @@ func TestForIssue(t *testing.T) {
 
 func TestForRootCause(t *testing.T) {
 	cases := map[string]string{
-		"node worker-2 (NotReady)":                        "high",
-		"PVC reports-data (ProvisioningFailed)":           "high",
+		"node worker-2 (NotReady)":                       "high",
+		"PVC reports-data (ProvisioningFailed)":          "high",
 		"registry ghcr.io (2 workloads failing to pull)": "medium",
-		"":                "",
-		"something else":  "",
+		"":               "",
+		"something else": "",
 	}
 	for rc, want := range cases {
 		if got := ForRootCause(rc); got != want {

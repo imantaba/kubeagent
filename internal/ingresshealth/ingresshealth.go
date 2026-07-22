@@ -24,7 +24,7 @@ type RouteIssue struct {
 	Path      string `json:"path,omitempty"`
 	Service   string `json:"service"`
 	Port      string `json:"port,omitempty"`
-	Problem   string `json:"problem"`            // "NoService" | "NoEndpoints" | "PortNotExposed"
+	Problem   string `json:"problem"` // "NoService" | "NoEndpoints" | "PortNotExposed"
 	Detail    string `json:"detail"`
 	Expected  bool   `json:"expected,omitempty"` // true when the empty backend is intentional (scaled to 0 / annotated)
 }

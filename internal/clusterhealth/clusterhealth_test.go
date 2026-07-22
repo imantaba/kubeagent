@@ -212,7 +212,7 @@ func hbLease(node string, renew time.Time) coordinationv1.Lease {
 
 func TestAssess_StaleHeartbeatDegrades(t *testing.T) {
 	now := time.Now()
-	hb := Heartbeat{Leases: []coordinationv1.Lease{hbLease("w1", now.Add(-90 * time.Second))}, Now: now, Threshold: 40 * time.Second}
+	hb := Heartbeat{Leases: []coordinationv1.Lease{hbLease("w1", now.Add(-90*time.Second))}, Now: now, Threshold: 40 * time.Second}
 	ch := Assess([]corev1.Node{hbReadyNode("w1")}, hb, nil, nil)
 	if ch.Verdict != "Degraded" || ch.NodesStaleHeartbeat != 1 {
 		t.Fatalf("stale lease must degrade + count: %+v", ch)
@@ -224,7 +224,7 @@ func TestAssess_StaleHeartbeatDegrades(t *testing.T) {
 
 func TestAssess_FreshHeartbeatClean(t *testing.T) {
 	now := time.Now()
-	hb := Heartbeat{Leases: []coordinationv1.Lease{hbLease("w1", now.Add(-5 * time.Second))}, Now: now, Threshold: 40 * time.Second}
+	hb := Heartbeat{Leases: []coordinationv1.Lease{hbLease("w1", now.Add(-5*time.Second))}, Now: now, Threshold: 40 * time.Second}
 	ch := Assess([]corev1.Node{hbReadyNode("w1")}, hb, nil, nil)
 	if ch.Verdict != "Healthy" || ch.NodesStaleHeartbeat != 0 {
 		t.Errorf("fresh lease must stay Healthy: %+v", ch)
@@ -248,7 +248,7 @@ func TestAssess_NotReadyNodeNoDuplicateHeartbeat(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "w1"},
 		Status:     corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionFalse, Reason: "KubeletNotReady"}}},
 	}
-	hb := Heartbeat{Leases: []coordinationv1.Lease{hbLease("w1", now.Add(-90 * time.Second))}, Now: now, Threshold: 40 * time.Second}
+	hb := Heartbeat{Leases: []coordinationv1.Lease{hbLease("w1", now.Add(-90*time.Second))}, Now: now, Threshold: 40 * time.Second}
 	ch := Assess([]corev1.Node{notReady}, hb, nil, nil)
 	if ch.NodesStaleHeartbeat != 0 {
 		t.Errorf("NotReady node must not add a heartbeat issue: %+v", ch)
@@ -329,7 +329,7 @@ func TestAssess_DownNodesNotReadyAndStale(t *testing.T) {
 	now := time.Unix(1_000_000, 0)
 	nodes := []corev1.Node{
 		notReadyNode("worker-2", "KubeletNotReady", "runtime down"),
-		hbReadyNode("worker-1"),        // Ready, but lease will be stale
+		hbReadyNode("worker-1"),           // Ready, but lease will be stale
 		node("worker-3", true, nil, true), // Ready + cordoned — NOT hard-down
 		node("worker-4", true, []corev1.NodeConditionType{corev1.NodeMemoryPressure}, false), // Ready + pressure — NOT hard-down
 	}

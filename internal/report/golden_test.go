@@ -176,6 +176,10 @@ func goldenWorkloads() []inventory.Workload {
 			Findings: []diagnose.Finding{{Pod: "shop/storefront", Issue: "FailedCreate",
 				Reason:   "the controller cannot create pods — blocked by a ResourceQuota",
 				Evidence: `pods "storefront-7c9f-" is forbidden: exceeded quota: compute, requested: requests.cpu=2, used: requests.cpu=4, limited: requests.cpu=4`}}},
+		{Namespace: "shop", Name: "worker", Kind: "Deployment", Desired: 2, Ready: 0, Status: "Degraded",
+			Findings: []diagnose.Finding{{Pod: "shop/worker-7c9f-x", Issue: "CreateContainerConfigError",
+				Reason:   "a referenced ConfigMap or Secret is missing, or a required key is absent — the container cannot start",
+				Evidence: `container "worker": configmap "worker-config" not found`, Container: "worker"}}},
 	}
 }
 

@@ -103,6 +103,17 @@ with the raw admission message as evidence. A Deployment's event lands on its
 ReplicaSet and is resolved back to the Deployment; StatefulSets and DaemonSets
 are matched directly. Read-only, always-on, no new RBAC.
 
+### CreateContainerConfigError
+
+A container (main or init) that cannot start because a referenced ConfigMap or
+Secret is **missing from the cluster**, or a **required key is absent** from an
+existing object. Kubernetes surfaces this as a `CreateContainerConfigError` event
+on the pod — the container never reaches `Running`. `kubeagent` reads the
+kubelet's event message and names the missing object directly, for example:
+`container "worker": configmap "worker-config" not found`. Because the error
+fires at container creation rather than at runtime, it is detected by reading pod
+events already collected during a scan — read-only, no new RBAC.
+
 ### Root-cause attribution
 
 When a node is **hard-down** — `NotReady`, or Ready but its kubelet has stopped
@@ -479,7 +490,7 @@ schema are unchanged.
 
 `kubeagent scan` performs a read-only, whole-cluster scan and reports
 CrashLoopBackOff, ImagePullBackOff/ErrImagePull, OOMKilled,
-Pending/Unschedulable, VolumeAttachError (Multi-Attach), RestartLoop, ProbeFailure, init-container failures, failed Jobs/CronJobs, and controllers that cannot create pods (FailedCreate), in text or JSON.
+Pending/Unschedulable, VolumeAttachError (Multi-Attach), RestartLoop, ProbeFailure, init-container failures, failed Jobs/CronJobs, controllers that cannot create pods (FailedCreate), and containers blocked by a missing ConfigMap or Secret (CreateContainerConfigError), in text or JSON.
 
 The optional `--explain` flag makes a single Claude API call to summarize
 findings in plain English. The deterministic core still works offline with no

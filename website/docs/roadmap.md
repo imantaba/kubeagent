@@ -173,6 +173,12 @@
   Read-only; correlates against collected StorageClasses and PVs; no new flag,
   metric, or RBAC. See [Failure diagnostics](features/diagnostics.md).
 
+- **Missing-config detection (`CreateContainerConfigError`)** (Theme-B deeper
+  diagnosis) — `scan` flags a container (main or init) that cannot start because
+  a referenced ConfigMap or Secret is missing from the cluster, or a required key
+  is absent — naming the object directly from the kubelet event message. Read-only;
+  no new flag, metric, or RBAC. See [Failure diagnostics](features/diagnostics.md).
+
 !!! info "Version history"
     [GitHub Releases](https://github.com/imantaba/kubeagent/releases) and the
     [CHANGELOG](https://github.com/imantaba/kubeagent/blob/main/CHANGELOG.md)

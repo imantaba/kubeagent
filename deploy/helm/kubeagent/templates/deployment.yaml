@@ -34,7 +34,7 @@ spec:
             {{- if .Values.watch.namespace }}
             - "--namespace={{ .Values.watch.namespace }}"
             {{- end }}
-          {{- if or .Values.diskUsage.enabled .Values.kubeletHealth.enabled .Values.certs.enabled }}
+          {{- if or .Values.diskUsage.enabled .Values.kubeletHealth.enabled .Values.certs.enabled .Values.controlPlaneHealth.enabled }}
           env:
             {{- if .Values.diskUsage.enabled }}
             - name: KUBEAGENT_DISK_USAGE
@@ -44,6 +44,10 @@ spec:
             {{- end }}
             {{- if .Values.kubeletHealth.enabled }}
             - name: KUBEAGENT_KUBELET_HEALTH
+              value: "true"
+            {{- end }}
+            {{- if .Values.controlPlaneHealth.enabled }}
+            - name: KUBEAGENT_CONTROL_PLANE_HEALTH
               value: "true"
             {{- end }}
             {{- if .Values.certs.enabled }}

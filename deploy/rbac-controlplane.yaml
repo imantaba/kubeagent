@@ -1,0 +1,24 @@
+# Optional add-on grant for `kubeagent scan --control-plane-health` (and the daemon
+# with KUBEAGENT_CONTROL_PLANE_HEALTH=true): read the apiserver /readyz endpoint to
+# flag an unhealthy control plane / etcd. Strictly read-only (a single nonResourceURL
+# GET). Apply alongside deploy/rbac.yaml when the control-plane-health check is used.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubeagent-controlplane
+rules:
+  - nonResourceURLs: ["/readyz"]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubeagent-controlplane
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubeagent-controlplane
+subjects:
+  - kind: ServiceAccount
+    name: kubeagent
+    namespace: kubeagent

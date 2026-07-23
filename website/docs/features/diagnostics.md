@@ -386,8 +386,8 @@ grant with the Helm value `dnsHealth.enabled=true` or by applying
 `KUBEAGENT_DNS_HEALTH=true`; the gauge `kubeagent_dns_servfail_ratio` reports the
 current ratio as a float.
 
-The check is **advisory** — it appears in a `DNS` section but does not change
-the cluster verdict. Example output:
+The check is **advisory** — it appears in a `DNS` section and JSON `dns` but does
+not change the cluster verdict. Example output:
 
 ```text
 DNS  (opt-in)

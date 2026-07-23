@@ -1092,6 +1092,19 @@ func TestEvaluate_FlagsStuckRollout(t *testing.T) {
 	}
 }
 
+func TestEvaluate_DNSHealthOffByDefault(t *testing.T) {
+	client := fake.NewSimpleClientset(
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"}},
+	)
+	res, err := Evaluate(context.Background(), client, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.DNS.Status != "" {
+		t.Errorf("DNS must not be probed when disabled, got %+v", res.DNS)
+	}
+}
+
 func TestEvaluate_FlagsNearFullQuota(t *testing.T) {
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"},
 		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}}

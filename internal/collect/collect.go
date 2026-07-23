@@ -432,6 +432,18 @@ func KubeletHealthz(ctx context.Context, client kubernetes.Interface, node strin
 	return classify(node, code, body)
 }
 
+// CoreDNSMetrics fetches a CoreDNS pod's :9153/metrics via the pods/proxy
+// subresource, returning the raw body and HTTP status code. Never returns an error
+// (non-fatal, like KubeletHealthz). Needs the pods/proxy get grant; a 401/403 is
+// surfaced to the caller via the code.
+func CoreDNSMetrics(ctx context.Context, client kubernetes.Interface, namespace, pod string) ([]byte, int) {
+	var code int
+	body, _ := client.CoreV1().RESTClient().Get().
+		AbsPath(fmt.Sprintf("/api/v1/namespaces/%s/pods/%s:9153/proxy/metrics", namespace, pod)).
+		Do(ctx).StatusCode(&code).Raw()
+	return body, code
+}
+
 // ControlPlaneReadyz probes the apiserver /readyz?verbose endpoint and classifies
 // the result. Never returns an error (non-fatal, like KubeletHealthz). Needs the
 // nonResourceURLs /readyz get grant; a 401/403 yields Status "forbidden".

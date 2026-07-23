@@ -22,6 +22,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/createhealth"
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/diskusage"
+	"github.com/imantaba/kubeagent/internal/dnshealth"
 	"github.com/imantaba/kubeagent/internal/hpahealth"
 	"github.com/imantaba/kubeagent/internal/ingresshealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
@@ -57,6 +58,8 @@ type Options struct {
 	ExpectedNodes          []string
 	KubeletHealth          bool
 	ControlPlaneHealth     bool
+	DNSHealth              bool
+	DNSServfailRatio       float64
 	Logs                   bool
 }
 
@@ -77,6 +80,7 @@ type Result struct {
 	SecurityIssues   []secscan.Finding
 	KubeletHealth    nodehealth.Report
 	ControlPlane     controlplane.Probe
+	DNS              dnshealth.Report
 	Certificates     *certhealth.Report
 	StuckTerminating []termhealth.Issue
 	PDBIssues        []pdbhealth.Issue
@@ -104,6 +108,17 @@ func splitNamespacedName(s string) (ns, name string, ok bool) {
 		return s[:i], s[i+1:], true
 	}
 	return "", "", false
+}
+
+// coreDNSPods returns the Running CoreDNS pods (kube-system, k8s-app=kube-dns).
+func coreDNSPods(pods []corev1.Pod) []corev1.Pod {
+	var out []corev1.Pod
+	for _, p := range pods {
+		if p.Namespace == "kube-system" && p.Labels["k8s-app"] == "kube-dns" && p.Status.Phase == corev1.PodRunning {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func nonSystemServices(svcs []corev1.Service) []corev1.Service {
@@ -286,5 +301,30 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 		controlPlane = collect.ControlPlaneReadyz(ctx, client)
 	}
 
-	return Result{Inputs: inputs, Nodes: nodes, NodeReserve: nodereserve.Assess(nodes), PVCReclaim: pvcReclaim, DiskUsage: diskReport, Health: health, Inventory: result, ServiceIssues: serviceIssues, IngressIssues: ingressIssues, PVCIssues: pvcIssues, SecurityIssues: securityIssues, KubeletHealth: kubeletHealth, ControlPlane: controlPlane, Certificates: certReport, StuckTerminating: stuckTerminating, PDBIssues: pdbIssues, HPAIssues: hpaIssues, WebhookIssues: webhookIssues, QuotaIssues: quotaIssues}, nil
+	var dnsReport dnshealth.Report
+	if opts.DNSHealth {
+		ratio := opts.DNSServfailRatio
+		if ratio <= 0 || ratio > 1 {
+			ratio = 0.05
+		}
+		cdns := coreDNSPods(inputs.Pods)
+		agg := map[string]int64{}
+		forbidden, unreachable := 0, 0
+		for _, p := range cdns {
+			body, code := collect.CoreDNSMetrics(ctx, client, p.Namespace, p.Name)
+			switch {
+			case code == 401 || code == 403:
+				forbidden++
+			case code == 200:
+				for rc, n := range dnshealth.ParseResponses(body) {
+					agg[rc] += n
+				}
+			default:
+				unreachable++
+			}
+		}
+		dnsReport = dnshealth.Assess(agg, len(cdns), forbidden, unreachable, ratio, 100)
+	}
+
+	return Result{Inputs: inputs, Nodes: nodes, NodeReserve: nodereserve.Assess(nodes), PVCReclaim: pvcReclaim, DiskUsage: diskReport, Health: health, Inventory: result, ServiceIssues: serviceIssues, IngressIssues: ingressIssues, PVCIssues: pvcIssues, SecurityIssues: securityIssues, KubeletHealth: kubeletHealth, ControlPlane: controlPlane, DNS: dnsReport, Certificates: certReport, StuckTerminating: stuckTerminating, PDBIssues: pdbIssues, HPAIssues: hpaIssues, WebhookIssues: webhookIssues, QuotaIssues: quotaIssues}, nil
 }

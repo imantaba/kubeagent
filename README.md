@@ -142,6 +142,14 @@ kubeagent scan
   `controlPlaneHealth.enabled=true`). The daemon exposes
   `kubeagent_control_plane_unhealthy` and is enabled with
   `KUBEAGENT_CONTROL_PLANE_HEALTH=true`.
+- **DNS / CoreDNS resolution health (opt-in)** — `scan --dns-health` probes each
+  CoreDNS pod's `:9153/metrics` and flags an elevated SERVFAIL+REFUSED response
+  ratio (default ≥ 5% over a 100-response floor; env
+  `KUBEAGENT_DNS_SERVFAIL_RATIO`) — catching DNS that is up but failing to
+  resolve, which the CoreDNS-pod health check misses. Read-only; needs the
+  `pods/proxy` add-on grant (`deploy/rbac-dnshealth.yaml` or Helm
+  `dnsHealth.enabled=true`). The daemon exposes `kubeagent_dns_servfail_ratio`
+  and is enabled with `KUBEAGENT_DNS_HEALTH=true`.
 - **Certificate expiry (--certs)** — flags expired and soon-expiring TLS certificates (public cert metadata only; never reads keys), with the Ingress routes they front.
 - **Crash log root-cause (opt-in)** — `scan --logs` reads a crashing container's
   previous logs and names the failure (panic, connection refused, bad entrypoint, …).

@@ -366,6 +366,35 @@ CONTROL PLANE  (opt-in)
       ⚠ 2 checks failing: etcd, poststarthook/start-kube-apiserver-admission-initializer
 ```
 
+### DNS / CoreDNS resolution health (opt-in)
+
+`scan --dns-health` probes each CoreDNS pod's `:9153/metrics` endpoint (via the
+`pods/proxy` subresource) and flags an elevated **SERVFAIL+REFUSED response
+ratio** — the sign that DNS is up but failing to resolve, a failure mode the
+CoreDNS-pod health check misses entirely.
+
+The check fires when the ratio of SERVFAIL + REFUSED responses to total responses
+is at or above **5%** (the default; set `KUBEAGENT_DNS_SERVFAIL_RATIO` to tune)
+over a minimum floor of **100 responses**. Below the floor the ratio is too
+noisy to be actionable and is skipped. Findings are aggregated across all CoreDNS
+pods so a single ratio and count appear in the output.
+
+It is **opt-in**: off by default because it requires the `pods/proxy` subresource
+— a broader grant than kubeagent's usual `get`/`list`/`watch`. Enable the add-on
+grant with the Helm value `dnsHealth.enabled=true` or by applying
+`deploy/rbac-dnshealth.yaml`. In the daemon, set
+`KUBEAGENT_DNS_HEALTH=true`; the gauge `kubeagent_dns_servfail_ratio` reports the
+current ratio as a float.
+
+The check is **advisory** — it appears in a `DNS` section but does not change
+the cluster verdict. Example output:
+
+```text
+DNS  (opt-in)
+  ✗ cluster DNS is failing to resolve
+      ⚠ CoreDNS SERVFAIL+REFUSED ratio 12.3% (1234/10000 responses across 2 pods)
+```
+
 ### Certificate expiry (opt-in)
 
 `scan --certs` reads the cluster's `kubernetes.io/tls` Secrets and flags

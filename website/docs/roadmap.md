@@ -206,6 +206,15 @@
   `kubeagent_control_plane_unhealthy`. See
   [Failure diagnostics](features/diagnostics.md).
 
+- **DNS / CoreDNS resolution health (`--dns-health`)** (Theme-B control-plane closer) —
+  opt-in `scan --dns-health` probes each CoreDNS pod's `:9153/metrics` and flags
+  an elevated SERVFAIL+REFUSED response ratio (default ≥ 5% over a 100-response
+  floor; env `KUBEAGENT_DNS_SERVFAIL_RATIO`) — catching DNS that is up but failing
+  to resolve, which the CoreDNS-pod health check misses. Read-only; needs the
+  `pods/proxy` add-on grant (`deploy/rbac-dnshealth.yaml` or Helm
+  `dnsHealth.enabled=true`); the daemon exposes `kubeagent_dns_servfail_ratio`.
+  See [Failure diagnostics](features/diagnostics.md).
+
 - **`--suggest` next steps** (first Theme-C / principled intelligence slice) —
   opt-in `scan --suggest` prints a deterministic, reviewed next-step suggestion
   and a read-only `kubectl` investigation command under each pod finding. Offline

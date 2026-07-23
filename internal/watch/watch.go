@@ -22,23 +22,24 @@ import (
 
 // Config configures the daemon.
 type Config struct {
-	Namespace              string
-	MetricsAddr            string
-	Heartbeat              time.Duration
-	Debounce               time.Duration
-	IncludeCron            bool
-	IncludeRestarts        bool
-	DiskUsage              bool
-	DiskThreshold          float64
-	QuotaThreshold         float64
-	NodeHeartbeatThreshold time.Duration
-	ExpectedNodes          []string
-	KubeletHealth          bool
-	ControlPlaneHealth     bool
-	DNSHealth              bool
-	DNSServfailRatio       float64
-	Certs                  bool
-	CertWarnDays           int
+	Namespace               string
+	MetricsAddr             string
+	Heartbeat               time.Duration
+	Debounce                time.Duration
+	IncludeCron             bool
+	IncludeRestarts         bool
+	DiskUsage               bool
+	DiskThreshold           float64
+	QuotaThreshold          float64
+	NodeHeartbeatThreshold  time.Duration
+	ExpectedNodes           []string
+	KubeletHealth           bool
+	ControlPlaneHealth      bool
+	DNSHealth               bool
+	DNSServfailRatio        float64
+	Certs                   bool
+	CertWarnDays            int
+	WebhookTimeoutThreshold int32
 }
 
 // Run starts the metrics server and the informer-driven control loop, blocking
@@ -96,7 +97,7 @@ func Run(ctx context.Context, client kubernetes.Interface, cfg Config) error {
 	}
 	log.Printf("kubeagent: watching cluster (namespace=%q, heartbeat=%s); metrics on %s", scopeLabel(cfg.Namespace), cfg.Heartbeat, cfg.MetricsAddr)
 
-	opts := scan.Options{Namespace: cfg.Namespace, IncludeCron: cfg.IncludeCron, IncludeRestarts: cfg.IncludeRestarts, DiskUsage: cfg.DiskUsage, DiskThreshold: cfg.DiskThreshold, QuotaThreshold: cfg.QuotaThreshold, NodeHeartbeatThreshold: cfg.NodeHeartbeatThreshold, ExpectedNodes: cfg.ExpectedNodes, KubeletHealth: cfg.KubeletHealth, ControlPlaneHealth: cfg.ControlPlaneHealth, DNSHealth: cfg.DNSHealth, DNSServfailRatio: cfg.DNSServfailRatio, Certs: cfg.Certs, CertWarnDays: cfg.CertWarnDays}
+	opts := scan.Options{Namespace: cfg.Namespace, IncludeCron: cfg.IncludeCron, IncludeRestarts: cfg.IncludeRestarts, DiskUsage: cfg.DiskUsage, DiskThreshold: cfg.DiskThreshold, QuotaThreshold: cfg.QuotaThreshold, NodeHeartbeatThreshold: cfg.NodeHeartbeatThreshold, ExpectedNodes: cfg.ExpectedNodes, KubeletHealth: cfg.KubeletHealth, ControlPlaneHealth: cfg.ControlPlaneHealth, DNSHealth: cfg.DNSHealth, DNSServfailRatio: cfg.DNSServfailRatio, Certs: cfg.Certs, CertWarnDays: cfg.CertWarnDays, WebhookTimeoutThreshold: cfg.WebhookTimeoutThreshold}
 	var cl changeLogger
 	reconcile := func() {
 		start := time.Now()

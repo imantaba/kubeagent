@@ -526,8 +526,35 @@ the webhook name, followed by the reason — for example:
 ```
 
 Read-only and advisory — it never changes the cluster verdict. The daemon
-exposes `kubeagent_admission_webhooks_failing`. Adds a base
-`admissionregistration.k8s.io` read grant.
+exposes `kubeagent_admission_webhooks_failing` (backend failures only). Adds a
+base `admissionregistration.k8s.io` read grant.
+
+### Admission-webhook latency risk
+
+`scan` also flags a Validating or Mutating webhook whose `failurePolicy` is
+`Fail` and whose `timeoutSeconds` is **≥ 15** — a latency landmine. Under
+`failurePolicy: Fail`, a slow webhook blocks every `create`/`update` it
+intercepts for up to that many seconds, then rejects it; the result is a
+cluster that appears to accept traffic but silently stalls and then errors on
+every affected operation.
+
+The threshold defaults to 15 and is tunable via the environment variable
+`KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS` (e.g.
+`KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS=10` to warn earlier) or the Helm value
+`webhookLatency.timeoutThreshold`. Webhooks with `failurePolicy: Ignore` and
+those with a `nil` (unset) `timeoutSeconds` are never flagged.
+
+The check is **always-on**, **cluster-wide only** (skipped under
+`--namespace`), and **advisory** — it does not change the cluster verdict. The
+daemon exposes `kubeagent_admission_webhook_latency_risks`. No new RBAC is
+required (reuses the `admissionregistration.k8s.io` grant above). Example
+output:
+
+```text
+WEBHOOK
+  ✗ slow-validator  ValidatingWebhookConfiguration  webhook policy.example.com
+      ⚠ WebhookSlow: timeoutSeconds 30 ≥ 15s under failurePolicy Fail — a slow webhook blocks every intercepted create/update for up to 30s, then rejects it
+```
 
 ### Security posture (opt-in)
 

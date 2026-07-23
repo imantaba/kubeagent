@@ -1105,6 +1105,36 @@ func TestEvaluate_DNSHealthOffByDefault(t *testing.T) {
 	}
 }
 
+func TestEvaluate_FlagsSlowWebhook(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}}
+	url := "https://hook.example.com/validate"
+	fail := admissionv1.Fail
+	vwc := &admissionv1.ValidatingWebhookConfiguration{
+		ObjectMeta: metav1.ObjectMeta{Name: "slow-validator"},
+		Webhooks: []admissionv1.ValidatingWebhook{{
+			Name:           "policy.example.com",
+			FailurePolicy:  &fail,
+			ClientConfig:   admissionv1.WebhookClientConfig{URL: &url},
+			TimeoutSeconds: p32(20),
+		}},
+	}
+	cli := fake.NewSimpleClientset(node, vwc)
+	res, err := Evaluate(context.Background(), cli, Options{}) // Namespace "" → webhook check runs; threshold 0 → 15
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, is := range res.WebhookIssues {
+		if is.Problem == "high-timeout" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a high-timeout webhook issue, got %+v", res.WebhookIssues)
+	}
+}
+
 func TestEvaluate_FlagsNearFullQuota(t *testing.T) {
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"},
 		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}}

@@ -1,6 +1,7 @@
 package webhookhealth
 
 import (
+	"strings"
 	"testing"
 
 	admissionv1 "k8s.io/api/admissionregistration/v1"
@@ -13,6 +14,16 @@ func failP() *admissionv1.FailurePolicyType   { f := admissionv1.Fail; return &f
 func ignoreP() *admissionv1.FailurePolicyType { f := admissionv1.Ignore; return &f }
 func svcRef(ns, name string) *admissionv1.ServiceReference {
 	return &admissionv1.ServiceReference{Namespace: ns, Name: name}
+}
+
+func i32(n int32) *int32 { return &n }
+
+// vhookT / mhookT build a webhook with a timeoutSeconds set.
+func vhookT(name string, fp *admissionv1.FailurePolicyType, cc admissionv1.WebhookClientConfig, timeout int32) admissionv1.ValidatingWebhook {
+	return admissionv1.ValidatingWebhook{Name: name, FailurePolicy: fp, ClientConfig: cc, TimeoutSeconds: i32(timeout)}
+}
+func mhookT(name string, fp *admissionv1.FailurePolicyType, cc admissionv1.WebhookClientConfig, timeout int32) admissionv1.MutatingWebhook {
+	return admissionv1.MutatingWebhook{Name: name, FailurePolicy: fp, ClientConfig: cc, TimeoutSeconds: i32(timeout)}
 }
 
 func vwc(name string, ws ...admissionv1.ValidatingWebhook) admissionv1.ValidatingWebhookConfiguration {
@@ -52,7 +63,7 @@ func TestAssess_NoEndpoints(t *testing.T) {
 		admissionv1.WebhookClientConfig{Service: svcRef("kube-system", "policy-svc")}))
 	services := []corev1.Service{svc("kube-system", "policy-svc")}
 	slices := []discoveryv1.EndpointSlice{sliceFor("kube-system", "policy-svc", false)} // 0 ready
-	is, ok := find(Assess([]admissionv1.ValidatingWebhookConfiguration{v}, nil, services, slices), "validate.policy.io")
+	is, ok := find(Assess([]admissionv1.ValidatingWebhookConfiguration{v}, nil, services, slices, 15), "validate.policy.io")
 	if !ok || is.Problem != "no-endpoints" {
 		t.Fatalf("want no-endpoints, got %+v", is)
 	}
@@ -67,7 +78,7 @@ func TestAssess_NoEndpoints(t *testing.T) {
 func TestAssess_MissingService(t *testing.T) {
 	m := mwc("image-signing", mhook("sign.example.com", failP(),
 		admissionv1.WebhookClientConfig{Service: svcRef("secure", "signer")}))
-	is, ok := find(Assess(nil, []admissionv1.MutatingWebhookConfiguration{m}, nil, nil), "sign.example.com")
+	is, ok := find(Assess(nil, []admissionv1.MutatingWebhookConfiguration{m}, nil, nil, 15), "sign.example.com")
 	if !ok || is.Problem != "missing-service" {
 		t.Fatalf("want missing-service, got %+v", is)
 	}
@@ -82,7 +93,7 @@ func TestAssess_MissingService(t *testing.T) {
 func TestAssess_NilFailurePolicyIsFail(t *testing.T) {
 	// nil failurePolicy defaults to Fail in admissionregistration.k8s.io/v1.
 	v := vwc("c", vhook("w", nil, admissionv1.WebhookClientConfig{Service: svcRef("ns", "gone")}))
-	if _, ok := find(Assess([]admissionv1.ValidatingWebhookConfiguration{v}, nil, nil, nil), "w"); !ok {
+	if _, ok := find(Assess([]admissionv1.ValidatingWebhookConfiguration{v}, nil, nil, nil, 15), "w"); !ok {
 		t.Fatal("a nil-failurePolicy webhook with a down backend must be flagged")
 	}
 }
@@ -93,10 +104,10 @@ func TestAssess_NotFlagged(t *testing.T) {
 	url := "https://external.example.com/hook"
 	cases := []admissionv1.ValidatingWebhookConfiguration{
 		vwc("ignore", vhook("ig", ignoreP(), admissionv1.WebhookClientConfig{Service: svcRef("ns", "gone")})), // Ignore → not blocking
-		vwc("urlhook", vhook("u", failP(), admissionv1.WebhookClientConfig{URL: &url})),                       // URL → can't check
+		vwc("urlhook", vhook("u", failP(), admissionv1.WebhookClientConfig{URL: &url})),                       // URL, nil timeout → not flagged
 		vwc("healthy", vhook("h", failP(), admissionv1.WebhookClientConfig{Service: svcRef("ns", "up")})),     // ready backend
 	}
-	if got := Assess(cases, nil, services, slices); len(got) != 0 {
+	if got := Assess(cases, nil, services, slices, 15); len(got) != 0 {
 		t.Fatalf("expected nothing flagged, got %+v", got)
 	}
 }
@@ -106,7 +117,7 @@ func TestAssess_SortedAndPerWebhook(t *testing.T) {
 	v := vwc("cfg",
 		vhook("b-hook", failP(), admissionv1.WebhookClientConfig{Service: svcRef("ns", "gone")}),
 		vhook("a-hook", failP(), admissionv1.WebhookClientConfig{Service: svcRef("ns", "gone")}))
-	got := Assess([]admissionv1.ValidatingWebhookConfiguration{v}, nil, nil, nil)
+	got := Assess([]admissionv1.ValidatingWebhookConfiguration{v}, nil, nil, nil, 15)
 	if len(got) != 2 || got[0].Webhook != "a-hook" || got[1].Webhook != "b-hook" {
 		t.Fatalf("want two issues sorted by webhook, got %+v", got)
 	}
@@ -116,8 +127,105 @@ func TestAssess_SortsMutatingBeforeValidating(t *testing.T) {
 	// Cross-kind ordering: "MutatingWebhookConfiguration" < "ValidatingWebhookConfiguration".
 	v := vwc("vcfg", vhook("vw", failP(), admissionv1.WebhookClientConfig{Service: svcRef("ns", "gone")}))
 	m := mwc("mcfg", mhook("mw", failP(), admissionv1.WebhookClientConfig{Service: svcRef("ns", "gone")}))
-	got := Assess([]admissionv1.ValidatingWebhookConfiguration{v}, []admissionv1.MutatingWebhookConfiguration{m}, nil, nil)
+	got := Assess([]admissionv1.ValidatingWebhookConfiguration{v}, []admissionv1.MutatingWebhookConfiguration{m}, nil, nil, 15)
 	if len(got) != 2 || got[0].Kind != "MutatingWebhookConfiguration" || got[1].Kind != "ValidatingWebhookConfiguration" {
 		t.Fatalf("want Mutating sorted before Validating, got %+v", got)
+	}
+}
+
+func TestAssess_HighTimeoutFlagged(t *testing.T) {
+	v := vwc("slow-validator", vhookT("policy.example.com", failP(),
+		admissionv1.WebhookClientConfig{Service: svcRef("kube-system", "policy-svc")}, 30))
+	services := []corev1.Service{svc("kube-system", "policy-svc")}
+	slices := []discoveryv1.EndpointSlice{sliceFor("kube-system", "policy-svc", true)} // healthy backend
+
+	is, ok := find(Assess([]admissionv1.ValidatingWebhookConfiguration{v}, nil, services, slices, 15), "policy.example.com")
+	if !ok {
+		t.Fatal("want a high-timeout issue for a healthy 30s Fail webhook")
+	}
+	if is.Problem != "high-timeout" {
+		t.Errorf("Problem = %q, want high-timeout", is.Problem)
+	}
+	if !strings.Contains(is.Reason, "timeoutSeconds 30") || !strings.Contains(is.Reason, "≥ 15s") {
+		t.Errorf("Reason = %q", is.Reason)
+	}
+}
+
+func TestAssess_TimeoutAtThresholdFlagged(t *testing.T) {
+	v := vwc("edge", vhookT("edge.io", failP(), admissionv1.WebhookClientConfig{Service: svcRef("ns", "svc")}, 15))
+	services := []corev1.Service{svc("ns", "svc")}
+	slices := []discoveryv1.EndpointSlice{sliceFor("ns", "svc", true)}
+	if _, ok := find(Assess([]admissionv1.ValidatingWebhookConfiguration{v}, nil, services, slices, 15), "edge.io"); !ok {
+		t.Error("timeoutSeconds == threshold (15) should be flagged (inclusive)")
+	}
+}
+
+func TestAssess_TimeoutBelowThresholdNotFlagged(t *testing.T) {
+	v := vwc("ok", vhookT("ok.io", failP(), admissionv1.WebhookClientConfig{Service: svcRef("ns", "svc")}, 14))
+	services := []corev1.Service{svc("ns", "svc")}
+	slices := []discoveryv1.EndpointSlice{sliceFor("ns", "svc", true)}
+	if _, ok := find(Assess([]admissionv1.ValidatingWebhookConfiguration{v}, nil, services, slices, 15), "ok.io"); ok {
+		t.Error("timeoutSeconds 14 < 15 should not be flagged")
+	}
+}
+
+func TestAssess_IgnorePolicyHighTimeoutNotFlagged(t *testing.T) {
+	v := vwc("lax", vhookT("lax.io", ignoreP(), admissionv1.WebhookClientConfig{Service: svcRef("ns", "svc")}, 30))
+	services := []corev1.Service{svc("ns", "svc")}
+	slices := []discoveryv1.EndpointSlice{sliceFor("ns", "svc", true)}
+	if _, ok := find(Assess([]admissionv1.ValidatingWebhookConfiguration{v}, nil, services, slices, 15), "lax.io"); ok {
+		t.Error("Ignore-policy webhook must not be latency-flagged")
+	}
+}
+
+func TestAssess_NilTimeoutNotFlagged(t *testing.T) {
+	// vhook (no timeout) → TimeoutSeconds nil
+	v := vwc("nilto", vhook("nilto.io", failP(), admissionv1.WebhookClientConfig{Service: svcRef("ns", "svc")}))
+	services := []corev1.Service{svc("ns", "svc")}
+	slices := []discoveryv1.EndpointSlice{sliceFor("ns", "svc", true)}
+	if _, ok := find(Assess([]admissionv1.ValidatingWebhookConfiguration{v}, nil, services, slices, 15), "nilto.io"); ok {
+		t.Error("nil timeoutSeconds must not be flagged")
+	}
+}
+
+func TestAssess_BackendDownHighTimeoutNoDoubleReport(t *testing.T) {
+	v := vwc("down", vhookT("down.io", failP(), admissionv1.WebhookClientConfig{Service: svcRef("ns", "gone")}, 30))
+	// no Service "gone" collected → missing-service
+	got := Assess([]admissionv1.ValidatingWebhookConfiguration{v}, nil, nil, nil, 15)
+	if len(got) != 1 {
+		t.Fatalf("want exactly one issue (backend, not doubled), got %+v", got)
+	}
+	if got[0].Problem != "missing-service" {
+		t.Errorf("Problem = %q, want missing-service (backend wins)", got[0].Problem)
+	}
+}
+
+func TestAssess_URLWebhookHighTimeoutFlagged(t *testing.T) {
+	u := "https://hook.example.com/validate"
+	v := vwc("urlhook", vhookT("url.io", failP(), admissionv1.WebhookClientConfig{URL: &u}, 30))
+	is, ok := find(Assess([]admissionv1.ValidatingWebhookConfiguration{v}, nil, nil, nil, 15), "url.io")
+	if !ok {
+		t.Fatal("URL-based Fail webhook with high timeout should be flagged")
+	}
+	if is.Problem != "high-timeout" || is.Service != "" {
+		t.Errorf("issue = %+v, want high-timeout with empty Service", is)
+	}
+}
+
+func TestAssess_MutatingHighTimeoutFlagged(t *testing.T) {
+	m := mwc("slow-mutator", mhookT("mut.io", failP(), admissionv1.WebhookClientConfig{Service: svcRef("ns", "svc")}, 30))
+	services := []corev1.Service{svc("ns", "svc")}
+	slices := []discoveryv1.EndpointSlice{sliceFor("ns", "svc", true)}
+	if _, ok := find(Assess(nil, []admissionv1.MutatingWebhookConfiguration{m}, services, slices, 15), "mut.io"); !ok {
+		t.Error("mutating high-timeout webhook should be flagged")
+	}
+}
+
+func TestAssess_ThresholdRespected(t *testing.T) {
+	v := vwc("t", vhookT("t.io", failP(), admissionv1.WebhookClientConfig{Service: svcRef("ns", "svc")}, 30))
+	services := []corev1.Service{svc("ns", "svc")}
+	slices := []discoveryv1.EndpointSlice{sliceFor("ns", "svc", true)}
+	if _, ok := find(Assess([]admissionv1.ValidatingWebhookConfiguration{v}, nil, services, slices, 31), "t.io"); ok {
+		t.Error("threshold 31 should not flag a 30s webhook")
 	}
 }

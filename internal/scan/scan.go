@@ -45,22 +45,23 @@ import (
 
 // Options controls the evaluation scope.
 type Options struct {
-	Namespace              string
-	IncludeCron            bool
-	IncludeRestarts        bool
-	DiskUsage              bool
-	DiskThreshold          float64
-	QuotaThreshold         float64
-	Certs                  bool
-	CertWarnDays           int
-	Security               bool
-	NodeHeartbeatThreshold time.Duration
-	ExpectedNodes          []string
-	KubeletHealth          bool
-	ControlPlaneHealth     bool
-	DNSHealth              bool
-	DNSServfailRatio       float64
-	Logs                   bool
+	Namespace               string
+	IncludeCron             bool
+	IncludeRestarts         bool
+	DiskUsage               bool
+	DiskThreshold           float64
+	QuotaThreshold          float64
+	Certs                   bool
+	CertWarnDays            int
+	Security                bool
+	NodeHeartbeatThreshold  time.Duration
+	ExpectedNodes           []string
+	KubeletHealth           bool
+	ControlPlaneHealth      bool
+	DNSHealth               bool
+	DNSServfailRatio        float64
+	Logs                    bool
+	WebhookTimeoutThreshold int32
 }
 
 // Result is the structured health picture. Inputs and Nodes are exposed so the
@@ -232,7 +233,11 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	if opts.Namespace == "" { // webhook backends can live in any namespace; only sound cluster-wide
 		vwc, _ := collect.ValidatingWebhookConfigurations(ctx, client)
 		mwc, _ := collect.MutatingWebhookConfigurations(ctx, client)
-		webhookIssues = webhookhealth.Assess(vwc, mwc, svcs, slices)
+		webhookThreshold := opts.WebhookTimeoutThreshold
+		if webhookThreshold <= 0 {
+			webhookThreshold = 15
+		}
+		webhookIssues = webhookhealth.Assess(vwc, mwc, svcs, slices, webhookThreshold)
 	}
 	pvs, _ := collect.PersistentVolumes(ctx, client)
 	pvcReclaim := pvcreclaim.Assess(pvcs, pvs)

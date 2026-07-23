@@ -215,6 +215,16 @@
   `dnsHealth.enabled=true`); the daemon exposes `kubeagent_dns_servfail_ratio`.
   See [Failure diagnostics](features/diagnostics.md).
 
+- **Admission-webhook latency risk** (Theme-B closer — closes the admission-webhook line) —
+  always-on `scan` check that flags a Fail-policy webhook whose `timeoutSeconds`
+  is at or above 15 (env `KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS`, Helm
+  `webhookLatency.timeoutThreshold`) — a latency landmine that blocks every
+  intercepted create/update for up to that long, then rejects it. Rendered
+  `WebhookSlow`; complements the existing webhook-failure check (missing/no-endpoints
+  backend). Read-only, always-on, advisory; the daemon exposes
+  `kubeagent_admission_webhook_latency_risks`; no new RBAC.
+  See [Failure diagnostics](features/diagnostics.md).
+
 - **`--suggest` next steps** (first Theme-C / principled intelligence slice) —
   opt-in `scan --suggest` prints a deterministic, reviewed next-step suggestion
   and a read-only `kubectl` investigation command under each pod finding. Offline

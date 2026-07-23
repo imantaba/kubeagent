@@ -63,6 +63,7 @@ type metrics struct {
 	pdbBlockingIssues     int
 	hpaScalingIssues      int
 	webhooksFailing       int
+	webhookLatencyRisks   int
 	quotaIssues           int
 	findings              map[string]int
 	lastScanUnix          int64
@@ -113,7 +114,15 @@ func (m *metrics) update(res *scan.Result, dur time.Duration, now time.Time, err
 	m.stuckTerminating = len(res.StuckTerminating)
 	m.pdbBlockingIssues = len(res.PDBIssues)
 	m.hpaScalingIssues = len(res.HPAIssues)
-	m.webhooksFailing = len(res.WebhookIssues)
+	m.webhooksFailing = 0
+	m.webhookLatencyRisks = 0
+	for _, i := range res.WebhookIssues {
+		if i.Problem == "high-timeout" {
+			m.webhookLatencyRisks++
+		} else {
+			m.webhooksFailing++
+		}
+	}
 	m.quotaIssues = len(res.QuotaIssues)
 	flagged := 0
 	findings := map[string]int{}
@@ -177,6 +186,7 @@ func (m *metrics) render() string {
 	gauge("kubeagent_pdb_blocking_issues", "PodDisruptionBudgets that will block a node drain", float64(m.pdbBlockingIssues))
 	gauge("kubeagent_hpa_scaling_issues", "HorizontalPodAutoscalers that cannot scale as intended", float64(m.hpaScalingIssues))
 	gauge("kubeagent_admission_webhooks_failing", "Fail-policy admission webhooks whose backend is missing or has no ready endpoints", float64(m.webhooksFailing))
+	gauge("kubeagent_admission_webhook_latency_risks", "Fail-policy admission webhooks with a high timeoutSeconds (a latency landmine)", float64(m.webhookLatencyRisks))
 	gauge("kubeagent_resourcequota_issues", "ResourceQuota entries at or over the usage threshold", float64(m.quotaIssues))
 	fmt.Fprintf(&b, "# HELP kubeagent_findings Current findings by issue type\n# TYPE kubeagent_findings gauge\n")
 	issues := make([]string, 0, len(m.findings))

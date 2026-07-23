@@ -1736,6 +1736,24 @@ func TestPrintInventory_NoWebhookSectionWhenEmpty(t *testing.T) {
 	}
 }
 
+func TestPrintWebhookIssues_LatencyLabel(t *testing.T) {
+	in := Input{Result: inventory.Result{}, WebhookIssues: []webhookhealth.Issue{
+		{Kind: "ValidatingWebhookConfiguration", Config: "slow-validator", Webhook: "policy.example.com", Problem: "high-timeout", Reason: "timeoutSeconds 30 ≥ 15s under failurePolicy Fail — a slow webhook blocks every intercepted create/update for up to 30s, then rejects it"},
+		{Kind: "ValidatingWebhookConfiguration", Config: "down-validator", Webhook: "down.io", Service: "ns/svc", Problem: "no-endpoints", Reason: "backend Service ns/svc has no ready endpoints — failurePolicy Fail rejects every intercepted create/update"},
+	}}
+	var b bytes.Buffer
+	if err := PrintInventory(in, "text", &b); err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	if !strings.Contains(out, "⚠ WebhookSlow: timeoutSeconds 30 ≥ 15s") {
+		t.Errorf("missing WebhookSlow line:\n%s", out)
+	}
+	if !strings.Contains(out, "⚠ WebhookDown: backend Service ns/svc has no ready endpoints") {
+		t.Errorf("backend issue should still render WebhookDown:\n%s", out)
+	}
+}
+
 func TestPrintInventory_SuggestLines(t *testing.T) {
 	build := func(suggest bool) string {
 		var buf bytes.Buffer

@@ -642,7 +642,11 @@ func printWebhookIssues(issues []webhookhealth.Issue, w io.Writer) error {
 		if _, err := fmt.Fprintf(w, "  ✗ %s  %s  webhook %s\n", is.Config, is.Kind, is.Webhook); err != nil {
 			return err
 		}
-		if _, err := fmt.Fprintf(w, "      ⚠ WebhookDown: %s\n", is.Reason); err != nil {
+		label := "WebhookDown"
+		if is.Problem == "high-timeout" {
+			label = "WebhookSlow"
+		}
+		if _, err := fmt.Fprintf(w, "      ⚠ %s: %s\n", label, is.Reason); err != nil {
 			return err
 		}
 	}

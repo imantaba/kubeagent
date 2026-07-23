@@ -92,6 +92,14 @@ func TestOpenAISummarizer_Errors(t *testing.T) {
 	if _, err := (openaiSummarizer{endpoint: srvEmpty.URL, model: "m", http: srvEmpty.Client()}).summarize(context.Background(), "p"); err == nil {
 		t.Error("want an error when the response has no choices")
 	}
+
+	srvBadJSON := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "not json at all")
+	}))
+	defer srvBadJSON.Close()
+	if _, err := (openaiSummarizer{endpoint: srvBadJSON.URL, model: "m", http: srvBadJSON.Client()}).summarize(context.Background(), "p"); err == nil {
+		t.Error("want a parse error when the 200 body is not JSON")
+	}
 }
 
 func TestNewFromConfig_LocalBackendEndToEnd(t *testing.T) {

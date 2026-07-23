@@ -117,7 +117,7 @@ func TestApply_RollsBackToPreviousTemplate(t *testing.T) {
 	good := rsWithImage("shop", "web-1", "web", "1", "nginx:1.27")
 	broken := rsWithImage("shop", "web-2", "web", "2", "nginx:does-not-exist")
 	cli := fake.NewSimpleClientset(cur, &good, &broken)
-	res := Apply(context.Background(), cli, Action{Kind: "RolloutUndo", Namespace: "shop", Name: "web"})
+	res := Apply(context.Background(), cli, Action{Kind: "RolloutUndo", Namespace: "shop", Name: "web", CurrentRevision: 2, TargetRevision: 1})
 	if !res.Applied || res.Err != nil {
 		t.Fatalf("expected applied, got %+v", res)
 	}
@@ -327,5 +327,63 @@ func TestPlan_UncordonCarriesStaticChange(t *testing.T) {
 	want := Change{Field: "spec.unschedulable", From: "true", To: "false"}
 	if len(got[0].Changes) != 1 || got[0].Changes[0] != want {
 		t.Errorf("changes = %+v, want [%+v]", got[0].Changes, want)
+	}
+}
+
+func TestApply_RefusesOnCurrentRevisionDrift(t *testing.T) {
+	// Previewed cur=2 target=1, but a new rollout happened: deployment is now rev 3.
+	cur := depObj("shop", "web", "nginx:still-broken", "3")
+	r1 := rsWithImage("shop", "web-1", "web", "1", "nginx:1.27")
+	r2 := rsWithImage("shop", "web-2", "web", "2", "nginx:broken")
+	r3 := rsWithImage("shop", "web-3", "web", "3", "nginx:still-broken")
+	cli := fake.NewSimpleClientset(cur, &r1, &r2, &r3)
+	res := Apply(context.Background(), cli, Action{
+		Kind: "RolloutUndo", Namespace: "shop", Name: "web",
+		CurrentRevision: 2, TargetRevision: 1,
+	})
+	if res.Applied || res.Err != nil {
+		t.Fatalf("drift must refuse without error, got %+v", res)
+	}
+	if !strings.Contains(res.Detail, "state changed since preview") {
+		t.Errorf("detail = %q, want the drift refusal", res.Detail)
+	}
+	for _, act := range cli.Actions() {
+		if act.GetVerb() == "update" || act.GetVerb() == "patch" || act.GetVerb() == "delete" {
+			t.Fatalf("drift refusal must make no write, saw %s", act.GetVerb())
+		}
+	}
+}
+
+func TestApply_RefusesOnTargetRevisionDrift(t *testing.T) {
+	// Previewed target=1, but rev 1's RS is gone; pickTarget would land on rev 2.
+	cur := depObj("shop", "web", "nginx:broken3", "3")
+	r2 := rsWithImage("shop", "web-2", "web", "2", "nginx:1.27")
+	r3 := rsWithImage("shop", "web-3", "web", "3", "nginx:broken3")
+	cli := fake.NewSimpleClientset(cur, &r2, &r3)
+	res := Apply(context.Background(), cli, Action{
+		Kind: "RolloutUndo", Namespace: "shop", Name: "web",
+		CurrentRevision: 3, TargetRevision: 1,
+	})
+	if res.Applied || !strings.Contains(res.Detail, "state changed since preview") {
+		t.Fatalf("target drift must refuse, got %+v", res)
+	}
+	for _, act := range cli.Actions() {
+		if act.GetVerb() == "update" {
+			t.Fatal("target drift refusal must make no write")
+		}
+	}
+}
+
+func TestApply_MatchingPreviewApplies(t *testing.T) {
+	cur := depObj("shop", "web", "nginx:does-not-exist", "2")
+	good := rsWithImage("shop", "web-1", "web", "1", "nginx:1.27")
+	broken := rsWithImage("shop", "web-2", "web", "2", "nginx:does-not-exist")
+	cli := fake.NewSimpleClientset(cur, &good, &broken)
+	res := Apply(context.Background(), cli, Action{
+		Kind: "RolloutUndo", Namespace: "shop", Name: "web",
+		CurrentRevision: 2, TargetRevision: 1,
+	})
+	if !res.Applied || res.Err != nil {
+		t.Fatalf("matching preview must apply, got %+v", res)
 	}
 }

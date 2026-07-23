@@ -284,6 +284,13 @@ func applyRolloutUndo(ctx context.Context, client kubernetes.Interface, a Action
 		res.Detail = "no differing prior revision to roll back to (state changed); no write made"
 		return res
 	}
+	curRev, targetRev := revFromAnnotations(dep.Annotations), revFromAnnotations(target.Annotations)
+	if curRev != a.CurrentRevision || targetRev != a.TargetRevision {
+		res.Detail = fmt.Sprintf(
+			"state changed since preview (revision %d is now current and the rollback would land on %d; previewed %d → %d) — re-run kubeagent scan --fix; no write made",
+			curRev, targetRev, a.CurrentRevision, a.TargetRevision)
+		return res
+	}
 	tpl := *target.Spec.Template.DeepCopy()
 	delete(tpl.Labels, "pod-template-hash")
 	dep.Spec.Template = tpl

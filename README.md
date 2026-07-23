@@ -321,10 +321,13 @@ Read-only and namespace-scoped.
 
 By default kubeagent only reads. `scan --fix` additionally proposes safe,
 reversible remediations for what it finds and applies each one **only after you
-confirm** (`Apply? [y/N]`, default No). Writes are guard-railed: a fixed allowlist
-of actions, never in protected namespaces (`kube-system`, `kube-public`,
-`kube-node-lease`), preconditions re-checked against live state, and the result
-re-verified. Nothing about remediations is sent to `--explain`.
+confirm** (`Apply? [y/N]`, default No). Every proposal shows a field-level diff
+of exactly what will change (revision, per-container images — never env values or
+template contents), and refuses to apply if the cluster drifted since the preview
+(a new rollout landed, or the target revision is gone). Writes are guard-railed:
+a fixed allowlist of actions, never in protected namespaces (`kube-system`,
+`kube-public`, `kube-node-lease`), preconditions re-checked against live state,
+and the result re-verified. Nothing about remediations is sent to `--explain`.
 
 ```bash
 ./kubeagent scan --fix             # propose + confirm each fix

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`--fix` diff preview + preview→apply contract.** Every proposed fix now shows a
+  curated `will change:` diff (revision, per-container images, a safe count of other
+  template changes — never env values or template contents) computed at plan time,
+  and `Apply` is bound to the preview: if the cluster drifted since (a new rollout,
+  the target revision gone), it refuses with `state changed since preview` and makes
+  no write. With `--output json`, the plan is included as `remediationPlan`
+  (status `proposed`) — the foundation for the coming audit log. Plan and apply now
+  share one target-selection rule (highest prior revision with a differing template).
+
 ## [0.50.0] - 2026-07-23
 
 ### Added

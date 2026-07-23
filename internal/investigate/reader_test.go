@@ -20,10 +20,22 @@ func call(name string, input map[string]string) toolCall {
 func TestReader_DescribePod_StructuredNoSecrets(t *testing.T) {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "web-abc", Namespace: "shop"},
-		Spec:       corev1.PodSpec{NodeName: "node-1"},
+		Spec: corev1.PodSpec{
+			NodeName: "node-1",
+			Containers: []corev1.Container{{
+				Name:    "web",
+				Command: []string{"/bin/secret-launcher"},
+				Args:    []string{"--token=SECRETARG"},
+				Env: []corev1.EnvVar{{
+					Name:  "DB_PASSWORD",
+					Value: "SECRETENV",
+				}},
+			}},
+		},
 		Status: corev1.PodStatus{
 			Phase:  corev1.PodRunning,
 			PodIP:  "10.1.2.3",
+			HostIP: "192.168.5.5",
 			ContainerStatuses: []corev1.ContainerStatus{{
 				Name: "web", Ready: false, RestartCount: 5,
 				State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{
@@ -46,8 +58,11 @@ func TestReader_DescribePod_StructuredNoSecrets(t *testing.T) {
 	if !strings.Contains(res.Content, "CrashLoopBackOff") || !strings.Contains(res.Content, "restarts=5") {
 		t.Errorf("missing structured status: %q", res.Content)
 	}
-	if strings.Contains(res.Content, "10.1.2.3") {
-		t.Errorf("pod IP must not leak into tool output: %q", res.Content)
+	// Egress invariant: none of these forbidden fields must appear in output.
+	for _, forbidden := range []string{"10.1.2.3", "192.168.5.5", "SECRETARG", "SECRETENV", "DB_PASSWORD", "secret-launcher"} {
+		if strings.Contains(res.Content, forbidden) {
+			t.Errorf("forbidden field %q leaked into tool output: %q", forbidden, res.Content)
+		}
 	}
 }
 
@@ -90,6 +105,30 @@ func TestReader_GetEvents_ForInScopeObject(t *testing.T) {
 	}
 }
 
+func TestReader_DescribeWorkload_StructuredNoSecrets(t *testing.T) {
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: "shop"},
+		Status: appsv1.DeploymentStatus{
+			ReadyReplicas: 1,
+			Replicas:      3,
+		},
+	}
+	r := Reader{client: fake.NewSimpleClientset(dep)}
+	s := NewScope(nil)
+	s.Add("deployment", "shop", "web")
+
+	res := r.execute(context.Background(), call("describe", map[string]string{
+		"kind": "deployment", "namespace": "shop", "name": "web",
+	}), s)
+
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", res.Content)
+	}
+	if !strings.Contains(res.Content, "ready=1/3") {
+		t.Errorf("missing structured readiness in output: %q", res.Content)
+	}
+}
+
 func TestReader_GetRelated_OwnerAddsToScope(t *testing.T) {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -97,8 +136,7 @@ func TestReader_GetRelated_OwnerAddsToScope(t *testing.T) {
 			OwnerReferences: []metav1.OwnerReference{{Kind: "ReplicaSet", Name: "web-5f"}},
 		},
 	}
-	rs := &appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Name: "web-5f", Namespace: "shop"}}
-	r := Reader{client: fake.NewSimpleClientset(pod, rs)}
+	r := Reader{client: fake.NewSimpleClientset(pod)}
 	s := NewScope(nil)
 	s.Add("pod", "shop", "web-abc")
 	res := r.execute(context.Background(), call("get_related", map[string]string{

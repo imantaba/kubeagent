@@ -18,6 +18,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/pdbhealth"
 	"github.com/imantaba/kubeagent/internal/quotahealth"
+	"github.com/imantaba/kubeagent/internal/remediate"
 	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/termhealth"
 	"github.com/imantaba/kubeagent/internal/webhookhealth"
@@ -351,13 +352,42 @@ func TestRun_InvestigateSupersedesExplain(t *testing.T) {
 	}
 }
 
+func TestRunFixes_PrintsWillChangeBlock(t *testing.T) {
+	actions := []remediate.Action{{
+		Kind: "RolloutUndo", Namespace: "shop", Name: "web",
+		Target: "shop/web (Deployment)", Summary: "roll back to the previous revision",
+		Reason:            "newest rollout cannot pull its image; a prior revision (1) exists",
+		KubectlEquivalent: "kubectl -n shop rollout undo deployment/web",
+		Changes: []remediate.Change{
+			{Field: "revision", From: "2", To: "1"},
+			{Field: "image (c)", From: "nginx:broken", To: "nginx:1.27"},
+			{Field: "1 other template field changed"},
+		},
+		CurrentRevision: 2, TargetRevision: 1,
+	}}
+	var out bytes.Buffer
+	runFixes(context.Background(), fake.NewSimpleClientset(), actions, true /*dryRun*/, false, &out, strings.NewReader(""))
+	s := out.String()
+	for _, want := range []string{
+		"will change:",
+		"revision: 2 → 1",
+		"image (c): nginx:broken → nginx:1.27",
+		"1 other template field changed",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("output missing %q:\n%s", want, s)
+		}
+	}
+}
+
 func TestRunFixes_DryRunWritesNothing(t *testing.T) {
 	d := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web",
 		Annotations: map[string]string{"deployment.kubernetes.io/revision": "2"}}}
 	d.Spec.Template = corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "nginx:bad"}}}}
 	cli := fake.NewSimpleClientset(d)
 	var out bytes.Buffer
-	runFixes(context.Background(), cli, fixWorkload(), fixRS(), nil, true /*dryRun*/, false, &out, strings.NewReader(""))
+	actions := remediate.Plan(fixWorkload(), fixRS(), nil)
+	runFixes(context.Background(), cli, actions, true /*dryRun*/, false, &out, strings.NewReader(""))
 	for _, a := range cli.Actions() {
 		if a.GetVerb() == "update" {
 			t.Fatalf("dry-run must not write; saw %s", a.GetVerb())
@@ -375,7 +405,8 @@ func TestRunFixes_YesApplies(t *testing.T) {
 	rss := fixRS()
 	cli := fake.NewSimpleClientset(d, &rss[0], &rss[1])
 	var out bytes.Buffer
-	runFixes(context.Background(), cli, fixWorkload(), rss, nil, false, true /*assumeYes*/, &out, strings.NewReader(""))
+	actions := remediate.Plan(fixWorkload(), rss, nil)
+	runFixes(context.Background(), cli, actions, false, true /*assumeYes*/, &out, strings.NewReader(""))
 	got, _ := cli.AppsV1().Deployments("shop").Get(context.Background(), "web", metav1.GetOptions{})
 	if got.Spec.Template.Spec.Containers[0].Image != "nginx:1.27" {
 		t.Errorf("expected rollback to nginx:1.27, got %q", got.Spec.Template.Spec.Containers[0].Image)
@@ -387,7 +418,8 @@ func TestRunFixes_DryRunUncordonWritesNothing(t *testing.T) {
 	n.Spec.Unschedulable = true
 	cli := fake.NewSimpleClientset(n)
 	var out bytes.Buffer
-	runFixes(context.Background(), cli, nil, nil, []corev1.Node{*n}, true /*dryRun*/, false, &out, strings.NewReader(""))
+	actions := remediate.Plan(nil, nil, []corev1.Node{*n})
+	runFixes(context.Background(), cli, actions, true /*dryRun*/, false, &out, strings.NewReader(""))
 	for _, a := range cli.Actions() {
 		if a.GetVerb() == "update" {
 			t.Fatalf("dry-run must not write a node; saw update")
@@ -403,7 +435,8 @@ func TestRunFixes_UncordonYesApplies(t *testing.T) {
 	n.Spec.Unschedulable = true
 	cli := fake.NewSimpleClientset(n)
 	var out bytes.Buffer
-	runFixes(context.Background(), cli, nil, nil, []corev1.Node{*n}, false, true, &out, strings.NewReader(""))
+	actions := remediate.Plan(nil, nil, []corev1.Node{*n})
+	runFixes(context.Background(), cli, actions, false, true, &out, strings.NewReader(""))
 	got, _ := cli.CoreV1().Nodes().Get(context.Background(), "worker-1", metav1.GetOptions{})
 	if got.Spec.Unschedulable {
 		t.Errorf("expected node uncordoned by --yes")

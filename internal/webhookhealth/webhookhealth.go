@@ -1,8 +1,9 @@
 // Package webhookhealth flags admission webhooks whose failurePolicy is Fail and
-// whose backing Service is missing or has no ready endpoints — such a webhook
-// rejects every create/update it intercepts, cluster-wide. Pure and read-only: the
-// caller supplies the webhook configs and the collected Services/EndpointSlices.
-// Advisory (never affects the cluster verdict).
+// whose backing Service is missing or has no ready endpoints, or has a high
+// timeoutSeconds (a latency landmine) — such a webhook rejects every create/update
+// it intercepts, cluster-wide. Pure and read-only: the caller supplies the webhook
+// configs and the collected Services/EndpointSlices. Advisory (never affects the
+// cluster verdict).
 package webhookhealth
 
 import (
@@ -34,42 +35,58 @@ type hook struct {
 	name    string
 	fp      *admissionv1.FailurePolicyType
 	service *admissionv1.ServiceReference
+	timeout *int32
 }
 
 // Assess flags Fail-policy webhooks whose backend Service is missing or has no
-// ready endpoints, sorted by (Kind, Config, Webhook).
+// ready endpoints, or whose timeoutSeconds is >= timeoutThreshold, sorted by
+// (Kind, Config, Webhook).
 func Assess(
 	validating []admissionv1.ValidatingWebhookConfiguration,
 	mutating []admissionv1.MutatingWebhookConfiguration,
 	services []corev1.Service,
 	slices []discoveryv1.EndpointSlice,
+	timeoutThreshold int32,
 ) []Issue {
 	var hooks []hook
 	for _, c := range validating {
 		for _, w := range c.Webhooks {
-			hooks = append(hooks, hook{"ValidatingWebhookConfiguration", c.Name, w.Name, w.FailurePolicy, w.ClientConfig.Service})
+			hooks = append(hooks, hook{"ValidatingWebhookConfiguration", c.Name, w.Name, w.FailurePolicy, w.ClientConfig.Service, w.TimeoutSeconds})
 		}
 	}
 	for _, c := range mutating {
 		for _, w := range c.Webhooks {
-			hooks = append(hooks, hook{"MutatingWebhookConfiguration", c.Name, w.Name, w.FailurePolicy, w.ClientConfig.Service})
+			hooks = append(hooks, hook{"MutatingWebhookConfiguration", c.Name, w.Name, w.FailurePolicy, w.ClientConfig.Service, w.TimeoutSeconds})
 		}
 	}
 
 	var out []Issue
 	for _, h := range hooks {
-		if !failsClosed(h.fp) || h.service == nil {
-			continue // Ignore policy, or a URL-based webhook we can't check
+		if !failsClosed(h.fp) {
+			continue // Ignore policy
 		}
-		id := h.service.Namespace + "/" + h.service.Name
-		svc, found := findService(services, h.service.Namespace, h.service.Name)
-		switch {
-		case !found:
-			out = append(out, Issue{Kind: h.kind, Config: h.config, Webhook: h.name, Service: id, Problem: "missing-service",
-				Reason: fmt.Sprintf("backend Service %s does not exist — failurePolicy Fail rejects every intercepted create/update", id)})
-		case svchealth.ReadyEndpoints(svc, slices) == 0:
-			out = append(out, Issue{Kind: h.kind, Config: h.config, Webhook: h.name, Service: id, Problem: "no-endpoints",
-				Reason: fmt.Sprintf("backend Service %s has no ready endpoints — failurePolicy Fail rejects every intercepted create/update", id)})
+		backendFlagged := false
+		if h.service != nil {
+			id := h.service.Namespace + "/" + h.service.Name
+			svc, found := findService(services, h.service.Namespace, h.service.Name)
+			switch {
+			case !found:
+				out = append(out, Issue{Kind: h.kind, Config: h.config, Webhook: h.name, Service: id, Problem: "missing-service",
+					Reason: fmt.Sprintf("backend Service %s does not exist — failurePolicy Fail rejects every intercepted create/update", id)})
+				backendFlagged = true
+			case svchealth.ReadyEndpoints(svc, slices) == 0:
+				out = append(out, Issue{Kind: h.kind, Config: h.config, Webhook: h.name, Service: id, Problem: "no-endpoints",
+					Reason: fmt.Sprintf("backend Service %s has no ready endpoints — failurePolicy Fail rejects every intercepted create/update", id)})
+				backendFlagged = true
+			}
+		}
+		if !backendFlagged && h.timeout != nil && *h.timeout >= timeoutThreshold {
+			id := ""
+			if h.service != nil {
+				id = h.service.Namespace + "/" + h.service.Name
+			}
+			out = append(out, Issue{Kind: h.kind, Config: h.config, Webhook: h.name, Service: id, Problem: "high-timeout",
+				Reason: fmt.Sprintf("timeoutSeconds %d ≥ %ds under failurePolicy Fail — a slow webhook blocks every intercepted create/update for up to %ds, then rejects it", *h.timeout, timeoutThreshold, *h.timeout)})
 		}
 	}
 

@@ -35,6 +35,8 @@ type Config struct {
 	ExpectedNodes          []string
 	KubeletHealth          bool
 	ControlPlaneHealth     bool
+	DNSHealth              bool
+	DNSServfailRatio       float64
 	Certs                  bool
 	CertWarnDays           int
 }

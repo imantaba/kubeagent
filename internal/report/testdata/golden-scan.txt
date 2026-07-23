@@ -4,7 +4,7 @@ Cluster: Degraded — 2/4 nodes Ready
   ✗ node worker-1 kubelet not heartbeating (lease 95s stale)
   ✗ node db-01 expected but absent from the cluster
   ✗ system kube-system/coredns Degraded 1/2
-  Needs attention: 16 workloads failing (7 ⇐ 4 root causes) · 2 services without endpoints · 1 ingress route broken · 1 PVC failing to provision · 2 resources stuck terminating · 1 PodDisruptionBudget blocking drains · 1 HPA can't scale · 2 admission webhooks failing · 1 ResourceQuota near/over quota
+  Needs attention: 16 workloads failing (7 ⇐ 4 root causes) · 2 services without endpoints · 1 ingress route broken · 1 PVC failing to provision · 2 resources stuck terminating · 1 PodDisruptionBudget blocking drains · 1 HPA can't scale · 1 admission webhook failing · 1 slow admission webhook · 1 ResourceQuota near/over quota
 
 NEEDS ATTENTION
 ✗ shop/web  Deployment  0/1 Degraded  · 8 restarts, last 205d ago

@@ -352,8 +352,19 @@ func attentionLine(in Input, real []svchealth.Issue, realIng []ingresshealth.Rou
 	if n := len(in.HPAIssues); n > 0 {
 		parts = append(parts, fmt.Sprintf("%d %s can't scale", n, plural(n, "HPA", "HPAs")))
 	}
-	if n := len(in.WebhookIssues); n > 0 {
-		parts = append(parts, fmt.Sprintf("%d %s failing", n, plural(n, "admission webhook", "admission webhooks")))
+	webhookFailing, webhookSlow := 0, 0
+	for _, i := range in.WebhookIssues {
+		if i.Problem == "high-timeout" {
+			webhookSlow++
+		} else {
+			webhookFailing++
+		}
+	}
+	if webhookFailing > 0 {
+		parts = append(parts, fmt.Sprintf("%d %s failing", webhookFailing, plural(webhookFailing, "admission webhook", "admission webhooks")))
+	}
+	if webhookSlow > 0 {
+		parts = append(parts, fmt.Sprintf("%d slow %s", webhookSlow, plural(webhookSlow, "admission webhook", "admission webhooks")))
 	}
 	if n := len(in.QuotaIssues); n > 0 {
 		parts = append(parts, fmt.Sprintf("%d %s near/over quota", n, plural(n, "ResourceQuota", "ResourceQuotas")))

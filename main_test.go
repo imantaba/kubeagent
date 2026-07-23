@@ -124,6 +124,25 @@ func TestRun_ExplainRequiresAPIKey(t *testing.T) {
 	}
 }
 
+func TestRun_ExplainNeedsKeyOrEndpoint(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "")
+	err := run([]string{"scan", "--explain"})
+	if err == nil || !strings.Contains(err.Error(), "KUBEAGENT_EXPLAIN_ENDPOINT") {
+		t.Fatalf("want the key-or-endpoint error, got %v", err)
+	}
+}
+
+func TestRun_ExplainLocalNeedsModel(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "http://localhost:11434/v1")
+	t.Setenv("KUBEAGENT_MODEL", "")
+	err := run([]string{"scan", "--explain"})
+	if err == nil || !strings.Contains(err.Error(), "needs --model") {
+		t.Fatalf("want the needs-model error, got %v", err)
+	}
+}
+
 func TestRun_ModelFlagIsRecognized(t *testing.T) {
 	// --model must be a known flag: with it set and no API key, the error is
 	// the fail-fast key error, NOT "flag provided but not defined".

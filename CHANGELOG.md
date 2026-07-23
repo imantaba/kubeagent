@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Admission-webhook latency risk.** `scan` flags a Fail-policy admission webhook
+  whose `timeoutSeconds` is at or above 15 (env `KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS`,
+  Helm `webhookLatency.timeoutThreshold`) — a latency landmine that blocks every
+  intercepted create/update for up to that long, then rejects it. Rendered
+  `WebhookSlow`; the daemon exposes `kubeagent_admission_webhook_latency_risks`.
+  Read-only, always-on, advisory. Closes the Theme-B admission-webhook line.
+
 ## [0.46.0] - 2026-07-23
 
 ### Added

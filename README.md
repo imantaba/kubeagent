@@ -103,8 +103,15 @@ kubeagent scan
   webhook whose `failurePolicy` is `Fail` and whose backing Service is missing
   or has no ready endpoints — it would reject every create/update it intercepts.
   Read-only, advisory, and cluster-wide only (skipped under `--namespace`); the
-  daemon exposes `kubeagent_admission_webhooks_failing`. Adds a base
-  `admissionregistration.k8s.io` read grant.
+  daemon exposes `kubeagent_admission_webhooks_failing` (backend failures only).
+  Adds a base `admissionregistration.k8s.io` read grant.
+- **Admission-webhook latency risk** — `scan` also flags a Fail-policy webhook
+  whose `timeoutSeconds` is at or above 15 (tunable via
+  `KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS` / Helm `webhookLatency.timeoutThreshold`)
+  — a latency landmine that blocks every intercepted create/update for up to
+  that long, then rejects it. Rendered `WebhookSlow`; always-on, advisory, and
+  cluster-wide only; the daemon exposes
+  `kubeagent_admission_webhook_latency_risks`. No new RBAC.
 - **ResourceQuota near-exhaustion** — `scan` flags a namespace's ResourceQuota
   entry whose `used/hard` ratio is at or over 90%, labelled `exhausted` (100%,
   blocking new objects now) or `near limit` — the proactive complement to the

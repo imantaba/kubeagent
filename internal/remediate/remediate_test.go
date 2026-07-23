@@ -387,3 +387,57 @@ func TestApply_MatchingPreviewApplies(t *testing.T) {
 		t.Fatalf("matching preview must apply, got %+v", res)
 	}
 }
+
+func TestPlan_MultiContainerOnlyChangedImageListed(t *testing.T) {
+	// rev 2 (current, broken): web=nginx:broken, sidecar=sidecar:v1
+	// rev 1 (target, good):   web=nginx:1.27,   sidecar=sidecar:v1  (sidecar unchanged)
+	// Only the "web" image change should appear; "sidecar" must not.
+	rev2 := rsWithImage("shop", "web-2", "web", "2", "nginx:broken")
+	rev2.Spec.Template.Spec.Containers[0].Name = "web"
+	rev2.Spec.Template.Spec.Containers = append(
+		rev2.Spec.Template.Spec.Containers,
+		corev1.Container{Name: "sidecar", Image: "sidecar:v1"},
+	)
+
+	rev1 := rsWithImage("shop", "web-1", "web", "1", "nginx:1.27")
+	rev1.Spec.Template.Spec.Containers[0].Name = "web"
+	rev1.Spec.Template.Spec.Containers = append(
+		rev1.Spec.Template.Spec.Containers,
+		corev1.Container{Name: "sidecar", Image: "sidecar:v1"},
+	)
+
+	wls := []inventory.Workload{dep("shop", "web", "ImagePullBackOff")}
+	got := Plan(wls, []appsv1.ReplicaSet{rev1, rev2}, nil)
+	if len(got) != 1 {
+		t.Fatalf("want one RolloutUndo, got %+v", got)
+	}
+	a := got[0]
+
+	// Changes[0] must be the revision line.
+	if len(a.Changes) == 0 || a.Changes[0].Field != "revision" {
+		t.Fatalf("changes[0] must be the revision line, got %+v", a.Changes)
+	}
+
+	// Exactly one image change must be present.
+	var imageChanges []Change
+	for _, c := range a.Changes {
+		if strings.HasPrefix(c.Field, "image (") {
+			imageChanges = append(imageChanges, c)
+		}
+	}
+	if len(imageChanges) != 1 {
+		t.Fatalf("want exactly one image change, got %+v", imageChanges)
+	}
+
+	want := Change{Field: "image (web)", From: "nginx:broken", To: "nginx:1.27"}
+	if imageChanges[0] != want {
+		t.Errorf("image change = %+v, want %+v", imageChanges[0], want)
+	}
+
+	// "sidecar" must not appear anywhere in the diff.
+	for _, c := range a.Changes {
+		if strings.Contains(c.Field+c.From+c.To, "sidecar") {
+			t.Errorf("sidecar must not appear in changes: %+v", c)
+		}
+	}
+}

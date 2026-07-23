@@ -83,6 +83,8 @@ Proposed fix: shop/web (Deployment) — roll back to the previous revision
 
 Proposed fix: node/worker-1 — uncordon the node (make it schedulable)
   reason: node is cordoned (SchedulingDisabled)
+  will change:
+    spec.unschedulable: true → false
   kubectl equivalent: kubectl uncordon worker-1
   Apply? [y/N] y
   applied: uncordoned node worker-1
@@ -105,7 +107,7 @@ This is the foundation for the coming audit log.
   "remediationPlan": [
     {
       "kind": "RolloutUndo",
-      "target": "shop/web",
+      "target": "shop/web (Deployment)",
       "summary": "roll back to the previous revision",
       "reason": "newest rollout cannot pull its image; a prior revision (1) exists",
       "kubectlEquivalent": "kubectl -n shop rollout undo deployment/web",

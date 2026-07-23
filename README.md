@@ -232,6 +232,13 @@ export ANTHROPIC_API_KEY=sk-ant-...
 >
 > Model precedence for `--explain`: the `--model` flag, then the
 > `KUBEAGENT_MODEL` environment variable, then the default `claude-opus-4-8`.
+>
+> **Local / offline model:** set `KUBEAGENT_EXPLAIN_ENDPOINT` to any
+> OpenAI-compatible `/chat/completions` base URL (Ollama, vLLM, llama.cpp, LM
+> Studio) and `--explain` calls that endpoint instead of Anthropic — no
+> `ANTHROPIC_API_KEY` required, and nothing leaves the network. `--model` names
+> the local model (required). Example:
+> `KUBEAGENT_EXPLAIN_ENDPOINT=http://localhost:11434/v1 ./kubeagent scan --explain --model llama3.1`
 
 Run the tests with `go test ./...`.
 

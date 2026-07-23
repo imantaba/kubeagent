@@ -659,14 +659,36 @@ The optional `--suggest` flag prints a deterministic next-step suggestion and
 a read-only `kubectl` investigation command under each finding — offline, no
 API key required.
 
-The optional `--explain` flag makes a single Claude API call to summarize
-findings in plain English. The explanation now **opens with a `Fix first:`
-ranked remediation list** — cluster/kube-system problems (P1) before workload
-issues (P2), most-blocking first — and each per-issue Fix is **grounded on
+The optional `--explain` flag makes a single API call to summarize findings
+in plain English. The explanation now **opens with a `Fix first:` ranked
+remediation list** — cluster/kube-system problems (P1) before workload issues
+(P2), most-blocking first — and each per-issue Fix is **grounded on
 kubeagent's deterministic, pre-reviewed `--suggest` command**: the model ranks,
 sequences, and phrases, but never invents or substitutes a command. The
 deterministic offline core (`scan`, `--suggest`) is unchanged; `--explain`
-remains opt-in and requires an API key.
+remains opt-in.
+
+By default `--explain` calls the Claude API and requires `ANTHROPIC_API_KEY`.
+To run **fully offline / on-network** against a local model instead, set
+`KUBEAGENT_EXPLAIN_ENDPOINT` to any OpenAI-compatible `/chat/completions` base
+URL — for example:
+
+```bash
+# Ollama (no key needed)
+export KUBEAGENT_EXPLAIN_ENDPOINT=http://localhost:11434/v1
+./kubeagent scan --explain --model llama3.1
+
+# vLLM / llama.cpp / LM Studio
+export KUBEAGENT_EXPLAIN_ENDPOINT=http://localhost:8000/v1
+./kubeagent scan --explain --model mistral-7b
+```
+
+When `KUBEAGENT_EXPLAIN_ENDPOINT` is set, `ANTHROPIC_API_KEY` is not required
+and nothing leaves the network. `--model` / `KUBEAGENT_MODEL` names the local
+model (required for the local path). `KUBEAGENT_EXPLAIN_API_KEY` is an optional
+bearer token for endpoints that require authentication (local Ollama needs none).
+The prompt, the ranked `Fix first:` output, and the offline scan core are
+unchanged.
 
 ## Example output
 

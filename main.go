@@ -67,8 +67,8 @@ func run(args []string) error {
 	kubeconfig := fs.String("kubeconfig", "", "path to kubeconfig (default: $KUBECONFIG or ~/.kube/config)")
 	contextName := fs.String("context", "", "kubeconfig context to use (default: current-context)")
 	output := fs.String("output", "text", "output format: text | json")
-	explainFlag := fs.Bool("explain", false, "summarize findings via one Claude API call (needs ANTHROPIC_API_KEY)")
-	model := fs.String("model", "", "Claude model for --explain (default: $KUBEAGENT_MODEL or claude-opus-4-8)")
+	explainFlag := fs.Bool("explain", false, "summarize findings via one LLM call (needs ANTHROPIC_API_KEY, or KUBEAGENT_EXPLAIN_ENDPOINT for a local OpenAI-compatible model)")
+	model := fs.String("model", "", "model for --explain (default: $KUBEAGENT_MODEL or claude-opus-4-8; the local model name when KUBEAGENT_EXPLAIN_ENDPOINT is set)")
 	includeCron := fs.Bool("include-cron", false, "include CronJobs in the report")
 	includeRestarts := fs.Bool("include-restarts", false, "include workloads that are healthy now but have restarted")
 	lintSecrets := fs.Bool("lint-secrets", false, "scan ConfigMaps and pod env for credentials stored in the clear (never prints values)")
@@ -100,9 +100,19 @@ func run(args []string) error {
 	if *output != "text" && *output != "json" {
 		return fmt.Errorf("unknown output format %q (want text or json)", *output)
 	}
-	// --explain needs an API key; check before running a full scan.
-	if *explainFlag && os.Getenv("ANTHROPIC_API_KEY") == "" {
-		return fmt.Errorf("--explain needs the ANTHROPIC_API_KEY environment variable")
+	// --explain needs Anthropic, or a local OpenAI-compatible endpoint; check before scanning.
+	explainEndpoint := os.Getenv("KUBEAGENT_EXPLAIN_ENDPOINT")
+	if *explainFlag && explainEndpoint == "" && os.Getenv("ANTHROPIC_API_KEY") == "" {
+		return fmt.Errorf("--explain needs ANTHROPIC_API_KEY, or set KUBEAGENT_EXPLAIN_ENDPOINT for a local OpenAI-compatible model")
+	}
+	var explainModel string
+	if explainEndpoint != "" {
+		explainModel = firstNonEmpty(*model, os.Getenv("KUBEAGENT_MODEL")) // no Anthropic default for a local model
+		if *explainFlag && explainModel == "" {
+			return fmt.Errorf("--explain with KUBEAGENT_EXPLAIN_ENDPOINT needs --model (or KUBEAGENT_MODEL) set to the local model name")
+		}
+	} else {
+		explainModel = explain.ResolveModel(*model, os.Getenv("KUBEAGENT_MODEL"))
 	}
 
 	client, err := cluster.NewClient(*kubeconfig, *contextName)
@@ -161,7 +171,7 @@ func run(args []string) error {
 	if *explainFlag {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		explanation, err = explain.New(explain.ResolveModel(*model, os.Getenv("KUBEAGENT_MODEL"))).ExplainInventory(ctx, health, &summary, &facts, serviceIssues, result.Workloads)
+		explanation, err = explain.NewFromConfig(explainModel, explainEndpoint, os.Getenv("KUBEAGENT_EXPLAIN_API_KEY")).ExplainInventory(ctx, health, &summary, &facts, serviceIssues, result.Workloads)
 		if err != nil {
 			return err
 		}
@@ -285,6 +295,14 @@ func runWatch(args []string) error {
 		CertWarnDays:            envInt("KUBEAGENT_CERT_WARN_DAYS", 30),
 		WebhookTimeoutThreshold: int32(envInt("KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS", 15)),
 	})
+}
+
+// firstNonEmpty returns a if non-empty, else b.
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
 }
 
 // splitCSV splits a comma-separated list into a slice, returning nil for empty.

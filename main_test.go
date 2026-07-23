@@ -113,8 +113,9 @@ func TestRun_RejectsBadOutputFormat(t *testing.T) {
 }
 
 func TestRun_ExplainRequiresAPIKey(t *testing.T) {
-	// --explain without a key must fail fast, before any cluster connection.
+	// --explain without a key (and without a local endpoint) must fail fast, before any cluster connection.
 	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "")
 	err := run([]string{"scan", "--explain"})
 	if err == nil {
 		t.Fatal("expected an error when --explain is set without ANTHROPIC_API_KEY")
@@ -124,10 +125,30 @@ func TestRun_ExplainRequiresAPIKey(t *testing.T) {
 	}
 }
 
+func TestRun_ExplainNeedsKeyOrEndpoint(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "")
+	err := run([]string{"scan", "--explain"})
+	if err == nil || !strings.Contains(err.Error(), "KUBEAGENT_EXPLAIN_ENDPOINT") {
+		t.Fatalf("want the key-or-endpoint error, got %v", err)
+	}
+}
+
+func TestRun_ExplainLocalNeedsModel(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "http://localhost:11434/v1")
+	t.Setenv("KUBEAGENT_MODEL", "")
+	err := run([]string{"scan", "--explain"})
+	if err == nil || !strings.Contains(err.Error(), "needs --model") {
+		t.Fatalf("want the needs-model error, got %v", err)
+	}
+}
+
 func TestRun_ModelFlagIsRecognized(t *testing.T) {
 	// --model must be a known flag: with it set and no API key, the error is
 	// the fail-fast key error, NOT "flag provided but not defined".
 	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "")
 	err := run([]string{"scan", "--explain", "--model", "claude-sonnet-4-6"})
 	if err == nil {
 		t.Fatal("expected the fail-fast API-key error")
@@ -141,6 +162,7 @@ func TestRun_IncludeFlagsAreRecognized(t *testing.T) {
 	// --include-cron / --include-restarts must be known flags: with --explain and
 	// no key, the error is the fail-fast key error, not "flag not defined".
 	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "")
 	err := run([]string{"scan", "--explain", "--include-cron", "--include-restarts"})
 	if err == nil {
 		t.Fatal("expected the fail-fast API-key error")

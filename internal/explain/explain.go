@@ -6,6 +6,7 @@ package explain
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -69,9 +70,19 @@ type Client struct {
 	s summarizer
 }
 
-// New returns a Client backed by the Anthropic API, using the given model
-// (empty falls back to DefaultModel). The SDK reads ANTHROPIC_API_KEY.
+// New returns a Client backed by the Anthropic API (empty model falls back to
+// DefaultModel). The SDK reads ANTHROPIC_API_KEY.
 func New(model string) *Client {
+	return NewFromConfig(model, "", "")
+}
+
+// NewFromConfig returns a Client using the local OpenAI-compatible endpoint when
+// endpoint is non-empty, otherwise the Anthropic backend. apiKey is the optional
+// bearer token for the local endpoint (ignored by the Anthropic path).
+func NewFromConfig(model, endpoint, apiKey string) *Client {
+	if endpoint != "" {
+		return &Client{s: openaiSummarizer{endpoint: endpoint, model: model, apiKey: apiKey, http: http.DefaultClient}}
+	}
 	if model == "" {
 		model = DefaultModel
 	}

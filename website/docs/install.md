@@ -52,7 +52,7 @@ curl localhost:8080/metrics
 
 The daemon is **strictly read-only** and makes **no external calls**. To pin a
 specific version, set the image tag in `deploy/deployment.yaml` (e.g.
-`imantaba/kubeagent:v0.46.0`); to build your own image, see
+`imantaba/kubeagent:v0.47.0`); to build your own image, see
 [`deploy/README.md`](https://github.com/imantaba/kubeagent/blob/main/deploy/README.md).
 
 ### With Helm
@@ -71,7 +71,7 @@ Common overrides via `--set` (see the chart's `values.yaml` for the full list):
 
 ```bash
 # pin an image tag (defaults to the chart appVersion)
---set image.tag=v0.46.0
+--set image.tag=v0.47.0
 # scope the daemon to one namespace, tune scan cadence
 --set watch.namespace=payments --set watch.heartbeat=30s
 ```

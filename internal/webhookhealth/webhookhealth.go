@@ -17,13 +17,15 @@ import (
 	"github.com/imantaba/kubeagent/internal/svchealth"
 )
 
-// Issue is one admission webhook whose backend is down under a Fail policy.
+// Issue is one Fail-policy admission webhook that is a problem: its backend is
+// down (missing-service / no-endpoints) or its timeoutSeconds is a latency risk
+// (high-timeout).
 type Issue struct {
 	Kind    string `json:"kind"`    // "ValidatingWebhookConfiguration" | "MutatingWebhookConfiguration"
 	Config  string `json:"config"`  // the configuration object's name
 	Webhook string `json:"webhook"` // the individual webhook's .name
-	Service string `json:"service"` // "ns/name" of the backend
-	Problem string `json:"problem"` // "missing-service" | "no-endpoints"
+	Service string `json:"service"` // "ns/name" of the backend ("" for a URL webhook)
+	Problem string `json:"problem"` // "missing-service" | "no-endpoints" | "high-timeout"
 	Reason  string `json:"reason"`
 }
 

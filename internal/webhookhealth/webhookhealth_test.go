@@ -104,7 +104,7 @@ func TestAssess_NotFlagged(t *testing.T) {
 	url := "https://external.example.com/hook"
 	cases := []admissionv1.ValidatingWebhookConfiguration{
 		vwc("ignore", vhook("ig", ignoreP(), admissionv1.WebhookClientConfig{Service: svcRef("ns", "gone")})), // Ignore → not blocking
-		vwc("urlhook", vhook("u", failP(), admissionv1.WebhookClientConfig{URL: &url})),                       // URL → can't check
+		vwc("urlhook", vhook("u", failP(), admissionv1.WebhookClientConfig{URL: &url})),                       // URL, nil timeout → not flagged
 		vwc("healthy", vhook("h", failP(), admissionv1.WebhookClientConfig{Service: svcRef("ns", "up")})),     // ready backend
 	}
 	if got := Assess(cases, nil, services, slices, 15); len(got) != 0 {

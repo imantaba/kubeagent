@@ -10,6 +10,7 @@ import (
 
 	"github.com/imantaba/kubeagent/internal/certhealth"
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
+	"github.com/imantaba/kubeagent/internal/controlplane"
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/diskusage"
 	"github.com/imantaba/kubeagent/internal/hpahealth"
@@ -58,6 +59,7 @@ func sampleResult() *scan.Result {
 		WebhookIssues:    []webhookhealth.Issue{{Config: "policy-webhook", Webhook: "w"}},
 		QuotaIssues:      []quotahealth.Issue{{Namespace: "shop", Quota: "compute", Resource: "pods", Severity: "near"}},
 		KubeletHealth:    nodehealth.Report{Probed: 2, Unhealthy: []nodehealth.Issue{{Node: "w"}}},
+		ControlPlane:     controlplane.Probe{Status: "unhealthy", Failed: []string{"etcd"}},
 		Certificates: &certhealth.Report{WarnDays: 30, Checked: 4,
 			Expired:  []certhealth.Cert{{Namespace: "shop", Name: "shop-tls", Days: -3}},
 			Expiring: []certhealth.Cert{{Namespace: "infra", Name: "api-tls", Days: 12}}},
@@ -90,6 +92,7 @@ func TestMetrics_RenderReflectsResult(t *testing.T) {
 		"kubeagent_resourcequota_issues 1",
 		"kubeagent_nodes_expected_absent 1",
 		"kubeagent_kubelet_unhealthy 1",
+		"kubeagent_control_plane_unhealthy 1",
 		"kubeagent_certificates_expired 1",
 		"kubeagent_certificates_expiring 1",
 	} {

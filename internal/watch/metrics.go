@@ -43,35 +43,36 @@ func realIngressIssues(issues []ingresshealth.RouteIssue) int {
 // All access is mutex-guarded; the daemon updates it from the reconcile loop and
 // the HTTP handler reads it.
 type metrics struct {
-	mu                  sync.RWMutex
-	ready               bool
-	healthy             float64
-	nodesReady          int
-	nodesTotal          int
-	nodesNoReserve      int
-	nodesStaleHeartbeat int
-	nodesExpectedAbsent int
-	kubeletUnhealthy    int
-	pvcsReclaimDelete   int
-	flagged             int
-	serviceIssues       int
-	ingressIssues       int
-	pvcPendingIssues    int
-	stuckTerminating    int
-	pdbBlockingIssues   int
-	hpaScalingIssues    int
-	webhooksFailing     int
-	quotaIssues         int
-	findings            map[string]int
-	lastScanUnix        int64
-	scanSeconds         float64
-	scansTotal          int64
-	scanErrors          int64
-	nodeFSRatio         map[string]float64
-	volumesOverDisk     int
-	certsRan            bool
-	certsExpired        int
-	certsExpiring       int
+	mu                    sync.RWMutex
+	ready                 bool
+	healthy               float64
+	nodesReady            int
+	nodesTotal            int
+	nodesNoReserve        int
+	nodesStaleHeartbeat   int
+	nodesExpectedAbsent   int
+	kubeletUnhealthy      int
+	controlPlaneUnhealthy int
+	pvcsReclaimDelete     int
+	flagged               int
+	serviceIssues         int
+	ingressIssues         int
+	pvcPendingIssues      int
+	stuckTerminating      int
+	pdbBlockingIssues     int
+	hpaScalingIssues      int
+	webhooksFailing       int
+	quotaIssues           int
+	findings              map[string]int
+	lastScanUnix          int64
+	scanSeconds           float64
+	scansTotal            int64
+	scanErrors            int64
+	nodeFSRatio           map[string]float64
+	volumesOverDisk       int
+	certsRan              bool
+	certsExpired          int
+	certsExpiring         int
 }
 
 func newMetrics() *metrics { return &metrics{findings: map[string]int{}} }
@@ -99,6 +100,10 @@ func (m *metrics) update(res *scan.Result, dur time.Duration, now time.Time, err
 	m.nodesStaleHeartbeat = res.Health.NodesStaleHeartbeat
 	m.nodesExpectedAbsent = res.Health.NodesExpectedAbsent
 	m.kubeletUnhealthy = len(res.KubeletHealth.Unhealthy)
+	m.controlPlaneUnhealthy = 0
+	if res.ControlPlane.Status == "unhealthy" {
+		m.controlPlaneUnhealthy = 1
+	}
 	m.pvcsReclaimDelete = res.PVCReclaim.Count
 	m.serviceIssues = realServiceIssues(res.ServiceIssues)
 	m.ingressIssues = realIngressIssues(res.IngressIssues)
@@ -159,6 +164,7 @@ func (m *metrics) render() string {
 	gauge("kubeagent_nodes_stale_heartbeat", "Ready nodes whose kubelet lease is stale (kubelet not heartbeating)", float64(m.nodesStaleHeartbeat))
 	gauge("kubeagent_nodes_expected_absent", "Declared expected nodes that are absent from the cluster", float64(m.nodesExpectedAbsent))
 	gauge("kubeagent_kubelet_unhealthy", "Nodes whose kubelet /healthz reported unhealthy", float64(m.kubeletUnhealthy))
+	gauge("kubeagent_control_plane_unhealthy", "Apiserver /readyz reported the control plane not ready", float64(m.controlPlaneUnhealthy))
 	gauge("kubeagent_pvcs_reclaim_delete", "PVCs whose bound PV has reclaimPolicy Delete", float64(m.pvcsReclaimDelete))
 	gauge("kubeagent_workloads_flagged", "Number of workloads currently flagged", float64(m.flagged))
 	gauge("kubeagent_service_issues", "Number of Service issues", float64(m.serviceIssues))

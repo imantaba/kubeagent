@@ -113,8 +113,9 @@ func TestRun_RejectsBadOutputFormat(t *testing.T) {
 }
 
 func TestRun_ExplainRequiresAPIKey(t *testing.T) {
-	// --explain without a key must fail fast, before any cluster connection.
+	// --explain without a key (and without a local endpoint) must fail fast, before any cluster connection.
 	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "")
 	err := run([]string{"scan", "--explain"})
 	if err == nil {
 		t.Fatal("expected an error when --explain is set without ANTHROPIC_API_KEY")

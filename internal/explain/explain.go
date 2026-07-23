@@ -13,6 +13,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/platform"
+	"github.com/imantaba/kubeagent/internal/remediation"
 	"github.com/imantaba/kubeagent/internal/resources"
 	"github.com/imantaba/kubeagent/internal/svchealth"
 )
@@ -21,6 +22,11 @@ const systemPrompt = `You are a senior Kubernetes SRE reviewing a read-only clus
 is wrong and exactly how to fix it, using ONLY the facts provided — do not invent
 causes, resources, or values that are not given.
 
+Begin your response with a "Fix first:" section — a numbered list ranking the
+issues in the order they should be remediated (most blocking / highest-impact
+first; cluster / kube-system P1 issues before workload P2 issues), each line
+"N. <namespace/name>: <one-phrase action>". Then give the per-issue detail below.
+
 Address issues in priority order: cluster / kube-system problems (P1) before
 workload problems (P2). For EACH issue use this structure:
 
@@ -28,7 +34,11 @@ workload problems (P2). For EACH issue use this structure:
 - Root cause: one line, from the facts. If the facts are ambiguous, name the most
   likely cause AND what to check — never present a guess as certain.
 - Check: 1–3 read-only commands to confirm (kubectl get/describe/logs).
-- Fix: the exact command(s) or concrete change to resolve it.
+- Fix: use the provided deterministic, pre-reviewed command for this issue
+  verbatim — you may add a namespace or flag already shown, sequence multiple
+  provided commands, and phrase it for on-call, but never substitute or invent a
+  different command. When the provided command is a generic describe, keep it and
+  say what to look for in the output.
 
 Be tight — no preamble, no restating the input, no generic advice. If a finding
 is expected (e.g. a scaled-to-zero workload), say it needs no action. Prefer
@@ -130,6 +140,8 @@ func buildInventoryPrompt(cluster clusterhealth.ClusterHealth, summary *resource
 					fmt.Fprintf(&b, "      container resources: memory req=%s limit=%s, cpu req=%s limit=%s\n",
 						r.MemRequest, r.MemLimit, r.CPURequest, r.CPULimit)
 				}
+				s := remediation.For(f)
+				fmt.Fprintf(&b, "      suggested fix (deterministic, pre-reviewed — do not substitute): %s | run: %s\n", s.NextStep, s.Command)
 			}
 			if len(w.NetworkPolicies) > 0 {
 				fmt.Fprintf(&b, "    network policy: pods selected by %s (possible cause)\n", strings.Join(w.NetworkPolicies, ", "))

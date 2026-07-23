@@ -282,6 +282,30 @@ func TestBuildInventoryPrompt_IncludesLogCauseNotExcerpt(t *testing.T) {
 	}
 }
 
+func TestBuildInventoryPrompt_InjectsDeterministicSuggestion(t *testing.T) {
+	ws := []inventory.Workload{{
+		Namespace: "shop", Name: "web", Kind: "Deployment", Ready: 0, Desired: 2, Status: "Degraded",
+		Findings: []diagnose.Finding{{Pod: "shop/web-abc", Issue: "CrashLoopBackOff", Reason: "crashes", Evidence: "restartCount=8", Container: "web"}},
+	}}
+	got := buildInventoryPrompt(clusterhealth.ClusterHealth{}, nil, nil, nil, ws)
+	if !strings.Contains(got, "suggested fix (deterministic, pre-reviewed — do not substitute):") {
+		t.Errorf("prompt missing the deterministic suggestion line:\n%s", got)
+	}
+	// The exact remediation.For command for a CrashLoopBackOff finding.
+	if !strings.Contains(got, "kubectl -n shop logs web-abc -c web --previous") {
+		t.Errorf("prompt missing the exact remediation.For command:\n%s", got)
+	}
+}
+
+func TestSystemPrompt_RanksAndGrounds(t *testing.T) {
+	if !strings.Contains(systemPrompt, "Fix first:") {
+		t.Error("systemPrompt must instruct a leading Fix first ranked list")
+	}
+	if !strings.Contains(systemPrompt, "verbatim") || !strings.Contains(systemPrompt, "never substitute or invent") {
+		t.Error("systemPrompt must ground the Fix on the deterministic command (verbatim / never substitute or invent)")
+	}
+}
+
 func TestResolveModel(t *testing.T) {
 	cases := []struct {
 		name, flag, env, want string

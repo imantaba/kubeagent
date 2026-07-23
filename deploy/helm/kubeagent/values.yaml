@@ -70,6 +70,9 @@ kubeletHealth:
 controlPlaneHealth:
   enabled: false
 
+dnsHealth:
+  enabled: false
+
 certs:
   enabled: false
   warnDays: "30"

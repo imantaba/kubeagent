@@ -1,0 +1,25 @@
+# Optional add-on grant for `kubeagent scan --dns-health` (and the daemon with
+# KUBEAGENT_DNS_HEALTH=true): read each CoreDNS pod's :9153/metrics via the
+# pods/proxy subresource to flag an elevated SERVFAIL+REFUSED response ratio.
+# Strictly read-only. Apply alongside deploy/rbac.yaml when the dns-health check is used.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubeagent-dnshealth
+rules:
+  - apiGroups: [""]
+    resources: [pods/proxy]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubeagent-dnshealth
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubeagent-dnshealth
+subjects:
+  - kind: ServiceAccount
+    name: kubeagent
+    namespace: kubeagent

@@ -6,7 +6,6 @@ package remediate
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strconv"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -27,15 +26,28 @@ var protectedNamespaces = map[string]bool{
 	"kube-node-lease": true,
 }
 
+// Change is one previewed field change, e.g. {"image (web)", "web:v2", "web:v1"}.
+// From/To are always safe display values (revisions, image refs, booleans, counts) —
+// never env values or raw template content. A count-only line (e.g. "2 other
+// template fields changed") leaves From/To empty.
+type Change struct {
+	Field string `json:"field"`
+	From  string `json:"from,omitempty"`
+	To    string `json:"to,omitempty"`
+}
+
 // Action is one proposed, allowlisted remediation. Never free-form; never LLM-decided.
 type Action struct {
 	Kind              string // "RolloutUndo" | "Uncordon"
 	Namespace         string
-	Name              string // workload name (a Deployment in v1)
-	Target            string // display target, e.g. "shop/web (Deployment)" or "node/worker-1"
-	Summary           string // one-line human description
-	Reason            string // why it's proposed
-	KubectlEquivalent string // shown for audit only; NOT how it executes
+	Name              string   // workload name (a Deployment in v1)
+	Target            string   // display target, e.g. "shop/web (Deployment)" or "node/worker-1"
+	Summary           string   // one-line human description
+	Reason            string   // why it's proposed
+	KubectlEquivalent string   // shown for audit only; NOT how it executes
+	Changes           []Change // the previewed field-level diff (rendered + JSON)
+	CurrentRevision   int      // RolloutUndo: revision current at preview time (0 for Uncordon)
+	TargetRevision    int      // RolloutUndo: revision the rollback lands on (0 for Uncordon)
 }
 
 // Plan returns the safe, allowlisted, precondition-satisfied remediations for the
@@ -52,18 +64,22 @@ func Plan(workloads []inventory.Workload, replicaSets []appsv1.ReplicaSet, nodes
 		if w.Ready >= w.Desired {
 			continue // still meeting its replica target (e.g. previous revision serving) — not an outage
 		}
-		prev := previousRevision(w.Namespace, w.Name, replicaSets)
-		if prev == "" {
+		cur, target := planTarget(w.Namespace, w.Name, replicaSets)
+		if target == nil {
 			continue
 		}
+		targetRev := revFromAnnotations(target.Annotations)
 		actions = append(actions, Action{
 			Kind:              "RolloutUndo",
 			Namespace:         w.Namespace,
 			Name:              w.Name,
 			Target:            w.Namespace + "/" + w.Name + " (Deployment)",
 			Summary:           "roll back to the previous revision",
-			Reason:            "newest rollout cannot pull its image; a prior revision (" + prev + ") exists",
+			Reason:            "newest rollout cannot pull its image; a prior revision (" + strconv.Itoa(targetRev) + ") exists",
 			KubectlEquivalent: "kubectl -n " + w.Namespace + " rollout undo deployment/" + w.Name,
+			Changes:           templateChanges(*cur, *target),
+			CurrentRevision:   revFromAnnotations(cur.Annotations),
+			TargetRevision:    targetRev,
 		})
 	}
 	for _, n := range nodes {
@@ -77,6 +93,7 @@ func Plan(workloads []inventory.Workload, replicaSets []appsv1.ReplicaSet, nodes
 			Summary:           "uncordon the node (make it schedulable)",
 			Reason:            "node is cordoned (SchedulingDisabled)",
 			KubectlEquivalent: "kubectl uncordon " + n.Name,
+			Changes:           []Change{{Field: "spec.unschedulable", From: "true", To: "false"}},
 		})
 	}
 	return actions
@@ -102,23 +119,110 @@ func hasImagePullFinding(w inventory.Workload) bool {
 	return false
 }
 
-// previousRevision returns the revision just below the current (max) one, among the
-// ReplicaSets owned by the named Deployment in the namespace, or "" if there is no
-// prior revision to roll back to.
-func previousRevision(namespace, deployment string, replicaSets []appsv1.ReplicaSet) string {
-	var revs []int
-	for _, rs := range replicaSets {
-		if rs.Namespace == namespace && ownedBy(rs, deployment) {
-			if r := revFromAnnotations(rs.Annotations); r > 0 {
-				revs = append(revs, r)
+// planTarget returns the deployment's current (highest-revision) owned ReplicaSet
+// and the rollback target — the highest revision strictly below current whose pod
+// template differs — or nils if there is no current or no differing prior revision.
+// This is the same selection rule Apply's pickTarget uses, so what Plan previews is
+// what Apply lands on.
+func planTarget(namespace, deployment string, replicaSets []appsv1.ReplicaSet) (cur, target *appsv1.ReplicaSet) {
+	for i := range replicaSets {
+		rs := &replicaSets[i]
+		if rs.Namespace != namespace || !ownedBy(*rs, deployment) || revFromAnnotations(rs.Annotations) == 0 {
+			continue
+		}
+		if cur == nil || revFromAnnotations(rs.Annotations) > revFromAnnotations(cur.Annotations) {
+			cur = rs
+		}
+	}
+	if cur == nil {
+		return nil, nil
+	}
+	curRev := revFromAnnotations(cur.Annotations)
+	for i := range replicaSets {
+		rs := &replicaSets[i]
+		if rs.Namespace != namespace || !ownedBy(*rs, deployment) {
+			continue
+		}
+		r := revFromAnnotations(rs.Annotations)
+		if r == 0 || r >= curRev {
+			continue
+		}
+		if templatesEqual(rs.Spec.Template, cur.Spec.Template) {
+			continue
+		}
+		if target == nil || r > revFromAnnotations(target.Annotations) {
+			target = rs
+		}
+	}
+	return cur, target
+}
+
+// templateChanges renders the curated preview diff between the current and target
+// templates: the revision line, per-container image changes, and a count-only line
+// for any other differences. Never prints template contents.
+func templateChanges(cur, target appsv1.ReplicaSet) []Change {
+	curRev, targetRev := revFromAnnotations(cur.Annotations), revFromAnnotations(target.Annotations)
+	changes := []Change{{Field: "revision", From: strconv.Itoa(curRev), To: strconv.Itoa(targetRev)}}
+	targetImages := map[string]string{}
+	for _, c := range target.Spec.Template.Spec.Containers {
+		targetImages[c.Name] = c.Image
+	}
+	for _, c := range cur.Spec.Template.Spec.Containers {
+		if to, ok := targetImages[c.Name]; ok && to != c.Image {
+			changes = append(changes, Change{Field: "image (" + c.Name + ")", From: c.Image, To: to})
+		}
+	}
+	if n := otherChangeCount(cur.Spec.Template, target.Spec.Template); n > 0 {
+		field := strconv.Itoa(n) + " other template field"
+		if n > 1 {
+			field += "s"
+		}
+		changes = append(changes, Change{Field: field + " changed"})
+	}
+	return changes
+}
+
+// otherChangeCount counts template differences beyond container images, comparing
+// with pod-template-hash stripped and images neutralized (they are reported
+// separately). Each differing aspect counts once; contents are never exposed.
+func otherChangeCount(a, b corev1.PodTemplateSpec) int {
+	ac, bc := a.DeepCopy(), b.DeepCopy()
+	delete(ac.Labels, "pod-template-hash")
+	delete(bc.Labels, "pod-template-hash")
+	for i := range ac.Spec.Containers {
+		ac.Spec.Containers[i].Image = ""
+	}
+	for i := range bc.Spec.Containers {
+		bc.Spec.Containers[i].Image = ""
+	}
+	n := 0
+	if !apiequality.Semantic.DeepEqual(ac.Labels, bc.Labels) {
+		n++
+	}
+	if !apiequality.Semantic.DeepEqual(ac.Annotations, bc.Annotations) {
+		n++
+	}
+	if len(ac.Spec.Containers) != len(bc.Spec.Containers) || len(ac.Spec.InitContainers) != len(bc.Spec.InitContainers) {
+		n++
+	} else {
+		for i := range ac.Spec.Containers {
+			if !apiequality.Semantic.DeepEqual(ac.Spec.Containers[i], bc.Spec.Containers[i]) {
+				n++
+			}
+		}
+		for i := range ac.Spec.InitContainers {
+			if !apiequality.Semantic.DeepEqual(ac.Spec.InitContainers[i], bc.Spec.InitContainers[i]) {
+				n++
 			}
 		}
 	}
-	if len(revs) < 2 {
-		return ""
+	podA, podB := ac.Spec.DeepCopy(), bc.Spec.DeepCopy()
+	podA.Containers, podB.Containers = nil, nil
+	podA.InitContainers, podB.InitContainers = nil, nil
+	if !apiequality.Semantic.DeepEqual(podA, podB) {
+		n++
 	}
-	sort.Sort(sort.Reverse(sort.IntSlice(revs)))
-	return strconv.Itoa(revs[1])
+	return n
 }
 
 func ownedBy(rs appsv1.ReplicaSet, deployment string) bool {

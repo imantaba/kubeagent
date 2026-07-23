@@ -41,7 +41,7 @@ func (o openaiSummarizer) summarize(ctx context.Context, prompt string) (string,
 		Model:  o.model,
 		Stream: false,
 		Messages: []chatMessage{
-			{Role: "system", Content: systemPrompt},
+			{Role: "system", Content: SystemPrompt},
 			{Role: "user", Content: prompt},
 		},
 	})

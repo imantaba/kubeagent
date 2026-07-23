@@ -72,6 +72,7 @@ controlPlaneHealth:
 
 dnsHealth:
   enabled: false
+  servfailRatio: "0.05"
 
 certs:
   enabled: false

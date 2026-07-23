@@ -93,3 +93,12 @@ func TestAssess_AllUnreachable(t *testing.T) {
 		t.Errorf("Status = %q, want unreachable", got.Status)
 	}
 }
+
+// Mixed total failure (one 403, one transport error, no metrics returned): the
+// concrete "forbidden" reason takes priority over "unreachable" so the operator
+// sees the actionable grant hint rather than a misleading "ok".
+func TestAssess_MixedForbiddenAndUnreachable(t *testing.T) {
+	if got := Assess(nil, 2, 1, 1, 0.05, 100); got.Status != "forbidden" {
+		t.Errorf("Status = %q, want forbidden (mixed failure, forbidden priority)", got.Status)
+	}
+}

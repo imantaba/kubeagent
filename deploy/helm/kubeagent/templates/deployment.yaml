@@ -53,6 +53,8 @@ spec:
             {{- if .Values.dnsHealth.enabled }}
             - name: KUBEAGENT_DNS_HEALTH
               value: "true"
+            - name: KUBEAGENT_DNS_SERVFAIL_RATIO
+              value: {{ .Values.dnsHealth.servfailRatio | quote }}
             {{- end }}
             {{- if .Values.certs.enabled }}
             - name: KUBEAGENT_CERTS

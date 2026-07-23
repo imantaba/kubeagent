@@ -148,6 +148,7 @@ func TestRun_ModelFlagIsRecognized(t *testing.T) {
 	// --model must be a known flag: with it set and no API key, the error is
 	// the fail-fast key error, NOT "flag provided but not defined".
 	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "")
 	err := run([]string{"scan", "--explain", "--model", "claude-sonnet-4-6"})
 	if err == nil {
 		t.Fatal("expected the fail-fast API-key error")
@@ -161,6 +162,7 @@ func TestRun_IncludeFlagsAreRecognized(t *testing.T) {
 	// --include-cron / --include-restarts must be known flags: with --explain and
 	// no key, the error is the fail-fast key error, not "flag not defined".
 	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "")
 	err := run([]string{"scan", "--explain", "--include-cron", "--include-restarts"})
 	if err == nil {
 		t.Fatal("expected the fail-fast API-key error")

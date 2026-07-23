@@ -53,6 +53,7 @@ type metrics struct {
 	nodesExpectedAbsent   int
 	kubeletUnhealthy      int
 	controlPlaneUnhealthy int
+	dnsServfailRatio      float64
 	pvcsReclaimDelete     int
 	flagged               int
 	serviceIssues         int
@@ -104,6 +105,7 @@ func (m *metrics) update(res *scan.Result, dur time.Duration, now time.Time, err
 	if res.ControlPlane.Status == "unhealthy" {
 		m.controlPlaneUnhealthy = 1
 	}
+	m.dnsServfailRatio = res.DNS.ServfailRatio
 	m.pvcsReclaimDelete = res.PVCReclaim.Count
 	m.serviceIssues = realServiceIssues(res.ServiceIssues)
 	m.ingressIssues = realIngressIssues(res.IngressIssues)
@@ -165,6 +167,7 @@ func (m *metrics) render() string {
 	gauge("kubeagent_nodes_expected_absent", "Declared expected nodes that are absent from the cluster", float64(m.nodesExpectedAbsent))
 	gauge("kubeagent_kubelet_unhealthy", "Nodes whose kubelet /healthz reported unhealthy", float64(m.kubeletUnhealthy))
 	gauge("kubeagent_control_plane_unhealthy", "Apiserver /readyz reported the control plane not ready", float64(m.controlPlaneUnhealthy))
+	gauge("kubeagent_dns_servfail_ratio", "CoreDNS SERVFAIL+REFUSED response ratio (0 when healthy or not probed)", m.dnsServfailRatio)
 	gauge("kubeagent_pvcs_reclaim_delete", "PVCs whose bound PV has reclaimPolicy Delete", float64(m.pvcsReclaimDelete))
 	gauge("kubeagent_workloads_flagged", "Number of workloads currently flagged", float64(m.flagged))
 	gauge("kubeagent_service_issues", "Number of Service issues", float64(m.serviceIssues))

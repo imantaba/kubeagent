@@ -42,6 +42,11 @@ rules:
     resources: [nodes/proxy]
     verbs: [get]
   {{- end }}
+  {{- if .Values.dnsHealth.enabled }}
+  - apiGroups: [""]
+    resources: [pods/proxy]
+    verbs: [get]
+  {{- end }}
   {{- if .Values.controlPlaneHealth.enabled }}
   - nonResourceURLs: ["/readyz"]
     verbs: [get]

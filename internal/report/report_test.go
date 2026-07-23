@@ -13,6 +13,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/credlint"
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/diskusage"
+	"github.com/imantaba/kubeagent/internal/dnshealth"
 	"github.com/imantaba/kubeagent/internal/hpahealth"
 	"github.com/imantaba/kubeagent/internal/ingresshealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
@@ -1843,6 +1844,41 @@ func TestPrintControlPlane(t *testing.T) {
 		}
 		if strings.Contains(bo.String(), "CONTROL PLANE") {
 			t.Errorf("probe %+v should render no CONTROL PLANE section:\n%s", p, bo.String())
+		}
+	}
+}
+
+func TestPrintDNSHealth(t *testing.T) {
+	degraded := &dnshealth.Report{Status: "degraded", ServfailRatio: 0.123, ErrorResponses: 1234, TotalResponses: 10000, PodsProbed: 2}
+	var b bytes.Buffer
+	if err := PrintInventory(Input{Result: inventory.Result{}, DNS: degraded}, "text", &b); err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	if !strings.Contains(out, "DNS") || !strings.Contains(out, "cluster DNS is failing to resolve") {
+		t.Errorf("missing DNS section:\n%s", out)
+	}
+	if !strings.Contains(out, "12.3%") || !strings.Contains(out, "1234/10000 responses across 2 pods") {
+		t.Errorf("missing ratio detail:\n%s", out)
+	}
+
+	// forbidden → grant hint
+	var bf bytes.Buffer
+	if err := PrintInventory(Input{Result: inventory.Result{}, DNS: &dnshealth.Report{Status: "forbidden"}}, "text", &bf); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(bf.String(), "pods/proxy") {
+		t.Errorf("forbidden should print a pods/proxy grant hint:\n%s", bf.String())
+	}
+
+	// ok / unreachable / nil → nothing
+	for _, p := range []*dnshealth.Report{{Status: "ok"}, {Status: "unreachable"}, nil} {
+		var bo bytes.Buffer
+		if err := PrintInventory(Input{Result: inventory.Result{}, DNS: p}, "text", &bo); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(bo.String(), "cluster DNS") {
+			t.Errorf("probe %+v should render no DNS finding:\n%s", p, bo.String())
 		}
 	}
 }

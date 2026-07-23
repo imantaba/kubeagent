@@ -70,6 +70,10 @@ kubeletHealth:
 controlPlaneHealth:
   enabled: false
 
+dnsHealth:
+  enabled: false
+  servfailRatio: "0.05"
+
 certs:
   enabled: false
   warnDays: "30"

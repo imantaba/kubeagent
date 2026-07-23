@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **DNS / CoreDNS resolution health (`--dns-health`).** An opt-in probe of each
+  CoreDNS pod's `:9153/metrics` flags an elevated SERVFAIL+REFUSED response ratio
+  (default ≥ 5% over a 100-response floor; env `KUBEAGENT_DNS_SERVFAIL_RATIO`) —
+  catching DNS that is up but failing to resolve, which the CoreDNS-pod health
+  check misses. Read-only; needs the `pods/proxy` add-on grant; the daemon exposes
+  `kubeagent_dns_servfail_ratio`. Second of the Theme-B control-plane closers.
+
 ## [0.45.0] - 2026-07-23
 
 ### Added

@@ -1900,3 +1900,36 @@ func TestPrintDNSHealth(t *testing.T) {
 		}
 	}
 }
+
+func TestPrintInventory_TextShowsInvestigation(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster:                clusterhealth.ClusterHealth{Verdict: "Healthy"},
+		Investigation:          "web — ImagePullBackOff\n- Root cause: bad tag",
+		InvestigationConsulted: []string{"describe pod shop/web-abc", "events shop/web-abc"},
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "── Investigation ──") ||
+		!strings.Contains(out, "consulted: describe pod shop/web-abc · events shop/web-abc") ||
+		!strings.Contains(out, "Root cause: bad tag") {
+		t.Errorf("investigation section missing/malformed:\n%s", out)
+	}
+}
+
+func TestPrintInventory_JSONIncludesInvestigation(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Investigation:          "narrative",
+		InvestigationConsulted: []string{"describe pod shop/web-abc"},
+	}
+	if err := PrintInventory(in, "json", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, `"investigation"`) || !strings.Contains(out, `"narrative"`) || !strings.Contains(out, `"consulted"`) {
+		t.Errorf("investigation JSON missing: %s", out)
+	}
+}

@@ -57,37 +57,53 @@ type inventoryReport struct {
 	WebhookIssues      []webhookhealth.Issue       `json:"webhookIssues,omitempty"`
 	QuotaIssues        []quotahealth.Issue         `json:"quotaIssues,omitempty"`
 	Explanation        string                      `json:"explanation,omitempty"`
+	Investigation      *investigationView          `json:"investigation,omitempty"`
+}
+
+type investigationView struct {
+	Consulted []string `json:"consulted,omitempty"`
+	Narrative string   `json:"narrative"`
+}
+
+// investigationOf builds the JSON view, or nil when no investigation ran.
+func investigationOf(in Input) *investigationView {
+	if in.Investigation == "" {
+		return nil
+	}
+	return &investigationView{Consulted: in.InvestigationConsulted, Narrative: in.Investigation}
 }
 
 // Input carries everything the report renders. Bundled into a struct because the
 // positional parameter list had grown unwieldy.
 type Input struct {
-	Cluster            clusterhealth.ClusterHealth
-	Result             inventory.Result
-	Resources          *resources.Summary
-	Platform           *platform.Facts
-	ServiceIssues      []svchealth.Issue
-	CredentialWarnings []credlint.Finding
-	NodeReserve        *nodereserve.Report
-	PVCReclaim         *pvcreclaim.Report
-	PVCReclaimFull     bool // --pvc-reclaim: expand the PVC list (text only)
-	DiskUsage          *diskusage.Report
-	IngressIssues      []ingresshealth.RouteIssue
-	PVCIssues          []pvchealth.Issue
-	SecurityIssues     []secscan.Finding
-	SecurityVerbose    bool
-	Suggest            bool
-	KubeletHealth      *nodehealth.Report
-	ControlPlane       *controlplane.Probe
-	DNS                *dnshealth.Report
-	Certificates       *certhealth.Report
-	StuckTerminating   []termhealth.Issue
-	PDBIssues          []pdbhealth.Issue
-	HPAIssues          []hpahealth.Issue
-	WebhookIssues      []webhookhealth.Issue
-	QuotaIssues        []quotahealth.Issue
-	Explanation        string
-	Now                time.Time // clock for relative ages; main sets time.Now(); zero → wall-clock
+	Cluster                clusterhealth.ClusterHealth
+	Result                 inventory.Result
+	Resources              *resources.Summary
+	Platform               *platform.Facts
+	ServiceIssues          []svchealth.Issue
+	CredentialWarnings     []credlint.Finding
+	NodeReserve            *nodereserve.Report
+	PVCReclaim             *pvcreclaim.Report
+	PVCReclaimFull         bool // --pvc-reclaim: expand the PVC list (text only)
+	DiskUsage              *diskusage.Report
+	IngressIssues          []ingresshealth.RouteIssue
+	PVCIssues              []pvchealth.Issue
+	SecurityIssues         []secscan.Finding
+	SecurityVerbose        bool
+	Suggest                bool
+	KubeletHealth          *nodehealth.Report
+	ControlPlane           *controlplane.Probe
+	DNS                    *dnshealth.Report
+	Certificates           *certhealth.Report
+	StuckTerminating       []termhealth.Issue
+	PDBIssues              []pdbhealth.Issue
+	HPAIssues              []hpahealth.Issue
+	WebhookIssues          []webhookhealth.Issue
+	QuotaIssues            []quotahealth.Issue
+	Explanation            string
+	Investigation          string
+	InvestigationConsulted []string
+	Now                    time.Time // clock for relative ages; main sets time.Now(); zero → wall-clock
 }
 
 // PrintInventory writes the cluster verdict and the prioritized workload set to w.
@@ -119,6 +135,7 @@ func PrintInventory(in Input, format string, w io.Writer) error {
 			WebhookIssues:      in.WebhookIssues,
 			QuotaIssues:        in.QuotaIssues,
 			Explanation:        in.Explanation,
+			Investigation:      investigationOf(in),
 		})
 	case "text":
 		return printInventoryText(in, w)
@@ -232,6 +249,19 @@ func printInventoryText(in Input, w io.Writer) error {
 
 	if in.Explanation != "" {
 		if _, err := fmt.Fprintf(w, "\n── Explanation ──\n%s\n", in.Explanation); err != nil {
+			return err
+		}
+	}
+	if in.Investigation != "" {
+		if _, err := fmt.Fprintf(w, "\n── Investigation ──\n"); err != nil {
+			return err
+		}
+		if len(in.InvestigationConsulted) > 0 {
+			if _, err := fmt.Fprintf(w, "consulted: %s\n", strings.Join(in.InvestigationConsulted, " · ")); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintf(w, "%s\n", in.Investigation); err != nil {
 			return err
 		}
 	}

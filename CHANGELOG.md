@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Agentic `--investigate`.** After a scan, an opt-in bounded tool-use loop lets the
+  model make read-only follow-up reads — describe an object, list its events, hop to a
+  related owner/node/PVC — to chase a root cause across the finding's resource graph,
+  then emits an `Investigation` section (evidence trail + the grounded fix). Findings-
+  scoped, capped (8 reads / 6 turns), no logs, structured-only egress, never writes.
+  Anthropic-only (`ANTHROPIC_API_KEY`); supersedes `--explain`.
+
 ## [0.49.0] - 2026-07-23
 
 ### Added

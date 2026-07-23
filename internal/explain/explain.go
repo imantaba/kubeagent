@@ -19,7 +19,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/svchealth"
 )
 
-const systemPrompt = `You are a senior Kubernetes SRE reviewing a read-only cluster scan. Explain what
+const SystemPrompt = `You are a senior Kubernetes SRE reviewing a read-only cluster scan. Explain what
 is wrong and exactly how to fix it, using ONLY the facts provided — do not invent
 causes, resources, or values that are not given.
 
@@ -96,7 +96,7 @@ func (c *Client) ExplainInventory(ctx context.Context, cluster clusterhealth.Clu
 	if cluster.Verdict != "Degraded" && len(workloads) == 0 && len(serviceIssues) == 0 {
 		return "", nil
 	}
-	out, err := c.s.summarize(ctx, buildInventoryPrompt(cluster, summary, facts, serviceIssues, workloads))
+	out, err := c.s.summarize(ctx, BuildInventoryPrompt(cluster, summary, facts, serviceIssues, workloads))
 	if err != nil {
 		return "", fmt.Errorf("explaining workloads: %w", err)
 	}
@@ -107,10 +107,10 @@ func (c *Client) ExplainInventory(ctx context.Context, cluster clusterhealth.Clu
 	return out, nil
 }
 
-// buildInventoryPrompt renders the cluster verdict (when degraded) and the
+// BuildInventoryPrompt renders the cluster verdict (when degraded) and the
 // given (pre-filtered) workloads. Only structured fields are sent — never raw pod specs or
 // secrets (node names in the cluster section are infrastructure identifiers).
-func buildInventoryPrompt(cluster clusterhealth.ClusterHealth, summary *resources.Summary, facts *platform.Facts, serviceIssues []svchealth.Issue, workloads []inventory.Workload) string {
+func BuildInventoryPrompt(cluster clusterhealth.ClusterHealth, summary *resources.Summary, facts *platform.Facts, serviceIssues []svchealth.Issue, workloads []inventory.Workload) string {
 	var b strings.Builder
 	if cluster.Verdict == "Degraded" {
 		fmt.Fprintf(&b, "Cluster health (P1): DEGRADED — %d/%d nodes Ready.\n", cluster.NodesReady, cluster.NodesTotal)
@@ -201,7 +201,7 @@ func (a anthropicSummarizer) summarize(ctx context.Context, prompt string) (stri
 	resp, err := a.client.Messages.New(ctx, anthropic.MessageNewParams{
 		Model:     anthropic.Model(a.model),
 		MaxTokens: 2048,
-		System:    []anthropic.TextBlockParam{{Text: systemPrompt}},
+		System:    []anthropic.TextBlockParam{{Text: SystemPrompt}},
 		Messages: []anthropic.MessageParam{
 			anthropic.NewUserMessage(anthropic.NewTextBlock(prompt)),
 		},

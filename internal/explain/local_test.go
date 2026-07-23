@@ -51,8 +51,8 @@ func TestOpenAISummarizer_PostsAndParses(t *testing.T) {
 	if len(req.Messages) != 2 || req.Messages[0].Role != "system" || req.Messages[1].Role != "user" {
 		t.Fatalf("messages = %+v, want [system,user]", req.Messages)
 	}
-	if req.Messages[0].Content != systemPrompt {
-		t.Error("system message is not systemPrompt")
+	if req.Messages[0].Content != SystemPrompt {
+		t.Error("system message is not SystemPrompt")
 	}
 	if req.Messages[1].Content != "PROMPT-BODY" {
 		t.Error("user message is not the prompt")

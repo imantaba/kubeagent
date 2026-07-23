@@ -22,23 +22,24 @@ import (
 
 // Config configures the daemon.
 type Config struct {
-	Namespace              string
-	MetricsAddr            string
-	Heartbeat              time.Duration
-	Debounce               time.Duration
-	IncludeCron            bool
-	IncludeRestarts        bool
-	DiskUsage              bool
-	DiskThreshold          float64
-	QuotaThreshold         float64
-	NodeHeartbeatThreshold time.Duration
-	ExpectedNodes          []string
-	KubeletHealth          bool
-	ControlPlaneHealth     bool
-	DNSHealth              bool
-	DNSServfailRatio       float64
-	Certs                  bool
-	CertWarnDays           int
+	Namespace               string
+	MetricsAddr             string
+	Heartbeat               time.Duration
+	Debounce                time.Duration
+	IncludeCron             bool
+	IncludeRestarts         bool
+	DiskUsage               bool
+	DiskThreshold           float64
+	QuotaThreshold          float64
+	NodeHeartbeatThreshold  time.Duration
+	ExpectedNodes           []string
+	KubeletHealth           bool
+	ControlPlaneHealth      bool
+	DNSHealth               bool
+	DNSServfailRatio        float64
+	Certs                   bool
+	CertWarnDays            int
+	WebhookTimeoutThreshold int32
 }
 
 // Run starts the metrics server and the informer-driven control loop, blocking

@@ -82,6 +82,17 @@ func TestResultInput_MapsQuotaIssues(t *testing.T) {
 	}
 }
 
+func TestEnvInt_WebhookTimeoutDefault(t *testing.T) {
+	t.Setenv("KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS", "")
+	if got := envInt("KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS", 15); got != 15 {
+		t.Errorf("unset env should default to 15, got %d", got)
+	}
+	t.Setenv("KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS", "25")
+	if got := envInt("KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS", 15); got != 25 {
+		t.Errorf("env override should be 25, got %d", got)
+	}
+}
+
 func TestRun_NoArgsReturnsUsage(t *testing.T) {
 	if err := run(nil); err == nil {
 		t.Fatal("expected a usage error with no args")

@@ -34,6 +34,7 @@ type Config struct {
 	NodeHeartbeatThreshold time.Duration
 	ExpectedNodes          []string
 	KubeletHealth          bool
+	ControlPlaneHealth     bool
 	Certs                  bool
 	CertWarnDays           int
 }

@@ -20,6 +20,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/cluster"
 	"github.com/imantaba/kubeagent/internal/collect"
 	"github.com/imantaba/kubeagent/internal/connectivity"
+	"github.com/imantaba/kubeagent/internal/controlplane"
 	"github.com/imantaba/kubeagent/internal/credlint"
 	"github.com/imantaba/kubeagent/internal/diskusage"
 	"github.com/imantaba/kubeagent/internal/explain"
@@ -58,7 +59,7 @@ func run(args []string) error {
 		return runWatch(args[1:])
 	}
 	if len(args) == 0 || args[0] != "scan" {
-		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--kubelet-health] [--certs [--cert-warn-days n]] [--logs] [--node-heartbeat-threshold dur] [--expected-nodes a,b,…] [--fix [--dry-run|--yes]] | kubeagent watch [--kubeconfig path] [--context name] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] | kubeagent version")
+		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--kubelet-health] [--control-plane-health] [--certs [--cert-warn-days n]] [--logs] [--node-heartbeat-threshold dur] [--expected-nodes a,b,…] [--fix [--dry-run|--yes]] | kubeagent watch [--kubeconfig path] [--context name] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] | kubeagent version")
 	}
 
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
@@ -74,6 +75,7 @@ func run(args []string) error {
 	diskUsage := fs.Bool("disk-usage", false, "check node filesystem and PVC usage via the kubelet (needs the nodes/proxy grant)")
 	diskThreshold := fs.Float64("disk-threshold", 0.80, "with --disk-usage: warn at this used ratio (0-1)")
 	kubeletHealth := fs.Bool("kubelet-health", false, "probe each kubelet's /healthz via nodes/proxy and flag unhealthy nodes (needs the nodes/proxy add-on)")
+	controlPlaneHealth := fs.Bool("control-plane-health", false, "probe the apiserver /readyz endpoint and flag an unhealthy control plane / etcd (needs the /readyz grant)")
 	certs := fs.Bool("certs", false, "check TLS-secret certificate expiry (public certs only; needs the secrets add-on grant)")
 	certWarnDays := fs.Int("cert-warn-days", 30, "with --certs: warn when a certificate expires within this many days")
 	logs := fs.Bool("logs", false, "read each crashing container's previous logs and classify the failure (needs the pods/log grant)")
@@ -116,6 +118,7 @@ func run(args []string) error {
 		NodeHeartbeatThreshold: *nodeHeartbeatThreshold,
 		ExpectedNodes:          splitCSV(*expectedNodes),
 		KubeletHealth:          *kubeletHealth,
+		ControlPlaneHealth:     *controlPlaneHealth,
 		Certs:                  *certs,
 		CertWarnDays:           *certWarnDays,
 		Logs:                   *logs,
@@ -175,6 +178,11 @@ func run(args []string) error {
 		kubeletRep = &res.KubeletHealth
 	}
 
+	var cpRep *controlplane.Probe
+	if *controlPlaneHealth {
+		cpRep = &res.ControlPlane
+	}
+
 	in := resultInput(res)
 	// Presentation-layer extras that live only in runScan (clock, summaries,
 	// flag-gated reports, credential/explain output).
@@ -185,6 +193,7 @@ func run(args []string) error {
 	in.PVCReclaimFull = *pvcReclaimFull
 	in.DiskUsage = diskRep
 	in.KubeletHealth = kubeletRep
+	in.ControlPlane = cpRep
 	in.SecurityVerbose = *securityVerbose
 	in.Suggest = *suggest
 	in.Explanation = explanation
@@ -258,6 +267,7 @@ func runWatch(args []string) error {
 		NodeHeartbeatThreshold: envDur("KUBEAGENT_NODE_HEARTBEAT_THRESHOLD", 40*time.Second),
 		ExpectedNodes:          splitCSV(envOr("KUBEAGENT_EXPECTED_NODES", "")),
 		KubeletHealth:          envBool("KUBEAGENT_KUBELET_HEALTH", false),
+		ControlPlaneHealth:     envBool("KUBEAGENT_CONTROL_PLANE_HEALTH", false),
 		Certs:                  envBool("KUBEAGENT_CERTS", false),
 		CertWarnDays:           envInt("KUBEAGENT_CERT_WARN_DAYS", 30),
 	})

@@ -18,6 +18,7 @@
 - 🔒 **Read-only by default** — only `get`/`list`/`watch`, safe against prod. (Opt-in `--fix` applies a fixed allowlist of reversible remediations, each behind a `[y/N]` confirm, never in `kube-system`.)
 - 📴 **Deterministic & offline** — the whole diagnostic core needs no API key. AI is strictly opt-in.
 - 🤖 **Optional `--explain`** — one Claude API call summarizes findings in plain English (never sends pod specs, env, or secrets).
+- 🔍 **Optional `--investigate`** — agentic read-only follow-up reads (bounded tool-use loop: describe objects, list events, hop to related resources) to chase a root cause and emit a grounded fix; Anthropic-only, supersedes `--explain`.
 - 📦 **Single Go binary** — built on `client-go`, the same library `kubectl` uses. No CRDs, no in-cluster agent required.
 - 📊 **`watch` daemon** — run it in-cluster for continuous read-only diagnosis with Prometheus metrics.
 

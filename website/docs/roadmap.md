@@ -249,6 +249,12 @@
   ranks; it never invents the remediation). See
   [Failure diagnostics](features/diagnostics.md).
 
+- **`--investigate`** — agentic read-only follow-up reads (bounded tool-use loop
+  over findings: describe objects, list events, hop to related owner/node/PVC) to
+  chase a root cause and emit a grounded Investigation section; closing Theme C's
+  principled-intelligence slices. See
+  [Failure diagnostics](features/diagnostics.md).
+
 !!! info "Version history"
     [GitHub Releases](https://github.com/imantaba/kubeagent/releases) and the
     [CHANGELOG](https://github.com/imantaba/kubeagent/blob/main/CHANGELOG.md)

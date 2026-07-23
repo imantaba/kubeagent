@@ -649,6 +649,51 @@ a `NotReady` node names its kubelet-reported cause (the `NodeReady` condition's
 reason and message) instead of a bare `NotReady`. The cluster verdict and JSON
 schema are unchanged.
 
+### Agentic investigation (`--investigate`)
+
+`kubeagent scan --investigate` runs the full scan, then — for each finding —
+launches a bounded, read-only, model-driven tool-use loop. The model can
+describe a flagged object, list its events, and hop to related resources
+(owner Deployment, node, PVC) to chase the root cause across the finding's
+resource graph. When the loop concludes it emits an **Investigation** section:
+an evidence trail (`consulted: ...` line) followed by a grounded Fix-first
+narrative.
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+./kubeagent scan --investigate
+```
+
+Sample output for a CrashLoopBackOff pod:
+
+```text
+Investigation  shop/api  Deployment
+  consulted: pod shop/api-7f9c-xr2kp (describe), events for shop/api-7f9c-xr2kp
+  Fix first: the pod exits immediately after the DB_HOST env var is resolved —
+  the ConfigMap "api-config" sets DB_HOST to "postgres.internal" which is not
+  reachable from this namespace. Update the ConfigMap or correct the hostname.
+```
+
+**Constraints and requirements:**
+
+- **Anthropic-only** — requires `ANTHROPIC_API_KEY`. Tool-use is not available
+  through the local-model path (`KUBEAGENT_EXPLAIN_ENDPOINT`); if only that
+  endpoint is set, `--investigate` errors clearly.
+- **Supersedes `--explain`** — `--investigate` is the agentic superset.
+  Running both flags is unnecessary; `--investigate` includes the grounded
+  narrative that `--explain` provides, plus the follow-up reads.
+- **Capped** — the loop is bounded per finding: at most **8 reads** and **6
+  turns**, so the total API cost is predictable and the scan remains fast.
+- **No logs** — `--investigate` does not fetch container logs. It uses
+  structured Kubernetes object reads only (describe / events / get), so no
+  raw container output leaves the process.
+- **Structured-only egress** — only object metadata, conditions, and events
+  are sent to the model. No pod specs, env values, or secrets.
+- **Never writes** — all tool calls are `get`/`list` only. The read-only
+  invariant is not relaxed.
+- **Model selection** — reuses `--model` / `KUBEAGENT_MODEL` (default
+  `claude-opus-4-8`).
+
 ## Status
 
 `kubeagent scan` performs a read-only, whole-cluster scan and reports

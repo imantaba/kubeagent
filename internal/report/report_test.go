@@ -24,6 +24,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/pvchealth"
 	"github.com/imantaba/kubeagent/internal/pvcreclaim"
 	"github.com/imantaba/kubeagent/internal/quotahealth"
+	"github.com/imantaba/kubeagent/internal/remediate"
 	"github.com/imantaba/kubeagent/internal/resources"
 	"github.com/imantaba/kubeagent/internal/secscan"
 	"github.com/imantaba/kubeagent/internal/svchealth"
@@ -1931,5 +1932,34 @@ func TestPrintInventory_JSONIncludesInvestigation(t *testing.T) {
 	out := buf.String()
 	if !strings.Contains(out, `"investigation"`) || !strings.Contains(out, `"narrative"`) || !strings.Contains(out, `"consulted"`) {
 		t.Errorf("investigation JSON missing: %s", out)
+	}
+}
+
+func TestPrintInventory_JSONIncludesRemediationPlan(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{RemediationPlan: []remediate.Action{{
+		Kind: "RolloutUndo", Target: "shop/web (Deployment)",
+		Summary: "roll back to the previous revision", Reason: "r",
+		KubectlEquivalent: "kubectl -n shop rollout undo deployment/web",
+		Changes:           []remediate.Change{{Field: "revision", From: "2", To: "1"}},
+	}}}
+	if err := PrintInventory(in, "json", &buf); err != nil {
+		t.Fatal(err)
+	}
+	s := buf.String()
+	for _, want := range []string{`"remediationPlan"`, `"kind": "RolloutUndo"`, `"status": "proposed"`, `"field": "revision"`} {
+		if !strings.Contains(s, want) {
+			t.Errorf("JSON missing %s:\n%s", want, s)
+		}
+	}
+}
+
+func TestPrintInventory_JSONOmitsRemediationPlanWhenNil(t *testing.T) {
+	var buf bytes.Buffer
+	if err := PrintInventory(Input{}, "json", &buf); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf.String(), "remediationPlan") {
+		t.Error("remediationPlan must be absent when no plan was computed")
 	}
 }

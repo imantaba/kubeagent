@@ -240,6 +240,7 @@ func run(args []string) error {
 	in.Explanation = explanation
 	in.Investigation = investigationReport.Narrative
 	in.InvestigationConsulted = investigationReport.Consulted
+	in.RemediationPlan = fixPlan
 	if err := report.PrintInventory(in, *output, os.Stdout); err != nil {
 		return err
 	}

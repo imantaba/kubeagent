@@ -1817,6 +1817,15 @@ func TestPrintControlPlane(t *testing.T) {
 		t.Errorf("missing failing-checks line:\n%s", out)
 	}
 
+	// unhealthy with no named checks → the generic not-ready line
+	var bg bytes.Buffer
+	if err := PrintInventory(Input{Result: inventory.Result{}, ControlPlane: &controlplane.Probe{Status: "unhealthy"}}, "text", &bg); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(bg.String(), "apiserver /readyz reported not ready") {
+		t.Errorf("empty-Failed unhealthy should print the generic not-ready line:\n%s", bg.String())
+	}
+
 	// forbidden → grant hint
 	var bf bytes.Buffer
 	if err := PrintInventory(Input{Result: inventory.Result{}, ControlPlane: &controlplane.Probe{Status: "forbidden"}}, "text", &bf); err != nil {
@@ -1826,8 +1835,8 @@ func TestPrintControlPlane(t *testing.T) {
 		t.Errorf("forbidden should print a /readyz grant hint:\n%s", bf.String())
 	}
 
-	// ok / nil → nothing
-	for _, p := range []*controlplane.Probe{{Status: "ok"}, nil} {
+	// ok / unreachable / nil → nothing
+	for _, p := range []*controlplane.Probe{{Status: "ok"}, {Status: "unreachable"}, nil} {
 		var bo bytes.Buffer
 		if err := PrintInventory(Input{Result: inventory.Result{}, ControlPlane: p}, "text", &bo); err != nil {
 			t.Fatal(err)

@@ -18,6 +18,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/collect"
 	"github.com/imantaba/kubeagent/internal/confidence"
+	"github.com/imantaba/kubeagent/internal/controlplane"
 	"github.com/imantaba/kubeagent/internal/createhealth"
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/diskusage"
@@ -55,6 +56,7 @@ type Options struct {
 	NodeHeartbeatThreshold time.Duration
 	ExpectedNodes          []string
 	KubeletHealth          bool
+	ControlPlaneHealth     bool
 	Logs                   bool
 }
 
@@ -74,6 +76,7 @@ type Result struct {
 	PVCIssues        []pvchealth.Issue
 	SecurityIssues   []secscan.Finding
 	KubeletHealth    nodehealth.Report
+	ControlPlane     controlplane.Probe
 	Certificates     *certhealth.Report
 	StuckTerminating []termhealth.Issue
 	PDBIssues        []pdbhealth.Issue
@@ -278,5 +281,10 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 		kubeletHealth = nodehealth.Assess(probes)
 	}
 
-	return Result{Inputs: inputs, Nodes: nodes, NodeReserve: nodereserve.Assess(nodes), PVCReclaim: pvcReclaim, DiskUsage: diskReport, Health: health, Inventory: result, ServiceIssues: serviceIssues, IngressIssues: ingressIssues, PVCIssues: pvcIssues, SecurityIssues: securityIssues, KubeletHealth: kubeletHealth, Certificates: certReport, StuckTerminating: stuckTerminating, PDBIssues: pdbIssues, HPAIssues: hpaIssues, WebhookIssues: webhookIssues, QuotaIssues: quotaIssues}, nil
+	var controlPlane controlplane.Probe
+	if opts.ControlPlaneHealth {
+		controlPlane = collect.ControlPlaneReadyz(ctx, client)
+	}
+
+	return Result{Inputs: inputs, Nodes: nodes, NodeReserve: nodereserve.Assess(nodes), PVCReclaim: pvcReclaim, DiskUsage: diskReport, Health: health, Inventory: result, ServiceIssues: serviceIssues, IngressIssues: ingressIssues, PVCIssues: pvcIssues, SecurityIssues: securityIssues, KubeletHealth: kubeletHealth, ControlPlane: controlPlane, Certificates: certReport, StuckTerminating: stuckTerminating, PDBIssues: pdbIssues, HPAIssues: hpaIssues, WebhookIssues: webhookIssues, QuotaIssues: quotaIssues}, nil
 }

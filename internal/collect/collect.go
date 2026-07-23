@@ -19,6 +19,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/imantaba/kubeagent/internal/controlplane"
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/diskusage"
 	"github.com/imantaba/kubeagent/internal/inventory"
@@ -429,6 +430,17 @@ func KubeletHealthz(ctx context.Context, client kubernetes.Interface, node strin
 		AbsPath(fmt.Sprintf("/api/v1/nodes/%s/proxy/healthz", node)).
 		Do(ctx).StatusCode(&code).Raw()
 	return classify(node, code, body)
+}
+
+// ControlPlaneReadyz probes the apiserver /readyz?verbose endpoint and classifies
+// the result. Never returns an error (non-fatal, like KubeletHealthz). Needs the
+// nonResourceURLs /readyz get grant; a 401/403 yields Status "forbidden".
+func ControlPlaneReadyz(ctx context.Context, client kubernetes.Interface) controlplane.Probe {
+	var code int
+	body, _ := client.CoreV1().RESTClient().Get().
+		AbsPath("/readyz").Param("verbose", "true").
+		Do(ctx).StatusCode(&code).Raw()
+	return controlplane.ParseReadyz(code, body)
 }
 
 // classify maps a /healthz probe result to a Probe. 200 is ok; 401/403 is

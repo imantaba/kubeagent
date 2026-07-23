@@ -14,6 +14,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/controlplane"
 	"github.com/imantaba/kubeagent/internal/credlint"
 	"github.com/imantaba/kubeagent/internal/diskusage"
+	"github.com/imantaba/kubeagent/internal/dnshealth"
 	"github.com/imantaba/kubeagent/internal/hpahealth"
 	"github.com/imantaba/kubeagent/internal/ingresshealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
@@ -48,6 +49,7 @@ type inventoryReport struct {
 	SecurityIssues     []secscan.Finding           `json:"securityIssues,omitempty"`
 	KubeletHealth      *nodehealth.Report          `json:"kubeletHealth,omitempty"`
 	ControlPlane       *controlplane.Probe         `json:"controlPlane,omitempty"`
+	DNS                *dnshealth.Report           `json:"dns,omitempty"`
 	Certificates       *certhealth.Report          `json:"certificates,omitempty"`
 	StuckTerminating   []termhealth.Issue          `json:"stuckTerminating,omitempty"`
 	PDBIssues          []pdbhealth.Issue           `json:"pdbIssues,omitempty"`
@@ -77,6 +79,7 @@ type Input struct {
 	Suggest            bool
 	KubeletHealth      *nodehealth.Report
 	ControlPlane       *controlplane.Probe
+	DNS                *dnshealth.Report
 	Certificates       *certhealth.Report
 	StuckTerminating   []termhealth.Issue
 	PDBIssues          []pdbhealth.Issue
@@ -108,6 +111,7 @@ func PrintInventory(in Input, format string, w io.Writer) error {
 			SecurityIssues:     in.SecurityIssues,
 			KubeletHealth:      in.KubeletHealth,
 			ControlPlane:       in.ControlPlane,
+			DNS:                in.DNS,
 			Certificates:       in.Certificates,
 			StuckTerminating:   in.StuckTerminating,
 			PDBIssues:          in.PDBIssues,
@@ -202,6 +206,11 @@ func printInventoryText(in Input, w io.Writer) error {
 		return err
 	}
 
+	hasDNS := dnsRenders(in.DNS)
+	if err := printDNSHealth(in.DNS, w); err != nil {
+		return err
+	}
+
 	hasCerts := certificatesRender(in.Certificates)
 	if err := printCertificates(in.Certificates, w); err != nil {
 		return err
@@ -215,7 +224,7 @@ func printInventoryText(in Input, w io.Writer) error {
 		return err
 	}
 
-	if !hasAttention && !hasSecurity && !hasKubeletHealth && !hasControlPlane && !hasCerts && in.Cluster.Verdict == "Healthy" {
+	if !hasAttention && !hasSecurity && !hasKubeletHealth && !hasControlPlane && !hasDNS && !hasCerts && in.Cluster.Verdict == "Healthy" {
 		if _, err := fmt.Fprintln(w, "No issues found. ✅"); err != nil {
 			return err
 		}
@@ -996,6 +1005,38 @@ func printControlPlane(p *controlplane.Probe, w io.Writer) error {
 		}
 	case "forbidden":
 		if _, err := fmt.Fprintln(w, "  ⚠ /readyz forbidden — grant nonResourceURLs /readyz to enable this check"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// dnsRenders reports whether the DNS section would print.
+func dnsRenders(p *dnshealth.Report) bool {
+	return p != nil && (p.Status == "degraded" || p.Status == "forbidden")
+}
+
+// printDNSHealth renders the advisory DNS section: an elevated CoreDNS SERVFAIL+
+// REFUSED response ratio (or a grant hint when forbidden).
+func printDNSHealth(p *dnshealth.Report, w io.Writer) error {
+	if !dnsRenders(p) {
+		return nil
+	}
+	if _, err := fmt.Fprintln(w, "DNS  (opt-in)"); err != nil {
+		return err
+	}
+	switch p.Status {
+	case "degraded":
+		if _, err := fmt.Fprintln(w, "  ✗ cluster DNS is failing to resolve"); err != nil {
+			return err
+		}
+		pct := float64(int64(p.ServfailRatio*1000+0.5)) / 10
+		if _, err := fmt.Fprintf(w, "      ⚠ CoreDNS SERVFAIL+REFUSED ratio %.1f%% (%d/%d responses across %d pods)\n",
+			pct, p.ErrorResponses, p.TotalResponses, p.PodsProbed); err != nil {
+			return err
+		}
+	case "forbidden":
+		if _, err := fmt.Fprintln(w, "  ⚠ CoreDNS /metrics forbidden — grant pods/proxy to enable this check"); err != nil {
 			return err
 		}
 	}

@@ -11,6 +11,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/certhealth"
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/confidence"
+	"github.com/imantaba/kubeagent/internal/controlplane"
 	"github.com/imantaba/kubeagent/internal/credlint"
 	"github.com/imantaba/kubeagent/internal/diskusage"
 	"github.com/imantaba/kubeagent/internal/hpahealth"
@@ -46,6 +47,7 @@ type inventoryReport struct {
 	PVCIssues          []pvchealth.Issue           `json:"pvcIssues,omitempty"`
 	SecurityIssues     []secscan.Finding           `json:"securityIssues,omitempty"`
 	KubeletHealth      *nodehealth.Report          `json:"kubeletHealth,omitempty"`
+	ControlPlane       *controlplane.Probe         `json:"controlPlane,omitempty"`
 	Certificates       *certhealth.Report          `json:"certificates,omitempty"`
 	StuckTerminating   []termhealth.Issue          `json:"stuckTerminating,omitempty"`
 	PDBIssues          []pdbhealth.Issue           `json:"pdbIssues,omitempty"`
@@ -74,6 +76,7 @@ type Input struct {
 	SecurityVerbose    bool
 	Suggest            bool
 	KubeletHealth      *nodehealth.Report
+	ControlPlane       *controlplane.Probe
 	Certificates       *certhealth.Report
 	StuckTerminating   []termhealth.Issue
 	PDBIssues          []pdbhealth.Issue
@@ -104,6 +107,7 @@ func PrintInventory(in Input, format string, w io.Writer) error {
 			PVCIssues:          in.PVCIssues,
 			SecurityIssues:     in.SecurityIssues,
 			KubeletHealth:      in.KubeletHealth,
+			ControlPlane:       in.ControlPlane,
 			Certificates:       in.Certificates,
 			StuckTerminating:   in.StuckTerminating,
 			PDBIssues:          in.PDBIssues,
@@ -193,6 +197,11 @@ func printInventoryText(in Input, w io.Writer) error {
 		return err
 	}
 
+	hasControlPlane := controlPlaneRenders(in.ControlPlane)
+	if err := printControlPlane(in.ControlPlane, w); err != nil {
+		return err
+	}
+
 	hasCerts := certificatesRender(in.Certificates)
 	if err := printCertificates(in.Certificates, w); err != nil {
 		return err
@@ -206,7 +215,7 @@ func printInventoryText(in Input, w io.Writer) error {
 		return err
 	}
 
-	if !hasAttention && !hasSecurity && !hasKubeletHealth && !hasCerts && in.Cluster.Verdict == "Healthy" {
+	if !hasAttention && !hasSecurity && !hasKubeletHealth && !hasControlPlane && !hasCerts && in.Cluster.Verdict == "Healthy" {
 		if _, err := fmt.Fprintln(w, "No issues found. ✅"); err != nil {
 			return err
 		}
@@ -951,6 +960,42 @@ func printWorkload(wl inventory.Workload, now time.Time, suggest bool, w io.Writ
 	}
 	if wl.PodsOmitted > 0 {
 		if _, err := fmt.Fprintf(w, "    +%d more pods\n", wl.PodsOmitted); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// controlPlaneRenders reports whether the CONTROL PLANE section would print.
+func controlPlaneRenders(p *controlplane.Probe) bool {
+	return p != nil && (p.Status == "unhealthy" || p.Status == "forbidden")
+}
+
+// printControlPlane renders the advisory CONTROL PLANE section: the apiserver
+// /readyz probe result when it is not ready (or a grant hint when forbidden).
+func printControlPlane(p *controlplane.Probe, w io.Writer) error {
+	if !controlPlaneRenders(p) {
+		return nil
+	}
+	if _, err := fmt.Fprintln(w, "CONTROL PLANE  (opt-in)"); err != nil {
+		return err
+	}
+	switch p.Status {
+	case "unhealthy":
+		if _, err := fmt.Fprintln(w, "  ✗ control plane not ready"); err != nil {
+			return err
+		}
+		if len(p.Failed) > 0 {
+			if _, err := fmt.Fprintf(w, "      ⚠ %d checks failing: %s\n", len(p.Failed), strings.Join(p.Failed, ", ")); err != nil {
+				return err
+			}
+		} else {
+			if _, err := fmt.Fprintln(w, "      ⚠ apiserver /readyz reported not ready"); err != nil {
+				return err
+			}
+		}
+	case "forbidden":
+		if _, err := fmt.Fprintln(w, "  ⚠ /readyz forbidden — grant nonResourceURLs /readyz to enable this check"); err != nil {
 			return err
 		}
 	}

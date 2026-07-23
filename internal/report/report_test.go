@@ -9,6 +9,7 @@ import (
 
 	"github.com/imantaba/kubeagent/internal/certhealth"
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
+	"github.com/imantaba/kubeagent/internal/controlplane"
 	"github.com/imantaba/kubeagent/internal/credlint"
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/diskusage"
@@ -1798,5 +1799,50 @@ func TestPrintQuotaIssues(t *testing.T) {
 	}
 	if strings.Contains(buf2.String(), "ResourceQuota") {
 		t.Errorf("empty QuotaIssues should render nothing, got:\n%s", buf2.String())
+	}
+}
+
+func TestPrintControlPlane(t *testing.T) {
+	// unhealthy → section with the failing checks
+	unhealthy := &controlplane.Probe{Status: "unhealthy", Failed: []string{"etcd", "poststarthook/x"}}
+	var b bytes.Buffer
+	if err := PrintInventory(Input{Result: inventory.Result{}, ControlPlane: unhealthy}, "text", &b); err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	if !strings.Contains(out, "CONTROL PLANE") || !strings.Contains(out, "control plane not ready") {
+		t.Errorf("missing CONTROL PLANE section:\n%s", out)
+	}
+	if !strings.Contains(out, "2 checks failing: etcd, poststarthook/x") {
+		t.Errorf("missing failing-checks line:\n%s", out)
+	}
+
+	// unhealthy with no named checks → the generic not-ready line
+	var bg bytes.Buffer
+	if err := PrintInventory(Input{Result: inventory.Result{}, ControlPlane: &controlplane.Probe{Status: "unhealthy"}}, "text", &bg); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(bg.String(), "apiserver /readyz reported not ready") {
+		t.Errorf("empty-Failed unhealthy should print the generic not-ready line:\n%s", bg.String())
+	}
+
+	// forbidden → grant hint
+	var bf bytes.Buffer
+	if err := PrintInventory(Input{Result: inventory.Result{}, ControlPlane: &controlplane.Probe{Status: "forbidden"}}, "text", &bf); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(bf.String(), "/readyz") {
+		t.Errorf("forbidden should print a /readyz grant hint:\n%s", bf.String())
+	}
+
+	// ok / unreachable / nil → nothing
+	for _, p := range []*controlplane.Probe{{Status: "ok"}, {Status: "unreachable"}, nil} {
+		var bo bytes.Buffer
+		if err := PrintInventory(Input{Result: inventory.Result{}, ControlPlane: p}, "text", &bo); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(bo.String(), "CONTROL PLANE") {
+			t.Errorf("probe %+v should render no CONTROL PLANE section:\n%s", p, bo.String())
+		}
 	}
 }

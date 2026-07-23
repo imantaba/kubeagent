@@ -955,6 +955,19 @@ func TestEvaluate_KubeletHealthOffByDefault(t *testing.T) {
 	}
 }
 
+func TestEvaluate_ControlPlaneHealthOffByDefault(t *testing.T) {
+	client := fake.NewSimpleClientset(
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"}},
+	)
+	res, err := Evaluate(context.Background(), client, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ControlPlane.Status != "" {
+		t.Errorf("control plane must not be probed when disabled, got %+v", res.ControlPlane)
+	}
+}
+
 func TestEvaluate_PVCMissingStorageClass_NoEvent(t *testing.T) {
 	// A Pending PVC referencing a StorageClass that does not exist, with NO event,
 	// is flagged structurally (proves the wiring passes StorageClasses + PVs and

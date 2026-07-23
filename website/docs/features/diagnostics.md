@@ -341,6 +341,31 @@ opt-in, and **advisory** — it appears in the `KUBELET HEALTH` section and JSON
 with `KUBEAGENT_KUBELET_HEALTH=true` and the `nodes/proxy` add-on
 (`deploy/rbac-diskusage.yaml` or Helm `kubeletHealth.enabled=true`).
 
+### Control-plane health (opt-in)
+
+`scan --control-plane-health` probes the apiserver `/readyz?verbose` endpoint
+and flags an unhealthy control plane — naming the individual checks that are
+failing (etcd, admission/controller poststarthooks, informer-sync). It covers
+**apiserver and etcd**; scheduler/controller-manager health is a documented
+follow-on.
+
+It is **opt-in**: off by default because it requires a `/readyz` grant not
+included in the base RBAC profile. Enable the add-on grant with the Helm value
+`controlPlaneHealth.enabled=true` or by applying
+`deploy/rbac-controlplane.yaml`. In the daemon, set
+`KUBEAGENT_CONTROL_PLANE_HEALTH=true`; the gauge
+`kubeagent_control_plane_unhealthy` is `1` when the check fires, `0`
+otherwise.
+
+The check is **advisory** — it appears in a `CONTROL PLANE` section and JSON
+`controlPlane` but does not change the cluster verdict. Example output:
+
+```text
+CONTROL PLANE  (opt-in)
+  ✗ control plane not ready
+      ⚠ 2 checks failing: etcd, poststarthook/start-kube-apiserver-admission-initializer
+```
+
 ### Certificate expiry (opt-in)
 
 `scan --certs` reads the cluster's `kubernetes.io/tls` Secrets and flags

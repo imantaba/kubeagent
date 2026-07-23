@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Local-model `--explain`.** Set `KUBEAGENT_EXPLAIN_ENDPOINT` (an OpenAI-compatible
+  `/chat/completions` URL — Ollama, vLLM, llama.cpp, LM Studio) and `--explain` runs
+  against that local model: no `ANTHROPIC_API_KEY`, and nothing leaves the network.
+  `--model`/`KUBEAGENT_MODEL` names the local model; `KUBEAGENT_EXPLAIN_API_KEY` is an
+  optional bearer token. Theme-C (principled intelligence) — offline/local explain.
+
 ## [0.48.0] - 2026-07-23
 
 ### Changed

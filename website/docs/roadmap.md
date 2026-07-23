@@ -233,6 +233,13 @@
   offline core is unchanged; `--explain` remains opt-in and requires an API key. See
   [Failure diagnostics](features/diagnostics.md#status).
 
+- **Local-model (offline) `--explain`** (Theme-C — offline/local explain) — set
+  `KUBEAGENT_EXPLAIN_ENDPOINT` to any OpenAI-compatible `/chat/completions` base URL
+  (Ollama, vLLM, llama.cpp, LM Studio) and `--explain` runs against that local model: no
+  `ANTHROPIC_API_KEY`, and nothing leaves the network. The prompt, ranked `Fix first:`
+  output, and offline scan core are unchanged. See
+  [Failure diagnostics](features/diagnostics.md#status).
+
 - **`--suggest` next steps** (first Theme-C / principled intelligence slice) —
   opt-in `scan --suggest` prints a deterministic, reviewed next-step suggestion
   and a read-only `kubectl` investigation command under each pod finding. Offline

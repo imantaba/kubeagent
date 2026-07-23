@@ -76,30 +76,30 @@ func investigationOf(in Input) *investigationView {
 // Input carries everything the report renders. Bundled into a struct because the
 // positional parameter list had grown unwieldy.
 type Input struct {
-	Cluster            clusterhealth.ClusterHealth
-	Result             inventory.Result
-	Resources          *resources.Summary
-	Platform           *platform.Facts
-	ServiceIssues      []svchealth.Issue
-	CredentialWarnings []credlint.Finding
-	NodeReserve        *nodereserve.Report
-	PVCReclaim         *pvcreclaim.Report
-	PVCReclaimFull     bool // --pvc-reclaim: expand the PVC list (text only)
-	DiskUsage          *diskusage.Report
-	IngressIssues      []ingresshealth.RouteIssue
-	PVCIssues          []pvchealth.Issue
-	SecurityIssues     []secscan.Finding
-	SecurityVerbose    bool
-	Suggest            bool
-	KubeletHealth      *nodehealth.Report
-	ControlPlane       *controlplane.Probe
-	DNS                *dnshealth.Report
-	Certificates       *certhealth.Report
-	StuckTerminating   []termhealth.Issue
-	PDBIssues          []pdbhealth.Issue
-	HPAIssues          []hpahealth.Issue
-	WebhookIssues      []webhookhealth.Issue
-	QuotaIssues        []quotahealth.Issue
+	Cluster                clusterhealth.ClusterHealth
+	Result                 inventory.Result
+	Resources              *resources.Summary
+	Platform               *platform.Facts
+	ServiceIssues          []svchealth.Issue
+	CredentialWarnings     []credlint.Finding
+	NodeReserve            *nodereserve.Report
+	PVCReclaim             *pvcreclaim.Report
+	PVCReclaimFull         bool // --pvc-reclaim: expand the PVC list (text only)
+	DiskUsage              *diskusage.Report
+	IngressIssues          []ingresshealth.RouteIssue
+	PVCIssues              []pvchealth.Issue
+	SecurityIssues         []secscan.Finding
+	SecurityVerbose        bool
+	Suggest                bool
+	KubeletHealth          *nodehealth.Report
+	ControlPlane           *controlplane.Probe
+	DNS                    *dnshealth.Report
+	Certificates           *certhealth.Report
+	StuckTerminating       []termhealth.Issue
+	PDBIssues              []pdbhealth.Issue
+	HPAIssues              []hpahealth.Issue
+	WebhookIssues          []webhookhealth.Issue
+	QuotaIssues            []quotahealth.Issue
 	Explanation            string
 	Investigation          string
 	InvestigationConsulted []string

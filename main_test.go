@@ -331,6 +331,26 @@ func TestRun_InvestigateRejectsLocalOnlyEndpoint(t *testing.T) {
 	}
 }
 
+func TestRun_InvestigateSupersedesExplain(t *testing.T) {
+	// Passing both --investigate and --explain must not produce a flag-parse error
+	// or a precondition error — --investigate supersedes --explain silently. The
+	// scan fails at cluster-connect (bogus kubeconfig), which is the expected
+	// outcome: it proves flags parsed and the investigate branch was selected.
+	t.Setenv("ANTHROPIC_API_KEY", "test-key")
+	t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "")
+	err := run([]string{"scan", "--investigate", "--explain", "--kubeconfig", "/nonexistent/path"})
+	if err == nil {
+		t.Fatal("expected a cluster-connect error for a nonexistent kubeconfig")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "flag provided but not defined") {
+		t.Errorf("got flag-parse error; both flags must be defined: %v", err)
+	}
+	if strings.Contains(msg, "ANTHROPIC_API_KEY") || strings.Contains(msg, "KUBEAGENT_EXPLAIN_ENDPOINT") {
+		t.Errorf("got a precondition error; should have reached cluster-connect: %v", err)
+	}
+}
+
 func TestRunFixes_DryRunWritesNothing(t *testing.T) {
 	d := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web",
 		Annotations: map[string]string{"deployment.kubernetes.io/revision": "2"}}}

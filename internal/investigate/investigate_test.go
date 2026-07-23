@@ -12,6 +12,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/svchealth"
 )
 
 func TestInvestigate_RunsLoopAndReturnsReport(t *testing.T) {
@@ -26,7 +27,7 @@ func TestInvestigate_RunsLoopAndReturnsReport(t *testing.T) {
 		if len(specs) != 3 {
 			t.Errorf("expected 3 tool specs, got %d", len(specs))
 		}
-		return &fakeConv{replies: []reply{
+		return &fakeConv{t: t, replies: []reply{
 			{Calls: []toolCall{mkCall("describe", map[string]string{"kind": "pod", "namespace": "shop", "name": "web-abc"})}},
 			{Text: "root cause: image pull", Done: true},
 		}}
@@ -53,7 +54,7 @@ func TestInvestigate_SkipsWhenNothingToDo(t *testing.T) {
 	called := false
 	c := &Client{newConversation: func(string, string, []toolSpec) conversation {
 		called = true
-		return &fakeConv{}
+		return &fakeConv{t: t}
 	}}
 	rep, err := c.Investigate(context.Background(), clusterhealth.ClusterHealth{Verdict: "Healthy"}, nil, nil, nil, nil, fake.NewSimpleClientset())
 	if err != nil {
@@ -64,5 +65,42 @@ func TestInvestigate_SkipsWhenNothingToDo(t *testing.T) {
 	}
 	if rep.Narrative != "" || len(rep.Consulted) != 0 {
 		t.Errorf("expected an empty report, got %+v", rep)
+	}
+}
+
+// TestInvestigate_RunsWhenOnlyServiceIssues proves the serviceIssues arm of the
+// skip condition: a healthy cluster with no workload findings but a non-empty
+// serviceIssues slice must still open a conversation (not skip).
+func TestInvestigate_RunsWhenOnlyServiceIssues(t *testing.T) {
+	opened := false
+	c := &Client{newConversation: func(string, string, []toolSpec) conversation {
+		opened = true
+		return &fakeConv{t: t, replies: []reply{
+			{Text: "svc root cause", Done: true},
+		}}
+	}}
+	issues := []svchealth.Issue{{
+		Namespace: "shop",
+		Name:      "frontend",
+		Type:      "ClusterIP",
+		Problem:   "NoEndpoints",
+		Detail:    "no ready endpoints",
+	}}
+	rep, err := c.Investigate(
+		context.Background(),
+		clusterhealth.ClusterHealth{Verdict: "Healthy"},
+		nil, nil,
+		issues,
+		nil, // no workloads
+		fake.NewSimpleClientset(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !opened {
+		t.Error("Investigate must open a conversation when serviceIssues is non-empty")
+	}
+	if rep.Narrative != "svc root cause" {
+		t.Errorf("narrative = %q, want %q", rep.Narrative, "svc root cause")
 	}
 }

@@ -681,7 +681,8 @@ Investigation  shop/api  Deployment
   endpoint is set, `--investigate` errors clearly.
 - **Supersedes `--explain`** — `--investigate` is the agentic superset.
   Running both flags is unnecessary; `--investigate` includes the grounded
-  narrative that `--explain` provides, plus the follow-up reads.
+  narrative that `--explain` provides, plus the follow-up reads. When both
+  flags are passed, `--investigate` runs and `--explain` is silently ignored.
 - **Capped** — the loop is bounded per finding: at most **8 reads** and **6
   turns**, so the total API cost is predictable and the scan remains fast.
 - **No logs** — `--investigate` does not fetch container logs. It uses

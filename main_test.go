@@ -313,6 +313,24 @@ func fixRS() []appsv1.ReplicaSet {
 	return []appsv1.ReplicaSet{mk("web-1", "1", "nginx:1.27"), mk("web-2", "2", "nginx:bad")}
 }
 
+func TestRun_InvestigateNeedsAPIKey(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "")
+	err := run([]string{"scan", "--investigate"})
+	if err == nil || !strings.Contains(err.Error(), "ANTHROPIC_API_KEY") {
+		t.Errorf("expected an ANTHROPIC_API_KEY error, got %v", err)
+	}
+}
+
+func TestRun_InvestigateRejectsLocalOnlyEndpoint(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "http://localhost:11434/v1")
+	err := run([]string{"scan", "--investigate"})
+	if err == nil || !strings.Contains(err.Error(), "ANTHROPIC_API_KEY") {
+		t.Errorf("investigate must require an Anthropic key even when a local endpoint is set, got %v", err)
+	}
+}
+
 func TestRunFixes_DryRunWritesNothing(t *testing.T) {
 	d := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web",
 		Annotations: map[string]string{"deployment.kubernetes.io/revision": "2"}}}

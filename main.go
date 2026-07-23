@@ -25,6 +25,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/diskusage"
 	"github.com/imantaba/kubeagent/internal/dnshealth"
 	"github.com/imantaba/kubeagent/internal/explain"
+	"github.com/imantaba/kubeagent/internal/investigate"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/nodehealth"
 	"github.com/imantaba/kubeagent/internal/platform"
@@ -60,7 +61,7 @@ func run(args []string) error {
 		return runWatch(args[1:])
 	}
 	if len(args) == 0 || args[0] != "scan" {
-		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--kubelet-health] [--control-plane-health] [--dns-health] [--certs [--cert-warn-days n]] [--logs] [--node-heartbeat-threshold dur] [--expected-nodes a,b,…] [--fix [--dry-run|--yes]] | kubeagent watch [--kubeconfig path] [--context name] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] | kubeagent version")
+		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--investigate] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--kubelet-health] [--control-plane-health] [--dns-health] [--certs [--cert-warn-days n]] [--logs] [--node-heartbeat-threshold dur] [--expected-nodes a,b,…] [--fix [--dry-run|--yes]] | kubeagent watch [--kubeconfig path] [--context name] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] | kubeagent version")
 	}
 
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
@@ -68,6 +69,7 @@ func run(args []string) error {
 	contextName := fs.String("context", "", "kubeconfig context to use (default: current-context)")
 	output := fs.String("output", "text", "output format: text | json")
 	explainFlag := fs.Bool("explain", false, "summarize findings via one LLM call (needs ANTHROPIC_API_KEY, or KUBEAGENT_EXPLAIN_ENDPOINT for a local OpenAI-compatible model)")
+	investigateFlag := fs.Bool("investigate", false, "agentic read-only investigation of findings via a bounded tool-use loop (needs ANTHROPIC_API_KEY; supersedes --explain)")
 	model := fs.String("model", "", "model for --explain (default: $KUBEAGENT_MODEL or claude-opus-4-8; the local model name when KUBEAGENT_EXPLAIN_ENDPOINT is set)")
 	includeCron := fs.Bool("include-cron", false, "include CronJobs in the report")
 	includeRestarts := fs.Bool("include-restarts", false, "include workloads that are healthy now but have restarted")
@@ -104,6 +106,11 @@ func run(args []string) error {
 	explainEndpoint := os.Getenv("KUBEAGENT_EXPLAIN_ENDPOINT")
 	if *explainFlag && explainEndpoint == "" && os.Getenv("ANTHROPIC_API_KEY") == "" {
 		return fmt.Errorf("--explain needs ANTHROPIC_API_KEY, or set KUBEAGENT_EXPLAIN_ENDPOINT for a local OpenAI-compatible model")
+	}
+	// --investigate requires the Anthropic API key directly; local endpoints do not
+	// support the tool-use loop in v1.
+	if *investigateFlag && os.Getenv("ANTHROPIC_API_KEY") == "" {
+		return fmt.Errorf("--investigate needs ANTHROPIC_API_KEY (local endpoints do not support the tool-use loop yet)")
 	}
 	var explainModel string
 	if explainEndpoint != "" {
@@ -168,10 +175,21 @@ func run(args []string) error {
 	facts := platform.Detect(nodes, sysDS, scs, ics)
 
 	var explanation string
-	if *explainFlag {
+	var investigationReport investigate.Report
+	switch {
+	case *investigateFlag:
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		defer cancel()
+		investigationReport, err = investigate.New(explain.ResolveModel(*model, os.Getenv("KUBEAGENT_MODEL"))).
+			Investigate(ctx, health, &summary, &facts, serviceIssues, result.Workloads, client)
+		if err != nil {
+			return err
+		}
+	case *explainFlag:
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		explanation, err = explain.NewFromConfig(explainModel, explainEndpoint, os.Getenv("KUBEAGENT_EXPLAIN_API_KEY")).ExplainInventory(ctx, health, &summary, &facts, serviceIssues, result.Workloads)
+		explanation, err = explain.NewFromConfig(explainModel, explainEndpoint, os.Getenv("KUBEAGENT_EXPLAIN_API_KEY")).
+			ExplainInventory(ctx, health, &summary, &facts, serviceIssues, result.Workloads)
 		if err != nil {
 			return err
 		}
@@ -218,6 +236,8 @@ func run(args []string) error {
 	in.SecurityVerbose = *securityVerbose
 	in.Suggest = *suggest
 	in.Explanation = explanation
+	in.Investigation = investigationReport.Narrative
+	in.InvestigationConsulted = investigationReport.Consulted
 	if err := report.PrintInventory(in, *output, os.Stdout); err != nil {
 		return err
 	}

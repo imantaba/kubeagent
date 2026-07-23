@@ -77,3 +77,6 @@ dnsHealth:
 certs:
   enabled: false
   warnDays: "30"
+
+webhookLatency:
+  timeoutThreshold: 15

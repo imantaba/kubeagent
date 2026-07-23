@@ -13,8 +13,6 @@ import (
 	"syscall"
 	"time"
 
-	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/imantaba/kubeagent/internal/cluster"
@@ -25,7 +23,6 @@ import (
 	"github.com/imantaba/kubeagent/internal/diskusage"
 	"github.com/imantaba/kubeagent/internal/dnshealth"
 	"github.com/imantaba/kubeagent/internal/explain"
-	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/investigate"
 	"github.com/imantaba/kubeagent/internal/nodehealth"
 	"github.com/imantaba/kubeagent/internal/platform"
@@ -221,6 +218,11 @@ func run(args []string) error {
 		dnsRep = &res.DNS
 	}
 
+	var fixPlan []remediate.Action
+	if *fix {
+		fixPlan = remediate.Plan(result.Workloads, res.Inputs.ReplicaSets, nodes)
+	}
+
 	in := resultInput(res)
 	// Presentation-layer extras that live only in runScan (clock, summaries,
 	// flag-gated reports, credential/explain output).
@@ -238,11 +240,12 @@ func run(args []string) error {
 	in.Explanation = explanation
 	in.Investigation = investigationReport.Narrative
 	in.InvestigationConsulted = investigationReport.Consulted
+	in.RemediationPlan = fixPlan
 	if err := report.PrintInventory(in, *output, os.Stdout); err != nil {
 		return err
 	}
 	if *fix {
-		runFixes(context.Background(), client, result.Workloads, res.Inputs.ReplicaSets, nodes, *dryRun, *assumeYes, os.Stdout, os.Stdin)
+		runFixes(context.Background(), client, fixPlan, *dryRun, *assumeYes, os.Stdout, os.Stdin)
 	}
 	return nil
 }
@@ -382,18 +385,28 @@ func envInt(key string, def int) int {
 }
 
 // runFixes proposes the planned remediations and, unless --dry-run, applies each
-// after a [y/N] confirmation (or unconditionally with --yes). Writes are guarded
-// inside remediate.Apply.
-func runFixes(ctx context.Context, client kubernetes.Interface, workloads []inventory.Workload, replicaSets []appsv1.ReplicaSet, nodes []corev1.Node, dryRun, assumeYes bool, w io.Writer, in io.Reader) {
-	actions := remediate.Plan(workloads, replicaSets, nodes)
+// after a [y/N] confirmation (or unconditionally with --yes). The actions were
+// planned once in runScan; Apply is bound to what each preview promised. Writes
+// are guarded inside remediate.Apply.
+func runFixes(ctx context.Context, client kubernetes.Interface, actions []remediate.Action, dryRun, assumeYes bool, w io.Writer, in io.Reader) {
 	if len(actions) == 0 {
 		fmt.Fprintln(w, "\nNo automatic remediations available.")
 		return
 	}
 	reader := bufio.NewReader(in)
 	for _, a := range actions {
-		fmt.Fprintf(w, "\nProposed fix: %s — %s\n  reason: %s\n  kubectl equivalent: %s\n",
-			a.Target, a.Summary, a.Reason, a.KubectlEquivalent)
+		fmt.Fprintf(w, "\nProposed fix: %s — %s\n  reason: %s\n", a.Target, a.Summary, a.Reason)
+		if len(a.Changes) > 0 {
+			fmt.Fprintln(w, "  will change:")
+			for _, c := range a.Changes {
+				if c.From == "" && c.To == "" {
+					fmt.Fprintf(w, "    %s\n", c.Field)
+				} else {
+					fmt.Fprintf(w, "    %s: %s → %s\n", c.Field, c.From, c.To)
+				}
+			}
+		}
+		fmt.Fprintf(w, "  kubectl equivalent: %s\n", a.KubectlEquivalent)
 		if dryRun {
 			fmt.Fprintln(w, "  (dry-run: not applied)")
 			continue

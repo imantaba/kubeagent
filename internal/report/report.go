@@ -25,6 +25,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/pvchealth"
 	"github.com/imantaba/kubeagent/internal/pvcreclaim"
 	"github.com/imantaba/kubeagent/internal/quotahealth"
+	"github.com/imantaba/kubeagent/internal/remediate"
 	"github.com/imantaba/kubeagent/internal/remediation"
 	"github.com/imantaba/kubeagent/internal/resources"
 	"github.com/imantaba/kubeagent/internal/secscan"
@@ -58,6 +59,7 @@ type inventoryReport struct {
 	QuotaIssues        []quotahealth.Issue         `json:"quotaIssues,omitempty"`
 	Explanation        string                      `json:"explanation,omitempty"`
 	Investigation      *investigationView          `json:"investigation,omitempty"`
+	RemediationPlan    []remediationActionView     `json:"remediationPlan,omitempty"`
 }
 
 type investigationView struct {
@@ -71,6 +73,33 @@ func investigationOf(in Input) *investigationView {
 		return nil
 	}
 	return &investigationView{Consulted: in.InvestigationConsulted, Narrative: in.Investigation}
+}
+
+// remediationActionView is the JSON shape of one proposed --fix action. Status is
+// always "proposed" in this slice; apply outcomes become durable in the audit-log
+// slice.
+type remediationActionView struct {
+	Kind              string             `json:"kind"`
+	Target            string             `json:"target"`
+	Summary           string             `json:"summary"`
+	Reason            string             `json:"reason"`
+	KubectlEquivalent string             `json:"kubectlEquivalent"`
+	Changes           []remediate.Change `json:"changes,omitempty"`
+	Status            string             `json:"status"`
+}
+
+func remediationPlanOf(in Input) []remediationActionView {
+	if len(in.RemediationPlan) == 0 {
+		return nil
+	}
+	out := make([]remediationActionView, len(in.RemediationPlan))
+	for i, a := range in.RemediationPlan {
+		out[i] = remediationActionView{
+			Kind: a.Kind, Target: a.Target, Summary: a.Summary, Reason: a.Reason,
+			KubectlEquivalent: a.KubectlEquivalent, Changes: a.Changes, Status: "proposed",
+		}
+	}
+	return out
 }
 
 // Input carries everything the report renders. Bundled into a struct because the
@@ -103,7 +132,8 @@ type Input struct {
 	Explanation            string
 	Investigation          string
 	InvestigationConsulted []string
-	Now                    time.Time // clock for relative ages; main sets time.Now(); zero → wall-clock
+	RemediationPlan        []remediate.Action // --fix: the proposed actions (JSON only)
+	Now                    time.Time          // clock for relative ages; main sets time.Now(); zero → wall-clock
 }
 
 // PrintInventory writes the cluster verdict and the prioritized workload set to w.
@@ -136,6 +166,7 @@ func PrintInventory(in Input, format string, w io.Writer) error {
 			QuotaIssues:        in.QuotaIssues,
 			Explanation:        in.Explanation,
 			Investigation:      investigationOf(in),
+			RemediationPlan:    remediationPlanOf(in),
 		})
 	case "text":
 		return printInventoryText(in, w)

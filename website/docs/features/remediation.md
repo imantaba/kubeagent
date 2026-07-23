@@ -55,17 +55,36 @@ exits without writing anything:
 
 ![kubeagent scan --fix --dry-run](../assets/fix-dry-run.gif)
 
+## The preview is a contract
+
+Every proposed fix includes a curated `will change:` diff — the revision line,
+a per-container image change (`image (name): old → new`), and a count-only
+`N other template fields changed` line for anything else — computed at plan
+time, before `Apply?` is shown. **Only safe, structural fields are diffed: env
+values and template contents are never shown.**
+
+`Apply` is bound to that preview. Just before writing, kubeagent re-checks the
+live revision and pod-template hash. If the cluster has moved — a new rollout
+landed, or the target revision is gone — the action is refused with
+`state changed since preview … no write made` and rendered as `skipped:`. To
+retry, re-run the scan so a fresh preview is computed against current state.
+
 ## Example
 
 ```text
-Proposed fix: chaos-rollout/web (Deployment) — roll back to the previous revision
+Proposed fix: shop/web (Deployment) — roll back to the previous revision
   reason: newest rollout cannot pull its image; a prior revision (1) exists
-  kubectl equivalent: kubectl -n chaos-rollout rollout undo deployment/web
+  will change:
+    revision: 2 → 1
+    image (web): registry.example.com/web:v2 → registry.example.com/web:v1
+  kubectl equivalent: kubectl -n shop rollout undo deployment/web
   Apply? [y/N] y
-  applied: rolled back chaos-rollout/web to revision 1 (pod template restored)
+  applied: rolled back shop/web to revision 1 (pod template restored)
 
 Proposed fix: node/worker-1 — uncordon the node (make it schedulable)
   reason: node is cordoned (SchedulingDisabled)
+  will change:
+    spec.unschedulable: true → false
   kubectl equivalent: kubectl uncordon worker-1
   Apply? [y/N] y
   applied: uncordoned node worker-1
@@ -75,4 +94,29 @@ When nothing is safely fixable, `kubeagent` says so and writes nothing:
 
 ```text
 No automatic remediations available.
+```
+
+## JSON output (`--output json`)
+
+With `--output json`, the remediation plan is included in the scan result as
+`remediationPlan` — an array of proposed actions, each with `status: "proposed"`.
+This is the foundation for the coming audit log.
+
+```json
+{
+  "remediationPlan": [
+    {
+      "kind": "RolloutUndo",
+      "target": "shop/web (Deployment)",
+      "summary": "roll back to the previous revision",
+      "reason": "newest rollout cannot pull its image; a prior revision (1) exists",
+      "kubectlEquivalent": "kubectl -n shop rollout undo deployment/web",
+      "changes": [
+        { "field": "revision", "from": "2", "to": "1" },
+        { "field": "image (web)", "from": "registry.example.com/web:v2", "to": "registry.example.com/web:v1" }
+      ],
+      "status": "proposed"
+    }
+  ]
+}
 ```

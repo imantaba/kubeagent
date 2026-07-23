@@ -255,6 +255,15 @@
   principled-intelligence slices. See
   [Failure diagnostics](features/diagnostics.md).
 
+- **`--fix` diff preview + preview→apply contract** (Theme D — slice 1, remediation
+  that earns trust) — every proposed fix now shows a plan-time `will change:` diff
+  (revision, per-container images, a safe count of other template changes — never env
+  values or template contents), and `Apply` is bound to that preview: if the cluster
+  drifted since (a new rollout, the target revision gone), it refuses with
+  `state changed since preview` and makes no write. With `--output json`, the plan
+  appears as `remediationPlan` (status `proposed`) — the foundation for the coming
+  audit-log and RBAC-preflight slices. See [Remediation](features/remediation.md).
+
 !!! info "Version history"
     [GitHub Releases](https://github.com/imantaba/kubeagent/releases) and the
     [CHANGELOG](https://github.com/imantaba/kubeagent/blob/main/CHANGELOG.md)

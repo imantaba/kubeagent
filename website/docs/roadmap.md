@@ -196,6 +196,16 @@
   `kubeagent_resourcequota_issues`; adds a `resourcequotas` read grant. See
   [Failure diagnostics](features/diagnostics.md).
 
+- **Control-plane / etcd health (`--control-plane-health`)** (Theme-B control-plane closer) —
+  opt-in `scan --control-plane-health` probes the apiserver `/readyz?verbose`
+  endpoint and flags an unhealthy control plane, naming the failing checks (etcd,
+  admission/controller poststarthooks, informer-sync). Covers apiserver + etcd;
+  scheduler/controller-manager health is a documented follow-on. Read-only; needs
+  the `/readyz` add-on grant (`deploy/rbac-controlplane.yaml` or Helm
+  `controlPlaneHealth.enabled=true`); the daemon exposes
+  `kubeagent_control_plane_unhealthy`. See
+  [Failure diagnostics](features/diagnostics.md).
+
 - **`--suggest` next steps** (first Theme-C / principled intelligence slice) —
   opt-in `scan --suggest` prints a deterministic, reviewed next-step suggestion
   and a read-only `kubectl` investigation command under each pod finding. Offline

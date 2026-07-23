@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Control-plane / etcd health (`--control-plane-health`).** An opt-in probe of
+  the apiserver `/readyz?verbose` endpoint flags an unhealthy control plane —
+  naming the failing checks (etcd, admission/controller poststarthooks,
+  informer-sync). Read-only; needs the `/readyz` add-on grant; the daemon exposes
+  `kubeagent_control_plane_unhealthy`. First of the Theme-B control-plane closers.
+
 ## [0.44.0] - 2026-07-23
 
 ### Added

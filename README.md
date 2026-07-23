@@ -135,6 +135,13 @@ kubeagent scan
   kubelet `/healthz` via `nodes/proxy` and flags a kubelet that is reachable but
   unhealthy (PLEG/runtime failures), the "alive but sick" case heartbeat and
   NotReady checks miss. Reuses the `nodes/proxy` add-on from `--disk-usage`.
+- **Control-plane / etcd health (opt-in)** — `scan --control-plane-health`
+  probes the apiserver `/readyz?verbose` and flags an unhealthy control plane,
+  naming the failing checks (etcd, poststarthooks, informer-sync). Read-only;
+  needs the `/readyz` add-on grant (`deploy/rbac-controlplane.yaml` or Helm
+  `controlPlaneHealth.enabled=true`). The daemon exposes
+  `kubeagent_control_plane_unhealthy` and is enabled with
+  `KUBEAGENT_CONTROL_PLANE_HEALTH=true`.
 - **Certificate expiry (--certs)** — flags expired and soon-expiring TLS certificates (public cert metadata only; never reads keys), with the Ingress routes they front.
 - **Crash log root-cause (opt-in)** — `scan --logs` reads a crashing container's
   previous logs and names the failure (panic, connection refused, bad entrypoint, …).

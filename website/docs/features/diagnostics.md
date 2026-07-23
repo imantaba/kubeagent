@@ -358,7 +358,7 @@ included in the base RBAC profile. Enable the add-on grant with the Helm value
 otherwise.
 
 The check is **advisory** — it appears in a `CONTROL PLANE` section and JSON
-`controlPlaneHealth` but does not change the cluster verdict. Example output:
+`controlPlane` but does not change the cluster verdict. Example output:
 
 ```text
 CONTROL PLANE  (opt-in)

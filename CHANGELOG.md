@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`--explain` now ranks and grounds remediation.** The explanation opens with a
+  `Fix first:` ordered remediation list, and each per-issue Fix is anchored to
+  kubeagent's deterministic, pre-reviewed `--suggest` command — the model ranks,
+  sequences, and phrases, but never invents or substitutes a command. First
+  Theme-C (principled intelligence) slice; the deterministic offline core is
+  unchanged.
+
 ## [0.47.0] - 2026-07-23
 
 ### Added

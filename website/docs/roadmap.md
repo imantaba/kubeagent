@@ -225,6 +225,14 @@
   `kubeagent_admission_webhook_latency_risks`; no new RBAC.
   See [Failure diagnostics](features/diagnostics.md).
 
+- **`--explain` ranked and grounded remediation** (Theme-C / first principled-intelligence
+  slice — pairs with `--suggest`) — `--explain` now opens with a `Fix first:` ordered
+  remediation list (cluster P1 before workload P2, most-blocking first), and each per-issue
+  Fix is anchored to kubeagent's deterministic, pre-reviewed `--suggest` command — the model
+  ranks, sequences, and phrases, but never invents or substitutes a command. The deterministic
+  offline core is unchanged; `--explain` remains opt-in and requires an API key. See
+  [Failure diagnostics](features/diagnostics.md#status).
+
 - **`--suggest` next steps** (first Theme-C / principled intelligence slice) —
   opt-in `scan --suggest` prints a deterministic, reviewed next-step suggestion
   and a read-only `kubectl` investigation command under each pod finding. Offline

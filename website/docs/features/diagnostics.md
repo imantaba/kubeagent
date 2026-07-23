@@ -660,8 +660,13 @@ a read-only `kubectl` investigation command under each finding — offline, no
 API key required.
 
 The optional `--explain` flag makes a single Claude API call to summarize
-findings in plain English. The deterministic core still works offline with no
-API key.
+findings in plain English. The explanation now **opens with a `Fix first:`
+ranked remediation list** — cluster/kube-system problems (P1) before workload
+issues (P2), most-blocking first — and each per-issue Fix is **grounded on
+kubeagent's deterministic, pre-reviewed `--suggest` command**: the model ranks,
+sequences, and phrases, but never invents or substitutes a command. The
+deterministic offline core (`scan`, `--suggest`) is unchanged; `--explain`
+remains opt-in and requires an API key.
 
 ## Example output
 

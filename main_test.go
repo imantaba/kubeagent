@@ -636,4 +636,8 @@ func TestRunFixes_DryRunReportsPermissionDenied(t *testing.T) {
 	if !strings.Contains(out.String(), "would be blocked") {
 		t.Errorf("dry-run should report the block, got: %s", out.String())
 	}
+	recs := auditLines(t, auditBuf.String())
+	if len(recs) != 1 || recs[0].Disposition != "dry-run" {
+		t.Fatalf("dry-run disposition expected on the denied path, got %+v", recs)
+	}
 }

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`--fix` RBAC preflight.** Before each guarded write, kubeagent runs a
+  `SelfSubjectAccessReview` to confirm the current credentials may perform it
+  (`update` on the target deployment/node). A denial refuses up front — `skipped: you
+  lack permission to update deployments in namespace "shop" (RBAC); no write attempted`
+  — recorded with a new `preflight` audit disposition, instead of a mid-apply 403. An
+  SSAR API failure fails closed (no write, `error`). Under `--dry-run` the check runs
+  read-only and reports whether each fix would be permitted. Needs no extra RBAC —
+  self-review is granted to all authenticated users.
+
 ## [0.52.0] - 2026-07-24
 
 ### Added

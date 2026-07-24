@@ -96,6 +96,41 @@ When nothing is safely fixable, `kubeagent` says so and writes nothing:
 No automatic remediations available.
 ```
 
+## RBAC preflight
+
+Before attempting each write, kubeagent runs a `SelfSubjectAccessReview` (SSAR)
+to confirm that the current credentials are permitted to perform it — for example,
+`update` on the target Deployment in namespace `shop`, or `update` on the target
+Node.
+
+**Denied — refused up front.** If the SSAR returns a denial, the action is skipped
+before any write is attempted:
+
+```text
+skipped: you lack permission to update deployments in namespace "shop" (RBAC); no write attempted
+```
+
+The outcome is recorded in the audit log with the new `preflight` disposition — a
+clean up-front refusal instead of a mid-apply 403.
+
+**Fail-closed on SSAR error.** If the `SelfSubjectAccessReview` API call itself
+fails (the API server is unreachable, a transient error), kubeagent fails closed:
+no write is attempted and the outcome is recorded with the `error` disposition.
+
+**Under `--dry-run`.** The preflight check runs in dry-run mode too (read-only).
+Depending on what the SSAR returns, the dry-run line reports one of:
+
+```text
+(dry-run: not applied; you have permission to apply this)
+(dry-run: not applied; would be blocked — you lack permission to update deployments in namespace "shop" (RBAC))
+(dry-run: not applied; permission check errored: <detail>)
+```
+
+**No extra RBAC required.** The `SelfSubjectAccessReview` is a self-check —
+querying your own permissions — and `create selfsubjectaccessreviews` is granted
+to all authenticated users by the built-in `system:basic-user` ClusterRole.
+kubeagent does not need any additional RBAC to run the preflight.
+
 ## Audit log (`--audit-log`)
 
 `--audit-log <path>` (used together with `--fix`) appends a durable,
@@ -122,7 +157,8 @@ Each record is a single JSON object on its own line:
 | `dry-run` | `--dry-run` was set; the action was planned but no write was made. |
 | `declined` | The operator answered `N` (or pressed Enter) at the `Apply? [y/N]` prompt. |
 | `refused` | A safety guard fired at apply time (cluster state drifted, or a nil-error "no write made" condition); no write was made. |
-| `error` | The write was attempted but the API server returned an error. |
+| `preflight` | The RBAC preflight (`SelfSubjectAccessReview`) denied the action before any write was attempted. |
+| `error` | The write was attempted but the API server returned an error; or the SSAR itself failed (fail-closed). |
 
 **Properties of the audit file:**
 

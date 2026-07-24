@@ -262,9 +262,9 @@ type Result struct {
 func Preflight(ctx context.Context, client kubernetes.Interface, a Action) (bool, string, error) {
 	var group, resource, ns string
 	switch a.Kind {
-	case "RolloutUndo":
+	case "RolloutUndo", "RolloutForward":
 		group, resource, ns = "apps", "deployments", a.Namespace
-	case "Uncordon":
+	case "Uncordon", "Cordon":
 		group, resource, ns = "", "nodes", ""
 	default:
 		return false, "", fmt.Errorf("unknown action kind %q", a.Kind)
@@ -296,6 +296,10 @@ func Apply(ctx context.Context, client kubernetes.Interface, a Action) Result {
 		return applyRolloutUndo(ctx, client, a)
 	case "Uncordon":
 		return applyUncordon(ctx, client, a)
+	case "RolloutForward":
+		return applyRolloutForward(ctx, client, a)
+	case "Cordon":
+		return applyCordon(ctx, client, a)
 	default:
 		return Result{Action: a, Err: fmt.Errorf("unknown action kind %q", a.Kind)}
 	}
@@ -420,4 +424,141 @@ func templatesEqual(a, b corev1.PodTemplateSpec) bool {
 	delete(ac.Labels, "pod-template-hash")
 	delete(bc.Labels, "pod-template-hash")
 	return apiequality.Semantic.DeepEqual(ac, bc)
+}
+
+// Inverse returns the deterministic undo of a previously applied remediation, from the
+// plain values an audit record carries (this package must not import internal/audit —
+// audit imports remediate). Pure: no I/O, never LLM-decided. The returned Action flows
+// through the same guard rails as any planned action.
+func Inverse(kind, namespace, name string, fromRevision, toRevision int) (Action, error) {
+	switch kind {
+	case "RolloutUndo":
+		if fromRevision == 0 || toRevision == 0 {
+			return Action{}, fmt.Errorf("this audit record predates structured rollback data (kubeagent < v0.54); cannot derive a safe rollback")
+		}
+		return Action{
+			Kind:              "RolloutForward",
+			Namespace:         namespace,
+			Name:              name,
+			Target:            namespace + "/" + name + " (Deployment)",
+			Summary:           "roll forward to the pre-fix revision",
+			Reason:            fmt.Sprintf("undo the fix that rolled %s/%s back from revision %d to %d", namespace, name, fromRevision, toRevision),
+			KubectlEquivalent: fmt.Sprintf("kubectl -n %s rollout undo deployment/%s --to-revision=%d", namespace, name, fromRevision),
+			Changes: []Change{{
+				Field: "revision",
+				From:  strconv.Itoa(toRevision),
+				To:    strconv.Itoa(fromRevision),
+			}},
+			CurrentRevision: toRevision,   // where the fix left it
+			TargetRevision:  fromRevision, // where we are restoring to
+		}, nil
+	case "Uncordon":
+		return Action{
+			Kind:              "Cordon",
+			Name:              name,
+			Target:            "node/" + name,
+			Summary:           "re-cordon the node (make it unschedulable)",
+			Reason:            "undo the fix that uncordoned node " + name,
+			KubectlEquivalent: "kubectl cordon " + name,
+			Changes:           []Change{{Field: "spec.unschedulable", From: "false", To: "true"}},
+		}, nil
+	default:
+		return Action{}, fmt.Errorf("no inverse defined for action kind %q", kind)
+	}
+}
+
+// applyRolloutForward restores a Deployment to the revision it had before a fix, using
+// the same guarded sequence as applyRolloutUndo: state precondition (the deployment is
+// still where the fix left it and the target revision still exists), then the RBAC
+// preflight, then the single write.
+func applyRolloutForward(ctx context.Context, client kubernetes.Interface, a Action) Result {
+	res := Result{Action: a}
+	if protectedNamespaces[a.Namespace] {
+		res.Err = fmt.Errorf("refusing to act in protected namespace %q", a.Namespace)
+		return res
+	}
+	dep, err := client.AppsV1().Deployments(a.Namespace).Get(ctx, a.Name, metav1.GetOptions{})
+	if err != nil {
+		res.Err = fmt.Errorf("get deployment: %w", err)
+		return res
+	}
+	if curRev := revFromAnnotations(dep.Annotations); curRev != a.CurrentRevision {
+		res.Detail = fmt.Sprintf(
+			"state changed since the fix (revision %d is now current; the fix left it at %d) — no write made",
+			curRev, a.CurrentRevision)
+		res.Refused = true
+		return res
+	}
+	rsList, err := client.AppsV1().ReplicaSets(a.Namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		res.Err = fmt.Errorf("list replicasets: %w", err)
+		return res
+	}
+	var target *appsv1.ReplicaSet
+	for i := range rsList.Items {
+		rs := &rsList.Items[i]
+		if ownedBy(*rs, a.Name) && revFromAnnotations(rs.Annotations) == a.TargetRevision {
+			target = rs
+			break
+		}
+	}
+	if target == nil {
+		res.Detail = fmt.Sprintf("revision %d no longer exists; no write made", a.TargetRevision)
+		res.Refused = true
+		return res
+	}
+	allowed, reason, err := Preflight(ctx, client, a)
+	if err != nil {
+		res.Err = fmt.Errorf("permission preflight failed: %w", err)
+		return res
+	}
+	if !allowed {
+		res.PreflightDenied = true
+		res.Detail = reason + "; no write attempted"
+		return res
+	}
+	tpl := *target.Spec.Template.DeepCopy()
+	delete(tpl.Labels, "pod-template-hash")
+	dep.Spec.Template = tpl
+	if _, err := client.AppsV1().Deployments(a.Namespace).Update(ctx, dep, metav1.UpdateOptions{}); err != nil {
+		res.Err = fmt.Errorf("update deployment: %w", err)
+		return res
+	}
+	res.Applied = true
+	res.Detail = fmt.Sprintf("rolled %s/%s forward to revision %d (pre-fix pod template restored)",
+		a.Namespace, a.Name, a.TargetRevision)
+	return res
+}
+
+// applyCordon re-cordons a node that a previous fix uncordoned.
+func applyCordon(ctx context.Context, client kubernetes.Interface, a Action) Result {
+	res := Result{Action: a}
+	n, err := client.CoreV1().Nodes().Get(ctx, a.Name, metav1.GetOptions{})
+	if err != nil {
+		res.Err = fmt.Errorf("get node: %w", err)
+		return res
+	}
+	if n.Spec.Unschedulable {
+		res.Detail = "node is already cordoned; no write made"
+		res.Refused = true
+		return res
+	}
+	allowed, reason, err := Preflight(ctx, client, a)
+	if err != nil {
+		res.Err = fmt.Errorf("permission preflight failed: %w", err)
+		return res
+	}
+	if !allowed {
+		res.PreflightDenied = true
+		res.Detail = reason + "; no write attempted"
+		return res
+	}
+	n.Spec.Unschedulable = true
+	if _, err := client.CoreV1().Nodes().Update(ctx, n, metav1.UpdateOptions{}); err != nil {
+		res.Err = fmt.Errorf("update node: %w", err)
+		return res
+	}
+	res.Applied = true
+	res.Detail = "re-cordoned node " + a.Name
+	return res
 }

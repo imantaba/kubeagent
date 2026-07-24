@@ -628,3 +628,166 @@ func TestApply_DriftShortCircuitsBeforePreflight(t *testing.T) {
 		t.Fatalf("expected the drift refusal, got %+v", res)
 	}
 }
+
+func TestInverse_RolloutUndoBecomesRolloutForward(t *testing.T) {
+	a, err := Inverse("RolloutUndo", "shop", "web", 5, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Kind != "RolloutForward" || a.Namespace != "shop" || a.Name != "web" {
+		t.Fatalf("action = %+v", a)
+	}
+	if a.CurrentRevision != 4 || a.TargetRevision != 5 {
+		t.Errorf("revisions = %d→%d, want 4→5 (undo the fix)", a.CurrentRevision, a.TargetRevision)
+	}
+	want := Change{Field: "revision", From: "4", To: "5"}
+	if len(a.Changes) != 1 || a.Changes[0] != want {
+		t.Errorf("changes = %+v, want [%+v]", a.Changes, want)
+	}
+}
+
+func TestInverse_UncordonBecomesCordon(t *testing.T) {
+	a, err := Inverse("Uncordon", "", "worker-1", 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Kind != "Cordon" || a.Name != "worker-1" {
+		t.Fatalf("action = %+v", a)
+	}
+	want := Change{Field: "spec.unschedulable", From: "false", To: "true"}
+	if len(a.Changes) != 1 || a.Changes[0] != want {
+		t.Errorf("changes = %+v, want [%+v]", a.Changes, want)
+	}
+}
+
+func TestInverse_RolloutUndoWithoutRevisionsErrors(t *testing.T) {
+	_, err := Inverse("RolloutUndo", "shop", "web", 0, 0)
+	if err == nil || !strings.Contains(err.Error(), "v0.54") {
+		t.Errorf("pre-v0.54 record must error mentioning the version, got %v", err)
+	}
+}
+
+func TestInverse_UnknownKindErrors(t *testing.T) {
+	if _, err := Inverse("Nope", "", "x", 0, 0); err == nil {
+		t.Error("unknown kind must error")
+	}
+}
+
+func TestApply_RolloutForwardRestoresRevision(t *testing.T) {
+	// current rev 4 (the fix landed here); rev 5 is the pre-fix revision to restore.
+	cur := depObj("shop", "web", "nginx:1.27", "4")
+	r4 := rsWithImage("shop", "web-4", "web", "4", "nginx:1.27")
+	r5 := rsWithImage("shop", "web-5", "web", "5", "nginx:2.0")
+	cli := fake.NewSimpleClientset(cur, &r4, &r5)
+	allowFix(cli)
+	a, _ := Inverse("RolloutUndo", "shop", "web", 5, 4)
+	res := Apply(context.Background(), cli, a)
+	if !res.Applied || res.Err != nil {
+		t.Fatalf("expected the rollback to apply, got %+v", res)
+	}
+	out, _ := cli.AppsV1().Deployments("shop").Get(context.Background(), "web", metav1.GetOptions{})
+	if got := out.Spec.Template.Spec.Containers[0].Image; got != "nginx:2.0" {
+		t.Errorf("image = %q, want the pre-fix nginx:2.0", got)
+	}
+}
+
+func TestApply_RolloutForwardRefusesOnDrift(t *testing.T) {
+	cur := depObj("shop", "web", "nginx:other", "6") // moved on since the fix
+	r4 := rsWithImage("shop", "web-4", "web", "4", "nginx:1.27")
+	r5 := rsWithImage("shop", "web-5", "web", "5", "nginx:2.0")
+	cli := fake.NewSimpleClientset(cur, &r4, &r5)
+	allowFix(cli)
+	a, _ := Inverse("RolloutUndo", "shop", "web", 5, 4)
+	res := Apply(context.Background(), cli, a)
+	if res.Applied || !res.Refused {
+		t.Fatalf("drift must refuse, got %+v", res)
+	}
+	for _, act := range cli.Actions() {
+		if act.GetVerb() == "update" {
+			t.Fatal("drift refusal must make no write")
+		}
+	}
+}
+
+func TestApply_RolloutForwardRefusesWhenTargetRevisionGone(t *testing.T) {
+	cur := depObj("shop", "web", "nginx:1.27", "4")
+	r4 := rsWithImage("shop", "web-4", "web", "4", "nginx:1.27") // rev 5 deleted
+	cli := fake.NewSimpleClientset(cur, &r4)
+	allowFix(cli)
+	a, _ := Inverse("RolloutUndo", "shop", "web", 5, 4)
+	res := Apply(context.Background(), cli, a)
+	if res.Applied || !res.Refused {
+		t.Fatalf("missing target revision must refuse, got %+v", res)
+	}
+}
+
+func TestApply_RolloutForwardPreflightDenied(t *testing.T) {
+	cur := depObj("shop", "web", "nginx:1.27", "4")
+	r4 := rsWithImage("shop", "web-4", "web", "4", "nginx:1.27")
+	r5 := rsWithImage("shop", "web-5", "web", "5", "nginx:2.0")
+	cli := fake.NewSimpleClientset(cur, &r4, &r5)
+	denyFix(cli)
+	a, _ := Inverse("RolloutUndo", "shop", "web", 5, 4)
+	res := Apply(context.Background(), cli, a)
+	if !res.PreflightDenied || res.Applied {
+		t.Fatalf("denied preflight expected, got %+v", res)
+	}
+	for _, act := range cli.Actions() {
+		if act.GetVerb() == "update" {
+			t.Fatal("preflight denial must make no write")
+		}
+	}
+}
+
+func TestApply_CordonSetsUnschedulable(t *testing.T) {
+	n := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1"}} // schedulable
+	cli := fake.NewSimpleClientset(n)
+	allowFix(cli)
+	a, _ := Inverse("Uncordon", "", "worker-1", 0, 0)
+	res := Apply(context.Background(), cli, a)
+	if !res.Applied || res.Err != nil {
+		t.Fatalf("cordon should apply, got %+v", res)
+	}
+	out, _ := cli.CoreV1().Nodes().Get(context.Background(), "worker-1", metav1.GetOptions{})
+	if !out.Spec.Unschedulable {
+		t.Error("node should be cordoned")
+	}
+}
+
+func TestApply_CordonRefusesWhenAlreadyCordoned(t *testing.T) {
+	n := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1"},
+		Spec: corev1.NodeSpec{Unschedulable: true}}
+	cli := fake.NewSimpleClientset(n)
+	allowFix(cli)
+	a, _ := Inverse("Uncordon", "", "worker-1", 0, 0)
+	res := Apply(context.Background(), cli, a)
+	if res.Applied || !res.Refused {
+		t.Fatalf("already-cordoned must refuse, got %+v", res)
+	}
+	for _, act := range cli.Actions() {
+		if act.GetVerb() == "update" {
+			t.Fatal("refusal must make no write")
+		}
+	}
+}
+
+func TestPreflight_KnowsInverseKinds(t *testing.T) {
+	cli := fake.NewSimpleClientset()
+	var got *authorizationv1.SelfSubjectAccessReview
+	cli.PrependReactor("create", "selfsubjectaccessreviews", func(a ktesting.Action) (bool, runtime.Object, error) {
+		got = a.(ktesting.CreateAction).GetObject().(*authorizationv1.SelfSubjectAccessReview)
+		return true, &authorizationv1.SelfSubjectAccessReview{Status: authorizationv1.SubjectAccessReviewStatus{Allowed: true}}, nil
+	})
+	if _, _, err := Preflight(context.Background(), cli, Action{Kind: "RolloutForward", Namespace: "shop", Name: "web"}); err != nil {
+		t.Fatalf("RolloutForward preflight errored: %v", err)
+	}
+	if ra := got.Spec.ResourceAttributes; ra.Resource != "deployments" || ra.Group != "apps" || ra.Namespace != "shop" {
+		t.Errorf("RolloutForward attributes = %+v", got.Spec.ResourceAttributes)
+	}
+	if _, _, err := Preflight(context.Background(), cli, Action{Kind: "Cordon", Name: "worker-1"}); err != nil {
+		t.Fatalf("Cordon preflight errored: %v", err)
+	}
+	if ra := got.Spec.ResourceAttributes; ra.Resource != "nodes" || ra.Group != "" || ra.Namespace != "" {
+		t.Errorf("Cordon attributes = %+v", got.Spec.ResourceAttributes)
+	}
+}

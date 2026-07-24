@@ -222,7 +222,7 @@ scenario_09_rollout() {   # bad image -> ImagePullBackOff
   {
     echo "after --fix:      $after_fix"
     echo "after --rollback: $after_rollback"
-    grep -c '"disposition":"rollback"' "$alog" 2>/dev/null | sed 's/^/rollback audit records: /'
+    { grep -c '"disposition":"rollback"' "$alog" 2>/dev/null || true; } | sed 's/^/rollback audit records: /'
   } | record "9b. Fix then rollback (audit-log round trip)" "rollback restores the pre-fix image"
   rm -f "$alog"
   kubectl --context "$CTX" delete ns chaos-rollout --wait=true --timeout=120s >/dev/null 2>&1 || true

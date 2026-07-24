@@ -581,6 +581,31 @@ func TestRunRollback_DryRunWritesNothing(t *testing.T) {
 	}
 }
 
+func TestRunRollback_DeclinedWritesNothing(t *testing.T) {
+	d := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web",
+		Annotations: map[string]string{"deployment.kubernetes.io/revision": "4"}}}
+	d.Spec.Template = corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "nginx:1.27"}}}}
+	cli := fake.NewSimpleClientset(d)
+	allowFix(cli)
+	p := filepath.Join(t.TempDir(), "audit.log")
+	if err := os.WriteFile(p, []byte(`{"time":"2026-07-24T06:30:00Z","kind":"RolloutUndo","namespace":"shop","name":"web","target":"shop/web (Deployment)","disposition":"applied","fromRevision":5,"toRevision":4}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out, auditBuf bytes.Buffer
+	if err := runRollback(context.Background(), cli, p, false /*dryRun*/, false /*assumeYes*/, &out, strings.NewReader("n\n"), audit.NewWriter(&auditBuf)); err != nil {
+		t.Fatal(err)
+	}
+	for _, act := range cli.Actions() {
+		if act.GetVerb() == "update" {
+			t.Fatal("declining must not write")
+		}
+	}
+	recs := auditLines(t, auditBuf.String())
+	if len(recs) != 1 || recs[0].Disposition != "declined" {
+		t.Fatalf("want one declined record, got %+v", recs)
+	}
+}
+
 func TestRun_RollbackNeedsAuditLog(t *testing.T) {
 	err := run([]string{"scan", "--rollback"})
 	if err == nil || !strings.Contains(err.Error(), "--audit-log") {

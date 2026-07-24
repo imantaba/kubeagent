@@ -203,13 +203,14 @@ The inverse runs through every guard rail that `--fix` uses:
 ### Sample proposal
 
 ```text
+Rolling back the fix applied at 2026-07-24T06:30:00Z
 Proposed rollback: shop/web (Deployment) — roll forward to the pre-fix revision
-  reason: audit record 2026-07-24T06:30:00Z: applied RolloutUndo (revision 5 → 4); reversing
+  reason: undo the fix that rolled shop/web back from revision 5 to 4
   will change:
     revision: 4 → 5
-  kubectl equivalent: kubectl -n shop rollout undo deployment/web
-  Apply? [y/N] y
-  rollback: rolled shop/web forward to revision 5 (pre-fix revision restored)
+  kubectl equivalent: kubectl -n shop rollout undo deployment/web --to-revision=5
+  Roll back? [y/N] y
+  rolled back: rolled shop/web forward to revision 5 (pre-fix pod template restored)
 ```
 
 ### Notes
@@ -225,6 +226,11 @@ Proposed rollback: shop/web (Deployment) — roll forward to the pre-fix revisio
   `fromRevision`/`toRevision` fields written into every audit record starting in
   v0.54. Records written by an older build lack those fields and are refused with a
   clear message — `--rollback` never guesses the inverse from free-text detail.
+- **Rollback records are not themselves reversible.** `--rollback` only matches
+  `applied` records; a `rollback`-disposition record is never the target. If you
+  re-run `--rollback` after a successful rollback, `ReadLast` finds the original
+  `applied` record again and re-proposes the same inverse — the drift bond or the
+  already-cordoned guard will normally refuse it.
 
 ## JSON output (`--output json`)
 

@@ -331,6 +331,16 @@ func applyRolloutUndo(ctx context.Context, client kubernetes.Interface, a Action
 		res.Refused = true
 		return res
 	}
+	allowed, reason, err := Preflight(ctx, client, a)
+	if err != nil {
+		res.Err = fmt.Errorf("permission preflight failed: %w", err)
+		return res
+	}
+	if !allowed {
+		res.PreflightDenied = true
+		res.Detail = reason + "; no write attempted"
+		return res
+	}
 	tpl := *target.Spec.Template.DeepCopy()
 	delete(tpl.Labels, "pod-template-hash")
 	dep.Spec.Template = tpl
@@ -355,6 +365,16 @@ func applyUncordon(ctx context.Context, client kubernetes.Interface, a Action) R
 	if !n.Spec.Unschedulable || hasNoExecuteTaint(*n) {
 		res.Detail = "node is no longer a safe uncordon target (already schedulable or NoExecute-tainted); no write made"
 		res.Refused = true
+		return res
+	}
+	allowed, reason, err := Preflight(ctx, client, a)
+	if err != nil {
+		res.Err = fmt.Errorf("permission preflight failed: %w", err)
+		return res
+	}
+	if !allowed {
+		res.PreflightDenied = true
+		res.Detail = reason + "; no write attempted"
 		return res
 	}
 	n.Spec.Unschedulable = false

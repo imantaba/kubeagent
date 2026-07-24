@@ -120,6 +120,7 @@ func TestApply_RollsBackToPreviousTemplate(t *testing.T) {
 	good := rsWithImage("shop", "web-1", "web", "1", "nginx:1.27")
 	broken := rsWithImage("shop", "web-2", "web", "2", "nginx:does-not-exist")
 	cli := fake.NewSimpleClientset(cur, &good, &broken)
+	allowFix(cli)
 	res := Apply(context.Background(), cli, Action{Kind: "RolloutUndo", Namespace: "shop", Name: "web", CurrentRevision: 2, TargetRevision: 1})
 	if !res.Applied || res.Err != nil {
 		t.Fatalf("expected applied, got %+v", res)
@@ -206,6 +207,7 @@ func TestApply_Uncordon(t *testing.T) {
 	n := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1"}}
 	n.Spec.Unschedulable = true
 	cli := fake.NewSimpleClientset(n)
+	allowFix(cli)
 	res := Apply(context.Background(), cli, Action{Kind: "Uncordon", Name: "worker-1"})
 	if !res.Applied || res.Err != nil {
 		t.Fatalf("expected applied, got %+v", res)
@@ -382,6 +384,7 @@ func TestApply_MatchingPreviewApplies(t *testing.T) {
 	good := rsWithImage("shop", "web-1", "web", "1", "nginx:1.27")
 	broken := rsWithImage("shop", "web-2", "web", "2", "nginx:does-not-exist")
 	cli := fake.NewSimpleClientset(cur, &good, &broken)
+	allowFix(cli)
 	res := Apply(context.Background(), cli, Action{
 		Kind: "RolloutUndo", Namespace: "shop", Name: "web",
 		CurrentRevision: 2, TargetRevision: 1,
@@ -429,6 +432,7 @@ func TestApply_CleanApplyNotRefused(t *testing.T) {
 	good := rsWithImage("shop", "web-1", "web", "1", "nginx:1.27")
 	broken := rsWithImage("shop", "web-2", "web", "2", "nginx:does-not-exist")
 	cli := fake.NewSimpleClientset(cur, &good, &broken)
+	allowFix(cli)
 	res := Apply(context.Background(), cli, Action{
 		Kind: "RolloutUndo", Namespace: "shop", Name: "web", CurrentRevision: 2, TargetRevision: 1,
 	})
@@ -562,5 +566,65 @@ func TestPreflight_APIErrorSurfaces(t *testing.T) {
 	})
 	if _, _, err := Preflight(context.Background(), cli, Action{Kind: "Uncordon", Name: "n1"}); err == nil {
 		t.Error("expected the SSAR API error to surface")
+	}
+}
+
+func TestApply_PreflightDeniedMakesNoWrite(t *testing.T) {
+	cur := depObj("shop", "web", "nginx:does-not-exist", "2")
+	good := rsWithImage("shop", "web-1", "web", "1", "nginx:1.27")
+	broken := rsWithImage("shop", "web-2", "web", "2", "nginx:does-not-exist")
+	cli := fake.NewSimpleClientset(cur, &good, &broken)
+	denyFix(cli)
+	res := Apply(context.Background(), cli, Action{
+		Kind: "RolloutUndo", Namespace: "shop", Name: "web", CurrentRevision: 2, TargetRevision: 1,
+	})
+	if res.Applied || res.Err != nil || !res.PreflightDenied {
+		t.Fatalf("denied preflight: got %+v", res)
+	}
+	for _, act := range cli.Actions() {
+		if act.GetVerb() == "update" {
+			t.Fatal("preflight denial must make no write")
+		}
+	}
+}
+
+func TestApply_PreflightErrorFailsClosed(t *testing.T) {
+	cur := depObj("shop", "web", "nginx:does-not-exist", "2")
+	good := rsWithImage("shop", "web-1", "web", "1", "nginx:1.27")
+	broken := rsWithImage("shop", "web-2", "web", "2", "nginx:does-not-exist")
+	cli := fake.NewSimpleClientset(cur, &good, &broken)
+	cli.PrependReactor("create", "selfsubjectaccessreviews", func(ktesting.Action) (bool, runtime.Object, error) {
+		return true, nil, context.DeadlineExceeded
+	})
+	res := Apply(context.Background(), cli, Action{
+		Kind: "RolloutUndo", Namespace: "shop", Name: "web", CurrentRevision: 2, TargetRevision: 1,
+	})
+	if res.Applied || res.Err == nil {
+		t.Fatalf("SSAR error must fail closed with an error, got %+v", res)
+	}
+	for _, act := range cli.Actions() {
+		if act.GetVerb() == "update" {
+			t.Fatal("fail-closed must make no write")
+		}
+	}
+}
+
+func TestApply_DriftShortCircuitsBeforePreflight(t *testing.T) {
+	// Drift (current rev 3, previewed 2) must refuse BEFORE preflight — even with a deny
+	// reactor installed, the disposition is the drift refusal, not preflight.
+	cur := depObj("shop", "web", "nginx:still-broken", "3")
+	r1 := rsWithImage("shop", "web-1", "web", "1", "nginx:1.27")
+	r2 := rsWithImage("shop", "web-2", "web", "2", "nginx:broken")
+	r3 := rsWithImage("shop", "web-3", "web", "3", "nginx:still-broken")
+	cli := fake.NewSimpleClientset(cur, &r1, &r2, &r3)
+	denyFix(cli)
+	res := Apply(context.Background(), cli, Action{
+		Kind: "RolloutUndo", Namespace: "shop", Name: "web", CurrentRevision: 2, TargetRevision: 1,
+	})
+	if res.PreflightDenied {
+		t.Fatal("drift must short-circuit before the preflight gate")
+	}
+	if !res.Refused {
+		t.Fatalf("expected the drift refusal, got %+v", res)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
+	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -357,6 +358,16 @@ func TestRun_InvestigateSupersedesExplain(t *testing.T) {
 	}
 }
 
+// allowFix makes the fake clientset's SelfSubjectAccessReview return Allowed:true so
+// tests that exercise the write path can reach the actual write.
+func allowFix(cli *fake.Clientset) {
+	cli.PrependReactor("create", "selfsubjectaccessreviews", func(ktesting.Action) (bool, runtime.Object, error) {
+		return true, &authorizationv1.SelfSubjectAccessReview{
+			Status: authorizationv1.SubjectAccessReviewStatus{Allowed: true},
+		}, nil
+	})
+}
+
 func TestRunFixes_PrintsWillChangeBlock(t *testing.T) {
 	actions := []remediate.Action{{
 		Kind: "RolloutUndo", Namespace: "shop", Name: "web",
@@ -409,6 +420,7 @@ func TestRunFixes_YesApplies(t *testing.T) {
 	d.Spec.Template = corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "nginx:bad"}}}}
 	rss := fixRS()
 	cli := fake.NewSimpleClientset(d, &rss[0], &rss[1])
+	allowFix(cli)
 	var out bytes.Buffer
 	actions := remediate.Plan(fixWorkload(), rss, nil)
 	runFixes(context.Background(), cli, actions, false, true /*assumeYes*/, &out, strings.NewReader(""), nil)
@@ -439,6 +451,7 @@ func TestRunFixes_UncordonYesApplies(t *testing.T) {
 	n := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1"}}
 	n.Spec.Unschedulable = true
 	cli := fake.NewSimpleClientset(n)
+	allowFix(cli)
 	var out bytes.Buffer
 	actions := remediate.Plan(nil, nil, []corev1.Node{*n})
 	runFixes(context.Background(), cli, actions, false, true, &out, strings.NewReader(""), nil)
@@ -494,6 +507,7 @@ func TestRunFixes_AuditRecordsApplied(t *testing.T) {
 	d.Spec.Template = corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "nginx:bad"}}}}
 	rss := fixRS()
 	cli := fake.NewSimpleClientset(d, &rss[0], &rss[1])
+	allowFix(cli)
 	var out, auditBuf bytes.Buffer
 	actions := remediate.Plan(fixWorkload(), rss, nil)
 	runFixes(context.Background(), cli, actions, false, true /*yes*/, &out, strings.NewReader(""), audit.NewWriter(&auditBuf))
@@ -556,6 +570,7 @@ func TestRunFixes_AuditRecordsError(t *testing.T) {
 	d.Spec.Template = corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "nginx:bad"}}}}
 	rss := fixRS()
 	cli := fake.NewSimpleClientset(d, &rss[0], &rss[1])
+	allowFix(cli)
 	cli.PrependReactor("update", "deployments", func(ktesting.Action) (bool, runtime.Object, error) {
 		return true, nil, errors.New("update boom")
 	})

@@ -267,6 +267,11 @@
 - **`--fix` audit log** (`--audit-log`, append-only JSON-Lines record of every
   remediation disposition) — the accountability half of the remediation contract.
 
+- **`--fix` RBAC preflight** (`SelfSubjectAccessReview` before each write; clean
+  up-front refusal with `skipped:` message, new `preflight` audit disposition,
+  dry-run permission report for each proposed fix) — the third write-path
+  hardening slice of Theme D.
+
 !!! info "Version history"
     [GitHub Releases](https://github.com/imantaba/kubeagent/releases) and the
     [CHANGELOG](https://github.com/imantaba/kubeagent/blob/main/CHANGELOG.md)

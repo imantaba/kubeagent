@@ -368,6 +368,16 @@ func allowFix(cli *fake.Clientset) {
 	})
 }
 
+// denyFix makes the fake clientset's SelfSubjectAccessReview return Allowed:false so
+// tests can exercise the preflight-denied path.
+func denyFix(cli *fake.Clientset) {
+	cli.PrependReactor("create", "selfsubjectaccessreviews", func(ktesting.Action) (bool, runtime.Object, error) {
+		return true, &authorizationv1.SelfSubjectAccessReview{
+			Status: authorizationv1.SubjectAccessReviewStatus{Allowed: false},
+		}, nil
+	})
+}
+
 func TestRunFixes_PrintsWillChangeBlock(t *testing.T) {
 	actions := []remediate.Action{{
 		Kind: "RolloutUndo", Namespace: "shop", Name: "web",
@@ -580,5 +590,50 @@ func TestRunFixes_AuditRecordsError(t *testing.T) {
 	recs := auditLines(t, auditBuf.String())
 	if len(recs) != 1 || recs[0].Disposition != "error" {
 		t.Fatalf("want one error record, got %+v", recs)
+	}
+}
+
+func TestRunFixes_AuditRecordsPreflight(t *testing.T) {
+	d := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web",
+		Annotations: map[string]string{"deployment.kubernetes.io/revision": "2"}}}
+	d.Spec.Template = corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "nginx:bad"}}}}
+	rss := fixRS()
+	cli := fake.NewSimpleClientset(d, &rss[0], &rss[1])
+	denyFix(cli) // reaches the gate, then denied
+	var out, auditBuf bytes.Buffer
+	actions := remediate.Plan(fixWorkload(), rss, nil)
+	runFixes(context.Background(), cli, actions, false, true /*yes*/, &out, strings.NewReader(""), audit.NewWriter(&auditBuf))
+	recs := auditLines(t, auditBuf.String())
+	if len(recs) != 1 || recs[0].Disposition != "preflight" {
+		t.Fatalf("want one preflight record, got %+v", recs)
+	}
+	if !strings.Contains(out.String(), "no write attempted") {
+		t.Errorf("expected the preflight skip line, got: %s", out.String())
+	}
+}
+
+func TestRunFixes_DryRunReportsPermissionAllowed(t *testing.T) {
+	cli := fake.NewSimpleClientset()
+	allowFix(cli)
+	var out, auditBuf bytes.Buffer
+	actions := remediate.Plan(fixWorkload(), fixRS(), nil)
+	runFixes(context.Background(), cli, actions, true /*dryRun*/, false, &out, strings.NewReader(""), audit.NewWriter(&auditBuf))
+	if !strings.Contains(out.String(), "you have permission") {
+		t.Errorf("dry-run should report permission, got: %s", out.String())
+	}
+	recs := auditLines(t, auditBuf.String())
+	if len(recs) != 1 || recs[0].Disposition != "dry-run" {
+		t.Fatalf("dry-run disposition expected, got %+v", recs)
+	}
+}
+
+func TestRunFixes_DryRunReportsPermissionDenied(t *testing.T) {
+	cli := fake.NewSimpleClientset()
+	denyFix(cli)
+	var out, auditBuf bytes.Buffer
+	actions := remediate.Plan(fixWorkload(), fixRS(), nil)
+	runFixes(context.Background(), cli, actions, true /*dryRun*/, false, &out, strings.NewReader(""), audit.NewWriter(&auditBuf))
+	if !strings.Contains(out.String(), "would be blocked") {
+		t.Errorf("dry-run should report the block, got: %s", out.String())
 	}
 }

@@ -427,8 +427,18 @@ func runFixes(ctx context.Context, client kubernetes.Interface, actions []remedi
 		}
 		fmt.Fprintf(w, "  kubectl equivalent: %s\n", a.KubectlEquivalent)
 		if dryRun {
-			fmt.Fprintln(w, "  (dry-run: not applied)")
-			logAudit(a, "dry-run", "")
+			allowed, reason, err := remediate.Preflight(ctx, client, a)
+			switch {
+			case err != nil:
+				fmt.Fprintf(w, "  (dry-run: not applied; permission check errored: %v)\n", err)
+				logAudit(a, "dry-run", "permission check errored: "+err.Error())
+			case allowed:
+				fmt.Fprintln(w, "  (dry-run: not applied; you have permission to apply this)")
+				logAudit(a, "dry-run", "permission: allowed")
+			default:
+				fmt.Fprintf(w, "  (dry-run: not applied; would be blocked — %s)\n", reason)
+				logAudit(a, "dry-run", reason)
+			}
 			continue
 		}
 		if !assumeYes {
@@ -448,6 +458,9 @@ func runFixes(ctx context.Context, client kubernetes.Interface, actions []remedi
 		case res.Applied:
 			fmt.Fprintf(w, "  applied: %s\n", res.Detail)
 			logAudit(a, "applied", res.Detail)
+		case res.PreflightDenied:
+			fmt.Fprintf(w, "  skipped: %s\n", res.Detail)
+			logAudit(a, "preflight", res.Detail)
 		default:
 			fmt.Fprintf(w, "  skipped: %s\n", res.Detail)
 			logAudit(a, "refused", res.Detail)

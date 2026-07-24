@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -80,5 +82,77 @@ func TestWriter_LogSurfacesWriteError(t *testing.T) {
 	w := NewWriter(failWriter{})
 	if err := w.Log(RecordFor(remediate.Action{Kind: "Uncordon", Name: "n1"}, "applied", "", fixedNow)); err == nil {
 		t.Error("expected a write error to surface")
+	}
+}
+
+func TestRecordFor_CarriesRevisions(t *testing.T) {
+	a := remediate.Action{Kind: "RolloutUndo", Namespace: "shop", Name: "web",
+		Target: "shop/web (Deployment)", CurrentRevision: 5, TargetRevision: 4}
+	r := RecordFor(a, "applied", "rolled back", fixedNow)
+	if r.FromRevision != 5 || r.ToRevision != 4 {
+		t.Errorf("revisions = %d/%d, want 5/4", r.FromRevision, r.ToRevision)
+	}
+}
+
+func TestRecordFor_UncordonHasNoRevisions(t *testing.T) {
+	a := remediate.Action{Kind: "Uncordon", Name: "worker-1", Target: "node/worker-1"}
+	r := RecordFor(a, "applied", "uncordoned", fixedNow)
+	if r.FromRevision != 0 || r.ToRevision != 0 {
+		t.Errorf("node action must have zero revisions, got %d/%d", r.FromRevision, r.ToRevision)
+	}
+	b, _ := json.Marshal(r)
+	if strings.Contains(string(b), "fromRevision") {
+		t.Errorf("zero revisions must be omitted from JSON: %s", b)
+	}
+}
+
+func writeLines(t *testing.T, lines ...string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "audit.log")
+	if err := os.WriteFile(p, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func applied(r Record) bool { return r.Disposition == "applied" }
+
+func TestReadLast_ReturnsNewestMatch(t *testing.T) {
+	p := writeLines(t,
+		`{"time":"2026-07-24T06:00:00Z","kind":"RolloutUndo","namespace":"shop","name":"web","target":"shop/web (Deployment)","disposition":"applied","fromRevision":3,"toRevision":2}`,
+		`{"time":"2026-07-24T07:00:00Z","kind":"Uncordon","name":"w1","target":"node/w1","disposition":"refused"}`,
+		`{"time":"2026-07-24T08:00:00Z","kind":"RolloutUndo","namespace":"shop","name":"web","target":"shop/web (Deployment)","disposition":"applied","fromRevision":5,"toRevision":4}`,
+	)
+	rec, found, err := ReadLast(p, applied)
+	if err != nil || !found {
+		t.Fatalf("found=%v err=%v", found, err)
+	}
+	if rec.FromRevision != 5 || rec.ToRevision != 4 {
+		t.Errorf("want the newest applied record (5→4), got %d→%d", rec.FromRevision, rec.ToRevision)
+	}
+}
+
+func TestReadLast_SkipsMalformedLines(t *testing.T) {
+	p := writeLines(t,
+		`{"time":"2026-07-24T06:00:00Z","kind":"Uncordon","name":"w1","target":"node/w1","disposition":"applied"}`,
+		`this is not json`,
+		`{"partial":`,
+	)
+	rec, found, err := ReadLast(p, applied)
+	if err != nil || !found || rec.Name != "w1" {
+		t.Fatalf("malformed lines must be skipped; got rec=%+v found=%v err=%v", rec, found, err)
+	}
+}
+
+func TestReadLast_NoMatch(t *testing.T) {
+	p := writeLines(t, `{"time":"2026-07-24T06:00:00Z","kind":"Uncordon","name":"w1","target":"node/w1","disposition":"declined"}`)
+	if _, found, err := ReadLast(p, applied); err != nil || found {
+		t.Fatalf("want found=false without error, got found=%v err=%v", found, err)
+	}
+}
+
+func TestReadLast_MissingFileErrors(t *testing.T) {
+	if _, _, err := ReadLast(filepath.Join(t.TempDir(), "nope.log"), applied); err == nil {
+		t.Error("expected an error for a missing audit file")
 	}
 }

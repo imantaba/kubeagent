@@ -6,9 +6,12 @@ import (
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
+	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	ktesting "k8s.io/client-go/testing"
 
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/inventory"
@@ -485,5 +488,79 @@ func TestPlan_MultiContainerOnlyChangedImageListed(t *testing.T) {
 		if strings.Contains(c.Field+c.From+c.To, "sidecar") {
 			t.Errorf("sidecar must not appear in changes: %+v", c)
 		}
+	}
+}
+
+// allowFix makes the fake clientset's SelfSubjectAccessReview return Allowed:true, so
+// a write-path test can reach the actual write. Refusal/drift tests short-circuit
+// before the preflight and do not need it.
+func allowFix(cli *fake.Clientset) {
+	cli.PrependReactor("create", "selfsubjectaccessreviews", func(ktesting.Action) (bool, runtime.Object, error) {
+		return true, &authorizationv1.SelfSubjectAccessReview{
+			Status: authorizationv1.SubjectAccessReviewStatus{Allowed: true},
+		}, nil
+	})
+}
+
+func denyFix(cli *fake.Clientset) {
+	cli.PrependReactor("create", "selfsubjectaccessreviews", func(ktesting.Action) (bool, runtime.Object, error) {
+		return true, &authorizationv1.SelfSubjectAccessReview{
+			Status: authorizationv1.SubjectAccessReviewStatus{Allowed: false},
+		}, nil
+	})
+}
+
+func TestPreflight_RolloutUndoBuildsDeploymentAttributes(t *testing.T) {
+	cli := fake.NewSimpleClientset()
+	var got *authorizationv1.SelfSubjectAccessReview
+	cli.PrependReactor("create", "selfsubjectaccessreviews", func(a ktesting.Action) (bool, runtime.Object, error) {
+		got = a.(ktesting.CreateAction).GetObject().(*authorizationv1.SelfSubjectAccessReview)
+		return true, &authorizationv1.SelfSubjectAccessReview{Status: authorizationv1.SubjectAccessReviewStatus{Allowed: true}}, nil
+	})
+	allowed, reason, err := Preflight(context.Background(), cli, Action{Kind: "RolloutUndo", Namespace: "shop", Name: "web"})
+	if err != nil || !allowed || reason != "" {
+		t.Fatalf("allowed preflight: got (%v,%q,%v)", allowed, reason, err)
+	}
+	ra := got.Spec.ResourceAttributes
+	if ra == nil || ra.Verb != "update" || ra.Group != "apps" || ra.Resource != "deployments" || ra.Namespace != "shop" || ra.Name != "web" {
+		t.Errorf("attributes = %+v", ra)
+	}
+}
+
+func TestPreflight_UncordonBuildsNodeAttributes(t *testing.T) {
+	cli := fake.NewSimpleClientset()
+	var got *authorizationv1.SelfSubjectAccessReview
+	cli.PrependReactor("create", "selfsubjectaccessreviews", func(a ktesting.Action) (bool, runtime.Object, error) {
+		got = a.(ktesting.CreateAction).GetObject().(*authorizationv1.SelfSubjectAccessReview)
+		return true, &authorizationv1.SelfSubjectAccessReview{Status: authorizationv1.SubjectAccessReviewStatus{Allowed: true}}, nil
+	})
+	if _, _, err := Preflight(context.Background(), cli, Action{Kind: "Uncordon", Name: "worker-1"}); err != nil {
+		t.Fatal(err)
+	}
+	ra := got.Spec.ResourceAttributes
+	if ra.Verb != "update" || ra.Group != "" || ra.Resource != "nodes" || ra.Namespace != "" || ra.Name != "worker-1" {
+		t.Errorf("node attributes = %+v", ra)
+	}
+}
+
+func TestPreflight_DeniedReturnsReason(t *testing.T) {
+	cli := fake.NewSimpleClientset()
+	denyFix(cli)
+	allowed, reason, err := Preflight(context.Background(), cli, Action{Kind: "RolloutUndo", Namespace: "shop", Name: "web"})
+	if allowed || err != nil {
+		t.Fatalf("want denied without error, got (%v,%v)", allowed, err)
+	}
+	if !strings.Contains(reason, "permission to update deployments") || !strings.Contains(reason, "shop") {
+		t.Errorf("reason = %q", reason)
+	}
+}
+
+func TestPreflight_APIErrorSurfaces(t *testing.T) {
+	cli := fake.NewSimpleClientset()
+	cli.PrependReactor("create", "selfsubjectaccessreviews", func(ktesting.Action) (bool, runtime.Object, error) {
+		return true, nil, context.DeadlineExceeded
+	})
+	if _, _, err := Preflight(context.Background(), cli, Action{Kind: "Uncordon", Name: "n1"}); err == nil {
+		t.Error("expected the SSAR API error to surface")
 	}
 }

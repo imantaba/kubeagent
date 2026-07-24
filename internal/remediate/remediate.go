@@ -9,6 +9,7 @@ import (
 	"strconv"
 
 	appsv1 "k8s.io/api/apps/v1"
+	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -245,11 +246,47 @@ func revFromAnnotations(anno map[string]string) int {
 
 // Result records what Apply did, for the audit line.
 type Result struct {
-	Action  Action
-	Applied bool
-	Refused bool // a guarded no-write refusal (drift, no target, unsafe precondition); Applied false, Err nil
-	Detail  string
-	Err     error
+	Action          Action
+	Applied         bool
+	Refused         bool // a guarded no-write refusal (drift, no target, unsafe precondition); Applied false, Err nil
+	PreflightDenied bool // the RBAC preflight refused this action; Applied false, Err nil, no write
+	Detail          string
+	Err             error
+}
+
+// Preflight asks the API server whether the current credentials may perform the write
+// this Action implies (verb=update on its resource/namespace/name) via a
+// SelfSubjectAccessReview. Returns (allowed, humanReason, err): err != nil means the
+// SSAR call itself failed (callers fail closed and do not write); allowed==false means
+// not permitted and reason explains it in plain language.
+func Preflight(ctx context.Context, client kubernetes.Interface, a Action) (bool, string, error) {
+	var group, resource, ns string
+	switch a.Kind {
+	case "RolloutUndo":
+		group, resource, ns = "apps", "deployments", a.Namespace
+	case "Uncordon":
+		group, resource, ns = "", "nodes", ""
+	default:
+		return false, "", fmt.Errorf("unknown action kind %q", a.Kind)
+	}
+	ssar := &authorizationv1.SelfSubjectAccessReview{
+		Spec: authorizationv1.SelfSubjectAccessReviewSpec{
+			ResourceAttributes: &authorizationv1.ResourceAttributes{
+				Verb: "update", Group: group, Resource: resource, Namespace: ns, Name: a.Name,
+			},
+		},
+	}
+	resp, err := client.AuthorizationV1().SelfSubjectAccessReviews().Create(ctx, ssar, metav1.CreateOptions{})
+	if err != nil {
+		return false, "", err
+	}
+	if resp.Status.Allowed {
+		return true, "", nil
+	}
+	if ns == "" {
+		return false, fmt.Sprintf("you lack permission to update %s (RBAC)", resource), nil
+	}
+	return false, fmt.Sprintf("you lack permission to update %s in namespace %q (RBAC)", resource, ns), nil
 }
 
 // Apply performs an allowlisted remediation's single guarded write via client-go.

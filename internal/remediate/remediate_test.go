@@ -388,6 +388,52 @@ func TestApply_MatchingPreviewApplies(t *testing.T) {
 	}
 }
 
+func TestApply_RefusedFlagOnDrift(t *testing.T) {
+	cur := depObj("shop", "web", "nginx:still-broken", "3")
+	r1 := rsWithImage("shop", "web-1", "web", "1", "nginx:1.27")
+	r2 := rsWithImage("shop", "web-2", "web", "2", "nginx:broken")
+	r3 := rsWithImage("shop", "web-3", "web", "3", "nginx:still-broken")
+	cli := fake.NewSimpleClientset(cur, &r1, &r2, &r3)
+	res := Apply(context.Background(), cli, Action{
+		Kind: "RolloutUndo", Namespace: "shop", Name: "web", CurrentRevision: 2, TargetRevision: 1,
+	})
+	if res.Applied || res.Err != nil || !res.Refused {
+		t.Fatalf("drift must set Refused (not Applied, no Err), got %+v", res)
+	}
+}
+
+func TestApply_RefusedFlagOnNoTarget(t *testing.T) {
+	cur := depObj("shop", "web", "nginx:x", "2")
+	only := rsWithImage("shop", "web-2", "web", "2", "nginx:x") // only the current revision
+	cli := fake.NewSimpleClientset(cur, &only)
+	res := Apply(context.Background(), cli, Action{Kind: "RolloutUndo", Namespace: "shop", Name: "web"})
+	if res.Applied || res.Err != nil || !res.Refused {
+		t.Fatalf("no-target must set Refused, got %+v", res)
+	}
+}
+
+func TestApply_RefusedFlagOnUncordonPrecondition(t *testing.T) {
+	n := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1"}} // already schedulable
+	cli := fake.NewSimpleClientset(n)
+	res := Apply(context.Background(), cli, Action{Kind: "Uncordon", Name: "worker-1"})
+	if res.Applied || res.Err != nil || !res.Refused {
+		t.Fatalf("uncordon precondition must set Refused, got %+v", res)
+	}
+}
+
+func TestApply_CleanApplyNotRefused(t *testing.T) {
+	cur := depObj("shop", "web", "nginx:does-not-exist", "2")
+	good := rsWithImage("shop", "web-1", "web", "1", "nginx:1.27")
+	broken := rsWithImage("shop", "web-2", "web", "2", "nginx:does-not-exist")
+	cli := fake.NewSimpleClientset(cur, &good, &broken)
+	res := Apply(context.Background(), cli, Action{
+		Kind: "RolloutUndo", Namespace: "shop", Name: "web", CurrentRevision: 2, TargetRevision: 1,
+	})
+	if !res.Applied || res.Refused {
+		t.Fatalf("clean apply must not be Refused, got %+v", res)
+	}
+}
+
 func TestPlan_MultiContainerOnlyChangedImageListed(t *testing.T) {
 	// rev 2 (current, broken): web=nginx:broken, sidecar=sidecar:v1
 	// rev 1 (target, good):   web=nginx:1.27,   sidecar=sidecar:v1  (sidecar unchanged)

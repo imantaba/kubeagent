@@ -328,6 +328,8 @@ template contents), and refuses to apply if the cluster drifted since the previe
 a fixed allowlist of actions, never in protected namespaces (`kube-system`,
 `kube-public`, `kube-node-lease`), preconditions re-checked against live state,
 and the result re-verified. Nothing about remediations is sent to `--explain`.
+With `--audit-log <path>`, appends a JSON-Lines record of every remediation
+outcome (applied / refused / declined / dry-run / error).
 
 ```bash
 ./kubeagent scan --fix             # propose + confirm each fix

@@ -96,6 +96,48 @@ When nothing is safely fixable, `kubeagent` says so and writes nothing:
 No automatic remediations available.
 ```
 
+## Audit log (`--audit-log`)
+
+`--audit-log <path>` (used together with `--fix`) appends a durable,
+append-only JSON-Lines record of every remediation outcome — one line per
+action — to the file you name. The log is written whether the action was
+applied, declined, skipped as a dry-run, or refused by a safety guard.
+
+```bash
+kubeagent scan --fix --yes --audit-log /var/log/kubeagent-fix.log
+```
+
+Each record is a single JSON object on its own line:
+
+```json
+{"time":"2026-07-24T06:30:00Z","kind":"RolloutUndo","namespace":"shop","name":"web","target":"shop/web (Deployment)","changes":[{"field":"revision","from":"5","to":"4"},{"field":"image (web)","from":"registry.example.com/web:v2","to":"registry.example.com/web:v1"}],"disposition":"applied","detail":"rolled back shop/web to revision 4 (pod template restored)"}
+{"time":"2026-07-24T06:31:00Z","kind":"Uncordon","name":"worker-1","target":"node/worker-1","disposition":"refused","detail":"node is no longer a safe uncordon target (already schedulable or NoExecute-tainted); no write made"}
+```
+
+**Disposition vocabulary:**
+
+| Disposition | When it appears |
+| ----------- | --------------- |
+| `applied` | The write succeeded. |
+| `dry-run` | `--dry-run` was set; the action was planned but no write was made. |
+| `declined` | The operator answered `N` (or pressed Enter) at the `Apply? [y/N]` prompt. |
+| `refused` | A safety guard fired at apply time (cluster state drifted, or a nil-error "no write made" condition); no write was made. |
+| `error` | The write was attempted but the API server returned an error. |
+
+**Properties of the audit file:**
+
+- **`0o600`, append-only.** The file is opened with mode `0o600` (`O_APPEND`),
+  so only the process owner can read it and concurrent runs safely interleave.
+- **Records every disposition.** Every outcome — including dry-runs and
+  user-declined actions — is logged, giving a complete picture of what
+  kubeagent proposed and what happened.
+- **Fails fast.** If the path is unwritable, kubeagent reports the error and
+  exits before any scan or write begins.
+- **Secret-free by construction.** Only the previewed diff values (the same
+  fields shown in the `will change:` block), the action metadata, and the
+  result detail are recorded. Env values and template contents are never
+  captured.
+
 ## JSON output (`--output json`)
 
 With `--output json`, the remediation plan is included in the scan result as

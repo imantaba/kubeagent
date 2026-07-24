@@ -474,6 +474,127 @@ func TestRunFixes_UncordonYesApplies(t *testing.T) {
 	}
 }
 
+func rsFor(ns, name, owner, rev, image string) *appsv1.ReplicaSet {
+	return &appsv1.ReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: ns, Name: name,
+			Annotations:     map[string]string{"deployment.kubernetes.io/revision": rev},
+			OwnerReferences: []metav1.OwnerReference{{Kind: "Deployment", Name: owner}},
+		},
+		Spec: appsv1.ReplicaSetSpec{Template: corev1.PodTemplateSpec{
+			ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": owner, "pod-template-hash": "h" + rev}},
+			Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: image}}},
+		}},
+	}
+}
+
+func TestRunRollback_UndoesLastAppliedFix(t *testing.T) {
+	// The cluster is where the fix left it: rev 4 (nginx:1.27); rev 5 is pre-fix.
+	d := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web",
+		Annotations: map[string]string{"deployment.kubernetes.io/revision": "4"}}}
+	d.Spec.Template = corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "nginx:1.27"}}}}
+	r4 := rsFor("shop", "web-4", "web", "4", "nginx:1.27")
+	r5 := rsFor("shop", "web-5", "web", "5", "nginx:2.0")
+	cli := fake.NewSimpleClientset(d, r4, r5)
+	allowFix(cli)
+
+	p := filepath.Join(t.TempDir(), "audit.log")
+	if err := os.WriteFile(p, []byte(`{"time":"2026-07-24T08:00:00Z","kind":"RolloutUndo","namespace":"shop","name":"web","target":"shop/web (Deployment)","disposition":"applied","fromRevision":5,"toRevision":4}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out, auditBuf bytes.Buffer
+	if err := runRollback(context.Background(), cli, p, false, true /*yes*/, &out, strings.NewReader(""), audit.NewWriter(&auditBuf)); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := cli.AppsV1().Deployments("shop").Get(context.Background(), "web", metav1.GetOptions{})
+	if img := got.Spec.Template.Spec.Containers[0].Image; img != "nginx:2.0" {
+		t.Errorf("image = %q, want the pre-fix nginx:2.0", img)
+	}
+	recs := auditLines(t, auditBuf.String())
+	if len(recs) != 1 || recs[0].Disposition != "rollback" {
+		t.Fatalf("want one rollback record, got %+v", recs)
+	}
+}
+
+func TestRunRollback_NothingToRollBack(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "audit.log")
+	if err := os.WriteFile(p, []byte(`{"time":"2026-07-24T08:00:00Z","kind":"Uncordon","name":"w1","target":"node/w1","disposition":"declined"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cli := fake.NewSimpleClientset()
+	var out bytes.Buffer
+	if err := runRollback(context.Background(), cli, p, false, true, &out, strings.NewReader(""), nil); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "nothing to roll back") {
+		t.Errorf("expected the nothing-to-roll-back message, got: %s", out.String())
+	}
+	for _, act := range cli.Actions() {
+		if act.GetVerb() == "update" {
+			t.Fatal("no write may happen when there is nothing to roll back")
+		}
+	}
+}
+
+func TestRunRollback_PreV054RecordRefuses(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "audit.log")
+	if err := os.WriteFile(p, []byte(`{"time":"2026-07-24T08:00:00Z","kind":"RolloutUndo","namespace":"shop","name":"web","target":"shop/web (Deployment)","disposition":"applied"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cli := fake.NewSimpleClientset()
+	var out bytes.Buffer
+	if err := runRollback(context.Background(), cli, p, false, true, &out, strings.NewReader(""), nil); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "v0.54") {
+		t.Errorf("expected the version refusal, got: %s", out.String())
+	}
+	for _, act := range cli.Actions() {
+		if act.GetVerb() == "update" {
+			t.Fatal("a pre-v0.54 record must not produce a write")
+		}
+	}
+}
+
+func TestRunRollback_DryRunWritesNothing(t *testing.T) {
+	d := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web",
+		Annotations: map[string]string{"deployment.kubernetes.io/revision": "4"}}}
+	d.Spec.Template = corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "nginx:1.27"}}}}
+	cli := fake.NewSimpleClientset(d)
+	allowFix(cli)
+	p := filepath.Join(t.TempDir(), "audit.log")
+	if err := os.WriteFile(p, []byte(`{"time":"2026-07-24T08:00:00Z","kind":"RolloutUndo","namespace":"shop","name":"web","target":"shop/web (Deployment)","disposition":"applied","fromRevision":5,"toRevision":4}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out, auditBuf bytes.Buffer
+	if err := runRollback(context.Background(), cli, p, true /*dryRun*/, false, &out, strings.NewReader(""), audit.NewWriter(&auditBuf)); err != nil {
+		t.Fatal(err)
+	}
+	for _, act := range cli.Actions() {
+		if act.GetVerb() == "update" {
+			t.Fatal("dry-run must not write")
+		}
+	}
+	recs := auditLines(t, auditBuf.String())
+	if len(recs) != 1 || recs[0].Disposition != "dry-run" {
+		t.Fatalf("want one dry-run record, got %+v", recs)
+	}
+}
+
+func TestRun_RollbackNeedsAuditLog(t *testing.T) {
+	err := run([]string{"scan", "--rollback"})
+	if err == nil || !strings.Contains(err.Error(), "--audit-log") {
+		t.Errorf("expected an --audit-log requirement error, got %v", err)
+	}
+}
+
+func TestRun_RollbackAndFixAreExclusive(t *testing.T) {
+	err := run([]string{"scan", "--rollback", "--fix", "--audit-log", "/tmp/x.log"})
+	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Errorf("expected a mutual-exclusion error, got %v", err)
+	}
+}
+
 func auditLines(t *testing.T, s string) []audit.Record {
 	t.Helper()
 	var recs []audit.Record

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
+	"github.com/imantaba/kubeagent/internal/audit"
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/hpahealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
@@ -366,7 +368,7 @@ func TestRunFixes_PrintsWillChangeBlock(t *testing.T) {
 		CurrentRevision: 2, TargetRevision: 1,
 	}}
 	var out bytes.Buffer
-	runFixes(context.Background(), fake.NewSimpleClientset(), actions, true /*dryRun*/, false, &out, strings.NewReader(""))
+	runFixes(context.Background(), fake.NewSimpleClientset(), actions, true /*dryRun*/, false, &out, strings.NewReader(""), nil)
 	s := out.String()
 	for _, want := range []string{
 		"will change:",
@@ -387,7 +389,7 @@ func TestRunFixes_DryRunWritesNothing(t *testing.T) {
 	cli := fake.NewSimpleClientset(d)
 	var out bytes.Buffer
 	actions := remediate.Plan(fixWorkload(), fixRS(), nil)
-	runFixes(context.Background(), cli, actions, true /*dryRun*/, false, &out, strings.NewReader(""))
+	runFixes(context.Background(), cli, actions, true /*dryRun*/, false, &out, strings.NewReader(""), nil)
 	for _, a := range cli.Actions() {
 		if a.GetVerb() == "update" {
 			t.Fatalf("dry-run must not write; saw %s", a.GetVerb())
@@ -406,7 +408,7 @@ func TestRunFixes_YesApplies(t *testing.T) {
 	cli := fake.NewSimpleClientset(d, &rss[0], &rss[1])
 	var out bytes.Buffer
 	actions := remediate.Plan(fixWorkload(), rss, nil)
-	runFixes(context.Background(), cli, actions, false, true /*assumeYes*/, &out, strings.NewReader(""))
+	runFixes(context.Background(), cli, actions, false, true /*assumeYes*/, &out, strings.NewReader(""), nil)
 	got, _ := cli.AppsV1().Deployments("shop").Get(context.Background(), "web", metav1.GetOptions{})
 	if got.Spec.Template.Spec.Containers[0].Image != "nginx:1.27" {
 		t.Errorf("expected rollback to nginx:1.27, got %q", got.Spec.Template.Spec.Containers[0].Image)
@@ -419,7 +421,7 @@ func TestRunFixes_DryRunUncordonWritesNothing(t *testing.T) {
 	cli := fake.NewSimpleClientset(n)
 	var out bytes.Buffer
 	actions := remediate.Plan(nil, nil, []corev1.Node{*n})
-	runFixes(context.Background(), cli, actions, true /*dryRun*/, false, &out, strings.NewReader(""))
+	runFixes(context.Background(), cli, actions, true /*dryRun*/, false, &out, strings.NewReader(""), nil)
 	for _, a := range cli.Actions() {
 		if a.GetVerb() == "update" {
 			t.Fatalf("dry-run must not write a node; saw update")
@@ -436,12 +438,74 @@ func TestRunFixes_UncordonYesApplies(t *testing.T) {
 	cli := fake.NewSimpleClientset(n)
 	var out bytes.Buffer
 	actions := remediate.Plan(nil, nil, []corev1.Node{*n})
-	runFixes(context.Background(), cli, actions, false, true, &out, strings.NewReader(""))
+	runFixes(context.Background(), cli, actions, false, true, &out, strings.NewReader(""), nil)
 	got, _ := cli.CoreV1().Nodes().Get(context.Background(), "worker-1", metav1.GetOptions{})
 	if got.Spec.Unschedulable {
 		t.Errorf("expected node uncordoned by --yes")
 	}
 	if !strings.Contains(out.String(), "node/worker-1") {
 		t.Errorf("expected the node target in output, got: %s", out.String())
+	}
+}
+
+func auditLines(t *testing.T, s string) []audit.Record {
+	t.Helper()
+	var recs []audit.Record
+	for _, line := range strings.Split(strings.TrimRight(s, "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		var r audit.Record
+		if err := json.Unmarshal([]byte(line), &r); err != nil {
+			t.Fatalf("audit line not JSON: %v (%q)", err, line)
+		}
+		recs = append(recs, r)
+	}
+	return recs
+}
+
+func TestRunFixes_AuditRecordsDryRun(t *testing.T) {
+	var out, auditBuf bytes.Buffer
+	actions := remediate.Plan(fixWorkload(), fixRS(), nil)
+	runFixes(context.Background(), fake.NewSimpleClientset(), actions, true /*dryRun*/, false, &out, strings.NewReader(""), audit.NewWriter(&auditBuf))
+	recs := auditLines(t, auditBuf.String())
+	if len(recs) != 1 || recs[0].Disposition != "dry-run" {
+		t.Fatalf("want one dry-run record, got %+v", recs)
+	}
+}
+
+func TestRunFixes_AuditRecordsDeclined(t *testing.T) {
+	var out, auditBuf bytes.Buffer
+	actions := remediate.Plan(fixWorkload(), fixRS(), nil)
+	runFixes(context.Background(), fake.NewSimpleClientset(), actions, false, false, &out, strings.NewReader("n\n"), audit.NewWriter(&auditBuf))
+	recs := auditLines(t, auditBuf.String())
+	if len(recs) != 1 || recs[0].Disposition != "declined" {
+		t.Fatalf("want one declined record, got %+v", recs)
+	}
+}
+
+func TestRunFixes_AuditRecordsApplied(t *testing.T) {
+	// Mirror TestRunFixes_YesApplies' live-appliable fixtures exactly.
+	d := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web",
+		Annotations: map[string]string{"deployment.kubernetes.io/revision": "2"}}}
+	d.Spec.Template = corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "nginx:bad"}}}}
+	rss := fixRS()
+	cli := fake.NewSimpleClientset(d, &rss[0], &rss[1])
+	var out, auditBuf bytes.Buffer
+	actions := remediate.Plan(fixWorkload(), rss, nil)
+	runFixes(context.Background(), cli, actions, false, true /*yes*/, &out, strings.NewReader(""), audit.NewWriter(&auditBuf))
+	recs := auditLines(t, auditBuf.String())
+	if len(recs) != 1 || recs[0].Disposition != "applied" {
+		t.Fatalf("want one applied record, got %+v", recs)
+	}
+}
+
+func TestRunFixes_NilAuditWriterLogsNothing(t *testing.T) {
+	var out bytes.Buffer
+	actions := remediate.Plan(fixWorkload(), fixRS(), nil)
+	runFixes(context.Background(), fake.NewSimpleClientset(), actions, true, false, &out, strings.NewReader(""), nil)
+	// no panic, no audit output; the human output still rendered
+	if !strings.Contains(out.String(), "Proposed fix") {
+		t.Error("human output should still render with a nil audit writer")
 	}
 }

@@ -15,6 +15,7 @@ import (
 
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/imantaba/kubeagent/internal/audit"
 	"github.com/imantaba/kubeagent/internal/cluster"
 	"github.com/imantaba/kubeagent/internal/collect"
 	"github.com/imantaba/kubeagent/internal/connectivity"
@@ -58,7 +59,7 @@ func run(args []string) error {
 		return runWatch(args[1:])
 	}
 	if len(args) == 0 || args[0] != "scan" {
-		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--investigate] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--kubelet-health] [--control-plane-health] [--dns-health] [--certs [--cert-warn-days n]] [--logs] [--node-heartbeat-threshold dur] [--expected-nodes a,b,…] [--fix [--dry-run|--yes]] | kubeagent watch [--kubeconfig path] [--context name] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] | kubeagent version")
+		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--investigate] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--kubelet-health] [--control-plane-health] [--dns-health] [--certs [--cert-warn-days n]] [--logs] [--node-heartbeat-threshold dur] [--expected-nodes a,b,…] [--fix [--dry-run|--yes] [--audit-log path]] | kubeagent watch [--kubeconfig path] [--context name] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] | kubeagent version")
 	}
 
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
@@ -88,6 +89,7 @@ func run(args []string) error {
 	fix := fs.Bool("fix", false, "propose and (after confirmation) apply safe, reversible remediations (opt-in writes)")
 	dryRun := fs.Bool("dry-run", false, "with --fix: print proposed remediations only; never prompt or write")
 	assumeYes := fs.Bool("yes", false, "with --fix: apply all proposed remediations without prompting")
+	auditLog := fs.String("audit-log", "", "with --fix: append a JSON-lines audit record per action to this file")
 	var namespace string
 	fs.StringVar(&namespace, "namespace", "", "namespace to scan (default: all namespaces)")
 	fs.StringVar(&namespace, "n", "", "namespace to scan (shorthand)")
@@ -245,7 +247,16 @@ func run(args []string) error {
 		return err
 	}
 	if *fix {
-		runFixes(context.Background(), client, fixPlan, *dryRun, *assumeYes, os.Stdout, os.Stdin)
+		var auditw *audit.Writer
+		if *auditLog != "" {
+			f, err := os.OpenFile(*auditLog, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+			if err != nil {
+				return fmt.Errorf("opening audit log %q: %w", *auditLog, err)
+			}
+			defer f.Close()
+			auditw = audit.NewWriter(f)
+		}
+		runFixes(context.Background(), client, fixPlan, *dryRun, *assumeYes, os.Stdout, os.Stdin, auditw)
 	}
 	return nil
 }
@@ -387,11 +398,19 @@ func envInt(key string, def int) int {
 // runFixes proposes the planned remediations and, unless --dry-run, applies each
 // after a [y/N] confirmation (or unconditionally with --yes). The actions were
 // planned once in runScan; Apply is bound to what each preview promised. Writes
-// are guarded inside remediate.Apply.
-func runFixes(ctx context.Context, client kubernetes.Interface, actions []remediate.Action, dryRun, assumeYes bool, w io.Writer, in io.Reader) {
+// are guarded inside remediate.Apply. auditw may be nil (no audit logging).
+func runFixes(ctx context.Context, client kubernetes.Interface, actions []remediate.Action, dryRun, assumeYes bool, w io.Writer, in io.Reader, auditw *audit.Writer) {
 	if len(actions) == 0 {
 		fmt.Fprintln(w, "\nNo automatic remediations available.")
 		return
+	}
+	logAudit := func(a remediate.Action, disposition, detail string) {
+		if auditw == nil {
+			return
+		}
+		if err := auditw.Log(audit.RecordFor(a, disposition, detail, time.Now())); err != nil {
+			fmt.Fprintf(w, "  (audit log write failed: %v)\n", err)
+		}
 	}
 	reader := bufio.NewReader(in)
 	for _, a := range actions {
@@ -409,6 +428,7 @@ func runFixes(ctx context.Context, client kubernetes.Interface, actions []remedi
 		fmt.Fprintf(w, "  kubectl equivalent: %s\n", a.KubectlEquivalent)
 		if dryRun {
 			fmt.Fprintln(w, "  (dry-run: not applied)")
+			logAudit(a, "dry-run", "")
 			continue
 		}
 		if !assumeYes {
@@ -416,6 +436,7 @@ func runFixes(ctx context.Context, client kubernetes.Interface, actions []remedi
 			line, _ := reader.ReadString('\n')
 			if strings.ToLower(strings.TrimSpace(line)) != "y" {
 				fmt.Fprintln(w, "  skipped.")
+				logAudit(a, "declined", "")
 				continue
 			}
 		}
@@ -423,10 +444,13 @@ func runFixes(ctx context.Context, client kubernetes.Interface, actions []remedi
 		switch {
 		case res.Err != nil:
 			fmt.Fprintf(w, "  ERROR: %v\n", res.Err)
+			logAudit(a, "error", res.Err.Error())
 		case res.Applied:
 			fmt.Fprintf(w, "  applied: %s\n", res.Detail)
+			logAudit(a, "applied", res.Detail)
 		default:
 			fmt.Fprintf(w, "  skipped: %s\n", res.Detail)
+			logAudit(a, "refused", res.Detail)
 		}
 	}
 }

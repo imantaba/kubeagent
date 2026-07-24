@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`--fix` rollback.** `kubeagent scan --rollback --audit-log <path>` reads the most
+  recent applied remediation from the audit log and undoes it — rolling a Deployment
+  forward to its pre-fix revision, or re-cordoning a node — through the same guard rails
+  as any fix: curated preview diff, `[y/N]` confirmation, drift bond (refuses if the
+  cluster moved since), RBAC preflight, and an audit record with the new `rollback`
+  disposition. The inverse is derived deterministically from structured
+  `fromRevision`/`toRevision` fields now written into every audit record; records
+  written before v0.54 are refused with a clear message rather than guessed at. One
+  action per invocation; `--rollback` requires `--audit-log` and cannot be combined
+  with `--fix`.
+
 ## [0.53.0] - 2026-07-24
 
 ### Added

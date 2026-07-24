@@ -272,6 +272,13 @@
   dry-run permission report for each proposed fix) — the third write-path
   hardening slice of Theme D.
 
+- **`--fix` rollback** (`--rollback`, undo the last applied fix from the audit
+  log through every guard rail: curated preview diff, `[y/N]`, drift bond, RBAC
+  preflight, `rollback` audit disposition; inverse derived from structured
+  `fromRevision`/`toRevision` fields; pre-v0.54 records refused cleanly) — the
+  fourth and final write-path hardening slice, **completing Theme D**. See
+  [Remediation](features/remediation.md#rollback-rollback).
+
 !!! info "Version history"
     [GitHub Releases](https://github.com/imantaba/kubeagent/releases) and the
     [CHANGELOG](https://github.com/imantaba/kubeagent/blob/main/CHANGELOG.md)
@@ -317,10 +324,10 @@ These are the north star; every item below is measured against them.
   investigation mode lets the model request bounded, allow-listed follow-up reads
   (logs, describe, events) to deepen a finding — the deterministic core never
   changes, and every query is logged. Local-model (offline) explain.
-- **D · Remediation that earns trust** — `--fix` gains plan/dry-run with a diff,
-  an audit log, RBAC preflight (only offer what the caller can actually do), a
-  larger *reversible* allowlist, and rollback; then guarded, policy-gated
-  autonomous remediation inside `watch`.
+- **D · Remediation that earns trust** ✅ — `--fix` gains plan/dry-run with a
+  diff, an audit log, RBAC preflight (only offer what the caller can actually
+  do), and rollback (`--rollback`). Theme D is complete; guarded, policy-gated
+  autonomous remediation inside `watch` moves to Theme E.
 - **E · Continuous operations** — `watch` gains state (regressions, flapping, MTTR,
   "new since last"), alerting integrations (Slack / PagerDuty / webhook), SLO
   burn-rate signals, rate-limited on-incident `--explain`, and a multi-cluster hub.

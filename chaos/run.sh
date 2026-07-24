@@ -213,6 +213,18 @@ scenario_09_rollout() {   # bad image -> ImagePullBackOff
   kubectl --context "$CTX" -n chaos-rollout set image deploy/web web=nginx:does-not-exist-9999 >/dev/null
   sleep 18
   { scan 2>&1 || true; } | record "9. Faulty rolling deployment (bad image)" "detected: ImagePullBackOff"
+  # slice-4: apply the fix with an audit log, then roll it back and confirm the image returns
+  local alog; alog="$(mktemp)"
+  ./kubeagent scan --context "$CTX" -n chaos-rollout --fix --yes --audit-log "$alog" >/dev/null 2>&1 || true
+  local after_fix; after_fix="$(kubectl --context "$CTX" -n chaos-rollout get deploy web -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null)"
+  ./kubeagent scan --context "$CTX" -n chaos-rollout --rollback --yes --audit-log "$alog" >/dev/null 2>&1 || true
+  local after_rollback; after_rollback="$(kubectl --context "$CTX" -n chaos-rollout get deploy web -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null)"
+  {
+    echo "after --fix:      $after_fix"
+    echo "after --rollback: $after_rollback"
+    { grep -c '"disposition":"rollback"' "$alog" 2>/dev/null || true; } | sed 's/^/rollback audit records: /'
+  } | record "9b. Fix then rollback (audit-log round trip)" "rollback restores the pre-fix image"
+  rm -f "$alog"
   kubectl --context "$CTX" delete ns chaos-rollout --wait=true --timeout=120s >/dev/null 2>&1 || true
 }
 

@@ -159,6 +159,7 @@ Each record is a single JSON object on its own line:
 | `refused` | A safety guard fired at apply time (cluster state drifted, or a nil-error "no write made" condition); no write was made. |
 | `preflight` | The RBAC preflight (`SelfSubjectAccessReview`) denied the action before any write was attempted. |
 | `error` | The write was attempted but the API server returned an error; or the SSAR itself failed (fail-closed). |
+| `rollback` | A `--rollback` invocation successfully applied the inverse of the most recent `applied` record. |
 
 **Properties of the audit file:**
 
@@ -173,6 +174,63 @@ Each record is a single JSON object on its own line:
   fields shown in the `will change:` block), the action metadata, and the
   result detail are recorded. Env values and template contents are never
   captured.
+
+## Rollback (`--rollback`)
+
+`kubeagent scan --rollback --audit-log /var/log/kubeagent-fix.log` reads the
+most recent `applied` record from the audit log and proposes its deterministic
+inverse:
+
+- **`RolloutUndo` → roll forward** — a Deployment that was rolled back is rolled
+  forward to the revision it was on before the fix (i.e. it restores the
+  image/template that the `--fix` had rolled away from).
+- **`Uncordon` → re-cordon** — a node that was uncordoned is cordoned again.
+
+### Guard rails (same as `--fix`)
+
+The inverse runs through every guard rail that `--fix` uses:
+
+- **Curated `will change:` preview diff** — for example `revision: 4 → 5`.
+- **`[y/N]` confirmation** — or `--yes` to skip.
+- **Drift bond** — if the cluster has moved since the original fix was applied
+  (the revision is already gone, or the node is already cordoned), the rollback
+  is refused with a clear message and no write is made.
+- **RBAC preflight** — a `SelfSubjectAccessReview` confirms write permission
+  before any write is attempted.
+- **Audit record** — the outcome is appended to the audit log with the new
+  `rollback` disposition.
+
+### Sample proposal
+
+```text
+Rolling back the fix applied at 2026-07-24T06:30:00Z
+Proposed rollback: shop/web (Deployment) — roll forward to the pre-fix revision
+  reason: undo the fix that rolled shop/web back from revision 5 to 4
+  will change:
+    revision: 4 → 5
+  kubectl equivalent: kubectl -n shop rollout undo deployment/web --to-revision=5
+  Roll back? [y/N] y
+  rolled back: rolled shop/web forward to revision 5 (pre-fix pod template restored)
+```
+
+### Notes
+
+- **One action per invocation.** `--rollback` proposes the inverse of the single
+  most-recent `applied` record. Re-run to walk further back.
+- **Requires `--audit-log`.** `--rollback` has no way to find the record to undo
+  without the audit log path; the flag is required.
+- **Mutually exclusive with `--fix`.** `--rollback` and `--fix` cannot be
+  combined in a single invocation.
+- **`--dry-run` is supported.** Reports the proposed inverse without writing.
+- **Pre-v0.54 records refused.** The inverse is derived from structured
+  `fromRevision`/`toRevision` fields written into every audit record starting in
+  v0.54. Records written by an older build lack those fields and are refused with a
+  clear message — `--rollback` never guesses the inverse from free-text detail.
+- **Rollback records are not themselves reversible.** `--rollback` only matches
+  `applied` records; a `rollback`-disposition record is never the target. If you
+  re-run `--rollback` after a successful rollback, `ReadLast` finds the original
+  `applied` record again and re-proposes the same inverse — the drift bond or the
+  already-cordoned guard will normally refuse it.
 
 ## JSON output (`--output json`)
 

@@ -59,7 +59,7 @@ func run(args []string) error {
 		return runWatch(args[1:])
 	}
 	if len(args) == 0 || args[0] != "scan" {
-		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--investigate] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--kubelet-health] [--control-plane-health] [--dns-health] [--certs [--cert-warn-days n]] [--logs] [--node-heartbeat-threshold dur] [--expected-nodes a,b,…] [--fix [--dry-run|--yes] [--audit-log path]] | kubeagent watch [--kubeconfig path] [--context name] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] | kubeagent version")
+		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--investigate] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--kubelet-health] [--control-plane-health] [--dns-health] [--certs [--cert-warn-days n]] [--logs] [--node-heartbeat-threshold dur] [--expected-nodes a,b,…] [--fix [--dry-run|--yes] [--audit-log path]] [--rollback --audit-log path] | kubeagent watch [--kubeconfig path] [--context name] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] | kubeagent version")
 	}
 
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
@@ -90,6 +90,7 @@ func run(args []string) error {
 	dryRun := fs.Bool("dry-run", false, "with --fix: print proposed remediations only; never prompt or write")
 	assumeYes := fs.Bool("yes", false, "with --fix: apply all proposed remediations without prompting")
 	auditLog := fs.String("audit-log", "", "with --fix: append a JSON-lines audit record per action to this file")
+	rollback := fs.Bool("rollback", false, "undo the most recent applied fix recorded in --audit-log (requires --audit-log)")
 	var namespace string
 	fs.StringVar(&namespace, "namespace", "", "namespace to scan (default: all namespaces)")
 	fs.StringVar(&namespace, "n", "", "namespace to scan (shorthand)")
@@ -110,6 +111,12 @@ func run(args []string) error {
 	// support the tool-use loop in v1.
 	if *investigateFlag && os.Getenv("ANTHROPIC_API_KEY") == "" {
 		return fmt.Errorf("--investigate needs ANTHROPIC_API_KEY (local endpoints do not support the tool-use loop yet)")
+	}
+	if *rollback && *fix {
+		return fmt.Errorf("--rollback and --fix are mutually exclusive")
+	}
+	if *rollback && *auditLog == "" {
+		return fmt.Errorf("--rollback requires --audit-log (the file to read the last applied fix from)")
 	}
 	var explainModel string
 	if explainEndpoint != "" {
@@ -246,7 +253,7 @@ func run(args []string) error {
 	if err := report.PrintInventory(in, *output, os.Stdout); err != nil {
 		return err
 	}
-	if *fix {
+	if *fix || *rollback {
 		var auditw *audit.Writer
 		if *auditLog != "" {
 			f, err := os.OpenFile(*auditLog, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
@@ -256,7 +263,13 @@ func run(args []string) error {
 			defer f.Close()
 			auditw = audit.NewWriter(f)
 		}
-		runFixes(context.Background(), client, fixPlan, *dryRun, *assumeYes, os.Stdout, os.Stdin, auditw)
+		if *rollback {
+			if err := runRollback(context.Background(), client, *auditLog, *dryRun, *assumeYes, os.Stdout, os.Stdin, auditw); err != nil {
+				return err
+			}
+		} else {
+			runFixes(context.Background(), client, fixPlan, *dryRun, *assumeYes, os.Stdout, os.Stdin, auditw)
+		}
 	}
 	return nil
 }
@@ -393,6 +406,76 @@ func envInt(key string, def int) int {
 		}
 	}
 	return def
+}
+
+// runRollback undoes the most recent applied remediation recorded in the audit log. The
+// inverse action is derived deterministically (never LLM-decided) and applied through
+// the same guard rails as any fix: preview, confirmation, drift bond, RBAC preflight.
+func runRollback(ctx context.Context, client kubernetes.Interface, auditPath string, dryRun, assumeYes bool, w io.Writer, in io.Reader, auditw *audit.Writer) error {
+	rec, found, err := audit.ReadLast(auditPath, func(r audit.Record) bool { return r.Disposition == "applied" })
+	if err != nil {
+		return fmt.Errorf("reading audit log %q: %w", auditPath, err)
+	}
+	if !found {
+		fmt.Fprintf(w, "\nNo applied remediation found in %s; nothing to roll back.\n", auditPath)
+		return nil
+	}
+	a, err := remediate.Inverse(rec.Kind, rec.Namespace, rec.Name, rec.FromRevision, rec.ToRevision)
+	if err != nil {
+		fmt.Fprintf(w, "\nCannot roll back the last applied fix (%s %s): %v\n", rec.Kind, rec.Target, err)
+		return nil
+	}
+	logAudit := func(disposition, detail string) {
+		if auditw == nil {
+			return
+		}
+		if err := auditw.Log(audit.RecordFor(a, disposition, detail, time.Now())); err != nil {
+			fmt.Fprintf(os.Stderr, "kubeagent: audit log write failed: %v\n", err)
+		}
+	}
+	fmt.Fprintf(w, "\nRolling back the fix applied at %s\nProposed rollback: %s — %s\n  reason: %s\n",
+		rec.Time, a.Target, a.Summary, a.Reason)
+	if len(a.Changes) > 0 {
+		fmt.Fprintln(w, "  will change:")
+		for _, c := range a.Changes {
+			if c.From == "" && c.To == "" {
+				fmt.Fprintf(w, "    %s\n", c.Field)
+			} else {
+				fmt.Fprintf(w, "    %s: %s → %s\n", c.Field, c.From, c.To)
+			}
+		}
+	}
+	fmt.Fprintf(w, "  kubectl equivalent: %s\n", a.KubectlEquivalent)
+	if dryRun {
+		fmt.Fprintln(w, "  (dry-run: not applied)")
+		logAudit("dry-run", "")
+		return nil
+	}
+	if !assumeYes {
+		fmt.Fprint(w, "  Roll back? [y/N] ")
+		line, _ := bufio.NewReader(in).ReadString('\n')
+		if strings.ToLower(strings.TrimSpace(line)) != "y" {
+			fmt.Fprintln(w, "  skipped.")
+			logAudit("declined", "")
+			return nil
+		}
+	}
+	res := remediate.Apply(ctx, client, a)
+	switch {
+	case res.Err != nil:
+		fmt.Fprintf(w, "  ERROR: %v\n", res.Err)
+		logAudit("error", res.Err.Error())
+	case res.Applied:
+		fmt.Fprintf(w, "  rolled back: %s\n", res.Detail)
+		logAudit("rollback", res.Detail)
+	case res.PreflightDenied:
+		fmt.Fprintf(w, "  skipped: %s\n", res.Detail)
+		logAudit("preflight", res.Detail)
+	default:
+		fmt.Fprintf(w, "  skipped: %s\n", res.Detail)
+		logAudit("refused", res.Detail)
+	}
+	return nil
 }
 
 // runFixes proposes the planned remediations and, unless --dry-run, applies each

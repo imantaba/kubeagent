@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.52.0] - 2026-07-24
+
 ### Added
 
 - **`--fix` audit log.** A new `--audit-log <path>` flag (with `--fix`) appends a
@@ -713,7 +715,8 @@ infrastructure (a documentation site and a pre-release chaos-test harness).
 - CI (vet/test/build on push & PR) and a release workflow publishing a
   linux/amd64 tarball + `SHA256SUMS` to a GitHub Release.
 
-[Unreleased]: https://github.com/imantaba/kubeagent/compare/v0.51.0...HEAD
+[Unreleased]: https://github.com/imantaba/kubeagent/compare/v0.52.0...HEAD
+[0.52.0]: https://github.com/imantaba/kubeagent/compare/v0.51.0...v0.52.0
 [0.51.0]: https://github.com/imantaba/kubeagent/compare/v0.50.0...v0.51.0
 [0.50.0]: https://github.com/imantaba/kubeagent/compare/v0.49.0...v0.50.0
 [0.49.0]: https://github.com/imantaba/kubeagent/compare/v0.48.0...v0.49.0

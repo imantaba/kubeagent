@@ -71,7 +71,7 @@ Useful overrides:
 ```bash
 # pin a different image tag (defaults to the chart's appVersion)
 helm install kubeagent deploy/helm/kubeagent -n kubeagent --create-namespace \
-  --set image.tag=v0.51.0
+  --set image.tag=v0.52.0
 
 # scope the daemon to a single namespace, tune scan cadence
 helm install kubeagent deploy/helm/kubeagent -n kubeagent --create-namespace \

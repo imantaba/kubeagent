@@ -247,6 +247,7 @@ func revFromAnnotations(anno map[string]string) int {
 type Result struct {
 	Action  Action
 	Applied bool
+	Refused bool // a guarded no-write refusal (drift, no target, unsafe precondition); Applied false, Err nil
 	Detail  string
 	Err     error
 }
@@ -282,6 +283,7 @@ func applyRolloutUndo(ctx context.Context, client kubernetes.Interface, a Action
 	target := pickTarget(dep, rsList.Items)
 	if target == nil {
 		res.Detail = "no differing prior revision to roll back to (state changed); no write made"
+		res.Refused = true
 		return res
 	}
 	curRev, targetRev := revFromAnnotations(dep.Annotations), revFromAnnotations(target.Annotations)
@@ -289,6 +291,7 @@ func applyRolloutUndo(ctx context.Context, client kubernetes.Interface, a Action
 		res.Detail = fmt.Sprintf(
 			"state changed since preview (revision %d is now current and the rollback would land on %d; previewed %d → %d) — re-run kubeagent scan --fix; no write made",
 			curRev, targetRev, a.CurrentRevision, a.TargetRevision)
+		res.Refused = true
 		return res
 	}
 	tpl := *target.Spec.Template.DeepCopy()
@@ -314,6 +317,7 @@ func applyUncordon(ctx context.Context, client kubernetes.Interface, a Action) R
 	// apply-time precondition: still cordoned and still no NoExecute taint
 	if !n.Spec.Unschedulable || hasNoExecuteTaint(*n) {
 		res.Detail = "node is no longer a safe uncordon target (already schedulable or NoExecute-tainted); no write made"
+		res.Refused = true
 		return res
 	}
 	n.Spec.Unschedulable = false

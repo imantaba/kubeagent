@@ -264,6 +264,9 @@
   appears as `remediationPlan` (status `proposed`) — the foundation for the coming
   audit-log and RBAC-preflight slices. See [Remediation](features/remediation.md).
 
+- **`--fix` audit log** (`--audit-log`, append-only JSON-Lines record of every
+  remediation disposition) — the accountability half of the remediation contract.
+
 !!! info "Version history"
     [GitHub Releases](https://github.com/imantaba/kubeagent/releases) and the
     [CHANGELOG](https://github.com/imantaba/kubeagent/blob/main/CHANGELOG.md)

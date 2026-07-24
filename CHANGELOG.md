@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`--fix` audit log.** A new `--audit-log <path>` flag (with `--fix`) appends a
+  durable, append-only JSON-Lines record of every remediation outcome — one line per
+  action with its timestamp, target, previewed changes, and disposition
+  (`dry-run` / `declined` / `applied` / `refused` / `error`). Secret-free by
+  construction (only the previewed diff values and result detail are recorded); the
+  file is opened `0o600` and append-only, and an unwritable path fails before any
+  write. The accountability half of the remediation contract.
+
 ## [0.51.0] - 2026-07-24
 
 ### Added

@@ -142,7 +142,7 @@ Each record is a single JSON object on its own line:
 
 With `--output json`, the remediation plan is included in the scan result as
 `remediationPlan` — an array of proposed actions, each with `status: "proposed"`.
-This is the foundation for the coming audit log.
+The audit log (`--audit-log`, described above) records the outcome of each of these actions.
 
 ```json
 {

@@ -409,7 +409,7 @@ func runFixes(ctx context.Context, client kubernetes.Interface, actions []remedi
 			return
 		}
 		if err := auditw.Log(audit.RecordFor(a, disposition, detail, time.Now())); err != nil {
-			fmt.Fprintf(w, "  (audit log write failed: %v)\n", err)
+			fmt.Fprintf(os.Stderr, "kubeagent: audit log write failed: %v\n", err)
 		}
 	}
 	reader := bufio.NewReader(in)

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,7 +13,9 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	ktesting "k8s.io/client-go/testing"
 
 	"github.com/imantaba/kubeagent/internal/audit"
 	"github.com/imantaba/kubeagent/internal/diagnose"
@@ -507,5 +510,60 @@ func TestRunFixes_NilAuditWriterLogsNothing(t *testing.T) {
 	// no panic, no audit output; the human output still rendered
 	if !strings.Contains(out.String(), "Proposed fix") {
 		t.Error("human output should still render with a nil audit writer")
+	}
+}
+
+func TestRunFixes_AuditRecordsRefused(t *testing.T) {
+	// Drift scenario: action previewed at CurrentRevision=2 but cluster is at rev 3,
+	// so remediate.Apply returns Refused=true → audit disposition must be "refused".
+	cur := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web",
+		Annotations: map[string]string{"deployment.kubernetes.io/revision": "3"}}}
+	cur.Spec.Template = corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "nginx:still-broken"}}}}
+	r1 := appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web-1",
+		Annotations:     map[string]string{"deployment.kubernetes.io/revision": "1"},
+		OwnerReferences: []metav1.OwnerReference{{Kind: "Deployment", Name: "web"}}}}
+	r1.Spec.Template = corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "nginx:1.27"}}}}
+	r2 := appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web-2",
+		Annotations:     map[string]string{"deployment.kubernetes.io/revision": "2"},
+		OwnerReferences: []metav1.OwnerReference{{Kind: "Deployment", Name: "web"}}}}
+	r2.Spec.Template = corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "nginx:broken"}}}}
+	r3 := appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web-3",
+		Annotations:     map[string]string{"deployment.kubernetes.io/revision": "3"},
+		OwnerReferences: []metav1.OwnerReference{{Kind: "Deployment", Name: "web"}}}}
+	r3.Spec.Template = corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "nginx:still-broken"}}}}
+	cli := fake.NewSimpleClientset(cur, &r1, &r2, &r3)
+
+	// Action was previewed at CurrentRevision=2, but the cluster has advanced to rev 3 → drift.
+	actions := []remediate.Action{{
+		Kind: "RolloutUndo", Namespace: "shop", Name: "web",
+		Target: "shop/web (Deployment)", Summary: "roll back", Reason: "r",
+		KubectlEquivalent: "kubectl -n shop rollout undo deployment/web",
+		CurrentRevision:   2, TargetRevision: 1,
+		Changes: []remediate.Change{{Field: "revision", From: "2", To: "1"}},
+	}}
+	var out, auditBuf bytes.Buffer
+	runFixes(context.Background(), cli, actions, false, true /*assumeYes*/, &out, strings.NewReader(""), audit.NewWriter(&auditBuf))
+	recs := auditLines(t, auditBuf.String())
+	if len(recs) != 1 || recs[0].Disposition != "refused" {
+		t.Fatalf("want one refused record, got %+v", recs)
+	}
+}
+
+func TestRunFixes_AuditRecordsError(t *testing.T) {
+	// Inject a failing reactor so the Deployment update errors → audit disposition "error".
+	d := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web",
+		Annotations: map[string]string{"deployment.kubernetes.io/revision": "2"}}}
+	d.Spec.Template = corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "nginx:bad"}}}}
+	rss := fixRS()
+	cli := fake.NewSimpleClientset(d, &rss[0], &rss[1])
+	cli.PrependReactor("update", "deployments", func(ktesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("update boom")
+	})
+	var out, auditBuf bytes.Buffer
+	actions := remediate.Plan(fixWorkload(), rss, nil)
+	runFixes(context.Background(), cli, actions, false, true /*assumeYes*/, &out, strings.NewReader(""), audit.NewWriter(&auditBuf))
+	recs := auditLines(t, auditBuf.String())
+	if len(recs) != 1 || recs[0].Disposition != "error" {
+		t.Fatalf("want one error record, got %+v", recs)
 	}
 }

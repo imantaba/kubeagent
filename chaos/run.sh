@@ -347,6 +347,71 @@ scenario_12_watch() {   # stateful watch daemon: NEW on outage, RESOLVED on repa
   kubectl --context "$CTX" delete ns "$ns" --wait=true --timeout=120s >/dev/null 2>&1 || true
 }
 
+scenario_13_slo() {   # SLO burn rate: series track real breakage, and a cold daemon does NOT page
+  log "scenario 13: SLO burn-rate signals (cold daemon must not page)"
+  local ns=chaos-slo port=18082 aport=18083 wlog wpid i alerts apid healthy broken n
+  wlog="$(mktemp)"
+  alerts="$(mktemp)"
+  python3 chaos/alert-receiver.py "$aport" "$alerts" >/dev/null 2>&1 &
+  apid=$!
+  kubectl --context "$CTX" create ns "$ns" --dry-run=client -o yaml | kubectl --context "$CTX" apply -f - >/dev/null
+  kubectl --context "$CTX" -n "$ns" apply -f chaos/manifests/app.yaml >/dev/null
+  kubectl --context "$CTX" -n "$ns" rollout status deploy web --timeout=90s >/dev/null 2>&1 || true
+
+  KUBEAGENT_ALERT_WEBHOOK="http://127.0.0.1:$aport" \
+  ./kubeagent watch --context "$CTX" -n "$ns" --metrics-addr "127.0.0.1:$port" \
+    --heartbeat 10s --debounce 2s --alert-format json --alert-repeat 1h \
+    --slo-target 99.9 >"$wlog" 2>&1 &
+  wpid=$!
+  for i in $(seq 40); do
+    curl -sf "http://127.0.0.1:$port/readyz" >/dev/null 2>&1 && break
+    sleep 1
+  done
+  sleep 30
+  healthy="$(curl -s "http://127.0.0.1:$port/metrics" 2>/dev/null | grep '^kubeagent_slo_' || echo '<unreachable>')"
+
+  # Break the only workload in scope (bad image, old replicas taken down with the
+  # rollout so Ready < Desired — the same fault as scenarios 9 and 12).
+  kubectl --context "$CTX" -n "$ns" patch deploy web --type=strategic \
+    -p '{"spec":{"strategy":{"rollingUpdate":{"maxUnavailable":"100%"}}}}' >/dev/null
+  kubectl --context "$CTX" -n "$ns" set image deploy/web web=nginx:does-not-exist-9999 >/dev/null
+  sleep 45
+  broken="$(curl -s "http://127.0.0.1:$port/metrics" 2>/dev/null | grep '^kubeagent_slo_' || echo '<unreachable>')"
+
+  kill "$wpid" >/dev/null 2>&1 || true
+  wait "$wpid" >/dev/null 2>&1 || true
+  kill "$apid" >/dev/null 2>&1 || true
+  wait "$apid" >/dev/null 2>&1 || true
+
+  {
+    echo '--- SLO series while the workload was healthy ---'
+    printf '%s\n' "$healthy"
+    echo
+    echo '--- SLO series after the workload broke ---'
+    printf '%s\n' "$broken"
+    echo
+    echo '--- SLO notifications delivered to the webhook receiver ---'
+    n=$(grep -c '"kind":"SLO"' "$alerts" 2>/dev/null) || true
+    printf 'SLO alerts delivered: %s\n' "${n:-0}"
+    echo '(must be 0 because the coverage gate held, not because nothing arrived — cross-check against the total below)'
+    echo
+    echo '--- object alerts still work in the same daemon (proves the SLO suppression is not a dead pipe) ---'
+    n=$(grep -c '"kind":"Deployment"' "$alerts" 2>/dev/null) || true
+    printf 'Deployment alerts delivered: %s\n' "${n:-0}"
+    echo
+    echo '--- total notification lines received (0 here is a scenario FAILURE: the receiver never got anything) ---'
+    n=$(wc -l 2>/dev/null < "$alerts") || true
+    printf 'total notification lines: %s\n' "${n:-0}"
+    echo
+    echo '--- daemon log tail (last 15 lines; diagnoses a failed start without re-running the suite) ---'
+    tail -n 15 "$wlog" 2>/dev/null || echo '<no daemon log captured>'
+  } | record "13. SLO burn-rate signals (cold daemon must not page)" \
+    "expect: the five kubeagent_slo_* series render in both snapshots, with kubeagent_slo_target_ratio exactly 0.999 (the one exact value here). kubeagent_slo_availability_ratio falls materially from the healthy snapshot toward the broken one but must NOT reach 0: Availability is accumulated as time-weighted workload-seconds across the WHOLE window, not read from the latest sample, and this run holds only ~30 healthy seconds against ~45 broken ones, so expect something near 0.4 — not 0, and not an exact value (pod-scheduling and image-pull timing shift it). kubeagent_slo_burn_rate rises far past both thresholds (14.4x fast, 6x slow) — near (1-0.4)/(1-0.999) = 600x, not the theoretical maximum, and again not exact. kubeagent_slo_window_coverage_ratio stays far below the 0.6 gate on both windows: the daemon has covered on the order of a minute against a 1h fast window and a 6h slow window. Despite that burn rate, SLO notifications delivered must be 0 — the coverage gate suppresses the page regardless of how hot the burn is — while Deployment alerts delivered must be NON-zero (the object-alert path fires normally) and total notification lines must also be NON-zero: a 0 total would mean the webhook pipe never worked at all, which is a scenario FAILURE, not the same thing as a correctly-suppressed 0 SLO count. This scenario deliberately does NOT cover a real full-window breach: filling the 6h slow window takes six hours; shortening it would need a test-only production flag, and claiming a breach after ninety seconds would be asserting a lie. The threshold arithmetic and the firing transition are unit-tested with an injected clock instead, where six hours costs nothing."
+
+  rm -f "$wlog" "$alerts"
+  kubectl --context "$CTX" delete ns "$ns" --wait=true --timeout=120s >/dev/null 2>&1 || true
+}
+
 scenario_02_certs() {   # documented skip (can't force cert expiry on Kind)
   log "scenario 2: expired certificates (skipped)"
   printf 'Skipped on Kind: control-plane certificate expiry cannot be forced quickly or safely.\nkubeagent TLS / expired-certificate handling is covered by internal/connectivity unit tests\n(x509 UnknownAuthority / CertificateInvalid / Hostname errors, plus "x509:" / "certificate" / "tls: " substrings).\n' \
@@ -383,7 +448,7 @@ run_scenarios() {
   # etcd/apiserver flap for a while afterwards (and while the API is down even
   # `kubectl wait` can't settle it). Running it last keeps that recovery noise from
   # contaminating the other scenarios' scans.
-  local all=(02_certs 03_diskfull 04_networkpolicy 05_coredns 06_lb 07_oom 08_nsdelete 09_rollout 10_credleak 11_kubelet 12_watch 01_etcd)
+  local all=(02_certs 03_diskfull 04_networkpolicy 05_coredns 06_lb 07_oom 08_nsdelete 09_rollout 10_credleak 11_kubelet 12_watch 13_slo 01_etcd)
   for s in "${all[@]}"; do
     if [ -z "$ONLY" ] || [ "$ONLY" = "${s%%_*}" ]; then "scenario_$s"; fi
   done

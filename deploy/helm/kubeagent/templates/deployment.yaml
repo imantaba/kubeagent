@@ -40,6 +40,14 @@ spec:
             - "--alert-repeat={{ .Values.alerts.repeat }}"
             {{- end }}
             {{- end }}
+            {{- if .Values.slo.enabled }}
+            {{- $target := required "slo.target is required when slo.enabled is true" .Values.slo.target }}
+            {{- $targetF := float64 $target }}
+            {{- if or (le $targetF 0.0) (ge $targetF 100.0) }}
+            {{- fail (printf "slo.target must be greater than 0 and less than 100 when slo.enabled is true (got %v)" $target) }}
+            {{- end }}
+            - "--slo-target={{ $target }}"
+            {{- end }}
           env:
             - name: KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS
               value: {{ .Values.webhookLatency.timeoutThreshold | quote }}

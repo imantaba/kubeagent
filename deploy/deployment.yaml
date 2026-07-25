@@ -19,7 +19,11 @@ spec:
       containers:
         - name: kubeagent
           image: imantaba/kubeagent:v0.56.0 # official image on Docker Hub; or build your own (see README.md)
-          args: ["watch", "--metrics-addr=:8080"]
+          args:
+            - "watch"
+            - "--metrics-addr=:8080"
+            # Track an availability SLO and expose burn-rate metrics.
+            # - "--slo-target=99.9"
           env:
             # Alerting (opt-in). Create the Secret first:
             #   kubectl -n kubeagent create secret generic kubeagent-alerts \

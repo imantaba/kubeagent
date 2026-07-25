@@ -13,6 +13,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/alert"
 	"github.com/imantaba/kubeagent/internal/ingresshealth"
 	"github.com/imantaba/kubeagent/internal/scan"
+	"github.com/imantaba/kubeagent/internal/slo"
 	"github.com/imantaba/kubeagent/internal/svchealth"
 	"github.com/imantaba/kubeagent/internal/watchstate"
 )
@@ -49,6 +50,14 @@ type issueSnapshot struct {
 	Active   []watchstate.Record
 	Resolved []watchstate.Record
 	Stats    watchstate.Stats
+}
+
+// sloSnapshot is the SLO tracker's state as of the last reconcile. Enabled is
+// false when --slo-target was not set, in which case no SLO series render at all.
+type sloSnapshot struct {
+	Enabled    bool
+	Target     float64
+	Fast, Slow slo.Report
 }
 
 // metrics holds the latest evaluation snapshot and renders it as Prometheus text.
@@ -89,6 +98,7 @@ type metrics struct {
 	certsExpiring         int
 	issues                issueSnapshot
 	alerts                alert.Stats
+	slo                   sloSnapshot
 }
 
 func newMetrics() *metrics { return &metrics{findings: map[string]int{}} }
@@ -187,6 +197,13 @@ func (m *metrics) updateAlerts(s alert.Stats) {
 	m.alerts = s
 }
 
+// updateSLO records the SLO tracker's latest report for rendering.
+func (m *metrics) updateSLO(enabled bool, target float64, fast, slow slo.Report) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.slo = sloSnapshot{Enabled: enabled, Target: target, Fast: fast, Slow: slow}
+}
+
 func (m *metrics) render() string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -278,6 +295,31 @@ func (m *metrics) render() string {
 	fmt.Fprintf(&b, "kubeagent_alerts_dropped_total{reason=%q} %d\n", "queue_full", m.alerts.DroppedQueueFull)
 	fmt.Fprintf(&b, "kubeagent_alerts_dropped_total{reason=%q} %d\n", "retries_exhausted", m.alerts.DroppedRetriesExhausted)
 	gauge("kubeagent_alert_last_success_timestamp_seconds", "Unix time of the last successful alert delivery (0 if none)", float64(m.alerts.LastSuccessUnix))
+	if m.slo.Enabled {
+		labelled := func(name, help string, fast, slow float64) {
+			fmt.Fprintf(&b, "# HELP %s %s\n# TYPE %s gauge\n", name, help, name)
+			fmt.Fprintf(&b, "%s{window=\"fast\"} %g\n", name, fast)
+			fmt.Fprintf(&b, "%s{window=\"slow\"} %g\n", name, slow)
+		}
+		gauge("kubeagent_slo_target_ratio", "Configured availability SLO as a ratio", m.slo.Target)
+		labelled("kubeagent_slo_availability_ratio",
+			"Time-weighted fraction of workload-seconds with no findings, over the window",
+			m.slo.Fast.Availability, m.slo.Slow.Availability)
+		labelled("kubeagent_slo_burn_rate",
+			"Error-budget consumption multiple over the window (1 = spending exactly at budget)",
+			m.slo.Fast.BurnRate, m.slo.Slow.BurnRate)
+		labelled("kubeagent_slo_window_coverage_ratio",
+			"Fraction of the window carrying samples; below 0.6 the burn alert is suppressed",
+			m.slo.Fast.Coverage, m.slo.Slow.Coverage)
+		// Clamped at zero: a burn above 1x means the window's budget is already
+		// spent, and a negative "remaining" is nonsense on a dashboard.
+		remaining := 1 - m.slo.Slow.BurnRate
+		if remaining < 0 {
+			remaining = 0
+		}
+		gauge("kubeagent_slo_error_budget_remaining_ratio",
+			"Fraction of the error budget left over the slow window, clamped to [0,1]", remaining)
+	}
 	gauge("kubeagent_last_scan_timestamp_seconds", "Unix time of the last evaluation", float64(m.lastScanUnix))
 	gauge("kubeagent_scan_duration_seconds", "Duration of the last evaluation in seconds", m.scanSeconds)
 	counter("kubeagent_scans_total", "Total evaluations run", m.scansTotal)

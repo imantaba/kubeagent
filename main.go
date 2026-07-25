@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/signal"
 	"strconv"
@@ -60,7 +61,7 @@ func run(args []string) error {
 		return runWatch(args[1:])
 	}
 	if len(args) == 0 || args[0] != "scan" {
-		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--investigate] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--kubelet-health] [--control-plane-health] [--dns-health] [--certs [--cert-warn-days n]] [--logs] [--node-heartbeat-threshold dur] [--expected-nodes a,b,…] [--fix [--dry-run|--yes] [--audit-log path]] [--rollback --audit-log path] | kubeagent watch [--kubeconfig path] [--context name] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] [--alert-format json|slack|alertmanager] [--alert-repeat dur] | kubeagent version")
+		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--investigate] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--kubelet-health] [--control-plane-health] [--dns-health] [--certs [--cert-warn-days n]] [--logs] [--node-heartbeat-threshold dur] [--expected-nodes a,b,…] [--fix [--dry-run|--yes] [--audit-log path]] [--rollback --audit-log path] | kubeagent watch [--kubeconfig path] [--context name] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] [--alert-format json|slack|alertmanager] [--alert-repeat dur] [--slo-target pct] | kubeagent version")
 	}
 
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
@@ -300,6 +301,13 @@ func resultInput(res scan.Result) report.Input {
 	}
 }
 
+// watchRun is the daemon entry point, indirected so tests can capture the
+// watch.Config runWatch builds without starting a daemon. runWatch's config is
+// otherwise unobservable: watch.Run blocks on informers until its context is
+// cancelled, and that context comes from signal.NotifyContext, which no test
+// can cancel.
+var watchRun = watch.Run
+
 func runWatch(args []string) error {
 	fs := flag.NewFlagSet("watch", flag.ContinueOnError)
 	kubeconfig := fs.String("kubeconfig", "", "path to kubeconfig for local dev (ignored in-cluster)")
@@ -311,6 +319,7 @@ func runWatch(args []string) error {
 	includeRestarts := fs.Bool("include-restarts", false, "include workloads that are healthy now but have restarted")
 	alertFormat := fs.String("alert-format", envOr("KUBEAGENT_ALERT_FORMAT", "json"), "alert payload format: json, slack, or alertmanager")
 	alertRepeat := fs.Duration("alert-repeat", envDur("KUBEAGENT_ALERT_REPEAT", 0), "re-send interval for still-firing alerts (0 = the format default: 4h, or 60s for alertmanager)")
+	sloTarget := fs.Float64("slo-target", envFloat("KUBEAGENT_SLO_TARGET", 0), "availability SLO as a percentage, e.g. 99.9 (0 = SLO tracking off)")
 	var namespace string
 	fs.StringVar(&namespace, "namespace", envOr("KUBEAGENT_NAMESPACE", ""), "namespace to watch (default: all)")
 	fs.StringVar(&namespace, "n", envOr("KUBEAGENT_NAMESPACE", ""), "namespace to watch (shorthand)")
@@ -330,6 +339,38 @@ func runWatch(args []string) error {
 		fmt.Fprintln(os.Stderr, "kubeagent: --alert-* flags ignored: KUBEAGENT_ALERT_WEBHOOK is not set, so alerting is off")
 	}
 
+	// The flag is a percentage because that is how an SRE writes an SLO; the
+	// tracker works in ratios. Plain division isn't enough: 99.9/100 in
+	// float64 lands on 0.9990000000000001, not 0.999, and metrics.go renders
+	// gauges with %g, which prints the shortest string that round-trips the
+	// double — so that exact artifact is what would go out on the wire as
+	// kubeagent_slo_target_ratio. The numeric error is around 1e-16 and
+	// changes no decision the burn-rate arithmetic makes, but the displayed
+	// value is one no operator typed, so round to 8 decimal places, which
+	// sits past six-nines (99.9999 -> 0.999999).
+	//
+	// Rounding is a display concern only, and must never change which side of
+	// validateSLOTarget's two boundaries a target falls on: 0 is its explicit
+	// "SLO tracking off" sentinel, and target >= 1 is rejected outright. A
+	// target typed close enough to either boundary rounds past it at 8
+	// places — 99.9999999 divides to 0.999999999, which rounds up to exactly
+	// 1.0, and a tiny nonzero percentage divides to something that rounds
+	// down to exactly 0 — so the rounded value is used only when it agrees
+	// with the exact (unrounded) quotient about which side of both
+	// boundaries it falls on. When it disagrees, the exact quotient is passed
+	// through instead, unrounded, so validateSLOTarget always classifies the
+	// value the operator actually typed rather than an artifact of display
+	// rounding. (-0.0 == 0.0 in Go, so a negative target that rounds to -0
+	// still compares equal to the exact-quotient's 0-ness here; it only takes
+	// the fallback, and reaches validateSLOTarget unrounded, when the target
+	// is nonzero — which is exactly when validateSLOTarget needs to see it to
+	// reject it.)
+	exact := *sloTarget / 100
+	sloRatio := math.Round(exact*1e8) / 1e8
+	if (sloRatio == 0) != (exact == 0) || (sloRatio >= 1) != (exact >= 1) {
+		sloRatio = exact
+	}
+
 	client, err := cluster.NewInClusterOrKubeconfig(*kubeconfig, *contextName)
 	if err != nil {
 		return err
@@ -337,7 +378,7 @@ func runWatch(args []string) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return watch.Run(ctx, client, watch.Config{
+	return watchRun(ctx, client, watch.Config{
 		Namespace:               namespace,
 		MetricsAddr:             *metricsAddr,
 		Heartbeat:               *heartbeat,
@@ -359,6 +400,7 @@ func runWatch(args []string) error {
 		AlertURL:                alertURL,
 		AlertFormat:             *alertFormat,
 		AlertRepeat:             repeat,
+		SLOTarget:               sloRatio,
 	})
 }
 

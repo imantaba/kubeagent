@@ -94,3 +94,12 @@ alerts:
   # Name of an existing Secret holding the webhook URL. Required when enabled.
   existingSecret: ""
   secretKey: webhook-url
+
+slo:
+  # Track an availability SLO and expose error-budget burn rate as metrics.
+  # The SLI is time-weighted workload availability: the fraction of
+  # workload-seconds in which a workload had no findings. Needs no extra RBAC —
+  # it reads the evaluation the daemon already performs.
+  enabled: false
+  # Availability target as a percentage. Must be greater than 0 and less than 100.
+  target: 99.9

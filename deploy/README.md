@@ -138,6 +138,25 @@ Only `scheme://host` is ever logged. See the
 [watch mode docs](https://k8sproject.top/features/watch-mode/) for the payload
 shapes and the Alertmanager cadence rule.
 
+## SLO burn rate (opt-in)
+
+The daemon can also track an availability SLO and expose multi-window
+error-budget burn rate as Prometheus gauges. It needs no extra RBAC — it reads
+the evaluation the daemon already performs — and stays off unless a target is
+set:
+
+```bash
+helm upgrade --install kubeagent deploy/helm/kubeagent \
+  --set slo.enabled=true \
+  --set slo.target=99.9
+```
+
+`slo.target` is a percentage and must be greater than 0 and less than 100;
+enabling with a target outside that range fails the chart render rather than
+producing a daemon that starts and immediately errors. See the
+[watch mode docs](https://k8sproject.top/features/watch-mode/#slo-burn-rate)
+for the SLI definition, the fixed windows/thresholds, and the restart caveat.
+
 ## Security notes
 
 - The daemon runs as UID 65532 (non-root) with a read-only root filesystem and

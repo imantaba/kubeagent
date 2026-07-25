@@ -18,6 +18,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/alert"
 	"github.com/imantaba/kubeagent/internal/alertstate"
 	"github.com/imantaba/kubeagent/internal/scan"
+	"github.com/imantaba/kubeagent/internal/slo"
 	"github.com/imantaba/kubeagent/internal/watchstate"
 )
 
@@ -44,17 +45,21 @@ type Config struct {
 	AlertURL                string        // empty disables alerting entirely
 	AlertFormat             string        // "json" | "slack" | "alertmanager"
 	AlertRepeat             time.Duration // re-send interval for still-firing alerts
+	SLOTarget               float64       // availability SLO as a ratio in (0,1); 0 disables SLO tracking
 }
 
 // Run starts the metrics server and the informer-driven control loop, blocking
 // until ctx is cancelled.
 func Run(ctx context.Context, client kubernetes.Interface, cfg Config) error {
-	// Validate the alert configuration before anything else starts. A bad
-	// --alert-format or --alert-repeat must fail fast: once the metrics server is
-	// listening and WaitForCacheSync is underway, a reachable-but-unresponsive API
-	// server can block that sync forever, hiding the config error behind what looks
-	// like a cluster hang.
-	//
+	// Validate every piece of configuration before anything else starts. A bad
+	// --slo-target, --alert-format or --alert-repeat must fail fast: once the
+	// metrics server is listening and WaitForCacheSync is underway, a
+	// reachable-but-unresponsive API server can block that sync forever, hiding
+	// the config error behind what looks like a cluster hang.
+	if err := validateSLOTarget(cfg.SLOTarget); err != nil {
+		return err
+	}
+
 	// The sink runs off its own cancellable context, alertCtx, rather than ctx
 	// directly: al.sink.Close() blocks on <-s.done, which only closes once the
 	// sender goroutine observes its context's Done channel. Every step between
@@ -134,10 +139,15 @@ func Run(ctx context.Context, client kubernetes.Interface, cfg Config) error {
 
 	opts := scan.Options{Namespace: cfg.Namespace, IncludeCron: cfg.IncludeCron, IncludeRestarts: cfg.IncludeRestarts, DiskUsage: cfg.DiskUsage, DiskThreshold: cfg.DiskThreshold, QuotaThreshold: cfg.QuotaThreshold, NodeHeartbeatThreshold: cfg.NodeHeartbeatThreshold, ExpectedNodes: cfg.ExpectedNodes, KubeletHealth: cfg.KubeletHealth, ControlPlaneHealth: cfg.ControlPlaneHealth, DNSHealth: cfg.DNSHealth, DNSServfailRatio: cfg.DNSServfailRatio, Certs: cfg.Certs, CertWarnDays: cfg.CertWarnDays, WebhookTimeoutThreshold: cfg.WebhookTimeoutThreshold}
 	tr := watchstate.New(watchstate.Options{})
+	sloTr, sloN := newSLOTracker(cfg)
+	if sloTr != nil {
+		log.Printf("kubeagent: SLO burn-rate tracking enabled (target=%g%%, windows 1h/6h, alert suppressed below %d%% window coverage)",
+			cfg.SLOTarget*100, 60)
+	}
 	reconcile := func() {
 		start := time.Now()
 		res, err := scan.Evaluate(ctx, client, opts)
-		applyResult(m, tr, al, &res, time.Since(start), time.Now(), err)
+		applyResult(m, tr, al, sloTr, sloN, &res, time.Since(start), time.Now(), err)
 	}
 	reconcile() // initial snapshot
 	m.markReady()
@@ -204,6 +214,17 @@ func (a *alerter) stats() alert.Stats {
 	return a.sink.Stats()
 }
 
+// enqueue hands one already-built notification to the sink. The SLO burn alert
+// uses this rather than notify: it is not derived from the issue tracker, but it
+// shares the sink so retry, backoff, the bounded queue and URL redaction all
+// apply to it unchanged.
+func (a *alerter) enqueue(n alertstate.Notification) {
+	if a == nil {
+		return
+	}
+	a.sink.Enqueue(n)
+}
+
 // newAlerter builds the alerter from the config, returning nil when no webhook is
 // configured. The URL is a credential: only scheme://host is ever logged.
 func newAlerter(ctx context.Context, cfg Config) (*alerter, error) {
@@ -220,12 +241,19 @@ func newAlerter(ctx context.Context, cfg Config) (*alerter, error) {
 	return &alerter{roller: alertstate.New(alertstate.Options{Repeat: cfg.AlertRepeat}), sink: sink}, nil
 }
 
-// applyResult folds one evaluation into the metrics, the issue tracker, and the
-// outbound alerter, and logs whatever changed. A failed evaluation never reaches
-// the tracker: an evaluation error is not "all clear", and treating it as one
-// would resolve every tracked issue, then re-fire them all on the next success —
-// and, now that alerting exists, page the on-call for an API blip.
-func applyResult(m *metrics, tr *watchstate.Tracker, al *alerter, res *scan.Result, dur time.Duration, now time.Time, err error) {
+// applyResult folds one evaluation into the metrics, the issue tracker, the SLO
+// tracker, and the outbound alerter, and logs whatever changed. A failed
+// evaluation never reaches any tracker: an evaluation error is not "all clear",
+// and treating it as one would resolve every tracked issue, then re-fire them
+// all on the next success — and page the on-call for an API blip. The SLO
+// tracker sits on the same side of that return for the same reason: an API error
+// is neither "all healthy" nor "all broken", so it must not become a sample. The
+// gap shows up as reduced window coverage, which is the honest representation.
+//
+// sloTr and sloN are always produced together by newSLOTracker (both nil, or
+// both set), but the signature does not enforce that, so both are checked here
+// rather than trusting the pairing: sloN.step on a nil sloN would panic.
+func applyResult(m *metrics, tr *watchstate.Tracker, al *alerter, sloTr *slo.Tracker, sloN *sloNotifier, res *scan.Result, dur time.Duration, now time.Time, err error) {
 	m.update(res, dur, now, err)
 	if err != nil {
 		log.Printf("kubeagent: evaluation error: %v", err)
@@ -233,6 +261,16 @@ func applyResult(m *metrics, tr *watchstate.Tracker, al *alerter, res *scan.Resu
 	}
 	d := tr.Observe(issueKeys(res), now)
 	al.notify(tr, now)
+	if sloTr != nil && sloN != nil {
+		good, total := workloadCensus(res)
+		sloTr.Observe(good, total, now)
+		v := sloTr.Verdict(now)
+		m.updateSLO(true, sloTr.Target(), v.Fast, v.Slow)
+		if n, ok := sloN.step(v, now); ok {
+			logSLO(n, v)
+			al.enqueue(n)
+		}
+	}
 	m.updateIssues(tr, now)
 	m.updateAlerts(al.stats())
 	logDelta(res, d, len(tr.Active()), tr.FlapWindow())

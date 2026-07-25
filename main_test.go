@@ -5,17 +5,21 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
 
@@ -28,6 +32,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/remediate"
 	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/termhealth"
+	"github.com/imantaba/kubeagent/internal/watch"
 	"github.com/imantaba/kubeagent/internal/webhookhealth"
 )
 
@@ -403,6 +408,424 @@ func TestRun_UsageMentionsWatchAlertFlags(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "[--alert-format json|slack|alertmanager] [--alert-repeat dur]") {
 		t.Fatalf("expected the usage string to mention --alert-format and --alert-repeat, got: %v", err)
+	}
+}
+
+// deadKubeconfigPath writes a syntactically valid kubeconfig pointing at a
+// server nothing listens on (https://127.0.0.1:1) and returns its path.
+// cluster.NewInClusterOrKubeconfig only builds a clientset from this — no
+// network I/O happens — so runWatch proceeds past it into watch.Run without
+// ever opening a socket, which is what lets these tests reach
+// validateSLOTarget deterministically instead of failing at cluster-connect.
+func deadKubeconfigPath(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	kc := filepath.Join(dir, "config")
+	cfg := `apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    server: https://127.0.0.1:1
+  name: dead
+contexts:
+- context:
+    cluster: dead
+    user: dead
+  name: dead
+current-context: dead
+users:
+- name: dead
+  user: {}
+`
+	if err := os.WriteFile(kc, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return kc
+}
+
+// runWatchBounded calls runWatch in a goroutine and waits up to timeout for it
+// to return, failing the test with a diagnostic instead of blocking forever if
+// it doesn't. Tests built on the dead kubeconfig expect runWatch to fail fast,
+// inside validateSLOTarget, before watch.Run does anything else. But 0 is
+// validateSLOTarget's explicit "off" value, so any regression that makes an
+// SLO target silently collapse to 0 — say, --slo-target's default quietly
+// losing its envFloat wiring — makes validation pass and lets Run fall through
+// into the real daemon: binding the metrics port and blocking on
+// WaitForCacheSync against a server nothing answers, forever, since nothing in
+// these tests can cancel runWatch's signal.NotifyContext. Bounding the wait
+// turns that failure mode into a fast, clear test failure instead of a
+// multi-minute hang that also leaves a port bound.
+//
+// Contract: callers MUST pass an ephemeral --metrics-addr (127.0.0.1:0). On
+// timeout, the abandoned goroutine keeps running for the lifetime of the test
+// binary — including, if it got past validation, holding whatever address it
+// was given open for the rest of the run. Passing the real default (:8080)
+// would leak a bound listener that a later test binding the same address would
+// then fail to acquire, surfacing as an unrelated "address already in use"
+// error layered on top of that test's actual failure.
+func runWatchBounded(t *testing.T, args []string, timeout time.Duration) error {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() { done <- runWatch(args) }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(timeout):
+		t.Fatalf("runWatch(%v) did not return within %s: it likely fell through into the real daemon instead of failing validation fast", args, timeout)
+		return nil // unreachable
+	}
+}
+
+func TestRunWatch_SLOTargetIsAPercentageNotARatio(t *testing.T) {
+	// The load-bearing test. --slo-target takes a percentage (99.9), but the
+	// tracker works in ratios (0.999), so runWatch must divide by 100 before
+	// handing the value to watch.Run. validateSLOTarget's error message
+	// multiplies the ratio back by 100 to report a percentage, so this is the
+	// only test that can catch a missing/wrong conversion: without the /100,
+	// a target of 100 would reach validation as the ratio 100, and the
+	// message would read "10000%", not "100%". Do NOT weaken this assertion
+	// to a substring like strings.Contains(err.Error(), "invalid --slo-target")
+	// — that would pass whether or not the conversion happened.
+	kc := deadKubeconfigPath(t)
+	err := runWatchBounded(t, []string{"--slo-target", "100", "--kubeconfig", kc, "--metrics-addr", "127.0.0.1:0"}, 3*time.Second)
+	if err == nil {
+		t.Fatal("expected a validation error for --slo-target 100")
+	}
+	want := "invalid --slo-target: 100% (must be greater than 0 and less than 100)"
+	if err.Error() != want {
+		t.Fatalf("error = %q, want exactly %q", err.Error(), want)
+	}
+}
+
+func TestRunWatch_SLOTargetIsRecognized(t *testing.T) {
+	// A valid --slo-target must parse and must not fail validation. This
+	// deliberately does NOT use the dead kubeconfig: with a valid target,
+	// watch.Run proceeds past validateSLOTarget, binds the metrics address,
+	// and blocks on informers until its context is cancelled — and runWatch
+	// builds that context from signal.NotifyContext, which no test can
+	// cancel. So, as TestRunWatch_AlertFlagsAreRecognized does, this uses a
+	// nonexistent kubeconfig path to fail at cluster-connect, before Run is
+	// ever reached, and only asserts that the flag parsed and no validation
+	// error occurred.
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "nonexistent")
+	err := runWatch([]string{"--slo-target", "99.9", "--kubeconfig", bad})
+	if err == nil {
+		t.Fatal("expected a kubeconfig load error")
+	}
+	if strings.Contains(err.Error(), "flag provided but not defined") {
+		t.Fatalf("expected --slo-target to be a recognized flag, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "invalid --slo-target") {
+		t.Fatalf("expected no validation error for --slo-target 99.9, got: %v", err)
+	}
+}
+
+func TestRunWatch_SLOTargetFromEnv(t *testing.T) {
+	// Proves KUBEAGENT_SLO_TARGET feeds the same flag default via envFloat.
+	// Same exact-message assertion as TestRunWatch_SLOTargetIsAPercentageNotARatio,
+	// this time with no flag given at all.
+	t.Setenv("KUBEAGENT_SLO_TARGET", "100")
+	kc := deadKubeconfigPath(t)
+	err := runWatchBounded(t, []string{"--kubeconfig", kc, "--metrics-addr", "127.0.0.1:0"}, 3*time.Second)
+	if err == nil {
+		t.Fatal("expected a validation error for KUBEAGENT_SLO_TARGET=100")
+	}
+	want := "invalid --slo-target: 100% (must be greater than 0 and less than 100)"
+	if err.Error() != want {
+		t.Fatalf("error = %q, want exactly %q", err.Error(), want)
+	}
+}
+
+func TestRunWatch_SLOTargetDefaultsToOff(t *testing.T) {
+	// Guards the commit's promise that upgrading without --slo-target changes
+	// nothing: the flag's default must be the literal zero value, 0, which
+	// validateSLOTarget treats as "disabled". A default of, say, 50 would still
+	// be a valid target — it would pass validation and silently turn SLO
+	// tracking on for every operator who upgrades without touching the flag.
+	//
+	// --help is the only way to observe a flag.Float64 default without either
+	// starting the daemon (which requires a live target that has since fallen
+	// through validation) or reaching into the flag.FlagSet's internals. Go's
+	// flag.PrintDefaults appends a literal " (default X)" suffix to a flag's
+	// usage line only when the default is NOT the type's zero value; at the
+	// zero value it prints just the usage text. So the trailing "\n" right
+	// after the usage string is exactly what discriminates "off by default"
+	// from "on by default": with a non-zero default (e.g. 50), this same line
+	// would instead read '...(0 = SLO tracking off) (default 50)\n'. A future
+	// maintainer must not loosen this to a substring/Contains check without
+	// the terminator — this branch has already shipped three prefix-matching
+	// assertions that passed for the wrong reason.
+	t.Setenv("KUBEAGENT_SLO_TARGET", "")
+	stderr := captureStderr(t, func() {
+		err := runWatch([]string{"--help"})
+		if !errors.Is(err, flag.ErrHelp) {
+			t.Fatalf("runWatch([--help]) error = %v, want flag.ErrHelp", err)
+		}
+	})
+	if !strings.Contains(stderr, "-slo-target float") {
+		t.Fatalf("expected --help output to describe -slo-target as a float flag, got: %q", stderr)
+	}
+	want := "availability SLO as a percentage, e.g. 99.9 (0 = SLO tracking off)\n"
+	if !strings.Contains(stderr, want) {
+		t.Fatalf("expected --help output to show --slo-target defaulting to off (no non-zero default suffix), got: %q", stderr)
+	}
+}
+
+func TestRun_UsageMentionsSLOTarget(t *testing.T) {
+	err := run(nil)
+	if err == nil {
+		t.Fatal("expected a usage error with no args")
+	}
+	if !strings.Contains(err.Error(), "[--alert-repeat dur] [--slo-target pct]") {
+		t.Fatalf("expected the usage string to mention --alert-repeat immediately followed by --slo-target, got: %v", err)
+	}
+}
+
+// captureWatchConfig swaps watchRun for a stub that records the watch.Config
+// runWatch built and returns nil immediately, instead of starting the daemon.
+// It restores the real watch.Run with defer, so a failing test can't leak the
+// stub into another one — no test in this file runs in parallel, and none may
+// be added around this helper, since the seam is a single package-level
+// variable shared by the whole test binary.
+//
+// runWatch only reaches watchRun after cluster.NewInClusterOrKubeconfig
+// succeeds, so callers must pass args whose --kubeconfig builds a clientset
+// without erroring; deadKubeconfigPath(t) does that without any network I/O.
+func captureWatchConfig(t *testing.T, args []string) (watch.Config, error) {
+	t.Helper()
+	var captured watch.Config
+	orig := watchRun
+	watchRun = func(_ context.Context, _ kubernetes.Interface, cfg watch.Config) error {
+		captured = cfg
+		return nil
+	}
+	defer func() { watchRun = orig }()
+	err := runWatch(args)
+	return captured, err
+}
+
+func TestRunWatch_DefaultSLOTargetReachesConfigAsZero(t *testing.T) {
+	// This is the test that must catch the reviewer's post-parse-override
+	// mutation: inserting "if *sloTarget == 0 { *sloTarget = 50 }" right after
+	// fs.Parse leaves the registered flag default and the --help text at 0 —
+	// so TestRunWatch_SLOTargetDefaultsToOff keeps passing — while silently
+	// turning SLO tracking on for every operator who upgrades without passing
+	// --slo-target. 0 is validateSLOTarget's sentinel meaning "SLO tracking
+	// off", not a placeholder a future default should fill in; the value that
+	// actually reaches watch.Config is the only thing that can catch a mutation
+	// downstream of parsing, so this asserts on that, not on a proxy for it.
+	t.Setenv("KUBEAGENT_SLO_TARGET", "")
+	kc := deadKubeconfigPath(t)
+	cfg, err := captureWatchConfig(t, []string{"--kubeconfig", kc, "--metrics-addr", "127.0.0.1:0"})
+	if err != nil {
+		t.Fatalf("runWatch returned an unexpected error: %v", err)
+	}
+	if cfg.SLOTarget != 0 {
+		t.Fatalf("cfg.SLOTarget = %v, want exactly 0 (SLO tracking off by default)", cfg.SLOTarget)
+	}
+}
+
+func TestRunWatch_ValidSLOTargetReachesConfigAsARatio(t *testing.T) {
+	// The first test that observes a *valid* --slo-target reaching
+	// watch.Config at all: every other SLO test in this file only exercises
+	// the rejection path (an out-of-range target failing validateSLOTarget).
+	//
+	// This used to compare with a tolerance instead of ==, because plain
+	// float64 division (*sloTarget / 100) is not guaranteed to be
+	// bit-identical to the literal 0.999. runWatch now rounds the ratio to 8
+	// decimal places specifically to land on the value an operator typed, so
+	// exact equality is the stronger assertion here: it fails the instant
+	// that rounding is dropped, where a tolerance check would silently keep
+	// passing.
+	kc := deadKubeconfigPath(t)
+	cfg, err := captureWatchConfig(t, []string{"--slo-target", "99.9", "--kubeconfig", kc, "--metrics-addr", "127.0.0.1:0"})
+	if err != nil {
+		t.Fatalf("runWatch returned an unexpected error: %v", err)
+	}
+	if cfg.SLOTarget != 0.999 {
+		t.Fatalf("cfg.SLOTarget = %v, want exactly 0.999", cfg.SLOTarget)
+	}
+}
+
+func TestRunWatch_SLOTargetRoundsToExactRatio(t *testing.T) {
+	// kubeagent_slo_target_ratio is rendered with %g, which prints the
+	// shortest string that round-trips the double — so whatever
+	// *sloTarget/100 actually produces in float64 is what an operator
+	// scraping the daemon sees. Plain division puts several of the most
+	// common SLO targets one bit off the value the operator typed (e.g.
+	// 99.9/100 -> 0.9990000000000001), so runWatch rounds the ratio to 8
+	// decimal places. This exercises that rounding for four targets whose
+	// unrounded division is not bit-identical to the intended ratio, through
+	// the real watch.Config runWatch builds — not a proxy computation — so a
+	// regression in the rounding itself, not just its presence, gets caught.
+	//
+	// The 99.9994 row pins the 8-decimal-place constant itself: a mutant that
+	// coarsens the rounding (e.g. 1e8 -> 1e5) still rounds 99.9, 99.99,
+	// 99.999, and 99.95 correctly, so none of the first four rows can catch
+	// it. 99.9994's ratio (0.999994) needs all 6 of its decimal digits kept,
+	// and — unlike 99.9999 below — rounding it at 5 places (0.99999) doesn't
+	// reach the 1.0 boundary, so the boundary guard has nothing to correct:
+	// a coarser rounding constant is exposed directly, uncorrected.
+	//
+	// 99.9999 -> 0.999999 documents the comment's own six-nines claim, but by
+	// itself does NOT pin the constant the way 99.9994 does: 99.9999's ratio
+	// sits close enough to 1.0 that rounding it at *any* coarser scale that
+	// still overshoots 1.0 (5 places included) trips the boundary guard,
+	// which then substitutes the exact quotient — which is exactly what this
+	// row expects. So this row mainly documents the comment's example and
+	// exercises the guard on a value one order of magnitude short of the
+	// fallback boundary; 99.9994 is what actually catches a coarsened
+	// constant.
+	//
+	// 99.9999999 -> 0.999999999 exercises the fallback path itself: at 8
+	// places this rounds up to exactly 1.0, outside the valid ratio range, so
+	// runWatch must take the exact (unrounded) quotient instead.
+	cases := []struct {
+		target string
+		want   float64
+	}{
+		{"99.9", 0.999},
+		{"99.99", 0.9999},
+		{"99.999", 0.99999},
+		{"99.95", 0.9995},
+		{"99.9994", 0.999994},
+		{"99.9999", 0.999999},
+		{"99.9999999", 0.999999999},
+	}
+	for _, c := range cases {
+		kc := deadKubeconfigPath(t)
+		cfg, err := captureWatchConfig(t, []string{"--slo-target", c.target, "--kubeconfig", kc, "--metrics-addr", "127.0.0.1:0"})
+		if err != nil {
+			t.Fatalf("runWatch(--slo-target %s) returned an unexpected error: %v", c.target, err)
+		}
+		if cfg.SLOTarget != c.want {
+			t.Errorf("--slo-target %s: cfg.SLOTarget = %v, want exactly %v", c.target, cfg.SLOTarget, c.want)
+		}
+	}
+}
+
+func TestRunWatch_TinyNonzeroSLOTargetIsNotLaunderedToOff(t *testing.T) {
+	// The mirror image of TestRunWatch_DefaultSLOTargetReachesConfigAsZero: 0
+	// is validateSLOTarget's explicit "SLO tracking off" sentinel, but a tiny
+	// nonzero percentage must never collapse into that sentinel merely
+	// because rounding the ratio to 8 decimal places lands on 0. Without the
+	// boundary guard, --slo-target 0.0000001 divides to roughly 1e-9, rounds
+	// to exactly 0 at 8 decimal places, and reaches watch.Config
+	// indistinguishable from "the operator never set --slo-target" — silently
+	// turning SLO tracking off instead of turning it on at a (nonsensically
+	// strict, but explicitly requested) near-zero error budget.
+	//
+	// validateSLOTarget itself would accept this target: it is > 0 and < 1,
+	// so it takes neither the "== 0, disabled" branch nor either rejection
+	// branch. The right observable behavior is therefore that it reaches
+	// watch.Config as the exact, unrounded quotient — not that it gets
+	// rejected.
+	//
+	// want is computed here the same way runWatch computes it: runtime
+	// float64 division of a float64 variable, not a source constant
+	// expression. Go evaluates a constant expression like 0.0000001/100 at
+	// effectively infinite precision and rounds only once at the end, which
+	// is not always bit-identical to two chained IEEE 754 float64 operations
+	// (parsing the flag, then dividing by 100 at runtime) — a hardcoded
+	// literal would risk asserting the wrong bits.
+	var target float64 = 0.0000001
+	want := target / 100
+	if want == 0 {
+		t.Fatal("test bug: want computed as exactly 0, this test could not detect laundering to the sentinel")
+	}
+
+	kc := deadKubeconfigPath(t)
+	cfg, err := captureWatchConfig(t, []string{"--slo-target", "0.0000001", "--kubeconfig", kc, "--metrics-addr", "127.0.0.1:0"})
+	if err != nil {
+		t.Fatalf("runWatch(--slo-target 0.0000001) returned an unexpected error: %v", err)
+	}
+	if cfg.SLOTarget == 0 {
+		t.Fatal("cfg.SLOTarget = 0, want nonzero: a tiny nonzero --slo-target must not be laundered into the \"SLO tracking off\" sentinel")
+	}
+	if cfg.SLOTarget != want {
+		t.Fatalf("cfg.SLOTarget = %v, want exactly %v (the exact, unrounded quotient)", cfg.SLOTarget, want)
+	}
+}
+
+func TestRunWatch_NegativeSLOTargetIsRejected(t *testing.T) {
+	// An ordinary negative --slo-target: -5/100 is -0.05, and
+	// math.Round(-0.05*1e8)/1e8 lands back on exactly -0.05 with no rounding
+	// artifact at all, so the boundary guard's condition — comparing that
+	// rounded value against the exact quotient — evaluates false and takes no
+	// corrective action here. This is the baseline the tiny-negative test
+	// below contrasts with: dropping the guard's zero-side clause, or the
+	// whole guard, changes nothing about this case (verified in the mutation
+	// checks recorded in the task report), because sloRatio never needed
+	// correcting in the first place. This test exists to nail down, through
+	// the real unstubbed watch.Run, that an everyday negative percentage is
+	// rejected end-to-end — the tiny-negative test isolates the laundering
+	// the guard actually exists to prevent.
+	kc := deadKubeconfigPath(t)
+	err := runWatchBounded(t, []string{"--slo-target", "-5", "--kubeconfig", kc, "--metrics-addr", "127.0.0.1:0"}, 3*time.Second)
+	if err == nil {
+		t.Fatal("expected a validation error for --slo-target -5")
+	}
+	want := "invalid --slo-target: -5% (must be greater than 0 and less than 100)"
+	if err.Error() != want {
+		t.Fatalf("error = %q, want exactly %q", err.Error(), want)
+	}
+}
+
+func TestRunWatch_TinyNegativeSLOTargetIsNotLaunderedToOff(t *testing.T) {
+	// The negative mirror of TestRunWatch_TinyNonzeroSLOTargetIsNotLaunderedToOff,
+	// and the subtlest case the boundary guard has to get right: -0.0 == 0.0
+	// in Go, so a negative target whose rounded ratio lands on negative zero
+	// is, without the guard's (sloRatio == 0) != (exact == 0) clause,
+	// indistinguishable from validateSLOTarget's "0 means SLO tracking off"
+	// sentinel — laundering a value that must be *rejected* into one that is
+	// silently *accepted*.
+	//
+	// math.Round(exact*1e8)/1e8 rounds to (negative) zero exactly when
+	// |exact*1e8| < 0.5, i.e. |exact| < 0.5e-8, i.e. |target/100| < 0.5e-8,
+	// i.e. |target| < 0.5e-6. -0.0000001 (-1e-7) sits inside that band: exact
+	// = -1e-7/100 is about -1e-9, so exact*1e8 is about -0.1, which
+	// math.Round sends to negative zero (Round rounds half away from zero,
+	// and preserves sign on underflow to zero — confirmed with
+	// math.Signbit in a standalone check before writing this test, the same
+	// way the task's reviewer verified it independently). Without the zero-
+	// side clause, that -0 compares equal to 0 and reaches validateSLOTarget
+	// as the "off" sentinel instead of the negative value the operator typed.
+	//
+	// This is asserted on runWatch's returned error, not on cfg.SLOTarget via
+	// captureWatchConfig: that helper stubs out watchRun itself, so it never
+	// calls the real watch.Run and never reaches validateSLOTarget — it can
+	// only show which ratio runWatch computed, not whether that ratio gets
+	// accepted or rejected, and rejection is the property this guard exists
+	// for. So this goes through runWatchBounded against the dead kubeconfig
+	// instead, exercising the real, unstubbed watch.Run, whose first
+	// statement is validateSLOTarget. If the zero-side clause (or the whole
+	// guard) were removed, this negative target would launder to the ratio
+	// 0, validateSLOTarget would accept it as "disabled", and Run would fall
+	// through into binding the metrics address and blocking on
+	// WaitForCacheSync against a server nothing answers — forever.
+	// runWatchBounded's timeout is exactly what turns that hang into a clean,
+	// fast test failure instead of wedging the test binary.
+	//
+	// want is computed here the same way runWatch and validateSLOTarget
+	// compute it — runtime float64 division and multiplication, not a copied
+	// literal — for the same reason TestRunWatch_TinyNonzeroSLOTargetIsNotLaunderedToOff
+	// gives: a hand-typed scientific-notation literal risks pinning the wrong
+	// bits.
+	var target float64 = -0.0000001
+	exact := target / 100
+	if exact == 0 {
+		t.Fatal("test bug: exact computed as exactly 0, this test could not distinguish rejection from laundering")
+	}
+	want := fmt.Sprintf("invalid --slo-target: %g%% (must be greater than 0 and less than 100)", exact*100)
+
+	kc := deadKubeconfigPath(t)
+	err := runWatchBounded(t, []string{"--slo-target", "-0.0000001", "--kubeconfig", kc, "--metrics-addr", "127.0.0.1:0"}, 3*time.Second)
+	if err == nil {
+		t.Fatal("expected a validation error for --slo-target -0.0000001, got none: the negative target may have been laundered into the \"SLO tracking off\" sentinel")
+	}
+	if err.Error() != want {
+		t.Fatalf("error = %q, want exactly %q", err.Error(), want)
 	}
 }
 

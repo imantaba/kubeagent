@@ -164,3 +164,57 @@ func TestRender_SLOMetricSet(t *testing.T) {
 		t.Errorf("got %d kubeagent_slo_* samples, want %d (excludes # HELP / # TYPE lines)", samples, wantSamples)
 	}
 }
+
+// TestRender_SLOMetricHelpTypeCardinality pins the plan's other half of the
+// SLO rendering constraint: one # HELP / # TYPE pair per metric name, not per
+// sample. TestRender_SLOMetricSet above cannot see this — it collects names
+// into a map, which dedups, so it cannot distinguish "one HELP line" from
+// "the same HELP line repeated before every sample," and it would not notice
+// a missing TYPE line as long as some other comment line still carried the
+// name. This test counts HELP and TYPE lines per metric by exact line-field
+// comparison instead of substring matching, so a metric name that happens to
+// prefix another (or be prefixed by one) cannot make the count creep.
+func TestRender_SLOMetricHelpTypeCardinality(t *testing.T) {
+	m := newMetrics()
+	m.updateSLO(true, 0.999,
+		slo.Report{Window: slo.Fast, Availability: 0.99, BurnRate: 10, Coverage: 1},
+		slo.Report{Window: slo.Slow, Availability: 0.995, BurnRate: 5, Coverage: 0.75},
+	)
+	out := m.render()
+
+	names := []string{
+		"kubeagent_slo_target_ratio",
+		"kubeagent_slo_availability_ratio",
+		"kubeagent_slo_burn_rate",
+		"kubeagent_slo_error_budget_remaining_ratio",
+		"kubeagent_slo_window_coverage_ratio",
+	}
+
+	helpCount := map[string]int{}
+	typeCount := map[string]int{}
+	for _, line := range strings.Split(out, "\n") {
+		// "# HELP <name> <help text...>" / "# TYPE <name> <type>": split on
+		// whitespace and compare the name field exactly, not with HasPrefix or
+		// Contains, so no metric name can be miscounted just because it is a
+		// prefix (or superstring) of another.
+		fields := strings.Fields(line)
+		if len(fields) < 3 || fields[0] != "#" {
+			continue
+		}
+		switch fields[1] {
+		case "HELP":
+			helpCount[fields[2]]++
+		case "TYPE":
+			typeCount[fields[2]]++
+		}
+	}
+
+	for _, name := range names {
+		if got := helpCount[name]; got != 1 {
+			t.Errorf("render() emitted %d # HELP line(s) for metric %q, want exactly 1", got, name)
+		}
+		if got := typeCount[name]; got != 1 {
+			t.Errorf("render() emitted %d # TYPE line(s) for metric %q, want exactly 1", got, name)
+		}
+	}
+}

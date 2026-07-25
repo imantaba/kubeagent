@@ -1202,6 +1202,6 @@ func TestEvaluate_CensusDropsGoodWhenAWorkloadBreaks(t *testing.T) {
 		t.Fatal("Census.Total = 0, want the broken Deployment counted")
 	}
 	if res.Inventory.Census.Good != 0 {
-		t.Errorf("Census.Good = %d, want 0: the only workload is crash-looping", res.Inventory.Census.Good)
+		t.Errorf("Census.Good = %d, want 0: every workload here is broken — the Deployment by ReadyReplicas, the bare pod by its crash loop", res.Inventory.Census.Good)
 	}
 }

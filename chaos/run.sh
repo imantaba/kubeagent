@@ -148,7 +148,8 @@ scenario_05_coredns() {   # bad Corefile -> CoreDNS CrashLoop
     -p='{"data":{"Corefile":".:53 {\n    this_is_an_invalid_plugin\n}\n"}}' >/dev/null
   kubectl --context "$CTX" -n kube-system rollout restart deploy coredns >/dev/null
   sleep 30
-  { scan 2>&1 || true; } | record "5. Broken DNS (CoreDNS crash)" "detected: P1 cluster Degraded + CrashLoopBackOff"
+  { scan 2>&1 || true; } | record "5. Broken DNS (CoreDNS crash)" \
+    "expect: the cluster line reads Degraded and kube-system/coredns is listed under NEEDS ATTENTION, under-replicated (1/2 or 0/2) with a non-zero restart count. That much is invariant. The specific finding is NOT: whether a CrashLoopBackOff line appears depends on where the scan lands in the kubelet's restart-backoff cycle — caught between restarts the pods read 0/1 Running with a restart count and no CrashLoopBackOff finding at all, which is a pass, not a miss. Assert on Degraded plus restarts; treat the named finding as timing-dependent."
   # Restore the pristine Corefile (captured in main()) via a clean merge-patch.
   local patch; patch=$(python3 -c 'import json,sys; print(json.dumps({"data":{"Corefile":open(sys.argv[1]).read()}}))' "$COREDNS_BACKUP")
   kubectl --context "$CTX" -n kube-system patch cm coredns --type=merge -p "$patch" >/dev/null
@@ -181,7 +182,8 @@ metadata: { name: deny-all }
 spec: { podSelector: {}, policyTypes: [Ingress, Egress] }
 NP
   sleep 15
-  { scan 2>&1 || true; } | record "4. NetworkPolicy blocking traffic (Calico deny-all)" "detected: degraded workload + NetworkPolicy hint"
+  { scan 2>&1 || true; } | record "4. NetworkPolicy blocking traffic (Calico deny-all)" \
+    "expect: chaos-np/blocked is reported 0/1 Degraded with a ProbeFailure finding, and NO NetworkPolicy hint. The absent hint is correct, not a miss: netpolicy.Annotate (internal/netpolicy/netpolicy.go) attaches policy names only to a workload that is Flagged() with zero detector findings, because the hint exists to explain a degraded workload nothing else accounts for. A failing readiness probe already accounts for this one, so the hint is suppressed by design. KNOWN GAP, tracked for a later slice: the probe here is exec [\"false\"], which fails whether or not the NetworkPolicy exists — deleting deny-all would not change this output. So the scenario proves a degraded workload is detected while a deny-all policy is in force; it does not yet prove the policy is the cause. Making it causal needs a network-dependent probe and its own verification run."
   kubectl --context "$CTX" delete ns chaos-np --wait=true --timeout=120s >/dev/null 2>&1 || true
 }
 

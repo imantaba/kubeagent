@@ -300,6 +300,13 @@ func resultInput(res scan.Result) report.Input {
 	}
 }
 
+// watchRun is the daemon entry point, indirected so tests can capture the
+// watch.Config runWatch builds without starting a daemon. runWatch's config is
+// otherwise unobservable: watch.Run blocks on informers until its context is
+// cancelled, and that context comes from signal.NotifyContext, which no test
+// can cancel.
+var watchRun = watch.Run
+
 func runWatch(args []string) error {
 	fs := flag.NewFlagSet("watch", flag.ContinueOnError)
 	kubeconfig := fs.String("kubeconfig", "", "path to kubeconfig for local dev (ignored in-cluster)")
@@ -342,7 +349,7 @@ func runWatch(args []string) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return watch.Run(ctx, client, watch.Config{
+	return watchRun(ctx, client, watch.Config{
 		Namespace:               namespace,
 		MetricsAddr:             *metricsAddr,
 		Heartbeat:               *heartbeat,

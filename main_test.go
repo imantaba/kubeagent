@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
 
@@ -30,6 +32,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/remediate"
 	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/termhealth"
+	"github.com/imantaba/kubeagent/internal/watch"
 	"github.com/imantaba/kubeagent/internal/webhookhealth"
 )
 
@@ -576,6 +579,69 @@ func TestRun_UsageMentionsSLOTarget(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "[--alert-repeat dur] [--slo-target pct]") {
 		t.Fatalf("expected the usage string to mention --alert-repeat immediately followed by --slo-target, got: %v", err)
+	}
+}
+
+// captureWatchConfig swaps watchRun for a stub that records the watch.Config
+// runWatch built and returns nil immediately, instead of starting the daemon.
+// It restores the real watch.Run with defer, so a failing test can't leak the
+// stub into another one — no test in this file runs in parallel, and none may
+// be added around this helper, since the seam is a single package-level
+// variable shared by the whole test binary.
+//
+// runWatch only reaches watchRun after cluster.NewInClusterOrKubeconfig
+// succeeds, so callers must pass args whose --kubeconfig builds a clientset
+// without erroring; deadKubeconfigPath(t) does that without any network I/O.
+func captureWatchConfig(t *testing.T, args []string) (watch.Config, error) {
+	t.Helper()
+	var captured watch.Config
+	orig := watchRun
+	watchRun = func(_ context.Context, _ kubernetes.Interface, cfg watch.Config) error {
+		captured = cfg
+		return nil
+	}
+	defer func() { watchRun = orig }()
+	err := runWatch(args)
+	return captured, err
+}
+
+func TestRunWatch_DefaultSLOTargetReachesConfigAsZero(t *testing.T) {
+	// This is the test that must catch the reviewer's post-parse-override
+	// mutation: inserting "if *sloTarget == 0 { *sloTarget = 50 }" right after
+	// fs.Parse leaves the registered flag default and the --help text at 0 —
+	// so TestRunWatch_SLOTargetDefaultsToOff keeps passing — while silently
+	// turning SLO tracking on for every operator who upgrades without passing
+	// --slo-target. 0 is validateSLOTarget's sentinel meaning "SLO tracking
+	// off", not a placeholder a future default should fill in; the value that
+	// actually reaches watch.Config is the only thing that can catch a mutation
+	// downstream of parsing, so this asserts on that, not on a proxy for it.
+	t.Setenv("KUBEAGENT_SLO_TARGET", "")
+	kc := deadKubeconfigPath(t)
+	cfg, err := captureWatchConfig(t, []string{"--kubeconfig", kc, "--metrics-addr", "127.0.0.1:0"})
+	if err != nil {
+		t.Fatalf("runWatch returned an unexpected error: %v", err)
+	}
+	if cfg.SLOTarget != 0 {
+		t.Fatalf("cfg.SLOTarget = %v, want exactly 0 (SLO tracking off by default)", cfg.SLOTarget)
+	}
+}
+
+func TestRunWatch_ValidSLOTargetReachesConfigAsARatio(t *testing.T) {
+	// The first test that observes a *valid* --slo-target reaching
+	// watch.Config at all: every other SLO test in this file only exercises
+	// the rejection path (an out-of-range target failing validateSLOTarget).
+	//
+	// A tolerance is used instead of == because 99.9/100 in float64 is not
+	// guaranteed to be bit-identical to the literal 0.999 — don't tighten this
+	// to an equality check; it may happen to pass on this platform's FPU and
+	// fail on another's.
+	kc := deadKubeconfigPath(t)
+	cfg, err := captureWatchConfig(t, []string{"--slo-target", "99.9", "--kubeconfig", kc, "--metrics-addr", "127.0.0.1:0"})
+	if err != nil {
+		t.Fatalf("runWatch returned an unexpected error: %v", err)
+	}
+	if diff := math.Abs(cfg.SLOTarget - 0.999); diff > 1e-12 {
+		t.Fatalf("cfg.SLOTarget = %v, want ~0.999 (within 1e-12), diff = %v", cfg.SLOTarget, diff)
 	}
 }
 

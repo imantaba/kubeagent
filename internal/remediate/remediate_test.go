@@ -702,6 +702,8 @@ func TestApply_RolloutForwardRefusesOnDrift(t *testing.T) {
 	allowFix(cli)
 	a, _ := Inverse("RolloutUndo", "shop", "web", 5, 4)
 	// Record the post-fix image so the drift check has data.
+	// "c" is the container name depObj/rsWithImage create; the drift check looks the
+	// container up by that name, so the fixtures must agree.
 	a.Changes = append(a.Changes, Change{Field: "image (c)", From: "nginx:2.0", To: "nginx:1.27"})
 	res := Apply(context.Background(), cli, a)
 	if res.Applied || !res.Refused {
@@ -802,6 +804,8 @@ func buildPostFixFixtures() (*fake.Clientset, Action) {
 	// Action{Kind:"RolloutForward", TargetRevision:2, CurrentRevision:1}
 	a, _ := Inverse("RolloutUndo", "shop", "web", 2, 1)
 	// Append the recorded post-fix image change so drift check has data
+	// "c" is the container name depObj/rsWithImage create; the drift check looks the
+	// container up by that name, so the fixtures must agree.
 	a.Changes = append(a.Changes, Change{Field: "image (c)", From: "nginx:2.0", To: "nginx:1.27"})
 	return cli, a
 }

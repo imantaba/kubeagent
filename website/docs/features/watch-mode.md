@@ -341,6 +341,150 @@ a 4xx is not retried. Drops are counted, never silent:
 | `kubeagent_alerts_dropped_total{reason}` | `queue_full` or `retries_exhausted` |
 | `kubeagent_alert_last_success_timestamp_seconds` | Last successful delivery (0 if none) |
 
+## SLO burn rate
+
+Opt-in: set `--slo-target` (a percentage, e.g. `99.9`) and the daemon starts
+tracking a time-weighted availability SLI and reporting a multi-window
+error-budget burn rate, alongside everything above. Unset — or `0`, the
+default — means no SLO tracking at all: no series render, no verdict is
+computed, no alert can fire. It is independent of the webhook alerting above:
+setting a target with no `KUBEAGENT_ALERT_WEBHOOK` configured still renders the
+series, it just never pages. The two are separate switches.
+
+`--slo-target` must be greater than 0 and less than 100 (`NaN`/`Inf` included in
+the rejection); a value outside that range is a startup error, checked at the
+same point as alert-config validation, before anything that could hide the
+failure behind a slow informer cache sync.
+
+### The SLI and the arithmetic
+
+The signal is **time-weighted workload availability**, not request-based:
+every reconcile contributes `good`/`total` workload counts weighted by the
+seconds since the previous reconcile, so an outage costs budget in proportion
+to how long it lasted and how much of the estate it took down. A workload
+counts as "good" when it has no findings — the same predicate the issue
+tracker uses to decide whether to track it, so the SLI and `/issues` can never
+disagree about what "broken" means.
+
+```
+good  += dt * count(workloads with no findings)
+total += dt * count(workloads)
+
+SLI       = good / total
+burn rate = (1 - SLI) / (1 - target)
+```
+
+Worked example: three workloads broken out of two hundred, for an hour,
+against a 99.9% target — SLI 98.5%, burn `(1 - 0.985) / (1 - 0.999) = 15×`, a
+fast-burn page. The same three broken workloads on a two-thousand-workload
+cluster burn only 1.5× — visible, not paged. The signal scales with the size
+of the estate, which a binary cluster-healthy gauge does not: a single stuck
+PVC would pin that at maximum forever.
+
+### The five series
+
+Rendered only while SLO tracking is on:
+
+| Metric | Labels | Meaning |
+|--------|--------|---------|
+| `kubeagent_slo_target_ratio` | none | Configured availability SLO as a ratio |
+| `kubeagent_slo_availability_ratio` | `window` (`fast`/`slow`) | Time-weighted fraction of workload-seconds with no findings, over the window |
+| `kubeagent_slo_burn_rate` | `window` (`fast`/`slow`) | Error-budget consumption multiple (1 = spending exactly at budget) |
+| `kubeagent_slo_window_coverage_ratio` | `window` (`fast`/`slow`) | Fraction of the window carrying samples |
+| `kubeagent_slo_error_budget_remaining_ratio` | none | Budget left over the **slow window only**, clamped to `[0,1]` |
+
+Five metric names, eight samples (three carry both a `fast` and a `slow`
+series). `kubeagent_slo_error_budget_remaining_ratio` is `1 - slowBurnRate`
+clamped at zero — it does not blend both windows — since a burn above 1×
+already means that window's budget is spent, and a negative "remaining" would
+be nonsense on a dashboard.
+
+### Fixed windows, thresholds, and the coverage gate
+
+The windows, thresholds, bucket width, and coverage gate are fixed constants,
+not flags: letting operators mix their own pair produces alerting that is
+either deafening or silent with no way to tell which. kubeagent uses the fixed
+pair from the Google SRE workbook's multi-window recipe:
+
+| Constant | Value |
+|----------|-------|
+| Bucket width | 1 minute (360 buckets cover the 6-hour window in a small fixed ring) |
+| Fast window | 1 hour |
+| Slow window | 6 hours |
+| Fast-window burn threshold | 14.4× |
+| Slow-window burn threshold | 6× |
+| Coverage gate | 60% of **both** windows |
+
+The alert fires only when **all four** conditions hold at once: fast burn ≥
+14.4×, slow burn ≥ 6×, fast coverage ≥ 60%, slow coverage ≥ 60%. Requiring
+both windows is what makes this multi-window: the fast window alone would page
+for a blip that already passed, and the slow window alone would take hours to
+notice a total outage.
+
+A sample's time weight is also capped, so a daemon that stalls (an
+unresponsive API server, for example) cannot resume and assert that its last
+known state held for the whole stall — the clamped-away time is simply never
+counted, which lowers coverage rather than inventing history for it. That cap
+is **2× the configured `--heartbeat`**, not a fixed duration — at the default
+60s heartbeat it works out to 2 minutes, and it scales with `--heartbeat`, so
+raising the heartbeat interval does not by itself starve the windows of
+coverage: reconciles ticking at a steady heartbeat always land well inside the
+cap. What actually erodes coverage is a genuine stall longer than that
+2×-heartbeat cap — a slow or unresponsive API server, or the daemon blocked for
+some other reason — regardless of which `--heartbeat` value is configured.
+
+### The restart caveat
+
+State is **in-memory only**, exactly as issue tracking is: nothing persists
+across restarts. After the daemon restarts, both windows start empty, and the
+coverage gate means the burn alert cannot fire until the **slow** window is
+roughly **3.6 hours** warm (60% of 6 hours). A daemon that just started would
+otherwise compute a burn rate from a few minutes of data and page on every
+rollout of the daemon itself.
+
+`kubeagent_slo_window_coverage_ratio` is how you see this happening — watch it
+climb toward 1.0 after a restart. A `kubeagent_slo_burn_rate` above threshold
+alongside low coverage is the daemon still warming up, not a real breach.
+Don't read the quiet in that window as "nothing is wrong."
+
+### Alerting on burn rate
+
+When the firing condition holds, the daemon raises exactly one alert,
+separate from the per-object alerts above: kind `SLO`, name `error-budget`,
+issue `ErrorBudgetBurn` — not `FastBurn`, because firing needs *both* windows,
+and naming it after the fast one alone would misdescribe what fired. It goes
+through the same sink as object alerts (the same bounded queue, retries,
+backoff, and URL redaction), reusing `--alert-repeat` for its re-send cadence,
+and clears with a single `resolved` notification on the clearing edge:
+
+```text
+kubeagent: NEW SLO/error-budget:ErrorBudgetBurn (fast=18.2x slow=7.1x, coverage fast=100% slow=95%)
+kubeagent: RESOLVED SLO/error-budget (burn back under threshold; fast=2.1x slow=1.4x)
+```
+
+This alert is **not** an object: it never enters `watchstate` or `alertstate`,
+so it does not appear in `/issues` or in any `kubeagent_issues_*` series. An
+operator reading those as object counts would otherwise be misled by a signal
+that isn't about any one object.
+
+The series render even with no webhook configured, so an operator who would
+rather alert on them directly than rely on the webhook can translate the
+firing condition straight into a Prometheus rule:
+
+```yaml
+- alert: KubeagentErrorBudgetBurn
+  expr: |
+    kubeagent_slo_burn_rate{window="fast"} >= 14.4
+    and kubeagent_slo_burn_rate{window="slow"} >= 6
+    and kubeagent_slo_window_coverage_ratio{window="fast"} >= 0.6
+    and kubeagent_slo_window_coverage_ratio{window="slow"} >= 0.6
+  for: 2m
+  labels:
+    severity: page
+  annotations:
+    summary: "Error budget burning fast (fast burn {{ $value }}x)"
+```
+
 ## Run it
 
 ```bash

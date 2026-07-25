@@ -298,10 +298,23 @@
   chart, and never logged beyond `scheme://host`. Delivery is a bounded queue
   with three attempts and counted drops, on its own goroutine, so a hung
   receiver cannot stall the reconcile loop. The daemon stays strictly
-  read-only toward the cluster and calls no LLM. SLO burn-rate signals,
-  rate-limited on-incident `--explain`, and the multi-cluster hub are the
-  remaining Theme E slices. See
+  read-only toward the cluster and calls no LLM. Rate-limited on-incident
+  `--explain` and the multi-cluster hub are the remaining Theme E slices. See
   [Watch mode](features/watch-mode.md#alerting).
+
+- **SLO burn-rate signals** (Theme E — slice 3) — the daemon can now track a
+  time-weighted availability SLI (`good`/`total` workload-seconds, good
+  meaning no findings — the same predicate the issue tracker uses) and report
+  a multi-window error-budget burn rate over it, following the Google SRE
+  workbook's fixed fast (1h, 14.4×) / slow (6h, 6×) pair. An alert fires only
+  when both windows breach at once and both carry at least 60% coverage, so a
+  daemon that just restarted — state is in-memory only — cannot page on its
+  own warm-up; `kubeagent_slo_window_coverage_ratio` shows that happening.
+  Five new Prometheus series render only once `--slo-target` is set, and the
+  burn alert reuses the existing sink rather than the per-object tracker, so
+  it never appears in `/issues` or `kubeagent_issues_*`. Off by default; no
+  new RBAC. See
+  [Watch mode](features/watch-mode.md#slo-burn-rate).
 
 !!! info "Version history"
     [GitHub Releases](https://github.com/imantaba/kubeagent/releases) and the
@@ -354,8 +367,8 @@ These are the north star; every item below is measured against them.
   autonomous remediation inside `watch` moves to Theme E.
 - **E · Continuous operations** — `watch` gains state (regressions, flapping, MTTR,
   "new since last"), webhook alerting (JSON / Slack / Alertmanager shipped;
-  PagerDuty remains an open receiver), SLO burn-rate signals, rate-limited
-  on-incident `--explain`, and a multi-cluster hub.
+  PagerDuty remains an open receiver), SLO burn-rate signals (shipped),
+  rate-limited on-incident `--explain`, and a multi-cluster hub.
 - **F · Ecosystem & operators** — first-class awareness of the operators people
   actually run (CloudNativePG, cert-manager, Longhorn/Ceph, Argo CD / Flux GitOps
   drift, Prometheus operator, service meshes), plus cost/right-sizing and

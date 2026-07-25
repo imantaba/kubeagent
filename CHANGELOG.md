@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `watch` SLO burn-rate tracking: an opt-in `--slo-target` (a percentage, e.g.
+  `99.9`) turns on a time-weighted availability SLI — `good`/`total` workload-seconds
+  where good means no findings, the same predicate the issue tracker uses — and a
+  multi-window error-budget burn rate over it, following the Google SRE workbook's
+  fast (1h, 14.4×) / slow (6h, 6×) pair. An alert fires only when both windows
+  breach their threshold at once, gated on each window carrying at least 60%
+  coverage: state is in-memory and resets on restart, so the gate keeps a
+  just-started daemon from paging on its own warm-up. Five new Prometheus series
+  render only when SLO tracking is on (`kubeagent_slo_target_ratio`,
+  `kubeagent_slo_availability_ratio`, `kubeagent_slo_burn_rate`, and
+  `kubeagent_slo_window_coverage_ratio`, each split by `window="fast"`/`"slow"`,
+  plus `kubeagent_slo_error_budget_remaining_ratio` over the slow window). The
+  burn alert (`SLO`/`error-budget`, issue `ErrorBudgetBurn`) reuses the existing
+  alert sink — same bounded queue, retries, and URL redaction — rather than the
+  per-object tracker, so it never appears in `/issues` or `kubeagent_issues_*`.
+  Off unless `--slo-target` is set (Helm: `slo.enabled` / `slo.target`), and the
+  daemon remains strictly read-only with no new RBAC.
+
 ## [0.56.0] - 2026-07-25
 
 ### Added

@@ -279,6 +279,16 @@
   fourth and final write-path hardening slice, **completing Theme D**. See
   [Remediation](features/remediation.md#rollback-rollback).
 
+- **Stateful `watch`** (Theme E — slice 1, the stateful core) — the daemon now
+  tracks issue state across reconciles instead of re-deriving the whole
+  picture every cycle, logging only the transitions (`NEW` / `RESOLVED` /
+  `FLAPPING`, steady state silent), exposing ten new Prometheus series
+  including mean-time-to-resolution, and serving a read-only `/issues` JSON
+  endpoint. In-memory only (state resets on restart); fixed, unconfigurable
+  defaults; no new flags or RBAC. Alerting integrations, SLO burn-rate, and
+  the multi-cluster hub are the remaining Theme E slices. See
+  [Watch mode](features/watch-mode.md#issue-tracking-state-across-reconciles).
+
 !!! info "Version history"
     [GitHub Releases](https://github.com/imantaba/kubeagent/releases) and the
     [CHANGELOG](https://github.com/imantaba/kubeagent/blob/main/CHANGELOG.md)

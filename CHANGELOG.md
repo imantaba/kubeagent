@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Stateful `watch`.** The daemon now tracks issue state across reconciles instead of
+  re-deriving the whole picture every cycle: each `(kind, namespace, name, issue)` is
+  followed through its lifecycle, and the daemon logs only the transitions — `NEW`,
+  `RESOLVED` (with how long it fired), and `FLAPPING` (repeated firings within a window) —
+  plus a per-reconcile summary line; a reconcile with no transitions logs nothing, so
+  steady state stays quiet. Ten new Prometheus series expose the same state
+  (`kubeagent_issues_active`, `kubeagent_issues_flapping`, `kubeagent_issues_new_total`,
+  `kubeagent_issues_resolved_total`, `kubeagent_issues_flapping_total`,
+  `kubeagent_issues_dropped_total`, `kubeagent_issue_resolution_seconds_sum` /
+  `_count` for mean time to resolution, and the per-issue `kubeagent_issue_active` /
+  `kubeagent_issue_age_seconds`), and a new read-only `/issues` JSON endpoint lists every
+  active and recently-resolved issue with its full history. State is in-memory only: on
+  restart, everything currently firing is reported as `NEW` once and every counter resets
+  from zero. Fixed, unconfigurable defaults (500 tracked issues, 1h resolved retention,
+  30m flap window, 3 firings to flap) — no new flags. The daemon remains strictly
+  read-only; the tracker performs no I/O of its own.
+
 ## [0.54.0] - 2026-07-25
 
 ### Added

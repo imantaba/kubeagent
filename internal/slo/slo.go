@@ -72,7 +72,7 @@ func New(o Options) *Tracker {
 func (t *Tracker) Target() float64 { return t.opts.Target }
 
 // Observe folds one evaluation's workload census into the ring: good is the
-// number of workloads with no findings, total the number evaluated.
+// number of workloads that are not flagged, total the number evaluated.
 //
 // The first sample establishes the baseline instant and contributes no weight —
 // there is no preceding interval to attribute it to. A sample at or before the

@@ -140,11 +140,23 @@ existed because two predicates disagreed about the same question; using
 
 ### The late annotators do not affect this
 
-`scan.Evaluate` runs six annotators at `internal/scan/scan.go:275-282`, *after*
-`Prioritize`, on the filtered slice. They can only reach workloads that were
-already `Flagged()` — an unflagged workload is not in that slice. So `Flagged()`
-evaluated during `Prioritize` gives the same answer the annotated set would, and
-computing the census before annotation is exact, not an approximation.
+Not because unflagged workloads are unreachable — they aren't. `Prioritize`
+appends unflagged workloads to `result.Workloads` under both
+`opts.IncludeCron` (`internal/inventory/inventory.go:449`) and
+`opts.IncludeRestarts` (`internal/inventory/inventory.go:459`), so the eight
+annotator calls `scan.Evaluate` runs afterward, at `internal/scan/scan.go:275-282`,
+can and do see unflagged workloads on the CronJob/restart-only paths. What
+actually protects the census is that every annotator gates itself: `createhealth.go:48`,
+`rollouthealth.go:31`, `netpolicy.go:24`, and `rollout.go:32` each open with a
+`!w.Flagged()` check and return early, as does `rootcause.go` at its three
+entry points, `:36`, `:71`, and `:139`. The eighth call, `confidence.Annotate`
+(`internal/confidence/confidence.go:44-50`), only sets `Confidence` on
+Findings that already exist, so it cannot create one regardless of gating.
+`Flagged()` evaluated during `Prioritize` therefore still gives the same
+answer the annotated set would, but that is a property of eight independent
+gates agreeing, not of the slice's membership. A future annotator added
+without its own `Flagged()` gate would silently corrupt the census, because
+the census is computed before annotation runs.
 
 ### JSON
 

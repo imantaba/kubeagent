@@ -304,8 +304,9 @@
 
 - **SLO burn-rate signals** (Theme E — slice 3) — the daemon can now track a
   time-weighted availability SLI (`good`/`total` workload-seconds, good
-  meaning no findings — the same predicate the issue tracker uses) and report
-  a multi-window error-budget burn rate over it, following the Google SRE
+  meaning not flagged — the same predicate the issue tracker uses, over the
+  unfiltered census rather than the display list) and report a multi-window
+  error-budget burn rate over it, following the Google SRE
   workbook's fixed fast (1h, 14.4×) / slow (6h, 6×) pair. An alert fires only
   when both windows breach at once and both carry at least 60% coverage, so a
   daemon that just restarted — state is in-memory only — cannot page on its

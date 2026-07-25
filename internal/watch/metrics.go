@@ -303,7 +303,7 @@ func (m *metrics) render() string {
 		}
 		gauge("kubeagent_slo_target_ratio", "Configured availability SLO as a ratio", m.slo.Target)
 		labelled("kubeagent_slo_availability_ratio",
-			"Time-weighted fraction of workload-seconds with no findings, over the window",
+			"Time-weighted fraction of workload-seconds that are not flagged, over the window",
 			m.slo.Fast.Availability, m.slo.Slow.Availability)
 		labelled("kubeagent_slo_burn_rate",
 			"Error-budget consumption multiple over the window (1 = spending exactly at budget)",

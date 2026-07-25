@@ -11,8 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `watch` SLO burn-rate tracking: an opt-in `--slo-target` (a percentage, e.g.
   `99.9`) turns on a time-weighted availability SLI — `good`/`total` workload-seconds
-  where good means no findings, the same predicate the issue tracker uses — and a
-  multi-window error-budget burn rate over it, following the Google SRE workbook's
+  over the unfiltered census, where good means not flagged, the same predicate
+  the issue tracker uses — and a multi-window error-budget burn rate over it,
+  following the Google SRE workbook's
   fast (1h, 14.4×) / slow (6h, 6×) pair. An alert fires only when both windows
   breach their threshold at once, gated on each window carrying at least 60%
   coverage: state is in-memory and resets on restart, so the gate keeps a

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -744,6 +745,87 @@ func TestRunWatch_TinyNonzeroSLOTargetIsNotLaunderedToOff(t *testing.T) {
 	}
 	if cfg.SLOTarget != want {
 		t.Fatalf("cfg.SLOTarget = %v, want exactly %v (the exact, unrounded quotient)", cfg.SLOTarget, want)
+	}
+}
+
+func TestRunWatch_NegativeSLOTargetIsRejected(t *testing.T) {
+	// An ordinary negative --slo-target: -5/100 is -0.05, and
+	// math.Round(-0.05*1e8)/1e8 lands back on exactly -0.05 with no rounding
+	// artifact at all, so the boundary guard's condition — comparing that
+	// rounded value against the exact quotient — evaluates false and takes no
+	// corrective action here. This is the baseline the tiny-negative test
+	// below contrasts with: dropping the guard's zero-side clause, or the
+	// whole guard, changes nothing about this case (verified in the mutation
+	// checks recorded in the task report), because sloRatio never needed
+	// correcting in the first place. This test exists to nail down, through
+	// the real unstubbed watch.Run, that an everyday negative percentage is
+	// rejected end-to-end — the tiny-negative test isolates the laundering
+	// the guard actually exists to prevent.
+	kc := deadKubeconfigPath(t)
+	err := runWatchBounded(t, []string{"--slo-target", "-5", "--kubeconfig", kc, "--metrics-addr", "127.0.0.1:0"}, 3*time.Second)
+	if err == nil {
+		t.Fatal("expected a validation error for --slo-target -5")
+	}
+	want := "invalid --slo-target: -5% (must be greater than 0 and less than 100)"
+	if err.Error() != want {
+		t.Fatalf("error = %q, want exactly %q", err.Error(), want)
+	}
+}
+
+func TestRunWatch_TinyNegativeSLOTargetIsNotLaunderedToOff(t *testing.T) {
+	// The negative mirror of TestRunWatch_TinyNonzeroSLOTargetIsNotLaunderedToOff,
+	// and the subtlest case the boundary guard has to get right: -0.0 == 0.0
+	// in Go, so a negative target whose rounded ratio lands on negative zero
+	// is, without the guard's (sloRatio == 0) != (exact == 0) clause,
+	// indistinguishable from validateSLOTarget's "0 means SLO tracking off"
+	// sentinel — laundering a value that must be *rejected* into one that is
+	// silently *accepted*.
+	//
+	// math.Round(exact*1e8)/1e8 rounds to (negative) zero exactly when
+	// |exact*1e8| < 0.5, i.e. |exact| < 0.5e-8, i.e. |target/100| < 0.5e-8,
+	// i.e. |target| < 0.5e-6. -0.0000001 (-1e-7) sits inside that band: exact
+	// = -1e-7/100 is about -1e-9, so exact*1e8 is about -0.1, which
+	// math.Round sends to negative zero (Round rounds half away from zero,
+	// and preserves sign on underflow to zero — confirmed with
+	// math.Signbit in a standalone check before writing this test, the same
+	// way the task's reviewer verified it independently). Without the zero-
+	// side clause, that -0 compares equal to 0 and reaches validateSLOTarget
+	// as the "off" sentinel instead of the negative value the operator typed.
+	//
+	// This is asserted on runWatch's returned error, not on cfg.SLOTarget via
+	// captureWatchConfig: that helper stubs out watchRun itself, so it never
+	// calls the real watch.Run and never reaches validateSLOTarget — it can
+	// only show which ratio runWatch computed, not whether that ratio gets
+	// accepted or rejected, and rejection is the property this guard exists
+	// for. So this goes through runWatchBounded against the dead kubeconfig
+	// instead, exercising the real, unstubbed watch.Run, whose first
+	// statement is validateSLOTarget. If the zero-side clause (or the whole
+	// guard) were removed, this negative target would launder to the ratio
+	// 0, validateSLOTarget would accept it as "disabled", and Run would fall
+	// through into binding the metrics address and blocking on
+	// WaitForCacheSync against a server nothing answers — forever.
+	// runWatchBounded's timeout is exactly what turns that hang into a clean,
+	// fast test failure instead of wedging the test binary.
+	//
+	// want is computed here the same way runWatch and validateSLOTarget
+	// compute it — runtime float64 division and multiplication, not a copied
+	// literal — for the same reason TestRunWatch_TinyNonzeroSLOTargetIsNotLaunderedToOff
+	// gives: a hand-typed scientific-notation literal risks pinning the wrong
+	// bits.
+	var target float64 = -0.0000001
+	exact := target / 100
+	if exact == 0 {
+		t.Fatal("test bug: exact computed as exactly 0, this test could not distinguish rejection from laundering")
+	}
+	want := fmt.Sprintf("invalid --slo-target: %g%% (must be greater than 0 and less than 100)", exact*100)
+
+	kc := deadKubeconfigPath(t)
+	err := runWatchBounded(t, []string{"--slo-target", "-0.0000001", "--kubeconfig", kc, "--metrics-addr", "127.0.0.1:0"}, 3*time.Second)
+	if err == nil {
+		t.Fatal("expected a validation error for --slo-target -0.0000001, got none: the negative target may have been laundered into the \"SLO tracking off\" sentinel")
+	}
+	if err.Error() != want {
+		t.Fatalf("error = %q, want exactly %q", err.Error(), want)
 	}
 }
 

@@ -32,6 +32,10 @@ const defaultSLORepeat = 4 * time.Hour
 // alertstate.Roller. The roller's job is rolling many per-issue records up to
 // per-object alerts; there is exactly one error budget, so all that remains is
 // the firing edge and the repeat clock.
+//
+// An sloNotifier is not safe for concurrent use; the daemon touches it only from
+// its reconcile loop, exactly as it does watchstate.Tracker and
+// alertstate.Roller.
 type sloNotifier struct {
 	repeat   time.Duration
 	firing   bool

@@ -3,6 +3,7 @@ package watch
 import (
 	"fmt"
 	"log"
+	"math"
 	"time"
 
 	"github.com/imantaba/kubeagent/internal/alertstate"
@@ -114,12 +115,15 @@ func workloadCensus(res *scan.Result) (good, total int) {
 
 // validateSLOTarget rejects a target that cannot produce a burn rate. 1.0 is
 // rejected explicitly: a 100% target makes the error budget zero, and the burn
-// rate would divide by it.
+// rate would divide by it. NaN needs its own check for the same reason: every
+// comparison against NaN is false, so target == 0, target <= 0, and
+// target >= 1 all fail to catch it, and it would otherwise fall through as a
+// silently accepted, enabled target.
 func validateSLOTarget(target float64) error {
 	if target == 0 {
 		return nil // disabled
 	}
-	if target <= 0 || target >= 1 {
+	if math.IsNaN(target) || target <= 0 || target >= 1 {
 		return fmt.Errorf("invalid --slo-target: %g%% (must be greater than 0 and less than 100)", target*100)
 	}
 	return nil

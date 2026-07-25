@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"log"
+	"math"
 	"os"
 	"strings"
 	"sync"
@@ -547,18 +548,36 @@ func TestValidateSLOTarget(t *testing.T) {
 		target  float64
 		wantErr bool
 	}{
-		{0, false},     // disabled
-		{0.999, false}, // typical
-		{0.5, false},   // permissive but legal
-		{1, true},      // zero error budget: burn rate divides by zero
-		{1.5, true},    // nonsense
-		{-0.1, true},   // nonsense
+		{0, false},           // disabled
+		{0.999, false},       // typical
+		{0.5, false},         // permissive but legal
+		{1, true},            // zero error budget: burn rate divides by zero
+		{1.5, true},          // nonsense
+		{-0.1, true},         // nonsense
+		{math.NaN(), true},   // every comparison against NaN is false; needs its own check
+		{math.Inf(1), true},  // already caught by target >= 1
+		{math.Inf(-1), true}, // already caught by target <= 0
 	}
 	for _, c := range cases {
 		err := validateSLOTarget(c.target)
 		if (err != nil) != c.wantErr {
 			t.Errorf("validateSLOTarget(%v) error = %v, wantErr = %v", c.target, err, c.wantErr)
 		}
+	}
+}
+
+func TestValidateSLOTarget_NaNMessage(t *testing.T) {
+	// A NaN target is not caught by any of validateSLOTarget's range checks
+	// (target == 0, target <= 0, target >= 1 are all false for NaN), so it
+	// needs its own guard. This pins the exact error text: %g renders NaN as
+	// "NaN", so the message reads "NaN%", not some other stringification.
+	err := validateSLOTarget(math.NaN())
+	if err == nil {
+		t.Fatal("expected an error for a NaN --slo-target")
+	}
+	want := "invalid --slo-target: NaN% (must be greater than 0 and less than 100)"
+	if err.Error() != want {
+		t.Fatalf("error = %q, want exactly %q", err.Error(), want)
 	}
 }
 

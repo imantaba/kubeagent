@@ -285,8 +285,9 @@
   `FLAPPING`, steady state silent), exposing ten new Prometheus series
   including mean-time-to-resolution, and serving a read-only `/issues` JSON
   endpoint. In-memory only (state resets on restart); fixed, unconfigurable
-  defaults; no new flags or RBAC. Alerting integrations, SLO burn-rate, and
-  the multi-cluster hub are the remaining Theme E slices. See
+  defaults; no new flags or RBAC. Alerting integrations, SLO burn-rate signals,
+  rate-limited on-incident `--explain`, and the multi-cluster hub are the
+  remaining Theme E slices. See
   [Watch mode](features/watch-mode.md#issue-tracking-state-across-reconciles).
 
 !!! info "Version history"

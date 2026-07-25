@@ -653,3 +653,36 @@ func TestPrioritize_CensusCountsUnknownKinds(t *testing.T) {
 		t.Errorf("Census = %+v, want {Good:1 Total:1}: an unknown controller kind is long-running", res.Census)
 	}
 }
+
+func TestPrioritize_CensusCountsFindingsAsBadEvenWhenFullyReady(t *testing.T) {
+	// Ready >= Desired here, so only the Findings disjunct of Flagged() can mark
+	// this workload bad. A predicate narrowed to a ready/desired comparison would
+	// wrongly call it Good.
+	in := []Workload{
+		{Namespace: "a", Name: "web", Kind: "Deployment", Ready: 1, Desired: 1, Status: "Running",
+			Findings: []diagnose.Finding{{Pod: "ns/p", Issue: "X"}}},
+	}
+	res := Prioritize(in, Opts{})
+	if res.Census.Total != 1 {
+		t.Fatalf("Census.Total = %d, want 1", res.Census.Total)
+	}
+	if res.Census.Good != 0 {
+		t.Errorf("Census.Good = %d, want 0: a fully-ready workload with findings is not available", res.Census.Good)
+	}
+}
+
+func TestPrioritize_CensusCountsFailedStatusAsBadEvenWhenFullyReady(t *testing.T) {
+	// Ready >= Desired here and there are no Findings, so only the
+	// Status == "Failed" disjunct of Flagged() can mark this workload bad. A
+	// predicate narrowed to a ready/desired comparison would wrongly call it Good.
+	in := []Workload{
+		{Namespace: "a", Name: "web", Kind: "Deployment", Ready: 1, Desired: 1, Status: "Failed"},
+	}
+	res := Prioritize(in, Opts{})
+	if res.Census.Total != 1 {
+		t.Fatalf("Census.Total = %d, want 1", res.Census.Total)
+	}
+	if res.Census.Good != 0 {
+		t.Errorf("Census.Good = %d, want 0: a fully-ready workload with Status==Failed is not available", res.Census.Good)
+	}
+}

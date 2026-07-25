@@ -325,14 +325,23 @@ scenario_12_watch() {   # stateful watch daemon: NEW on outage, RESOLVED on repa
     echo
     printf 'firing notifications: %s\n' "$(grep -c '"status":"firing"' "$alerts" 2>/dev/null || echo 0)"
     printf 'resolved notifications: %s\n' "$(grep -c '"status":"resolved"' "$alerts" 2>/dev/null || echo 0)"
-    printf 'distinct objects alerted: %s\n' "$(grep -o '"name":"[^"]*"' "$alerts" 2>/dev/null | sort -u | wc -l)"
+    # Key on kind+namespace+name, not name alone: the Deployment and the Service in
+    # this scenario are both called "web", so a name-only count collapses two objects
+    # into one and cannot tell "two objects resolved once each" from "one object
+    # resolved twice" — the exact regression the per-object rollup exists to prevent.
+    printf 'distinct objects alerted: %s\n' "$(grep -o '"kind":"[^"]*","namespace":"[^"]*","name":"[^"]*"' "$alerts" 2>/dev/null | sort -u | wc -l)"
+    echo
+    echo '--- resolved alerts per object (must be exactly one each) ---'
+    { grep '"status":"resolved"' "$alerts" 2>/dev/null \
+        | grep -o '"kind":"[^"]*","namespace":"[^"]*","name":"[^"]*"' \
+        | sort | uniq -c || echo '<no resolved alerts delivered>'; }
     echo
     echo '--- webhook URL redaction check (only scheme://host may appear) ---'
     { grep -c '127.0.0.1:'"$aport" "$wlog" || true; } | sed 's/^/log lines naming the endpoint host: /'
     echo
     echo '--- write-path check: the daemon issued no mutating calls ---'
     { grep -icE '\b(create|update|patch|delete)d?\b' "$wlog" || true; } | sed 's/^/log lines mentioning a write verb: /'
-  } | record "12. Stateful watch daemon (NEW on outage, RESOLVED on repair, /issues)" "expect: one NEW line naming Deployment/$ns/web, one RESOLVED line with the firing duration, the incident listed under /issues while firing and under resolved afterwards, and exactly one resolved alert delivered — the firing alert must survive the whole Degraded -> ErrImagePull -> ImagePullBackOff walk"
+  } | record "12. Stateful watch daemon (NEW on outage, RESOLVED on repair, /issues)" "expect: one NEW line naming Deployment/$ns/web, one RESOLVED line with the firing duration, the incident listed under /issues while firing and under resolved afterwards, and exactly one resolved alert per broken object — two objects break here (Deployment/$ns/web and its Service), so two objects alert and each resolves once. The Deployment's firing alert must survive the whole Degraded -> ErrImagePull -> ImagePullBackOff walk without a resolved notification, even though the per-issue transition log reports RESOLVED for each superseded mode."
 
   rm -f "$wlog" "$alerts"
   kubectl --context "$CTX" delete ns "$ns" --wait=true --timeout=120s >/dev/null 2>&1 || true

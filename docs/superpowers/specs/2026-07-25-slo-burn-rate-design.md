@@ -144,7 +144,7 @@ Fixed constants, not options:
 
 | Constant | Value | Why fixed |
 |----------|-------|-----------|
-| `bucketWidth` | 1 minute | 360 buckets covers the slow window in ~6 KB |
+| `bucketWidth` | 1 minute | 360 buckets covers the slow window in ~14 KB (40-byte bucket) |
 | `fastWindow` | 1 hour | Google SRE workbook fast-burn window |
 | `slowWindow` | 6 hours | workbook slow-burn window |
 | `fastBurnThreshold` | 14.4× | workbook pair for a 30-day budget |

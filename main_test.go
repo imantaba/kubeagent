@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -301,6 +302,107 @@ func TestRun_DNSHealthFlagAccepted(t *testing.T) {
 	err := run([]string{"scan", "--dns-health", "--output", "bogus"})
 	if err == nil || !strings.Contains(err.Error(), "unknown output format") {
 		t.Fatalf("want unknown-output-format error (proving the flag parsed), got %v", err)
+	}
+}
+
+// captureStderr redirects os.Stderr for the duration of f and returns what was
+// written to it. runWatch prints its "alert flags ignored" warning directly to
+// os.Stderr rather than through an injectable writer, so tests that need to
+// observe it must swap the package-level handle.
+func captureStderr(t *testing.T, f func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	old := os.Stderr
+	os.Stderr = w
+	f()
+	os.Stderr = old
+	if err := w.Close(); err != nil {
+		t.Fatalf("closing pipe writer: %v", err)
+	}
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("reading captured stderr: %v", err)
+	}
+	return string(out)
+}
+
+func TestRunWatch_AlertFlagsAreRecognized(t *testing.T) {
+	// --alert-format/--alert-repeat must be defined flags: with a kubeconfig path
+	// that fails to load, the error must be the kubeconfig-load error, not "flag
+	// provided but not defined", proving the flags parsed.
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "nonexistent")
+	err := runWatch([]string{"--alert-format", "slack", "--alert-repeat", "10m", "--kubeconfig", bad})
+	if err == nil {
+		t.Fatal("expected a kubeconfig load error")
+	}
+	if strings.Contains(err.Error(), "flag provided but not defined") {
+		t.Fatalf("expected --alert-format/--alert-repeat to be recognized flags, got: %v", err)
+	}
+}
+
+func TestRunWatch_NoAlertWebhookFlag(t *testing.T) {
+	// The webhook URL is a credential (a Slack incoming-webhook URL is a bearer
+	// token in URL form) and must never be settable via a flag — that would put it
+	// in the pod spec's args and in `ps` output. It must only ever come from the
+	// KUBEAGENT_ALERT_WEBHOOK environment variable.
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "nonexistent")
+	err := runWatch([]string{"--alert-webhook", "http://example.invalid/hook", "--kubeconfig", bad})
+	if err == nil || !strings.Contains(err.Error(), "flag provided but not defined") {
+		t.Fatalf("expected no --alert-webhook flag to exist, got: %v", err)
+	}
+}
+
+func TestRunWatch_WarnsWhenAlertFormatSetWithoutWebhook(t *testing.T) {
+	t.Setenv("KUBEAGENT_ALERT_WEBHOOK", "")
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "nonexistent")
+	stderr := captureStderr(t, func() {
+		_ = runWatch([]string{"--alert-format", "slack", "--kubeconfig", bad})
+	})
+	if !strings.Contains(stderr, "KUBEAGENT_ALERT_WEBHOOK is not set") {
+		t.Fatalf("expected the ignored-alert-flags warning on stderr, got: %q", stderr)
+	}
+}
+
+func TestRunWatch_WarnsWhenAlertRepeatSetWithoutWebhook(t *testing.T) {
+	t.Setenv("KUBEAGENT_ALERT_WEBHOOK", "")
+	t.Setenv("KUBEAGENT_ALERT_FORMAT", "")
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "nonexistent")
+	stderr := captureStderr(t, func() {
+		_ = runWatch([]string{"--alert-repeat", "5m", "--kubeconfig", bad})
+	})
+	if !strings.Contains(stderr, "KUBEAGENT_ALERT_WEBHOOK is not set") {
+		t.Fatalf("expected the ignored-alert-flags warning on stderr, got: %q", stderr)
+	}
+}
+
+func TestRunWatch_NoWarningWithDefaultAlertFlags(t *testing.T) {
+	t.Setenv("KUBEAGENT_ALERT_WEBHOOK", "")
+	t.Setenv("KUBEAGENT_ALERT_FORMAT", "")
+	t.Setenv("KUBEAGENT_ALERT_REPEAT", "")
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "nonexistent")
+	stderr := captureStderr(t, func() {
+		_ = runWatch([]string{"--kubeconfig", bad})
+	})
+	if strings.Contains(stderr, "flags ignored") {
+		t.Fatalf("unexpected alert-flags warning with default values: %q", stderr)
+	}
+}
+
+func TestRun_UsageMentionsWatchAlertFlags(t *testing.T) {
+	err := run(nil)
+	if err == nil {
+		t.Fatal("expected a usage error with no args")
+	}
+	if !strings.Contains(err.Error(), "[--alert-format json|slack|alertmanager] [--alert-repeat dur]") {
+		t.Fatalf("expected the usage string to mention --alert-format and --alert-repeat, got: %v", err)
 	}
 }
 

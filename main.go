@@ -15,6 +15,7 @@ import (
 
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/imantaba/kubeagent/internal/alert"
 	"github.com/imantaba/kubeagent/internal/audit"
 	"github.com/imantaba/kubeagent/internal/cluster"
 	"github.com/imantaba/kubeagent/internal/collect"
@@ -59,7 +60,7 @@ func run(args []string) error {
 		return runWatch(args[1:])
 	}
 	if len(args) == 0 || args[0] != "scan" {
-		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--investigate] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--kubelet-health] [--control-plane-health] [--dns-health] [--certs [--cert-warn-days n]] [--logs] [--node-heartbeat-threshold dur] [--expected-nodes a,b,…] [--fix [--dry-run|--yes] [--audit-log path]] [--rollback --audit-log path] | kubeagent watch [--kubeconfig path] [--context name] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] | kubeagent version")
+		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--investigate] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--kubelet-health] [--control-plane-health] [--dns-health] [--certs [--cert-warn-days n]] [--logs] [--node-heartbeat-threshold dur] [--expected-nodes a,b,…] [--fix [--dry-run|--yes] [--audit-log path]] [--rollback --audit-log path] | kubeagent watch [--kubeconfig path] [--context name] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] [--alert-format json|slack|alertmanager] [--alert-repeat dur] | kubeagent version")
 	}
 
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
@@ -308,11 +309,25 @@ func runWatch(args []string) error {
 	debounce := fs.Duration("debounce", envDur("KUBEAGENT_DEBOUNCE", 2*time.Second), "coalescing window for change events")
 	includeCron := fs.Bool("include-cron", false, "include CronJobs in the evaluation")
 	includeRestarts := fs.Bool("include-restarts", false, "include workloads that are healthy now but have restarted")
+	alertFormat := fs.String("alert-format", envOr("KUBEAGENT_ALERT_FORMAT", "json"), "alert payload format: json, slack, or alertmanager")
+	alertRepeat := fs.Duration("alert-repeat", envDur("KUBEAGENT_ALERT_REPEAT", 0), "re-send interval for still-firing alerts (0 = the format default: 4h, or 60s for alertmanager)")
 	var namespace string
 	fs.StringVar(&namespace, "namespace", envOr("KUBEAGENT_NAMESPACE", ""), "namespace to watch (default: all)")
 	fs.StringVar(&namespace, "n", envOr("KUBEAGENT_NAMESPACE", ""), "namespace to watch (shorthand)")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+
+	// The webhook URL is a credential (a Slack incoming-webhook URL is a bearer
+	// token in URL form), so it comes from the environment only — never a flag,
+	// which would put it in the pod spec's args and in `ps` output.
+	alertURL := os.Getenv("KUBEAGENT_ALERT_WEBHOOK")
+	repeat := *alertRepeat
+	if repeat == 0 {
+		repeat = alert.DefaultRepeat(alert.Format(*alertFormat))
+	}
+	if alertURL == "" && (*alertFormat != "json" || *alertRepeat != 0) {
+		fmt.Fprintln(os.Stderr, "kubeagent: --alert-* flags ignored: KUBEAGENT_ALERT_WEBHOOK is not set, so alerting is off")
 	}
 
 	client, err := cluster.NewInClusterOrKubeconfig(*kubeconfig, *contextName)
@@ -341,6 +356,9 @@ func runWatch(args []string) error {
 		Certs:                   envBool("KUBEAGENT_CERTS", false),
 		CertWarnDays:            envInt("KUBEAGENT_CERT_WARN_DAYS", 30),
 		WebhookTimeoutThreshold: int32(envInt("KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS", 15)),
+		AlertURL:                alertURL,
+		AlertFormat:             *alertFormat,
+		AlertRepeat:             repeat,
 	})
 }
 

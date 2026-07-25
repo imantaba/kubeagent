@@ -10,23 +10,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `watch` SLO burn-rate tracking: an opt-in `--slo-target` (a percentage, e.g.
-  `99.9`) turns on a time-weighted availability SLI — `good`/`total` workload-seconds
-  where good means no findings, the same predicate the issue tracker uses — and a
-  multi-window error-budget burn rate over it, following the Google SRE workbook's
-  fast (1h, 14.4×) / slow (6h, 6×) pair. An alert fires only when both windows
+  `99.9`) turns on a time-weighted availability SLI — `good`/`total`
+  workload-seconds over the unfiltered census, where good means not flagged,
+  the same predicate the issue tracker uses — and a multi-window
+  error-budget burn rate over it, following the Google SRE workbook's fast
+  (1h, 14.4×) / slow (6h, 6×) pair. An alert fires only when both windows
   breach their threshold at once, gated on each window carrying at least 60%
   coverage: state is in-memory and resets on restart, so the gate keeps a
-  just-started daemon from paging on its own warm-up. Five new Prometheus series
-  render only when SLO tracking is on: `kubeagent_slo_availability_ratio`,
+  just-started daemon from paging on its own warm-up. Five new Prometheus
+  series render only when SLO tracking is on: `kubeagent_slo_availability_ratio`,
   `kubeagent_slo_burn_rate`, and `kubeagent_slo_window_coverage_ratio`, each
   split by `window="fast"`/`"slow"`, plus the unlabelled
   `kubeagent_slo_target_ratio` and `kubeagent_slo_error_budget_remaining_ratio`
-  (the latter over the slow window). The
-  burn alert (`SLO`/`error-budget`, issue `ErrorBudgetBurn`) reuses the existing
-  alert sink — same bounded queue, retries, and URL redaction — rather than the
+  (the latter over the slow window). The burn alert (`SLO`/`error-budget`,
+  issue `ErrorBudgetBurn`) reuses the existing alert sink — same bounded
+  queue, retries, and URL redaction — rather than the
   per-object tracker, so it never appears in `/issues` or `kubeagent_issues_*`.
   Off unless `--slo-target` is set (Helm: `slo.enabled` / `slo.target`), and the
   daemon remains strictly read-only with no new RBAC.
+
+### Fixed
+
+- `watch` SLO burn-rate: the availability SLI was reading `good`/`total` off
+  the **display list** — the workloads `inventory.Prioritize` had already
+  filtered down to what `scan` prints for a human, which drops every healthy,
+  quiet workload. On a healthy cluster that list is empty, so `total` was 0,
+  `slo.Tracker.Observe` treated the reconcile as having nothing to record, and
+  window coverage never left zero: the burn-rate alert could not fire at all,
+  no matter how bad an outage got. A second bug in the same computation scored
+  a workload "good" whenever it had no `Findings`, while the display list (and
+  the issue tracker) key off `Flagged()` — so a workload that was
+  under-replicated or `Failed` but hadn't yet produced a Finding *raised*
+  measured availability instead of lowering it. `inventory.Prioritize` now
+  also computes an unfiltered census (`Good`/`Total`) over every long-running
+  workload before any display filtering, Job and CronJob excluded, with `Good`
+  meaning not `Flagged()`; the watch daemon feeds that to the SLI instead. No
+  change to `scan`'s output or its `--output json` contract. If you deployed
+  the SLO burn-rate feature, its alert was silently inert until this fix —
+  worth confirming your window-coverage series is now climbing rather than
+  flatlined at zero.
 
 ## [0.56.0] - 2026-07-25
 

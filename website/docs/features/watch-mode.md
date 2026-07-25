@@ -361,14 +361,17 @@ failure cannot hide behind a slow cache sync.
 The signal is **time-weighted workload availability**, not request-based:
 every reconcile contributes `good`/`total` workload counts weighted by the
 seconds since the previous reconcile, so an outage costs budget in proportion
-to how long it lasted and how much of the estate it took down. A workload
-counts as "good" when it has no findings — the same predicate the issue
-tracker uses to decide whether to track it, so the SLI and `/issues` can never
-disagree about what "broken" means.
+to how long it lasted and how much of the estate it took down. The
+denominator is every long-running workload in scope — Job and CronJob are
+excluded, since neither is expected to be continuously up — and a workload
+counts as "good" when it is **not flagged**: no findings, not
+under-replicated (`Ready < Desired`), and not `Failed`. That is the same
+predicate the issue tracker uses to decide whether a workload is broken, so
+the SLI and `/issues` can never disagree about what "broken" means.
 
 ```
-good  += dt * count(workloads with no findings)
-total += dt * count(workloads)
+good  += dt * count(non-Job/CronJob workloads that are not flagged)
+total += dt * count(non-Job/CronJob workloads)
 
 SLI       = good / total
 burn rate = (1 - SLI) / (1 - target)
@@ -388,7 +391,7 @@ Rendered only while SLO tracking is on:
 | Metric | Labels | Meaning |
 |--------|--------|---------|
 | `kubeagent_slo_target_ratio` | none | Configured availability SLO as a ratio |
-| `kubeagent_slo_availability_ratio` | `window` (`fast`/`slow`) | Time-weighted fraction of workload-seconds with no findings, over the window |
+| `kubeagent_slo_availability_ratio` | `window` (`fast`/`slow`) | Time-weighted fraction of workload-seconds that are not flagged, over the window |
 | `kubeagent_slo_burn_rate` | `window` (`fast`/`slow`) | Error-budget consumption multiple (1 = spending exactly at budget) |
 | `kubeagent_slo_window_coverage_ratio` | `window` (`fast`/`slow`) | Fraction of the window carrying samples |
 | `kubeagent_slo_error_budget_remaining_ratio` | none | Budget left over the **slow window only**, clamped to `[0,1]` |

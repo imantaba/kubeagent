@@ -38,10 +38,20 @@ func sampleResult() *scan.Result {
 		Health:      clusterhealth.ClusterHealth{Verdict: "Degraded", NodesReady: 2, NodesTotal: 3, NodesStaleHeartbeat: 1, NodesExpectedAbsent: 1},
 		NodeReserve: nodereserve.Report{WarnCount: 1},
 		PVCReclaim:  pvcreclaim.Report{Count: 2},
-		Inventory: inventory.Result{Workloads: []inventory.Workload{
-			{Namespace: "shop", Name: "web", Kind: "Deployment", Ready: 0, Desired: 1,
-				Findings: []diagnose.Finding{{Issue: "CrashLoopBackOff"}}},
-		}},
+		Inventory: inventory.Result{
+			Workloads: []inventory.Workload{
+				{Namespace: "shop", Name: "web", Kind: "Deployment", Ready: 0, Desired: 1,
+					Findings: []diagnose.Finding{{Issue: "CrashLoopBackOff"}}},
+			},
+			// The one workload above is flagged (a Finding), so the census that
+			// inventory.Prioritize would have computed alongside it is Good: 0,
+			// Total: 1. sampleResult is reused by the SLO tests in slo_test.go and
+			// watch_test.go as their "one broken workload" fixture; applyResult now
+			// reads Census (not Workloads) to feed slo.Tracker.Observe, so this
+			// fixture needs Census set explicitly to keep representing a broken
+			// sample rather than an empty (no-data) one.
+			Census: inventory.Census{Good: 0, Total: 1},
+		},
 		DiskUsage: diskusage.Report{
 			Threshold: 0.80,
 			Over:      []diskusage.VolumeUsage{{Kind: "node", Node: "n1", Name: "n1", Ratio: 0.84}},

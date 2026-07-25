@@ -1154,3 +1154,91 @@ func TestEvaluate_FlagsNearFullQuota(t *testing.T) {
 		t.Errorf("want one near pods quota issue, got %+v", res.QuotaIssues)
 	}
 }
+
+func TestEvaluate_CensusCountsHealthyWorkloadsTheReportHides(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}}
+	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web"},
+		Spec:   appsv1.DeploymentSpec{Replicas: p32(1)},
+		Status: appsv1.DeploymentStatus{ReadyReplicas: 1}}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web-1"},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning,
+			Conditions:        []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}},
+			ContainerStatuses: []corev1.ContainerStatus{{Name: "web", Ready: true}}}}
+	cli := fake.NewSimpleClientset(node, dep, pod)
+	res, err := Evaluate(context.Background(), cli, Options{Namespace: "shop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The report shows nothing — that is correct, and it is exactly why the SLI
+	// must not count this list.
+	if got := len(res.Inventory.Workloads); got != 0 {
+		t.Fatalf("healthy cluster should display no workloads, got %+v", res.Inventory.Workloads)
+	}
+	if res.Inventory.Census.Total == 0 {
+		t.Fatal("Census.Total = 0 on a cluster with a running Deployment: the SLI would record nothing and coverage would never leave zero")
+	}
+	if res.Inventory.Census.Good != res.Inventory.Census.Total {
+		t.Errorf("Census = %+v, want Good == Total on a healthy cluster", res.Inventory.Census)
+	}
+}
+
+func TestEvaluate_CensusDropsGoodWhenAWorkloadBreaks(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}}
+	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web"},
+		Spec:   appsv1.DeploymentSpec{Replicas: p32(1)},
+		Status: appsv1.DeploymentStatus{ReadyReplicas: 0}}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web-1"},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{
+			Name: "web", Ready: false, RestartCount: 8,
+			State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}}}}}}
+	cli := fake.NewSimpleClientset(node, dep, pod)
+	res, err := Evaluate(context.Background(), cli, Options{Namespace: "shop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Inventory.Census.Total == 0 {
+		t.Fatal("Census.Total = 0, want the broken Deployment counted")
+	}
+	if res.Inventory.Census.Good != 0 {
+		t.Errorf("Census.Good = %d, want 0: every workload here is broken — the Deployment by ReadyReplicas, the bare pod by its crash loop", res.Inventory.Census.Good)
+	}
+}
+
+// TestEvaluate_CensusRealisticOwnershipCountsOneWorkload covers what the two
+// tests above do not: an ordinary Deployment -> ReplicaSet -> Pod ownership
+// chain, the shape almost every real cluster actually has. Both tests above
+// give their pod no OwnerReferences and give the fake clientset no
+// ReplicaSet, so the pod is assembled as its own bare Pod-kind workload
+// alongside the Deployment (Census{Good:2, Total:2}) — that exercises the
+// orphan-pod path, not this one. With a real ownership chain the pod rolls up
+// into its Deployment instead of counting separately, so the census must be
+// exactly one entry, not two. Unlike the relational assertions above
+// (Good == Total, Good == 0), this uses an exact assertion: the point of this
+// test is the count itself.
+func TestEvaluate_CensusRealisticOwnershipCountsOneWorkload(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}}
+	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web"},
+		Spec:   appsv1.DeploymentSpec{Replicas: p32(1)},
+		Status: appsv1.DeploymentStatus{ReadyReplicas: 1}}
+	rs := &appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web-7c9f",
+		OwnerReferences: []metav1.OwnerReference{{Kind: "Deployment", Name: "web", Controller: boolp(true)}}}}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web-7c9f-abcde",
+		OwnerReferences: []metav1.OwnerReference{{Kind: "ReplicaSet", Name: "web-7c9f", Controller: boolp(true)}}},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning,
+			Conditions:        []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}},
+			ContainerStatuses: []corev1.ContainerStatus{{Name: "web", Ready: true}}}}
+	cli := fake.NewSimpleClientset(node, dep, rs, pod)
+	res, err := Evaluate(context.Background(), cli, Options{Namespace: "shop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Inventory.Census.Total != 1 {
+		t.Fatalf("Census.Total = %d, want 1: the pod should roll up into its Deployment via the ReplicaSet, not count as a separate workload", res.Inventory.Census.Total)
+	}
+	if res.Inventory.Census.Good != 1 {
+		t.Errorf("Census.Good = %d, want 1", res.Inventory.Census.Good)
+	}
+}

@@ -589,3 +589,119 @@ func TestPrioritize_SortsByPriorityThenNamespaceName(t *testing.T) {
 		}
 	}
 }
+
+func TestPrioritize_CensusCountsHiddenHealthyWorkloads(t *testing.T) {
+	in := []Workload{
+		{Namespace: "a", Name: "crash", Kind: "Deployment", Ready: 0, Desired: 1, Status: "Degraded"},
+		{Namespace: "a", Name: "healthy", Kind: "Deployment", Ready: 1, Desired: 1, Status: "Running"},
+		{Namespace: "a", Name: "also-healthy", Kind: "StatefulSet", Ready: 2, Desired: 2, Status: "Running"},
+	}
+	res := Prioritize(in, Opts{})
+	// Only "crash" is displayed, but all three are long-running workloads.
+	if len(res.Workloads) != 1 {
+		t.Fatalf("expected 1 displayed workload, got %+v", res.Workloads)
+	}
+	if res.Census.Total != 3 {
+		t.Errorf("Census.Total = %d, want 3 (the healthy majority must be counted)", res.Census.Total)
+	}
+	if res.Census.Good != 2 {
+		t.Errorf("Census.Good = %d, want 2", res.Census.Good)
+	}
+}
+
+func TestPrioritize_CensusExcludesJobAndCronJob(t *testing.T) {
+	in := []Workload{
+		{Namespace: "a", Name: "web", Kind: "Deployment", Ready: 1, Desired: 1, Status: "Running"},
+		{Namespace: "a", Name: "backup", Kind: "CronJob", Status: "Idle"},
+		{Namespace: "a", Name: "migrate", Kind: "Job", Status: "Complete"},
+		{Namespace: "a", Name: "failed-job", Kind: "Job", Status: "Failed"},
+	}
+	res := Prioritize(in, Opts{})
+	// Neither kind is expected to be continuously up, so neither belongs in an
+	// availability figure — not even the failed Job, whose findings never clear.
+	if res.Census.Total != 1 {
+		t.Errorf("Census.Total = %d, want 1 (only the Deployment)", res.Census.Total)
+	}
+	if res.Census.Good != 1 {
+		t.Errorf("Census.Good = %d, want 1", res.Census.Good)
+	}
+}
+
+func TestPrioritize_CensusCountsUnderReplicatedAsBad(t *testing.T) {
+	// The numerator defect, pinned directly: no Findings, but Ready < Desired.
+	// len(Findings)==0 would call this good; Flagged() correctly does not.
+	in := []Workload{
+		{Namespace: "a", Name: "web", Kind: "Deployment", Ready: 1, Desired: 3, Status: "Degraded"},
+	}
+	res := Prioritize(in, Opts{})
+	if res.Census.Total != 1 {
+		t.Fatalf("Census.Total = %d, want 1", res.Census.Total)
+	}
+	if res.Census.Good != 0 {
+		t.Errorf("Census.Good = %d, want 0: an under-replicated workload is not available", res.Census.Good)
+	}
+}
+
+func TestPrioritize_CensusCountsUnknownKinds(t *testing.T) {
+	// Assemble's pod rollup emits an arbitrary owner kind for CRD-owned pods.
+	// The exclusion list must let those through.
+	in := []Workload{
+		{Namespace: "a", Name: "canary", Kind: "Rollout", Ready: 2, Desired: 2, Status: "Running"},
+	}
+	res := Prioritize(in, Opts{})
+	if res.Census.Total != 1 || res.Census.Good != 1 {
+		t.Errorf("Census = %+v, want {Good:1 Total:1}: an unknown controller kind is long-running", res.Census)
+	}
+}
+
+func TestPrioritize_CensusCountsFindingsAsBadEvenWhenFullyReady(t *testing.T) {
+	// Ready >= Desired here, so only the Findings disjunct of Flagged() can mark
+	// this workload bad. A predicate narrowed to a ready/desired comparison would
+	// wrongly call it Good.
+	in := []Workload{
+		{Namespace: "a", Name: "web", Kind: "Deployment", Ready: 1, Desired: 1, Status: "Running",
+			Findings: []diagnose.Finding{{Pod: "ns/p", Issue: "X"}}},
+	}
+	res := Prioritize(in, Opts{})
+	if res.Census.Total != 1 {
+		t.Fatalf("Census.Total = %d, want 1", res.Census.Total)
+	}
+	if res.Census.Good != 0 {
+		t.Errorf("Census.Good = %d, want 0: a fully-ready workload with findings is not available", res.Census.Good)
+	}
+}
+
+func TestPrioritize_CensusCountsFailedStatusAsBadEvenWhenFullyReady(t *testing.T) {
+	// Ready >= Desired here and there are no Findings, so only the
+	// Status == "Failed" disjunct of Flagged() can mark this workload bad. A
+	// predicate narrowed to a ready/desired comparison would wrongly call it Good.
+	in := []Workload{
+		{Namespace: "a", Name: "web", Kind: "Deployment", Ready: 1, Desired: 1, Status: "Failed"},
+	}
+	res := Prioritize(in, Opts{})
+	if res.Census.Total != 1 {
+		t.Fatalf("Census.Total = %d, want 1", res.Census.Total)
+	}
+	if res.Census.Good != 0 {
+		t.Errorf("Census.Good = %d, want 0: a fully-ready workload with Status==Failed is not available", res.Census.Good)
+	}
+}
+
+func TestPrioritize_CensusCountsScaledToZeroAsGood(t *testing.T) {
+	// Ready(0) < Desired(0) is false and workloadStatus(0, 0) is "Scaled Down",
+	// not "Failed", so Flagged() is false and this workload counts as Good
+	// forever. That is the intended reading, not an oversight: an operator who
+	// deliberately scaled a Deployment to zero replicas is not experiencing an
+	// outage, so the SLI must not dent availability for it. Pinned here so the
+	// decision cannot silently flip to "Scaled Down counts as bad" later.
+	in := []Workload{
+		{Namespace: "a", Name: "paused", Kind: "Deployment", Ready: 0, Desired: 0, Status: "Scaled Down"},
+	}
+	res := Prioritize(in, Opts{})
+	if res.Census.Total != 1 {
+		t.Fatalf("Census.Total = %d, want 1", res.Census.Total)
+	}
+	if res.Census.Good != 1 {
+		t.Errorf("Census.Good = %d, want 1: a scaled-to-zero workload is intentional, not an outage", res.Census.Good)
+	}
+}

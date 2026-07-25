@@ -28,6 +28,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Off unless `--slo-target` is set (Helm: `slo.enabled` / `slo.target`), and the
   daemon remains strictly read-only with no new RBAC.
 
+### Fixed
+
+- `watch` SLO burn-rate: the availability SLI was reading `good`/`total` off
+  the **display list** — the workloads `inventory.Prioritize` had already
+  filtered down to what `scan` prints for a human, which drops every healthy,
+  quiet workload. On a healthy cluster that list is empty, so `total` was 0,
+  `slo.Tracker.Observe` treated the reconcile as having nothing to record, and
+  window coverage never left zero: the burn-rate alert could not fire at all,
+  no matter how bad an outage got. A second bug in the same computation scored
+  a workload "good" whenever it had no `Findings`, while the display list (and
+  the issue tracker) key off `Flagged()` — so a workload that was
+  under-replicated or `Failed` but hadn't yet produced a Finding *raised*
+  measured availability instead of lowering it. `inventory.Prioritize` now
+  also computes an unfiltered census (`Good`/`Total`) over every long-running
+  workload before any display filtering, Job and CronJob excluded, with `Good`
+  meaning not `Flagged()`; the watch daemon feeds that to the SLI instead. No
+  change to `scan`'s output or its `--output json` contract. If you deployed
+  the SLO burn-rate feature, its alert was silently inert until this fix —
+  worth confirming your window-coverage series is now climbing rather than
+  flatlined at zero.
+
 ## [0.56.0] - 2026-07-25
 
 ### Added

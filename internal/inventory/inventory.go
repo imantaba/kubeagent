@@ -399,6 +399,24 @@ type Result struct {
 	Workloads      []Workload
 	HiddenRestarts int
 	HiddenCron     int
+	Census         Census `json:"-"`
+}
+
+// Census counts long-running workloads before display filtering: Total is every
+// one of them, Good those that are not Flagged(). The watch daemon's SLI reads
+// this rather than Workloads, which is filtered for display and omits exactly
+// the healthy majority an availability figure needs.
+//
+// Job and CronJob are excluded: neither is expected to be continuously up. A
+// CronJob idle between runs is not unavailable, and a Job that failed once
+// carries its findings forever, permanently denting a figure it has no business
+// influencing.
+//
+// json:"-" because inventory.Result is serialized by `scan --output json`, whose
+// shape is a documented contract. The census feeds the watch SLI, not the report.
+type Census struct {
+	Good  int
+	Total int
 }
 
 // Priority tiers (lower = more urgent).
@@ -416,6 +434,12 @@ const (
 func Prioritize(workloads []Workload, opts Opts) Result {
 	var res Result
 	for _, w := range workloads {
+		if w.Kind != "Job" && w.Kind != "CronJob" {
+			res.Census.Total++
+			if !w.Flagged() {
+				res.Census.Good++
+			}
+		}
 		switch {
 		case w.Kind == "CronJob":
 			switch {

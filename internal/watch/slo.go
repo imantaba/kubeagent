@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/imantaba/kubeagent/internal/alertstate"
-	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/slo"
 )
 
@@ -97,20 +96,6 @@ func (n *sloNotifier) notification(s alertstate.Status, r alertstate.Reason, res
 		out.Issues = []string{sloAlertIssue}
 	}
 	return out
-}
-
-// workloadCensus counts the workloads the evaluation covered and how many of
-// them are clean. "Clean" is len(Findings) == 0 — the same predicate issueKeys
-// uses to decide whether to track a workload, so the SLI and the issue tracker
-// can never disagree about what "broken" means.
-func workloadCensus(res *scan.Result) (good, total int) {
-	for _, w := range res.Inventory.Workloads {
-		total++
-		if len(w.Findings) == 0 {
-			good++
-		}
-	}
-	return good, total
 }
 
 // validateSLOTarget rejects a target that cannot produce a burn rate. 1.0 is

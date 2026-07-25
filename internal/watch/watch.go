@@ -262,8 +262,8 @@ func applyResult(m *metrics, tr *watchstate.Tracker, al *alerter, sloTr *slo.Tra
 	d := tr.Observe(issueKeys(res), now)
 	al.notify(tr, now)
 	if sloTr != nil && sloN != nil {
-		good, total := workloadCensus(res)
-		sloTr.Observe(good, total, now)
+		c := res.Inventory.Census
+		sloTr.Observe(c.Good, c.Total, now)
 		v := sloTr.Verdict(now)
 		m.updateSLO(true, sloTr.Target(), v.Fast, v.Slow)
 		if n, ok := sloN.step(v, now); ok {

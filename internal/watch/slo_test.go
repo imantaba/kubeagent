@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/imantaba/kubeagent/internal/alertstate"
-	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/slo"
@@ -424,60 +423,19 @@ func TestSLONotifier_ResolvedAtZeroWhileFiring(t *testing.T) {
 	}
 }
 
-func TestWorkloadCensus(t *testing.T) {
-	res := &scan.Result{Inventory: inventory.Result{Workloads: []inventory.Workload{
-		{Name: "a"},
-		{Name: "b", Findings: []diagnose.Finding{{Issue: "CrashLoopBackOff"}}},
-		{Name: "c"},
-		{Name: "d", Findings: []diagnose.Finding{{Issue: "OOMKilled"}, {Issue: "Degraded"}}},
-	}}}
-	good, total := workloadCensus(res)
-	if good != 2 || total != 4 {
-		t.Errorf("census = (%d good, %d total), want (2, 4)", good, total)
-	}
-}
-
-// TestWorkloadCensus_AsymmetricSplit guards against workloadCensus counting the
-// wrong side of the clean/dirty split. TestWorkloadCensus above has a
-// 2-clean/2-dirty fixture: inverting the predicate (len(Findings) == 0 written
-// as != 0) would count the dirty workloads as good instead of the clean ones,
-// but the total would still land on 2 — so that test alone cannot catch the
-// predicate being inverted. This fixture is asymmetric (3 clean, 1 dirty) so an
-// inverted predicate produces a visibly wrong count instead of an
-// accidentally-matching one.
-func TestWorkloadCensus_AsymmetricSplit(t *testing.T) {
-	res := &scan.Result{Inventory: inventory.Result{Workloads: []inventory.Workload{
-		{Name: "a"},
-		{Name: "b"},
-		{Name: "c"},
-		{Name: "d", Findings: []diagnose.Finding{{Issue: "CrashLoopBackOff"}}},
-	}}}
-	good, total := workloadCensus(res)
-	if good != 3 || total != 4 {
-		t.Errorf("census = (%d good, %d total), want (3, 4)", good, total)
-	}
-}
-
-func TestWorkloadCensus_EmptyScope(t *testing.T) {
-	good, total := workloadCensus(&scan.Result{})
-	if good != 0 || total != 0 {
-		t.Errorf("census = (%d, %d), want (0, 0) for an empty scope", good, total)
-	}
-}
-
 // TestApplyResult_ErrorDoesNotSample pins the invariant that makes the SLI
 // trustworthy: a failed evaluation is neither "all clear" nor "all broken", so
 // it must not become a sample. Without this the first API blip would count as
 // an outage of the entire estate.
 //
-// The baseline sample must be genuinely clean (workloadCensus must read it as
-// good=total, not good=0) and the error-path result must carry a broken
-// workload (the realistic case: a real scan.Evaluate error can still return a
-// partially populated, unhealthy inventory). Feeding &scan.Result{} on every
-// call — an empty result censuses to (0, 0), which Tracker.Observe treats as
-// "no data" and skips regardless of whether the error check ran — would make
-// this test pass even against an implementation that samples on the error
-// path, because there would be nothing for the mutant sample to corrupt.
+// The baseline sample must be genuinely clean (its Census must read good=total,
+// not good=0) and the error-path result must carry a broken workload (the
+// realistic case: a real scan.Evaluate error can still return a partially
+// populated, unhealthy inventory). Feeding &scan.Result{} on every call — an
+// empty result censuses to (0, 0), which Tracker.Observe treats as "no data"
+// and skips regardless of whether the error check ran — would make this test
+// pass even against an implementation that samples on the error path, because
+// there would be nothing for the mutant sample to corrupt.
 //
 // The timing shape is what makes the coverage assertion discriminate: the
 // healthy baseline sits in the single bucket at sloBase..sloBase+1m. By the
@@ -492,7 +450,13 @@ func TestApplyResult_ErrorDoesNotSample(t *testing.T) {
 	tr := watchstate.New(watchstate.Options{})
 	sloTr, sloN := newSLOTracker(Config{SLOTarget: 0.999, Heartbeat: time.Minute, AlertRepeat: time.Hour})
 
-	healthy := &scan.Result{Inventory: inventory.Result{Workloads: []inventory.Workload{{Name: "a"}}}}
+	// applyResult reads Inventory.Census, not Inventory.Workloads, to feed
+	// Tracker.Observe; Workloads is set here only for realism (a partially
+	// populated inventory), the Census field is what actually drives the sample.
+	healthy := &scan.Result{Inventory: inventory.Result{
+		Workloads: []inventory.Workload{{Name: "a"}},
+		Census:    inventory.Census{Good: 1, Total: 1},
+	}}
 
 	// A healthy sample to establish the baseline, then a minute of healthy time.
 	captureLog(t, func() {
@@ -654,7 +618,10 @@ func TestApplyResult_FastAndSlowWindowsDoNotSwap(t *testing.T) {
 	tr := watchstate.New(watchstate.Options{})
 	sloTr, sloN := newSLOTracker(Config{SLOTarget: 0.999, Heartbeat: time.Minute, AlertRepeat: time.Hour})
 
-	healthy := &scan.Result{Inventory: inventory.Result{Workloads: []inventory.Workload{{Name: "a"}}}}
+	healthy := &scan.Result{Inventory: inventory.Result{
+		Workloads: []inventory.Workload{{Name: "a"}},
+		Census:    inventory.Census{Good: 1, Total: 1},
+	}}
 	broken := sampleResult()
 
 	now := sloBase
@@ -706,7 +673,10 @@ func TestApplyResult_RendersSLOSeriesThroughTheRealPath(t *testing.T) {
 	tr := watchstate.New(watchstate.Options{})
 	sloTr, sloN := newSLOTracker(Config{SLOTarget: 0.999, Heartbeat: time.Minute, AlertRepeat: time.Hour})
 
-	healthy := &scan.Result{Inventory: inventory.Result{Workloads: []inventory.Workload{{Name: "a"}}}}
+	healthy := &scan.Result{Inventory: inventory.Result{
+		Workloads: []inventory.Workload{{Name: "a"}},
+		Census:    inventory.Census{Good: 1, Total: 1},
+	}}
 	captureLog(t, func() {
 		applyResult(m, tr, nil, sloTr, sloN, healthy, time.Millisecond, sloBase, nil)
 	})

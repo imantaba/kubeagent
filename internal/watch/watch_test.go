@@ -24,7 +24,9 @@ import (
 	"github.com/imantaba/kubeagent/internal/alert"
 	"github.com/imantaba/kubeagent/internal/alertstate"
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
+	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/scan"
+	"github.com/imantaba/kubeagent/internal/slo"
 	"github.com/imantaba/kubeagent/internal/watchstate"
 )
 
@@ -443,8 +445,8 @@ func TestApplyResult_SLOBurnReachesTheSink(t *testing.T) {
 // broken-for-6h fixture as TestApplyResult_SLOBurnReachesTheSink above and
 // asserts the captured log actually contains the NEW burn line logSLO builds.
 //
-// The fixture's single workload carries a Finding on every reconcile, so
-// workloadCensus reports good=0 for the whole run: Availability is exactly 0
+// The fixture's single workload carries a Finding on every reconcile, so its
+// Census reports good=0 for the whole run: Availability is exactly 0
 // from the first broken sample onward, which pins BurnRate at exactly
 // (1-0)/(1-0.999) = 1000 for both windows from the moment either window holds
 // any data at all. That value does not drift as coverage keeps climbing
@@ -549,5 +551,33 @@ func TestRun_ValidatesSLOTargetBeforeStartingTheMetricsServer(t *testing.T) {
 			t.Fatal("metrics server accepted a connection after a rejected --slo-target; validation must run before ListenAndServe")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestApplyResult_HealthyClusterStillRecordsASample(t *testing.T) {
+	// The defect this fixes: on a healthy cluster the display-filtered workload
+	// list is empty, so the old census reported total==0, Observe recorded
+	// nothing, and window coverage never left zero — the coverage gate could
+	// never open and the daemon could never page.
+	m := newMetrics()
+	tr := watchstate.New(watchstate.Options{})
+	sloTr := slo.New(slo.Options{Target: 0.999, MaxSampleGap: 2 * time.Minute})
+	sloN := newSLONotifier(time.Hour)
+
+	var res scan.Result
+	res.Health.Verdict = "Healthy"
+	res.Inventory.Census = inventory.Census{Good: 5, Total: 5}
+	// Workloads deliberately left empty: that is what a healthy cluster looks like.
+
+	t0 := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
+	applyResult(m, tr, nil, sloTr, sloN, &res, 0, t0, nil)
+	applyResult(m, tr, nil, sloTr, sloN, &res, 0, t0.Add(30*time.Second), nil)
+
+	got := sloTr.Report(slo.Fast, t0.Add(30*time.Second))
+	if got.Coverage <= 0 {
+		t.Errorf("Coverage = %v, want > 0: a healthy cluster must accumulate window coverage", got.Coverage)
+	}
+	if got.Availability != 1 {
+		t.Errorf("Availability = %v, want 1 on an all-good census", got.Availability)
 	}
 }

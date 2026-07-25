@@ -163,9 +163,10 @@ func TestObserve_RingWrapsWithoutReadingStaleSlots(t *testing.T) {
 	tr.Observe(1, 1, base)
 	tr.Observe(1, 1, base.Add(time.Minute)) // 60s of weight at base+0..1m
 
-	// Seven hours later — past the 6h ring — write one more sample. The old slot
-	// must read as empty, not as live data from a previous lap.
-	late := base.Add(7 * time.Hour)
+	// Exactly one full lap later, so the new writes land on the SAME ring slots
+	// the first two used. Those slots must read as empty for the old timestamps,
+	// not as live data from the previous lap.
+	late := base.Add(6 * time.Hour)
 	tr.Observe(1, 1, late)
 	tr.Observe(1, 1, late.Add(time.Minute))
 
@@ -338,6 +339,13 @@ func (t *Tracker) slot(b time.Time) *bucket {
 // sum totals the workload-seconds recorded in [from, to). Buckets whose start
 // does not match the boundary being asked for belong to an earlier lap and read
 // as empty.
+//
+// Edge buckets are counted whole: a window edge falling mid-bucket pulls in that
+// bucket's full weight. With one-minute buckets that is at most ~1.7% of the
+// one-hour window and ~0.3% of the six-hour one — far below the resolution of
+// the 14.4x/6x thresholds this feeds, and not worth the arithmetic to split.
+// coverage() does prorate its edges, because a partial bucket at the edge of a
+// mostly-empty window is exactly the case the coverage gate has to get right.
 func (t *Tracker) sum(from, to time.Time) (good, total float64) {
 	for b := from.Truncate(bucketWidth); b.Before(to); b = b.Add(bucketWidth) {
 		slot := t.slot(b)
@@ -532,12 +540,15 @@ func TestVerdict_EachConditionIsLoadBearing(t *testing.T) {
 			name:     "slow burn below threshold",
 			withheld: "slow.BurnRate >= 6",
 			build: func() (*Tracker, time.Time) {
-				// 6h healthy, then 1h at 5% bad. Fast burn 50x; the slow window
-				// averages the breakage down to well under 6x.
+				// 6h healthy, then 1h at 2% bad. Fast burn is 0.02/0.001 = 20x,
+				// past 14.4. The slow window spreads that one bad hour over six,
+				// giving 0.02/6/0.001 = 3.33x, under 6. Only the slow threshold
+				// is unmet. (5% bad would give a slow burn of 8.33x and still
+				// fire — the margin here is deliberately narrow.)
 				tr := New(Options{Target: 0.999})
 				now := fill(tr, base, 6*time.Hour, 0, 100)
 				tr.last = time.Time{}
-				return tr, fill(tr, now, time.Hour, 5, 100)
+				return tr, fill(tr, now, time.Hour, 2, 100)
 			},
 		},
 		{

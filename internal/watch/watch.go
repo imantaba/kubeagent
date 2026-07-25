@@ -15,6 +15,8 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 
+	"github.com/imantaba/kubeagent/internal/alert"
+	"github.com/imantaba/kubeagent/internal/alertstate"
 	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/watchstate"
 )
@@ -39,6 +41,9 @@ type Config struct {
 	Certs                   bool
 	CertWarnDays            int
 	WebhookTimeoutThreshold int32
+	AlertURL                string        // empty disables alerting entirely
+	AlertFormat             string        // "json" | "slack" | "alertmanager"
+	AlertRepeat             time.Duration // re-send interval for still-firing alerts
 }
 
 // Run starts the metrics server and the informer-driven control loop, blocking
@@ -97,11 +102,18 @@ func Run(ctx context.Context, client kubernetes.Interface, cfg Config) error {
 	log.Printf("kubeagent: watching cluster (namespace=%q, heartbeat=%s); metrics on %s", scopeLabel(cfg.Namespace), cfg.Heartbeat, cfg.MetricsAddr)
 
 	opts := scan.Options{Namespace: cfg.Namespace, IncludeCron: cfg.IncludeCron, IncludeRestarts: cfg.IncludeRestarts, DiskUsage: cfg.DiskUsage, DiskThreshold: cfg.DiskThreshold, QuotaThreshold: cfg.QuotaThreshold, NodeHeartbeatThreshold: cfg.NodeHeartbeatThreshold, ExpectedNodes: cfg.ExpectedNodes, KubeletHealth: cfg.KubeletHealth, ControlPlaneHealth: cfg.ControlPlaneHealth, DNSHealth: cfg.DNSHealth, DNSServfailRatio: cfg.DNSServfailRatio, Certs: cfg.Certs, CertWarnDays: cfg.CertWarnDays, WebhookTimeoutThreshold: cfg.WebhookTimeoutThreshold}
+	al, err := newAlerter(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	if al != nil {
+		defer al.sink.Close()
+	}
 	tr := watchstate.New(watchstate.Options{})
 	reconcile := func() {
 		start := time.Now()
 		res, err := scan.Evaluate(ctx, client, opts)
-		applyResult(m, tr, &res, time.Since(start), time.Now(), err)
+		applyResult(m, tr, al, &res, time.Since(start), time.Now(), err)
 	}
 	reconcile() // initial snapshot
 	m.markReady()
@@ -141,18 +153,64 @@ func scopeLabel(ns string) string {
 	return ns
 }
 
-// applyResult folds one evaluation into the metrics and the issue tracker, and
-// logs whatever changed. A failed evaluation never reaches the tracker: an
-// evaluation error is not "all clear", and treating it as one would resolve every
-// tracked issue, then re-fire them all on the next success.
-func applyResult(m *metrics, tr *watchstate.Tracker, res *scan.Result, dur time.Duration, now time.Time, err error) {
+// alerter routes tracker state to the outbound sink. A nil *alerter means no
+// webhook is configured, which is the default: every method is a no-op, so the
+// reconcile loop needs no conditional.
+type alerter struct {
+	roller *alertstate.Roller
+	sink   *alert.Sink
+}
+
+// notify rolls the tracker's active issues up to per-object alerts and hands the
+// resulting notifications to the sink. Enqueue never blocks.
+func (a *alerter) notify(tr *watchstate.Tracker, now time.Time) {
+	if a == nil {
+		return
+	}
+	for _, n := range a.roller.Roll(tr.Active(), now) {
+		a.sink.Enqueue(n)
+	}
+}
+
+// stats returns the sink's delivery counters, or the zero value when alerting is off.
+func (a *alerter) stats() alert.Stats {
+	if a == nil {
+		return alert.Stats{}
+	}
+	return a.sink.Stats()
+}
+
+// newAlerter builds the alerter from the config, returning nil when no webhook is
+// configured. The URL is a credential: only scheme://host is ever logged.
+func newAlerter(ctx context.Context, cfg Config) (*alerter, error) {
+	if cfg.AlertURL == "" {
+		return nil, nil
+	}
+	format := alert.Format(cfg.AlertFormat)
+	sink, err := alert.New(alert.Config{URL: cfg.AlertURL, Format: format, Repeat: cfg.AlertRepeat}, nil)
+	if err != nil {
+		return nil, err
+	}
+	sink.Start(ctx)
+	log.Printf("kubeagent: alerting enabled (format=%s, repeat=%s, endpoint=%s)", format, cfg.AlertRepeat, alert.RedactURL(cfg.AlertURL))
+	return &alerter{roller: alertstate.New(alertstate.Options{Repeat: cfg.AlertRepeat}), sink: sink}, nil
+}
+
+// applyResult folds one evaluation into the metrics, the issue tracker, and the
+// outbound alerter, and logs whatever changed. A failed evaluation never reaches
+// the tracker: an evaluation error is not "all clear", and treating it as one
+// would resolve every tracked issue, then re-fire them all on the next success —
+// and, now that alerting exists, page the on-call for an API blip.
+func applyResult(m *metrics, tr *watchstate.Tracker, al *alerter, res *scan.Result, dur time.Duration, now time.Time, err error) {
 	m.update(res, dur, now, err)
 	if err != nil {
 		log.Printf("kubeagent: evaluation error: %v", err)
 		return
 	}
 	d := tr.Observe(issueKeys(res), now)
+	al.notify(tr, now)
 	m.updateIssues(tr, now)
+	m.updateAlerts(al.stats())
 	logDelta(res, d, len(tr.Active()), tr.FlapWindow())
 }
 

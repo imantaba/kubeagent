@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/imantaba/kubeagent/internal/alert"
 	"github.com/imantaba/kubeagent/internal/ingresshealth"
 	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/svchealth"
@@ -87,6 +88,7 @@ type metrics struct {
 	certsExpired          int
 	certsExpiring         int
 	issues                issueSnapshot
+	alerts                alert.Stats
 }
 
 func newMetrics() *metrics { return &metrics{findings: map[string]int{}} }
@@ -178,6 +180,13 @@ func (m *metrics) updateIssues(tr *watchstate.Tracker, now time.Time) {
 	m.issues = issueSnapshot{At: now, Active: tr.Active(), Resolved: tr.RecentlyResolved(), Stats: tr.Stats()}
 }
 
+// updateAlerts records the sink's delivery counters for rendering.
+func (m *metrics) updateAlerts(s alert.Stats) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.alerts = s
+}
+
 func (m *metrics) render() string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -260,6 +269,15 @@ func (m *metrics) render() string {
 		gauge("kubeagent_certificates_expired", "TLS certificates already expired (opt-in --certs)", float64(m.certsExpired))
 		gauge("kubeagent_certificates_expiring", "TLS certificates expiring within the warn window (opt-in --certs)", float64(m.certsExpiring))
 	}
+	fmt.Fprintf(&b, "# HELP kubeagent_alerts_sent_total Alert notifications delivered since start\n# TYPE kubeagent_alerts_sent_total counter\n")
+	fmt.Fprintf(&b, "kubeagent_alerts_sent_total{status=%q,outcome=%q} %d\n", "firing", "ok", m.alerts.FiringOK)
+	fmt.Fprintf(&b, "kubeagent_alerts_sent_total{status=%q,outcome=%q} %d\n", "firing", "failed", m.alerts.FiringFailed)
+	fmt.Fprintf(&b, "kubeagent_alerts_sent_total{status=%q,outcome=%q} %d\n", "resolved", "ok", m.alerts.ResolvedOK)
+	fmt.Fprintf(&b, "kubeagent_alerts_sent_total{status=%q,outcome=%q} %d\n", "resolved", "failed", m.alerts.ResolvedFailed)
+	fmt.Fprintf(&b, "# HELP kubeagent_alerts_dropped_total Alert notifications dropped without delivery\n# TYPE kubeagent_alerts_dropped_total counter\n")
+	fmt.Fprintf(&b, "kubeagent_alerts_dropped_total{reason=%q} %d\n", "queue_full", m.alerts.DroppedQueueFull)
+	fmt.Fprintf(&b, "kubeagent_alerts_dropped_total{reason=%q} %d\n", "retries_exhausted", m.alerts.DroppedRetriesExhausted)
+	gauge("kubeagent_alert_last_success_timestamp_seconds", "Unix time of the last successful alert delivery (0 if none)", float64(m.alerts.LastSuccessUnix))
 	gauge("kubeagent_last_scan_timestamp_seconds", "Unix time of the last evaluation", float64(m.lastScanUnix))
 	gauge("kubeagent_scan_duration_seconds", "Duration of the last evaluation in seconds", m.scanSeconds)
 	counter("kubeagent_scans_total", "Total evaluations run", m.scansTotal)

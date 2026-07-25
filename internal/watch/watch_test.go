@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"log"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,6 +19,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
+	"github.com/imantaba/kubeagent/internal/alert"
+	"github.com/imantaba/kubeagent/internal/alertstate"
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/watchstate"
@@ -41,14 +46,14 @@ func TestApplyResult_EvaluationErrorNeverReachesTheTracker(t *testing.T) {
 	tr := watchstate.New(watchstate.Options{})
 	at := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
 
-	captureLog(t, func() { applyResult(m, tr, sampleResult(), time.Millisecond, at, nil) })
+	captureLog(t, func() { applyResult(m, tr, nil, sampleResult(), time.Millisecond, at, nil) })
 	before := len(tr.Active())
 	if before == 0 {
 		t.Fatal("fixture must produce active issues")
 	}
 
 	out := captureLog(t, func() {
-		applyResult(m, tr, &scan.Result{}, time.Millisecond, at.Add(time.Minute), errors.New("boom"))
+		applyResult(m, tr, nil, &scan.Result{}, time.Millisecond, at.Add(time.Minute), errors.New("boom"))
 	})
 	if got := len(tr.Active()); got != before {
 		t.Errorf("active issues %d -> %d; an evaluation error must resolve nothing", before, got)
@@ -66,7 +71,7 @@ func TestApplyResult_LogsTransitionsAndStaysQuietInSteadyState(t *testing.T) {
 	tr := watchstate.New(watchstate.Options{})
 	at := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
 
-	first := captureLog(t, func() { applyResult(m, tr, sampleResult(), time.Millisecond, at, nil) })
+	first := captureLog(t, func() { applyResult(m, tr, nil, sampleResult(), time.Millisecond, at, nil) })
 	if !strings.Contains(first, "NEW Deployment/shop/web:CrashLoopBackOff") {
 		t.Errorf("first sighting must log a NEW line, got %q", first)
 	}
@@ -74,13 +79,13 @@ func TestApplyResult_LogsTransitionsAndStaysQuietInSteadyState(t *testing.T) {
 		t.Errorf("summary line missing from %q", first)
 	}
 
-	steady := captureLog(t, func() { applyResult(m, tr, sampleResult(), time.Millisecond, at.Add(time.Minute), nil) })
+	steady := captureLog(t, func() { applyResult(m, tr, nil, sampleResult(), time.Millisecond, at.Add(time.Minute), nil) })
 	if steady != "" {
 		t.Errorf("an unchanged reconcile must log nothing, got %q", steady)
 	}
 
 	cleared := captureLog(t, func() {
-		applyResult(m, tr, &scan.Result{}, time.Millisecond, at.Add(2*time.Minute), nil)
+		applyResult(m, tr, nil, &scan.Result{}, time.Millisecond, at.Add(2*time.Minute), nil)
 	})
 	if !strings.Contains(cleared, "RESOLVED Deployment/shop/web:CrashLoopBackOff (fired for 2m0s)") {
 		t.Errorf("clearing must log a RESOLVED line with the firing duration, got %q", cleared)
@@ -175,5 +180,102 @@ func TestRun_GracefulShutdown(t *testing.T) {
 	_, connErr := http.Get(readyz) //nolint:noctx
 	if connErr == nil {
 		t.Error("expected connection refused after shutdown, but GET /readyz succeeded")
+	}
+}
+
+// TestAlerter_NilIsDisabled pins that alerting is off by default: a nil *alerter
+// is the "no webhook configured" case and must be inert, not a panic.
+func TestAlerter_NilIsDisabled(t *testing.T) {
+	var al *alerter
+	tr := watchstate.New(watchstate.Options{})
+	tr.Observe([]watchstate.Key{{Kind: "Deployment", Namespace: "shop", Name: "web", Issue: "Degraded"}}, time.Now())
+	al.notify(tr, time.Now()) // must not panic
+	if got := al.stats(); got != (alert.Stats{}) {
+		t.Errorf("nil alerter stats = %+v, want the zero value", got)
+	}
+}
+
+// TestApplyResult_EvaluationErrorSendsNoAlert extends the tracker invariant to the
+// outbound path: one API blip must never page the on-call.
+func TestApplyResult_EvaluationErrorSendsNoAlert(t *testing.T) {
+	var mu sync.Mutex
+	posts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		posts++
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	sink, err := alert.New(alert.Config{URL: srv.URL, Format: alert.FormatJSON, Repeat: time.Hour}, nil)
+	if err != nil {
+		t.Fatalf("alert.New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	sink.Start(ctx)
+	al := &alerter{roller: alertstate.New(alertstate.Options{Repeat: time.Hour}), sink: sink}
+
+	m := newMetrics()
+	tr := watchstate.New(watchstate.Options{})
+	at := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
+
+	captureLog(t, func() {
+		applyResult(m, tr, al, &scan.Result{}, time.Millisecond, at, errors.New("boom"))
+	})
+	cancel()
+	sink.Close()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if posts != 0 {
+		t.Errorf("a failed evaluation produced %d alert POSTs, want 0", posts)
+	}
+}
+
+// TestApplyResult_AlertsOnRealFindings is the happy path: a successful evaluation
+// with findings reaches the receiver.
+func TestApplyResult_AlertsOnRealFindings(t *testing.T) {
+	var mu sync.Mutex
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies = append(bodies, string(b))
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	sink, err := alert.New(alert.Config{URL: srv.URL, Format: alert.FormatJSON, Repeat: time.Hour}, nil)
+	if err != nil {
+		t.Fatalf("alert.New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	sink.Start(ctx)
+	al := &alerter{roller: alertstate.New(alertstate.Options{Repeat: time.Hour}), sink: sink}
+
+	m := newMetrics()
+	tr := watchstate.New(watchstate.Options{})
+	at := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
+	captureLog(t, func() { applyResult(m, tr, al, sampleResult(), time.Millisecond, at, nil) })
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if sink.Stats().FiringOK > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	sink.Close()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(bodies) == 0 {
+		t.Fatal("no alert reached the receiver")
+	}
+	if !strings.Contains(bodies[0], `"status":"firing"`) {
+		t.Errorf("first body = %s, want a firing notification", bodies[0])
 	}
 }

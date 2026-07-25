@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/imantaba/kubeagent/internal/alert"
 	"github.com/imantaba/kubeagent/internal/certhealth"
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/controlplane"
@@ -301,6 +302,47 @@ func TestMetrics_IssuesEndpointEmptyArrays(t *testing.T) {
 	for _, want := range []string{`"active":[]`, `"resolved":[]`} {
 		if !strings.Contains(string(raw), want) {
 			t.Errorf("empty tracker must render %s, got %s", want, raw)
+		}
+	}
+}
+
+// TestRender_AlertSeriesAlwaysPresent pins that the three alert series render even
+// when alerting is disabled, so a dashboard does not break when it is switched on.
+func TestRender_AlertSeriesAlwaysPresent(t *testing.T) {
+	m := newMetrics()
+	out := m.render()
+	for _, want := range []string{
+		`kubeagent_alerts_sent_total{status="firing",outcome="ok"} 0`,
+		`kubeagent_alerts_sent_total{status="firing",outcome="failed"} 0`,
+		`kubeagent_alerts_sent_total{status="resolved",outcome="ok"} 0`,
+		`kubeagent_alerts_sent_total{status="resolved",outcome="failed"} 0`,
+		`kubeagent_alerts_dropped_total{reason="queue_full"} 0`,
+		`kubeagent_alerts_dropped_total{reason="retries_exhausted"} 0`,
+		"kubeagent_alert_last_success_timestamp_seconds 0",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing series %q", want)
+		}
+	}
+}
+
+func TestUpdateAlerts_RendersTheCounters(t *testing.T) {
+	m := newMetrics()
+	m.updateAlerts(alert.Stats{
+		FiringOK: 3, FiringFailed: 1, ResolvedOK: 2, ResolvedFailed: 0,
+		DroppedQueueFull: 7, DroppedRetriesExhausted: 4, LastSuccessUnix: 1770000000,
+	})
+	out := m.render()
+	for _, want := range []string{
+		`kubeagent_alerts_sent_total{status="firing",outcome="ok"} 3`,
+		`kubeagent_alerts_sent_total{status="firing",outcome="failed"} 1`,
+		`kubeagent_alerts_sent_total{status="resolved",outcome="ok"} 2`,
+		`kubeagent_alerts_dropped_total{reason="queue_full"} 7`,
+		`kubeagent_alerts_dropped_total{reason="retries_exhausted"} 4`,
+		"kubeagent_alert_last_success_timestamp_seconds 1.77e+09",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing series %q in:\n%s", want, out)
 		}
 	}
 }

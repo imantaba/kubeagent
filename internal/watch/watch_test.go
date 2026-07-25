@@ -396,12 +396,31 @@ func TestApplyResult_SLOBurnReachesTheSink(t *testing.T) {
 		captureLog(t, func() { applyResult(m, tr, al, sloTr, sloN, broken, time.Millisecond, now, nil) })
 	}
 
-	deadline := time.Now().Add(3 * time.Second)
+	// hasSLOIdentity is shared by the wait loop and the final assertion below so
+	// the two can never drift apart. That drift was the flake: applyResult logs
+	// object-level notifications (al.notify) before the SLO one (al.enqueue), so
+	// waiting on "any body has arrived" let the test cancel the context and call
+	// sink.Close() while the SLO body was still sitting behind them in the
+	// queue — Close only waits for the sender goroutine to exit, it does not
+	// drain the queue first, and deliver() then built its request against the
+	// already-cancelled context and dropped it. Waiting on the exact predicate
+	// the assertion checks means the SLO body is guaranteed to have already
+	// arrived by the time cancel/Close run.
+	hasSLOIdentity := func(bs []string) bool {
+		for _, b := range bs {
+			if strings.Contains(b, `"kind":"SLO"`) && strings.Contains(b, `"name":"error-budget"`) {
+				return true
+			}
+		}
+		return false
+	}
+
+	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		mu.Lock()
-		n := len(bodies)
+		arrived := hasSLOIdentity(bodies)
 		mu.Unlock()
-		if n > 0 {
+		if arrived {
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
@@ -411,15 +430,52 @@ func TestApplyResult_SLOBurnReachesTheSink(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	found := false
-	for _, b := range bodies {
-		if strings.Contains(b, `"kind":"SLO"`) && strings.Contains(b, `"name":"error-budget"`) {
-			found = true
-			break
-		}
-	}
-	if !found {
+	if !hasSLOIdentity(bodies) {
 		t.Errorf("no delivered notification carried the SLO/error-budget identity across %d bodies", len(bodies))
+	}
+}
+
+// TestApplyResult_LogsTheBurnTransition proves applyResult itself calls
+// logSLO on the firing edge, not just sloN.step to decide whether to. Every
+// captureLog call in this file exists only to silence log output during a
+// test, not to inspect it — deleting the logSLO(n, v) call in applyResult's
+// SLO block fails no other test. This drives applyResult with the same
+// broken-for-6h fixture as TestApplyResult_SLOBurnReachesTheSink above and
+// asserts the captured log actually contains the NEW burn line logSLO builds.
+//
+// The fixture's single workload carries a Finding on every reconcile, so
+// workloadCensus reports good=0 for the whole run: Availability is exactly 0
+// from the first broken sample onward, which pins BurnRate at exactly
+// (1-0)/(1-0.999) = 1000 for both windows from the moment either window holds
+// any data at all. That value does not drift as coverage keeps climbing
+// toward 1 over the run, so it can be asserted as a literal here instead of
+// read back off the tracker after the fact — unlike coverage, which does
+// drift with exactly when the firing edge lands and is deliberately not
+// asserted on.
+func TestApplyResult_LogsTheBurnTransition(t *testing.T) {
+	m := newMetrics()
+	tr := watchstate.New(watchstate.Options{})
+	sloTr, sloN := newSLOTracker(Config{SLOTarget: 0.999, Heartbeat: time.Minute, AlertRepeat: time.Hour})
+
+	broken := sampleResult() // one broken workload, unchanged for the whole run
+
+	now := sloBase
+	out := captureLog(t, func() {
+		applyResult(m, tr, nil, sloTr, sloN, broken, time.Millisecond, now, nil)
+		for elapsed := time.Duration(0); elapsed < 6*time.Hour; elapsed += time.Minute {
+			now = now.Add(time.Minute)
+			applyResult(m, tr, nil, sloTr, sloN, broken, time.Millisecond, now, nil)
+		}
+	})
+
+	if v := sloTr.Verdict(now); !v.Firing {
+		t.Fatalf("test setup did not cross the burn thresholds by the end of the run (fast=%.1fx/%.0f%% slow=%.1fx/%.0f%%); fixture needs adjusting",
+			v.Fast.BurnRate, v.Fast.Coverage*100, v.Slow.BurnRate, v.Slow.Coverage*100)
+	}
+
+	want := "kubeagent: NEW SLO/error-budget:ErrorBudgetBurn (fast=1000.0x slow=1000.0x"
+	if !strings.Contains(out, want) {
+		t.Errorf("captured log did not contain the burn transition line starting %q; got:\n%s", want, out)
 	}
 }
 

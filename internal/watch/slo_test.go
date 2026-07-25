@@ -667,3 +667,38 @@ func TestApplyResult_FastAndSlowWindowsDoNotSwap(t *testing.T) {
 			m.slo.Slow.Availability, wantSlow.Availability)
 	}
 }
+
+// TestApplyResult_RendersSLOSeriesThroughTheRealPath drives applyResult
+// itself with SLO tracking configured on, rather than calling m.updateSLO
+// directly the way every TestRender_SLO* test above does. Those tests
+// hardcode the enabled argument as a literal true or false and never go
+// through applyResult's own m.updateSLO(true, sloTr.Target(), v.Fast, v.Slow)
+// call site, so none of them would notice that literal flipped to false:
+// applyResult would keep computing the verdict and calling updateSLO exactly
+// as before, but every kubeagent_slo_* series would silently stop rendering
+// in production while every existing test in this file stayed green.
+//
+// One reconcile is enough: sloTr.Target() is read straight from the tracker's
+// config, independent of any sample having landed yet, so
+// kubeagent_slo_target_ratio renders (or does not) purely on the strength of
+// the enabled flag applyResult passes through.
+func TestApplyResult_RendersSLOSeriesThroughTheRealPath(t *testing.T) {
+	m := newMetrics()
+	tr := watchstate.New(watchstate.Options{})
+	sloTr, sloN := newSLOTracker(Config{SLOTarget: 0.999, Heartbeat: time.Minute, AlertRepeat: time.Hour})
+
+	healthy := &scan.Result{Inventory: inventory.Result{Workloads: []inventory.Workload{{Name: "a"}}}}
+	captureLog(t, func() {
+		applyResult(m, tr, nil, sloTr, sloN, healthy, time.Millisecond, sloBase, nil)
+	})
+
+	out := m.render()
+	// Anchored on the line terminator for the same reason as
+	// TestRender_SLOSeries: "0.999" ending the line is exactly the configured
+	// target, but an unanchored Contains would also pass against an unrelated
+	// rendered value that merely starts with it.
+	want := "kubeagent_slo_target_ratio 0.999\n"
+	if !strings.Contains(out, want) {
+		t.Errorf("applyResult with SLO tracking enabled did not render %q through the real m.updateSLO call site; got:\n%s", want, out)
+	}
+}

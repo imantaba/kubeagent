@@ -54,7 +54,7 @@ The key is read from the environment only; it is never written to the report.
 | 9 | Faulty rollout | `kubectl set image` to a bad tag | ImagePullBackOff |
 | 10 | Credential leak | ConfigMap with a fake `AKIA…` value | `--lint-secrets` warning (location + pattern only) |
 | 11 | Kubelet health probe | `systemctl stop containerd` on a worker (kubelet stays up) | node NotReady (base scan); `--kubelet-health` probes every kubelet via `nodes/proxy` and does **not** false-positive — kubelet `/healthz` stays `ok` (only ping/log/syncloop, not the runtime) — a **boundary** |
-| 12 | Stateful watch daemon | run `kubeagent watch` on a loopback metrics address, then inject and repair the bad-image outage | one `NEW` transition line, one `RESOLVED` line with the firing duration, and the incident on `/issues` (active while firing, under `resolved` afterwards) |
+| 12 | Stateful watch daemon | run `kubeagent watch` on a loopback metrics address with alerting pointed at a local receiver, then inject and repair the bad-image outage | one `NEW` transition line, one `RESOLVED` line with the firing duration, the incident on `/issues` (active while firing, under `resolved` afterwards), and exactly one resolved alert delivered — the firing alert survives the whole failure-mode walk |
 
 ### Validating `--fix` (remediation)
 

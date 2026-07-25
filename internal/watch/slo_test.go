@@ -1,12 +1,21 @@
 package watch
 
 import (
+	"errors"
+	"io"
+	"log"
+	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/imantaba/kubeagent/internal/alertstate"
+	"github.com/imantaba/kubeagent/internal/diagnose"
+	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/slo"
+	"github.com/imantaba/kubeagent/internal/watchstate"
 )
 
 // sloBase is a fixed instant for the SLO tests. Deliberately not named `base`:
@@ -411,5 +420,250 @@ func TestSLONotifier_ResolvedAtZeroWhileFiring(t *testing.T) {
 	}
 	if !got.ResolvedAt.IsZero() {
 		t.Errorf("ResolvedAt = %v, want the zero time on a repeat notification", got.ResolvedAt)
+	}
+}
+
+func TestWorkloadCensus(t *testing.T) {
+	res := &scan.Result{Inventory: inventory.Result{Workloads: []inventory.Workload{
+		{Name: "a"},
+		{Name: "b", Findings: []diagnose.Finding{{Issue: "CrashLoopBackOff"}}},
+		{Name: "c"},
+		{Name: "d", Findings: []diagnose.Finding{{Issue: "OOMKilled"}, {Issue: "Degraded"}}},
+	}}}
+	good, total := workloadCensus(res)
+	if good != 2 || total != 4 {
+		t.Errorf("census = (%d good, %d total), want (2, 4)", good, total)
+	}
+}
+
+// TestWorkloadCensus_AsymmetricSplit guards against workloadCensus counting the
+// wrong side of the clean/dirty split. TestWorkloadCensus above has a
+// 2-clean/2-dirty fixture: inverting the predicate (len(Findings) == 0 written
+// as != 0) would count the dirty workloads as good instead of the clean ones,
+// but the total would still land on 2 — so that test alone cannot catch the
+// predicate being inverted. This fixture is asymmetric (3 clean, 1 dirty) so an
+// inverted predicate produces a visibly wrong count instead of an
+// accidentally-matching one.
+func TestWorkloadCensus_AsymmetricSplit(t *testing.T) {
+	res := &scan.Result{Inventory: inventory.Result{Workloads: []inventory.Workload{
+		{Name: "a"},
+		{Name: "b"},
+		{Name: "c"},
+		{Name: "d", Findings: []diagnose.Finding{{Issue: "CrashLoopBackOff"}}},
+	}}}
+	good, total := workloadCensus(res)
+	if good != 3 || total != 4 {
+		t.Errorf("census = (%d good, %d total), want (3, 4)", good, total)
+	}
+}
+
+func TestWorkloadCensus_EmptyScope(t *testing.T) {
+	good, total := workloadCensus(&scan.Result{})
+	if good != 0 || total != 0 {
+		t.Errorf("census = (%d, %d), want (0, 0) for an empty scope", good, total)
+	}
+}
+
+// TestApplyResult_ErrorDoesNotSample pins the invariant that makes the SLI
+// trustworthy: a failed evaluation is neither "all clear" nor "all broken", so
+// it must not become a sample. Without this the first API blip would count as
+// an outage of the entire estate.
+//
+// The baseline sample must be genuinely clean (workloadCensus must read it as
+// good=total, not good=0) and the error-path result must carry a broken
+// workload (the realistic case: a real scan.Evaluate error can still return a
+// partially populated, unhealthy inventory). Feeding &scan.Result{} on every
+// call — an empty result censuses to (0, 0), which Tracker.Observe treats as
+// "no data" and skips regardless of whether the error check ran — would make
+// this test pass even against an implementation that samples on the error
+// path, because there would be nothing for the mutant sample to corrupt.
+//
+// The timing shape is what makes the coverage assertion discriminate: the
+// healthy baseline sits in the single bucket at sloBase..sloBase+1m. By the
+// time the fast (1h) report is read at sloBase+62m, that bucket has slid
+// entirely out of the window, so a correct implementation reports coverage
+// exactly 0. A mutant that samples errors would instead fill 61 more minutes of
+// (bad) data into the ring, driving coverage back up toward 1 and availability
+// down from 1 — either symptom alone catches the mutant, but Coverage's exact
+// value (0, not merely "less than before") is the tightest check.
+func TestApplyResult_ErrorDoesNotSample(t *testing.T) {
+	m := newMetrics()
+	tr := watchstate.New(watchstate.Options{})
+	sloTr, sloN := newSLOTracker(Config{SLOTarget: 0.999, Heartbeat: time.Minute, AlertRepeat: time.Hour})
+
+	healthy := &scan.Result{Inventory: inventory.Result{Workloads: []inventory.Workload{{Name: "a"}}}}
+
+	// A healthy sample to establish the baseline, then a minute of healthy time.
+	captureLog(t, func() {
+		applyResult(m, tr, nil, sloTr, sloN, healthy, time.Millisecond, sloBase, nil)
+	})
+	captureLog(t, func() {
+		applyResult(m, tr, nil, sloTr, sloN, healthy, time.Millisecond, sloBase.Add(time.Minute), nil)
+	})
+	before := sloTr.Report(slo.Fast, sloBase.Add(time.Minute))
+
+	// An hour of nothing but errors, each carrying a broken workload in the
+	// result — the dangerous case a mutant could turn into an "all broken"
+	// sample.
+	for i := 2; i <= 62; i++ {
+		captureLog(t, func() {
+			applyResult(m, tr, nil, sloTr, sloN, sampleResult(), time.Millisecond,
+				sloBase.Add(time.Duration(i)*time.Minute), errors.New("boom"))
+		})
+	}
+	after := sloTr.Report(slo.Fast, sloBase.Add(62*time.Minute))
+
+	if after.Availability != 1 {
+		t.Errorf("availability = %v after an hour of errors, want 1: errors must not be sampled", after.Availability)
+	}
+	if after.Coverage != 0 {
+		t.Errorf("coverage = %v, want exactly 0: the healthy baseline must have slid out of the 1h window with nothing behind it", after.Coverage)
+	}
+	if after.Coverage >= before.Coverage {
+		t.Errorf("coverage %v did not drop below %v; an error gap must reduce coverage, not be invisible",
+			after.Coverage, before.Coverage)
+	}
+}
+
+// TestApplyResult_SLODisabledIsInert proves the nil path: with SLOTarget unset
+// the reconcile loop must not panic and must render no SLO series.
+func TestApplyResult_SLODisabledIsInert(t *testing.T) {
+	m := newMetrics()
+	tr := watchstate.New(watchstate.Options{})
+	sloTr, sloN := newSLOTracker(Config{Heartbeat: time.Minute})
+	if sloTr != nil || sloN != nil {
+		t.Fatal("newSLOTracker returned a tracker with --slo-target unset")
+	}
+	captureLog(t, func() {
+		applyResult(m, tr, nil, sloTr, sloN, sampleResult(), time.Millisecond, sloBase, nil)
+	})
+	if strings.Contains(m.render(), "kubeagent_slo_") {
+		t.Error("SLO series rendered with SLO tracking off")
+	}
+}
+
+func TestValidateSLOTarget(t *testing.T) {
+	cases := []struct {
+		target  float64
+		wantErr bool
+	}{
+		{0, false},     // disabled
+		{0.999, false}, // typical
+		{0.5, false},   // permissive but legal
+		{1, true},      // zero error budget: burn rate divides by zero
+		{1.5, true},    // nonsense
+		{-0.1, true},   // nonsense
+	}
+	for _, c := range cases {
+		err := validateSLOTarget(c.target)
+		if (err != nil) != c.wantErr {
+			t.Errorf("validateSLOTarget(%v) error = %v, wantErr = %v", c.target, err, c.wantErr)
+		}
+	}
+}
+
+// TestApplyResult_ConcurrentWithRender makes updateSLO's mutex load-bearing.
+// Before this task wired a real caller into the reconcile loop, nothing drove
+// updateSLO concurrently with render, so deleting its Lock/Unlock passed every
+// test — including under -race, which can only report a race it actually
+// observes. This test drives applyResult (with SLO tracking enabled, so
+// updateSLO fires on every iteration) from one goroutine while concurrently
+// calling render from another, giving -race a genuine, repeated read/write
+// overlap on m.slo to catch.
+func TestApplyResult_ConcurrentWithRender(t *testing.T) {
+	log.SetOutput(io.Discard)
+	defer log.SetOutput(os.Stderr)
+
+	m := newMetrics()
+	tr := watchstate.New(watchstate.Options{})
+	sloTr, sloN := newSLOTracker(Config{SLOTarget: 0.999, Heartbeat: time.Minute, AlertRepeat: time.Hour})
+
+	const n = 500
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < n; i++ {
+			now := sloBase.Add(time.Duration(i) * time.Minute)
+			applyResult(m, tr, nil, sloTr, sloN, sampleResult(), time.Millisecond, now, nil)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < n; i++ {
+			_ = m.render()
+		}
+	}()
+	wg.Wait()
+}
+
+// TestApplyResult_MismatchedSLOPairDoesNotPanic pins down the applyResult
+// nil-guard decision directly: newSLOTracker only ever returns (nil, nil) or
+// (non-nil, non-nil), but applyResult's signature takes sloTr and sloN as two
+// independent parameters, so nothing stops a caller from passing a mismatched
+// pair. Guarding on "sloTr != nil" alone would call sloN.step on a nil
+// *sloNotifier whenever sloTr is set but sloN is not, and step dereferences
+// n.firing on entry — a nil-pointer panic, not a graceful no-op. Checking both
+// pointers, as applyResult does, keeps the mismatched-pair case inert instead
+// of a crash.
+func TestApplyResult_MismatchedSLOPairDoesNotPanic(t *testing.T) {
+	m := newMetrics()
+	tr := watchstate.New(watchstate.Options{})
+	sloTr, _ := newSLOTracker(Config{SLOTarget: 0.999, Heartbeat: time.Minute, AlertRepeat: time.Hour})
+
+	captureLog(t, func() {
+		applyResult(m, tr, nil, sloTr, nil, sampleResult(), time.Millisecond, sloBase, nil)
+	})
+}
+
+// TestApplyResult_FastAndSlowWindowsDoNotSwap pins the argument order in
+// applyResult's m.updateSLO(true, sloTr.Target(), v.Fast, v.Slow) call. Every
+// other SLO render test drives updateSLO directly, so none of them would
+// notice v.Fast and v.Slow being swapped at that one call site; this test has
+// to go through applyResult itself, and needs a history where the fast (1h)
+// and slow (6h) windows genuinely disagree so a swap is visible rather than
+// coincidentally correct.
+//
+// Five hours of healthy samples followed by one broken hour makes the fast
+// window (which only sees the last hour) read Availability 0, while the slow
+// window (which still has five clean hours behind the one broken hour) reads
+// something between 0 and 1. Comparing m.slo against sloTr.Report(...) read
+// independently at the same instant, rather than against hand-picked
+// constants, ties the assertion to whatever the tracker actually computed.
+func TestApplyResult_FastAndSlowWindowsDoNotSwap(t *testing.T) {
+	m := newMetrics()
+	tr := watchstate.New(watchstate.Options{})
+	sloTr, sloN := newSLOTracker(Config{SLOTarget: 0.999, Heartbeat: time.Minute, AlertRepeat: time.Hour})
+
+	healthy := &scan.Result{Inventory: inventory.Result{Workloads: []inventory.Workload{{Name: "a"}}}}
+	broken := sampleResult()
+
+	now := sloBase
+	for i := 0; i < 300; i++ { // 5 healthy hours
+		captureLog(t, func() {
+			applyResult(m, tr, nil, sloTr, sloN, healthy, time.Millisecond, now, nil)
+		})
+		now = now.Add(time.Minute)
+	}
+	for i := 0; i < 60; i++ { // 1 broken hour
+		captureLog(t, func() {
+			applyResult(m, tr, nil, sloTr, sloN, broken, time.Millisecond, now, nil)
+		})
+		now = now.Add(time.Minute)
+	}
+
+	wantFast := sloTr.Report(slo.Fast, now)
+	wantSlow := sloTr.Report(slo.Slow, now)
+	if wantFast.Availability == wantSlow.Availability {
+		t.Fatal("test setup did not separate fast and slow availability; fixture needs adjusting")
+	}
+
+	if m.slo.Fast.Availability != wantFast.Availability {
+		t.Errorf("m.slo.Fast.Availability = %v, want %v (sloTr's fast report): applyResult must pass v.Fast into the fast slot",
+			m.slo.Fast.Availability, wantFast.Availability)
+	}
+	if m.slo.Slow.Availability != wantSlow.Availability {
+		t.Errorf("m.slo.Slow.Availability = %v, want %v (sloTr's slow report): applyResult must pass v.Slow into the slow slot",
+			m.slo.Slow.Availability, wantSlow.Availability)
 	}
 }

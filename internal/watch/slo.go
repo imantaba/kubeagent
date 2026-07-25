@@ -1,9 +1,12 @@
 package watch
 
 import (
+	"fmt"
+	"log"
 	"time"
 
 	"github.com/imantaba/kubeagent/internal/alertstate"
+	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/slo"
 )
 
@@ -93,4 +96,55 @@ func (n *sloNotifier) notification(s alertstate.Status, r alertstate.Reason, res
 		out.Issues = []string{sloAlertIssue}
 	}
 	return out
+}
+
+// workloadCensus counts the workloads the evaluation covered and how many of
+// them are clean. "Clean" is len(Findings) == 0 — the same predicate issueKeys
+// uses to decide whether to track a workload, so the SLI and the issue tracker
+// can never disagree about what "broken" means.
+func workloadCensus(res *scan.Result) (good, total int) {
+	for _, w := range res.Inventory.Workloads {
+		total++
+		if len(w.Findings) == 0 {
+			good++
+		}
+	}
+	return good, total
+}
+
+// validateSLOTarget rejects a target that cannot produce a burn rate. 1.0 is
+// rejected explicitly: a 100% target makes the error budget zero, and the burn
+// rate would divide by it.
+func validateSLOTarget(target float64) error {
+	if target == 0 {
+		return nil // disabled
+	}
+	if target <= 0 || target >= 1 {
+		return fmt.Errorf("invalid --slo-target: %g%% (must be greater than 0 and less than 100)", target*100)
+	}
+	return nil
+}
+
+// newSLOTracker returns the tracker and its notifier, or nils when SLO tracking
+// is off. Like *alerter, the nil case is the switched-off state.
+func newSLOTracker(cfg Config) (*slo.Tracker, *sloNotifier) {
+	if cfg.SLOTarget == 0 {
+		return nil, nil
+	}
+	gap := 2 * cfg.Heartbeat
+	tr := slo.New(slo.Options{Target: cfg.SLOTarget, MaxSampleGap: gap})
+	return tr, newSLONotifier(cfg.AlertRepeat)
+}
+
+// logSLO prints the burn transition. It mirrors logDelta's NEW/RESOLVED shape so
+// the two alert sources read the same way in the daemon's log.
+func logSLO(n alertstate.Notification, v slo.Verdict) {
+	if n.Status == alertstate.StatusResolved {
+		log.Printf("kubeagent: RESOLVED SLO/error-budget (burn back under threshold; fast=%.1fx slow=%.1fx)",
+			v.Fast.BurnRate, v.Slow.BurnRate)
+		return
+	}
+	log.Printf("kubeagent: %s SLO/error-budget:ErrorBudgetBurn (fast=%.1fx slow=%.1fx, coverage fast=%.0f%% slow=%.0f%%)",
+		map[alertstate.Reason]string{alertstate.ReasonNew: "NEW", alertstate.ReasonRepeat: "REPEAT"}[n.Reason],
+		v.Fast.BurnRate, v.Slow.BurnRate, v.Fast.Coverage*100, v.Slow.Coverage*100)
 }

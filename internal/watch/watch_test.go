@@ -48,14 +48,14 @@ func TestApplyResult_EvaluationErrorNeverReachesTheTracker(t *testing.T) {
 	tr := watchstate.New(watchstate.Options{})
 	at := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
 
-	captureLog(t, func() { applyResult(m, tr, nil, sampleResult(), time.Millisecond, at, nil) })
+	captureLog(t, func() { applyResult(m, tr, nil, nil, nil, sampleResult(), time.Millisecond, at, nil) })
 	before := len(tr.Active())
 	if before == 0 {
 		t.Fatal("fixture must produce active issues")
 	}
 
 	out := captureLog(t, func() {
-		applyResult(m, tr, nil, &scan.Result{}, time.Millisecond, at.Add(time.Minute), errors.New("boom"))
+		applyResult(m, tr, nil, nil, nil, &scan.Result{}, time.Millisecond, at.Add(time.Minute), errors.New("boom"))
 	})
 	if got := len(tr.Active()); got != before {
 		t.Errorf("active issues %d -> %d; an evaluation error must resolve nothing", before, got)
@@ -73,7 +73,7 @@ func TestApplyResult_LogsTransitionsAndStaysQuietInSteadyState(t *testing.T) {
 	tr := watchstate.New(watchstate.Options{})
 	at := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
 
-	first := captureLog(t, func() { applyResult(m, tr, nil, sampleResult(), time.Millisecond, at, nil) })
+	first := captureLog(t, func() { applyResult(m, tr, nil, nil, nil, sampleResult(), time.Millisecond, at, nil) })
 	if !strings.Contains(first, "NEW Deployment/shop/web:CrashLoopBackOff") {
 		t.Errorf("first sighting must log a NEW line, got %q", first)
 	}
@@ -81,13 +81,13 @@ func TestApplyResult_LogsTransitionsAndStaysQuietInSteadyState(t *testing.T) {
 		t.Errorf("summary line missing from %q", first)
 	}
 
-	steady := captureLog(t, func() { applyResult(m, tr, nil, sampleResult(), time.Millisecond, at.Add(time.Minute), nil) })
+	steady := captureLog(t, func() { applyResult(m, tr, nil, nil, nil, sampleResult(), time.Millisecond, at.Add(time.Minute), nil) })
 	if steady != "" {
 		t.Errorf("an unchanged reconcile must log nothing, got %q", steady)
 	}
 
 	cleared := captureLog(t, func() {
-		applyResult(m, tr, nil, &scan.Result{}, time.Millisecond, at.Add(2*time.Minute), nil)
+		applyResult(m, tr, nil, nil, nil, &scan.Result{}, time.Millisecond, at.Add(2*time.Minute), nil)
 	})
 	if !strings.Contains(cleared, "RESOLVED Deployment/shop/web:CrashLoopBackOff (fired for 2m0s)") {
 		t.Errorf("clearing must log a RESOLVED line with the firing duration, got %q", cleared)
@@ -289,7 +289,7 @@ func TestApplyResult_EvaluationErrorSendsNoAlert(t *testing.T) {
 	at := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
 
 	captureLog(t, func() {
-		applyResult(m, tr, al, &scan.Result{}, time.Millisecond, at, errors.New("boom"))
+		applyResult(m, tr, al, nil, nil, &scan.Result{}, time.Millisecond, at, errors.New("boom"))
 	})
 	cancel()
 	sink.Close()
@@ -326,7 +326,7 @@ func TestApplyResult_AlertsOnRealFindings(t *testing.T) {
 	m := newMetrics()
 	tr := watchstate.New(watchstate.Options{})
 	at := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
-	captureLog(t, func() { applyResult(m, tr, al, sampleResult(), time.Millisecond, at, nil) })
+	captureLog(t, func() { applyResult(m, tr, al, nil, nil, sampleResult(), time.Millisecond, at, nil) })
 
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
@@ -345,5 +345,153 @@ func TestApplyResult_AlertsOnRealFindings(t *testing.T) {
 	}
 	if !strings.Contains(bodies[0], `"status":"firing"`) {
 		t.Errorf("first body = %s, want a firing notification", bodies[0])
+	}
+}
+
+// TestApplyResult_SLOBurnReachesTheSink proves the burn notification is
+// actually delivered end-to-end through al.enqueue and the real sink, not just
+// constructed and discarded. It drives applyResult with a workload that is
+// broken on every sample for a full slow (6h) window, which crosses both burn
+// thresholds and both coverage gates and fires the verdict.
+//
+// The object-level tracker is firing for the same broken workload throughout,
+// so the roller (al.notify) is also delivering plenty of NEW/REPEAT
+// notifications during this run — this test does not count deliveries, it
+// looks for the one body carrying the SLO/error-budget identity specifically,
+// which only sloNotifier ever manufactures. A regression that routed the burn
+// notification through al.notify instead of al.enqueue (discarding it and
+// re-rolling the object tracker instead) would still produce plenty of
+// traffic at the receiver, so counting alone would not catch it — the
+// object-kind noise would mask a missing SLO delivery.
+func TestApplyResult_SLOBurnReachesTheSink(t *testing.T) {
+	var mu sync.Mutex
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies = append(bodies, string(b))
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	sink, err := alert.New(alert.Config{URL: srv.URL, Format: alert.FormatJSON, Repeat: time.Hour}, nil)
+	if err != nil {
+		t.Fatalf("alert.New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	sink.Start(ctx)
+	al := &alerter{roller: alertstate.New(alertstate.Options{Repeat: time.Hour}), sink: sink}
+
+	m := newMetrics()
+	tr := watchstate.New(watchstate.Options{})
+	sloTr, sloN := newSLOTracker(Config{SLOTarget: 0.999, Heartbeat: time.Minute, AlertRepeat: time.Hour})
+
+	broken := sampleResult() // one broken workload, unchanged for the whole run
+
+	now := sloBase
+	captureLog(t, func() { applyResult(m, tr, al, sloTr, sloN, broken, time.Millisecond, now, nil) })
+	for elapsed := time.Duration(0); elapsed < 6*time.Hour; elapsed += time.Minute {
+		now = now.Add(time.Minute)
+		captureLog(t, func() { applyResult(m, tr, al, sloTr, sloN, broken, time.Millisecond, now, nil) })
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(bodies)
+		mu.Unlock()
+		if n > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	sink.Close()
+
+	mu.Lock()
+	defer mu.Unlock()
+	found := false
+	for _, b := range bodies {
+		if strings.Contains(b, `"kind":"SLO"`) && strings.Contains(b, `"name":"error-budget"`) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("no delivered notification carried the SLO/error-budget identity across %d bodies", len(bodies))
+	}
+}
+
+// TestRun_RejectsBadSLOTargetBeforeCacheSync pins that --slo-target is
+// validated before anything else starts, exactly like the alert config check
+// above. A bad target must fail Run() immediately, not after
+// WaitForCacheSync, which can block forever against a reachable-but-
+// unresponsive API server and hide the operator's config mistake behind what
+// looks like a cluster hang.
+func TestRun_RejectsBadSLOTargetBeforeCacheSync(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	// Block List forever. A config error must surface anyway: if validation ran
+	// after WaitForCacheSync, an unresponsive API server would hide it behind
+	// what looks like a cluster hang.
+	client.PrependReactor("list", "*", func(ktesting.Action) (bool, runtime.Object, error) {
+		select {}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err := Run(ctx, client, Config{
+		MetricsAddr: "127.0.0.1:0",
+		Heartbeat:   time.Minute,
+		Debounce:    time.Second,
+		SLOTarget:   1.0,
+	})
+	if err == nil {
+		t.Fatal("Run returned nil for --slo-target 100; want a startup error")
+	}
+	if !strings.Contains(err.Error(), "slo-target") {
+		t.Errorf("error %q does not name the offending flag", err)
+	}
+}
+
+// TestRun_ValidatesSLOTargetBeforeStartingTheMetricsServer guards the ordering
+// itself, not just "Run fails fast": TestRun_RejectsBadSLOTargetBeforeCacheSync
+// proves validation runs before the (potentially hanging) WaitForCacheSync, but
+// that alone would still pass even if validateSLOTarget moved to anywhere
+// earlier than WaitForCacheSync — including after the metrics server has
+// already started listening. This test catches that narrower regression
+// directly: on a bad --slo-target, the configured metrics port must never
+// accept a connection, because Run must return before ever calling
+// ListenAndServe.
+func TestRun_ValidatesSLOTargetBeforeStartingTheMetricsServer(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen: %v", err)
+	}
+	addr := l.Addr().String()
+	l.Close()
+
+	client := fake.NewSimpleClientset()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	runErr := Run(ctx, client, Config{
+		MetricsAddr: addr,
+		Heartbeat:   time.Minute,
+		Debounce:    time.Second,
+		SLOTarget:   1.0,
+	})
+	if runErr == nil {
+		t.Fatal("Run returned nil for --slo-target 100; want a startup error")
+	}
+
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", addr, 20*time.Millisecond)
+		if err == nil {
+			conn.Close()
+			t.Fatal("metrics server accepted a connection after a rejected --slo-target; validation must run before ListenAndServe")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

@@ -285,12 +285,23 @@
   `FLAPPING`, steady state silent), exposing ten new Prometheus series
   including mean-time-to-resolution, and serving a read-only `/issues` JSON
   endpoint. In-memory only (state resets on restart); fixed, unconfigurable
-  defaults; no new flags or RBAC. Slice 2 adds **alerting**: one webhook alert
-  per broken object (`json` / `slack` / `alertmanager`), off unless
-  `KUBEAGENT_ALERT_WEBHOOK` is set, with the daemon still read-only toward the
-  cluster. SLO burn-rate signals, rate-limited on-incident `--explain`, and the
-  multi-cluster hub are the remaining Theme E slices. See
+  defaults; no new flags or RBAC. See
   [Watch mode](features/watch-mode.md#issue-tracking-state-across-reconciles).
+
+- **`watch` alerting** (Theme E — slice 2) — the daemon can now push transitions
+  outbound: one webhook alert per broken object in `json`, `slack`, or
+  `alertmanager` form. Alerts roll up on the object, not the issue, so an
+  evolving failure (`Degraded` → `ErrImagePull` → `ImagePullBackOff`) opens a
+  single alert that clears only once the object has no active issues at all —
+  a still-broken workload never reports a recovery. Off unless
+  `KUBEAGENT_ALERT_WEBHOOK` is set; the URL is env-only, Secret-only in the
+  chart, and never logged beyond `scheme://host`. Delivery is a bounded queue
+  with three attempts and counted drops, on its own goroutine, so a hung
+  receiver cannot stall the reconcile loop. The daemon stays strictly
+  read-only toward the cluster and calls no LLM. SLO burn-rate signals,
+  rate-limited on-incident `--explain`, and the multi-cluster hub are the
+  remaining Theme E slices. See
+  [Watch mode](features/watch-mode.md#alerting).
 
 !!! info "Version history"
     [GitHub Releases](https://github.com/imantaba/kubeagent/releases) and the

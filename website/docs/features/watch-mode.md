@@ -218,6 +218,22 @@ workload recovered — check whether a `NEW` line for the same object arrived in
 the same reconcile. Mean time to resolution follows the same rule: it measures
 how long each distinct failure mode fired, not how long the object was broken.
 
+**Known limitation:** a node named via `--expected-nodes` that is absent from
+the cluster is **not** tracked as an issue, and never appears in `/issues` or
+the per-issue metrics. The cluster-health detector reports it only as the
+`kubeagent_nodes_expected_absent` counter plus free-text prose in the cluster
+summary, with no stable per-node identity to key a tracked record on. It still
+shows up in `scan` output and in that counter — it just doesn't participate in
+NEW/RESOLVED/FLAPPING tracking. Giving the detector a structured field to fix
+this is a separate, future change.
+
+### Still read-only
+
+Issue tracking adds no new API calls and no writes: the tracker only consumes
+the same evaluation `scan` already performs, entirely in memory, and
+`/issues` is a read-only view over it. Watch mode's RBAC (`get`/`list`/`watch`
+only) is unchanged.
+
 ## Alerting
 
 The daemon can push transitions to a webhook instead of waiting to be scraped. It
@@ -307,22 +323,6 @@ a 4xx is not retried. Drops are counted, never silent:
 | `kubeagent_alerts_sent_total{status,outcome}` | Deliveries by `firing`/`resolved` and `ok`/`failed` |
 | `kubeagent_alerts_dropped_total{reason}` | `queue_full` or `retries_exhausted` |
 | `kubeagent_alert_last_success_timestamp_seconds` | Last successful delivery (0 if none) |
-
-**Known limitation:** a node named via `--expected-nodes` that is absent from
-the cluster is **not** tracked as an issue, and never appears in `/issues` or
-the per-issue metrics. The cluster-health detector reports it only as the
-`kubeagent_nodes_expected_absent` counter plus free-text prose in the cluster
-summary, with no stable per-node identity to key a tracked record on. It still
-shows up in `scan` output and in that counter — it just doesn't participate in
-NEW/RESOLVED/FLAPPING tracking. Giving the detector a structured field to fix
-this is a separate, future change.
-
-### Still read-only
-
-Issue tracking adds no new API calls and no writes: the tracker only consumes
-the same evaluation `scan` already performs, entirely in memory, and
-`/issues` is a read-only view over it. Watch mode's RBAC (`get`/`list`/`watch`
-only) is unchanged.
 
 ## Run it
 

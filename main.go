@@ -60,7 +60,7 @@ func run(args []string) error {
 		return runWatch(args[1:])
 	}
 	if len(args) == 0 || args[0] != "scan" {
-		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--investigate] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--kubelet-health] [--control-plane-health] [--dns-health] [--certs [--cert-warn-days n]] [--logs] [--node-heartbeat-threshold dur] [--expected-nodes a,b,…] [--fix [--dry-run|--yes] [--audit-log path]] [--rollback --audit-log path] | kubeagent watch [--kubeconfig path] [--context name] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] [--alert-format json|slack|alertmanager] [--alert-repeat dur] | kubeagent version")
+		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--investigate] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--kubelet-health] [--control-plane-health] [--dns-health] [--certs [--cert-warn-days n]] [--logs] [--node-heartbeat-threshold dur] [--expected-nodes a,b,…] [--fix [--dry-run|--yes] [--audit-log path]] [--rollback --audit-log path] | kubeagent watch [--kubeconfig path] [--context name] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] [--alert-format json|slack|alertmanager] [--alert-repeat dur] [--slo-target pct] | kubeagent version")
 	}
 
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
@@ -311,6 +311,7 @@ func runWatch(args []string) error {
 	includeRestarts := fs.Bool("include-restarts", false, "include workloads that are healthy now but have restarted")
 	alertFormat := fs.String("alert-format", envOr("KUBEAGENT_ALERT_FORMAT", "json"), "alert payload format: json, slack, or alertmanager")
 	alertRepeat := fs.Duration("alert-repeat", envDur("KUBEAGENT_ALERT_REPEAT", 0), "re-send interval for still-firing alerts (0 = the format default: 4h, or 60s for alertmanager)")
+	sloTarget := fs.Float64("slo-target", envFloat("KUBEAGENT_SLO_TARGET", 0), "availability SLO as a percentage, e.g. 99.9 (0 = SLO tracking off)")
 	var namespace string
 	fs.StringVar(&namespace, "namespace", envOr("KUBEAGENT_NAMESPACE", ""), "namespace to watch (default: all)")
 	fs.StringVar(&namespace, "n", envOr("KUBEAGENT_NAMESPACE", ""), "namespace to watch (shorthand)")
@@ -329,6 +330,10 @@ func runWatch(args []string) error {
 	if alertURL == "" && (*alertFormat != "json" || *alertRepeat != 0) {
 		fmt.Fprintln(os.Stderr, "kubeagent: --alert-* flags ignored: KUBEAGENT_ALERT_WEBHOOK is not set, so alerting is off")
 	}
+
+	// The flag is a percentage because that is how an SRE writes an SLO; the
+	// tracker works in ratios. 0 stays 0, which means off.
+	sloRatio := *sloTarget / 100
 
 	client, err := cluster.NewInClusterOrKubeconfig(*kubeconfig, *contextName)
 	if err != nil {
@@ -359,6 +364,7 @@ func runWatch(args []string) error {
 		AlertURL:                alertURL,
 		AlertFormat:             *alertFormat,
 		AlertRepeat:             repeat,
+		SLOTarget:               sloRatio,
 	})
 }
 

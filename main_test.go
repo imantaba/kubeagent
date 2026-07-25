@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
@@ -403,6 +404,134 @@ func TestRun_UsageMentionsWatchAlertFlags(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "[--alert-format json|slack|alertmanager] [--alert-repeat dur]") {
 		t.Fatalf("expected the usage string to mention --alert-format and --alert-repeat, got: %v", err)
+	}
+}
+
+// deadKubeconfigPath writes a syntactically valid kubeconfig pointing at a
+// server nothing listens on (https://127.0.0.1:1) and returns its path.
+// cluster.NewInClusterOrKubeconfig only builds a clientset from this — no
+// network I/O happens — so runWatch proceeds past it into watch.Run without
+// ever opening a socket, which is what lets these tests reach
+// validateSLOTarget deterministically instead of failing at cluster-connect.
+func deadKubeconfigPath(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	kc := filepath.Join(dir, "config")
+	cfg := `apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    server: https://127.0.0.1:1
+  name: dead
+contexts:
+- context:
+    cluster: dead
+    user: dead
+  name: dead
+current-context: dead
+users:
+- name: dead
+  user: {}
+`
+	if err := os.WriteFile(kc, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return kc
+}
+
+// runWatchBounded calls runWatch in a goroutine and waits up to timeout for it
+// to return, failing the test with a diagnostic instead of blocking forever if
+// it doesn't. Tests built on the dead kubeconfig expect runWatch to fail fast,
+// inside validateSLOTarget, before watch.Run does anything else. But 0 is
+// validateSLOTarget's explicit "off" value, so any regression that makes an
+// SLO target silently collapse to 0 — say, --slo-target's default quietly
+// losing its envFloat wiring — makes validation pass and lets Run fall through
+// into the real daemon: binding the metrics port and blocking on
+// WaitForCacheSync against a server nothing answers, forever, since nothing in
+// these tests can cancel runWatch's signal.NotifyContext. Bounding the wait
+// turns that failure mode into a fast, clear test failure instead of a
+// multi-minute hang that also leaves a port bound.
+func runWatchBounded(t *testing.T, args []string, timeout time.Duration) error {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() { done <- runWatch(args) }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(timeout):
+		t.Fatalf("runWatch(%v) did not return within %s: it likely fell through into the real daemon instead of failing validation fast", args, timeout)
+		return nil // unreachable
+	}
+}
+
+func TestRunWatch_SLOTargetIsAPercentageNotARatio(t *testing.T) {
+	// The load-bearing test. --slo-target takes a percentage (99.9), but the
+	// tracker works in ratios (0.999), so runWatch must divide by 100 before
+	// handing the value to watch.Run. validateSLOTarget's error message
+	// multiplies the ratio back by 100 to report a percentage, so this is the
+	// only test that can catch a missing/wrong conversion: without the /100,
+	// a target of 100 would reach validation as the ratio 100, and the
+	// message would read "10000%", not "100%". Do NOT weaken this assertion
+	// to a substring like strings.Contains(err.Error(), "invalid --slo-target")
+	// — that would pass whether or not the conversion happened.
+	kc := deadKubeconfigPath(t)
+	err := runWatchBounded(t, []string{"--slo-target", "100", "--kubeconfig", kc}, 3*time.Second)
+	if err == nil {
+		t.Fatal("expected a validation error for --slo-target 100")
+	}
+	want := "invalid --slo-target: 100% (must be greater than 0 and less than 100)"
+	if err.Error() != want {
+		t.Fatalf("error = %q, want exactly %q", err.Error(), want)
+	}
+}
+
+func TestRunWatch_SLOTargetIsRecognized(t *testing.T) {
+	// A valid --slo-target must parse and must not fail validation. This
+	// deliberately does NOT use the dead kubeconfig: with a valid target,
+	// watch.Run proceeds past validateSLOTarget, binds the metrics address,
+	// and blocks on informers until its context is cancelled — and runWatch
+	// builds that context from signal.NotifyContext, which no test can
+	// cancel. So, as TestRunWatch_AlertFlagsAreRecognized does, this uses a
+	// nonexistent kubeconfig path to fail at cluster-connect, before Run is
+	// ever reached, and only asserts that the flag parsed and no validation
+	// error occurred.
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "nonexistent")
+	err := runWatch([]string{"--slo-target", "99.9", "--kubeconfig", bad})
+	if err == nil {
+		t.Fatal("expected a kubeconfig load error")
+	}
+	if strings.Contains(err.Error(), "flag provided but not defined") {
+		t.Fatalf("expected --slo-target to be a recognized flag, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "invalid --slo-target") {
+		t.Fatalf("expected no validation error for --slo-target 99.9, got: %v", err)
+	}
+}
+
+func TestRunWatch_SLOTargetFromEnv(t *testing.T) {
+	// Proves KUBEAGENT_SLO_TARGET feeds the same flag default via envFloat.
+	// Same exact-message assertion as TestRunWatch_SLOTargetIsAPercentageNotARatio,
+	// this time with no flag given at all.
+	t.Setenv("KUBEAGENT_SLO_TARGET", "100")
+	kc := deadKubeconfigPath(t)
+	err := runWatchBounded(t, []string{"--kubeconfig", kc}, 3*time.Second)
+	if err == nil {
+		t.Fatal("expected a validation error for KUBEAGENT_SLO_TARGET=100")
+	}
+	want := "invalid --slo-target: 100% (must be greater than 0 and less than 100)"
+	if err.Error() != want {
+		t.Fatalf("error = %q, want exactly %q", err.Error(), want)
+	}
+}
+
+func TestRun_UsageMentionsSLOTarget(t *testing.T) {
+	err := run(nil)
+	if err == nil {
+		t.Fatal("expected a usage error with no args")
+	}
+	if !strings.Contains(err.Error(), "[--alert-repeat dur] [--slo-target pct]") {
+		t.Fatalf("expected the usage string to mention --alert-repeat immediately followed by --slo-target, got: %v", err)
 	}
 }
 

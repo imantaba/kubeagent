@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `watch` alerting: the daemon can POST one alert per broken object to a webhook
+  (`json`, `slack`, or `alertmanager` format), keyed on the object rather than the
+  issue so an evolving failure never reports a recovery while the workload is
+  still broken. The URL comes from `KUBEAGENT_ALERT_WEBHOOK` and is never logged
+  beyond `scheme://host`; `--alert-format` and `--alert-repeat` tune the rest.
+  Delivery is a bounded queue with three attempts and counted drops
+  (`kubeagent_alerts_sent_total`, `kubeagent_alerts_dropped_total`,
+  `kubeagent_alert_last_success_timestamp_seconds`). Alerting is off unless the
+  environment variable is set, and the daemon remains strictly read-only toward
+  the cluster.
+
 ## [0.55.0] - 2026-07-25
 
 ### Added

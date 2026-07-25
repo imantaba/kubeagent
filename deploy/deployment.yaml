@@ -20,6 +20,16 @@ spec:
         - name: kubeagent
           image: imantaba/kubeagent:v0.55.0 # official image on Docker Hub; or build your own (see README.md)
           args: ["watch", "--metrics-addr=:8080"]
+          env:
+            # Alerting (opt-in). Create the Secret first:
+            #   kubectl -n kubeagent create secret generic kubeagent-alerts \
+            #     --from-literal=webhook-url=<WEBHOOK_URL>
+            # then uncomment this block and add --alert-format=<format> to args.
+            # - name: KUBEAGENT_ALERT_WEBHOOK
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: kubeagent-alerts
+            #       key: webhook-url
           ports:
             - name: metrics
               containerPort: 8080

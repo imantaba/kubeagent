@@ -115,6 +115,29 @@ by `scan --logs`. This is a scan-only add-on (not used by the watch daemon);
 most human kubeconfigs already allow `pods/log`. Without it, `--logs` reports no
 log cause and continues non-fatally.
 
+## Alerting (opt-in)
+
+The daemon can POST one alert per broken object to a webhook — generic JSON, a
+Slack incoming webhook, or Alertmanager's `/api/v2/alerts`. It stays read-only
+toward the cluster; the webhook is its only other egress.
+
+The URL is a credential, so it is read from `KUBEAGENT_ALERT_WEBHOOK` and never
+passed as a flag:
+
+```bash
+kubectl -n kubeagent create secret generic kubeagent-alerts \
+  --from-literal=webhook-url=<WEBHOOK_URL>
+
+helm upgrade --install kubeagent deploy/helm/kubeagent \
+  --set alerts.enabled=true \
+  --set alerts.format=slack \
+  --set alerts.existingSecret=kubeagent-alerts
+```
+
+Only `scheme://host` is ever logged. See the
+[watch mode docs](https://k8sproject.top/features/watch-mode/) for the payload
+shapes and the Alertmanager cadence rule.
+
 ## Security notes
 
 - The daemon runs as UID 65532 (non-root) with a read-only root filesystem and

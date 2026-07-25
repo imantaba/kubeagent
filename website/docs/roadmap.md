@@ -285,9 +285,11 @@
   `FLAPPING`, steady state silent), exposing ten new Prometheus series
   including mean-time-to-resolution, and serving a read-only `/issues` JSON
   endpoint. In-memory only (state resets on restart); fixed, unconfigurable
-  defaults; no new flags or RBAC. Alerting integrations, SLO burn-rate signals,
-  rate-limited on-incident `--explain`, and the multi-cluster hub are the
-  remaining Theme E slices. See
+  defaults; no new flags or RBAC. Slice 2 adds **alerting**: one webhook alert
+  per broken object (`json` / `slack` / `alertmanager`), off unless
+  `KUBEAGENT_ALERT_WEBHOOK` is set, with the daemon still read-only toward the
+  cluster. SLO burn-rate signals, rate-limited on-incident `--explain`, and the
+  multi-cluster hub are the remaining Theme E slices. See
   [Watch mode](features/watch-mode.md#issue-tracking-state-across-reconciles).
 
 !!! info "Version history"
@@ -340,8 +342,9 @@ These are the north star; every item below is measured against them.
   do), and rollback (`--rollback`). Theme D is complete; guarded, policy-gated
   autonomous remediation inside `watch` moves to Theme E.
 - **E · Continuous operations** — `watch` gains state (regressions, flapping, MTTR,
-  "new since last"), alerting integrations (Slack / PagerDuty / webhook), SLO
-  burn-rate signals, rate-limited on-incident `--explain`, and a multi-cluster hub.
+  "new since last"), webhook alerting (JSON / Slack / Alertmanager shipped;
+  PagerDuty remains an open receiver), SLO burn-rate signals, rate-limited
+  on-incident `--explain`, and a multi-cluster hub.
 - **F · Ecosystem & operators** — first-class awareness of the operators people
   actually run (CloudNativePG, cert-manager, Longhorn/Ceph, Argo CD / Flux GitOps
   drift, Prometheus operator, service meshes), plus cost/right-sizing and

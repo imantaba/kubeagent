@@ -30,7 +30,7 @@ if [ -n "$ONLY" ] && printf '%s' "$ONLY" | grep -qE '^[0-9]+$'; then ONLY=$(prin
 log() { printf '\n=== %s ===\n' "$*"; }
 
 preflight() {
-  for b in docker kind kubectl helm go curl; do
+  for b in docker kind kubectl helm go curl python3; do
     command -v "$b" >/dev/null || { echo "missing required tool: $b" >&2; exit 1; }
   done
   docker info >/dev/null 2>&1 || { echo "docker daemon not running" >&2; exit 1; }
@@ -269,16 +269,22 @@ scenario_11_kubelet() {   # runtime outage: node NotReady, kubelet /healthz stil
 
 scenario_12_watch() {   # stateful watch daemon: NEW on outage, RESOLVED on repair, /issues while firing
   log "scenario 12: stateful watch daemon (NEW / RESOLVED transitions, /issues)"
-  local ns=chaos-watch port=18080 wlog wpid i firing after
+  local ns=chaos-watch port=18080 aport=18081 wlog wpid i firing after alerts apid
   wlog="$(mktemp)"
+  alerts="$(mktemp)"
+  # A local receiver proves the alert path end to end. The daemon's only egress
+  # besides the API server is this URL.
+  python3 chaos/alert-receiver.py "$aport" "$alerts" >/dev/null 2>&1 &
+  apid=$!
   kubectl --context "$CTX" create ns "$ns" --dry-run=client -o yaml | kubectl --context "$CTX" apply -f - >/dev/null
   kubectl --context "$CTX" -n "$ns" apply -f chaos/manifests/app.yaml >/dev/null
   kubectl --context "$CTX" -n "$ns" rollout status deploy web --timeout=90s >/dev/null 2>&1 || true
 
   # The daemon is strictly read-only, so it runs with the same kubeconfig as the scans.
   # A short heartbeat keeps the transition latency inside this scenario's sleeps.
+  KUBEAGENT_ALERT_WEBHOOK="http://127.0.0.1:$aport" \
   ./kubeagent watch --context "$CTX" -n "$ns" --metrics-addr "127.0.0.1:$port" \
-    --heartbeat 10s --debounce 2s >"$wlog" 2>&1 &
+    --heartbeat 10s --debounce 2s --alert-format json --alert-repeat 1h >"$wlog" 2>&1 &
   wpid=$!
   for i in $(seq 40); do
     curl -sf "http://127.0.0.1:$port/readyz" >/dev/null 2>&1 && break
@@ -301,6 +307,8 @@ scenario_12_watch() {   # stateful watch daemon: NEW on outage, RESOLVED on repa
 
   kill "$wpid" >/dev/null 2>&1 || true
   wait "$wpid" >/dev/null 2>&1 || true
+  kill "$apid" >/dev/null 2>&1 || true
+  wait "$apid" >/dev/null 2>&1 || true
 
   {
     echo '--- daemon transition log (NEW / RESOLVED / FLAPPING lines only) ---'
@@ -312,11 +320,21 @@ scenario_12_watch() {   # stateful watch daemon: NEW on outage, RESOLVED on repa
     echo '--- /issues after the repair (active empty, the incident under resolved) ---'
     printf '%s\n' "$after" | python3 -m json.tool 2>/dev/null || printf '%s\n' "$after"
     echo
+    echo '--- alerts delivered to the webhook receiver ---'
+    { grep -o '"status":"[a-z]*","reason":"[a-z]*"' "$alerts" || echo '<no alerts delivered>'; }
+    echo
+    printf 'firing notifications: %s\n' "$(grep -c '"status":"firing"' "$alerts" 2>/dev/null || echo 0)"
+    printf 'resolved notifications: %s\n' "$(grep -c '"status":"resolved"' "$alerts" 2>/dev/null || echo 0)"
+    printf 'distinct objects alerted: %s\n' "$(grep -o '"name":"[^"]*"' "$alerts" 2>/dev/null | sort -u | wc -l)"
+    echo
+    echo '--- webhook URL redaction check (only scheme://host may appear) ---'
+    { grep -c '127.0.0.1:'"$aport" "$wlog" || true; } | sed 's/^/log lines naming the endpoint host: /'
+    echo
     echo '--- write-path check: the daemon issued no mutating calls ---'
     { grep -icE '\b(create|update|patch|delete)d?\b' "$wlog" || true; } | sed 's/^/log lines mentioning a write verb: /'
-  } | record "12. Stateful watch daemon (NEW on outage, RESOLVED on repair, /issues)" "expect: one NEW line naming Deployment/$ns/web, one RESOLVED line with the firing duration, the incident listed under /issues while firing and under resolved afterwards"
+  } | record "12. Stateful watch daemon (NEW on outage, RESOLVED on repair, /issues)" "expect: one NEW line naming Deployment/$ns/web, one RESOLVED line with the firing duration, the incident listed under /issues while firing and under resolved afterwards, and exactly one resolved alert delivered — the firing alert must survive the whole Degraded -> ErrImagePull -> ImagePullBackOff walk"
 
-  rm -f "$wlog"
+  rm -f "$wlog" "$alerts"
   kubectl --context "$CTX" delete ns "$ns" --wait=true --timeout=120s >/dev/null 2>&1 || true
 }
 

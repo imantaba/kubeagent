@@ -34,6 +34,12 @@ spec:
             {{- if .Values.watch.namespace }}
             - "--namespace={{ .Values.watch.namespace }}"
             {{- end }}
+            {{- if .Values.alerts.enabled }}
+            - "--alert-format={{ .Values.alerts.format }}"
+            {{- if .Values.alerts.repeat }}
+            - "--alert-repeat={{ .Values.alerts.repeat }}"
+            {{- end }}
+            {{- end }}
           env:
             - name: KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS
               value: {{ .Values.webhookLatency.timeoutThreshold | quote }}
@@ -62,6 +68,13 @@ spec:
               value: "true"
             - name: KUBEAGENT_CERT_WARN_DAYS
               value: {{ .Values.certs.warnDays | quote }}
+            {{- end }}
+            {{- if .Values.alerts.enabled }}
+            - name: KUBEAGENT_ALERT_WEBHOOK
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "alerts.existingSecret is required when alerts.enabled is true" .Values.alerts.existingSecret | quote }}
+                  key: {{ .Values.alerts.secretKey | quote }}
             {{- end }}
           ports:
             - name: metrics

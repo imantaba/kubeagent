@@ -23,18 +23,19 @@ func keySet(keys []watchstate.Key) map[string]bool {
 }
 
 // TestIssueKeys_CoversEverySource walks the shared sampleResult fixture and
-// asserts one key per issue source, so a new detector wired into scan.Result but
-// not into issueKeys shows up as a missing key here.
+// asserts the exact key set, so a new detector wired into scan.Result but not into
+// issueKeys shows up as a missing key — and a miswired one that emits an extra key
+// (a wrong Kind, an unfiltered advisory finding) shows up as a surplus.
 func TestIssueKeys_CoversEverySource(t *testing.T) {
 	got := keySet(issueKeys(sampleResult()))
-	for _, want := range []string{
+	want := []string{
 		"Deployment/shop/web:CrashLoopBackOff",
 		"Service/shop/api-svc:NoEndpoints",
 		"Ingress/shop/web:NoEndpoints",
 		"PVC/shop/data-pvc:ProvisioningFailed",
 		"Namespace/legacy-ns:StuckTerminating",
-		"PodDisruptionBudget/shop/api:",
-		"HorizontalPodAutoscaler/shop/api-hpa:",
+		"PodDisruptionBudget/shop/api:blocking",
+		"HorizontalPodAutoscaler/shop/api-hpa:capped",
 		"ValidatingWebhookConfiguration/policy-webhook/w:no-endpoints",
 		"ValidatingWebhookConfiguration/slow-webhook/s.io:high-timeout",
 		"ResourceQuota/shop/compute/pods:near",
@@ -45,10 +46,17 @@ func TestIssueKeys_CoversEverySource(t *testing.T) {
 		"Secret/infra/api-tls:CertExpiring",
 		"Secret/infra/broken-tls:CertInvalid",
 		"Volume/n1:DiskOverThreshold",
-	} {
-		if !got[want] {
-			t.Errorf("missing key %q; got %v", want, got)
+	}
+	for _, w := range want {
+		if !got[w] {
+			t.Errorf("missing key %q; got %v", w, got)
 		}
+	}
+	if total := len(got); total != len(want) {
+		for _, w := range want {
+			delete(got, w)
+		}
+		t.Errorf("issueKeys returned %d unique keys, want %d; surplus: %v", total, len(want), got)
 	}
 }
 

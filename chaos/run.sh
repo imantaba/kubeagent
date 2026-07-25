@@ -30,7 +30,7 @@ if [ -n "$ONLY" ] && printf '%s' "$ONLY" | grep -qE '^[0-9]+$'; then ONLY=$(prin
 log() { printf '\n=== %s ===\n' "$*"; }
 
 preflight() {
-  for b in docker kind kubectl helm go; do
+  for b in docker kind kubectl helm go curl; do
     command -v "$b" >/dev/null || { echo "missing required tool: $b" >&2; exit 1; }
   done
   docker info >/dev/null 2>&1 || { echo "docker daemon not running" >&2; exit 1; }
@@ -267,6 +267,59 @@ scenario_11_kubelet() {   # runtime outage: node NotReady, kubelet /healthz stil
   sleep 10
 }
 
+scenario_12_watch() {   # stateful watch daemon: NEW on outage, RESOLVED on repair, /issues while firing
+  log "scenario 12: stateful watch daemon (NEW / RESOLVED transitions, /issues)"
+  local ns=chaos-watch port=18080 wlog wpid i firing after
+  wlog="$(mktemp)"
+  kubectl --context "$CTX" create ns "$ns" --dry-run=client -o yaml | kubectl --context "$CTX" apply -f - >/dev/null
+  kubectl --context "$CTX" -n "$ns" apply -f chaos/manifests/app.yaml >/dev/null
+  kubectl --context "$CTX" -n "$ns" rollout status deploy web --timeout=90s >/dev/null 2>&1 || true
+
+  # The daemon is strictly read-only, so it runs with the same kubeconfig as the scans.
+  # A short heartbeat keeps the transition latency inside this scenario's sleeps.
+  ./kubeagent watch --context "$CTX" -n "$ns" --metrics-addr "127.0.0.1:$port" \
+    --heartbeat 10s --debounce 2s >"$wlog" 2>&1 &
+  wpid=$!
+  for i in $(seq 40); do
+    curl -sf "http://127.0.0.1:$port/readyz" >/dev/null 2>&1 && break
+    sleep 1
+  done
+
+  # Inject the same outage as scenario 9 (bad image, old replicas taken down with the
+  # rollout so Ready < Desired), then let two heartbeats land.
+  kubectl --context "$CTX" -n "$ns" patch deploy web --type=strategic \
+    -p '{"spec":{"strategy":{"rollingUpdate":{"maxUnavailable":"100%"}}}}' >/dev/null
+  kubectl --context "$CTX" -n "$ns" set image deploy/web web=nginx:does-not-exist-9999 >/dev/null
+  sleep 30
+  firing="$(curl -s "http://127.0.0.1:$port/issues" 2>/dev/null || echo '<unreachable>')"
+
+  # Repair and let the tracker observe the issue clear.
+  kubectl --context "$CTX" -n "$ns" set image deploy/web web=nginx:1.27-alpine >/dev/null
+  kubectl --context "$CTX" -n "$ns" rollout status deploy web --timeout=120s >/dev/null 2>&1 || true
+  sleep 30
+  after="$(curl -s "http://127.0.0.1:$port/issues" 2>/dev/null || echo '<unreachable>')"
+
+  kill "$wpid" >/dev/null 2>&1 || true
+  wait "$wpid" >/dev/null 2>&1 || true
+
+  {
+    echo '--- daemon transition log (NEW / RESOLVED / FLAPPING lines only) ---'
+    { grep -E 'kubeagent: (NEW|RESOLVED|FLAPPING) ' "$wlog" || echo '<no transition lines logged>'; }
+    echo
+    echo '--- /issues while the outage was firing ---'
+    printf '%s\n' "$firing" | python3 -m json.tool 2>/dev/null || printf '%s\n' "$firing"
+    echo
+    echo '--- /issues after the repair (active empty, the incident under resolved) ---'
+    printf '%s\n' "$after" | python3 -m json.tool 2>/dev/null || printf '%s\n' "$after"
+    echo
+    echo '--- write-path check: the daemon issued no mutating calls ---'
+    { grep -icE '\b(create|update|patch|delete)d?\b' "$wlog" || true; } | sed 's/^/log lines mentioning a write verb: /'
+  } | record "12. Stateful watch daemon (NEW on outage, RESOLVED on repair, /issues)" "expect: one NEW line naming Deployment/$ns/web, one RESOLVED line with the firing duration, the incident listed under /issues while firing and under resolved afterwards"
+
+  rm -f "$wlog"
+  kubectl --context "$CTX" delete ns "$ns" --wait=true --timeout=120s >/dev/null 2>&1 || true
+}
+
 scenario_02_certs() {   # documented skip (can't force cert expiry on Kind)
   log "scenario 2: expired certificates (skipped)"
   printf 'Skipped on Kind: control-plane certificate expiry cannot be forced quickly or safely.\nkubeagent TLS / expired-certificate handling is covered by internal/connectivity unit tests\n(x509 UnknownAuthority / CertificateInvalid / Hostname errors, plus "x509:" / "certificate" / "tls: " substrings).\n' \
@@ -303,7 +356,7 @@ run_scenarios() {
   # etcd/apiserver flap for a while afterwards (and while the API is down even
   # `kubectl wait` can't settle it). Running it last keeps that recovery noise from
   # contaminating the other scenarios' scans.
-  local all=(02_certs 03_diskfull 04_networkpolicy 05_coredns 06_lb 07_oom 08_nsdelete 09_rollout 10_credleak 11_kubelet 01_etcd)
+  local all=(02_certs 03_diskfull 04_networkpolicy 05_coredns 06_lb 07_oom 08_nsdelete 09_rollout 10_credleak 11_kubelet 12_watch 01_etcd)
   for s in "${all[@]}"; do
     if [ -z "$ONLY" ] || [ "$ONLY" = "${s%%_*}" ]; then "scenario_$s"; fi
   done

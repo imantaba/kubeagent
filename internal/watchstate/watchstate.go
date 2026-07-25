@@ -156,6 +156,10 @@ func (t *Tracker) Observe(keys []Key, now time.Time) Delta {
 		}
 		r.Active = false
 		r.ResolvedAt = now
+		// Flapping and RecentFirings are deliberately left as they are: they describe
+		// the firing history, which resolving does not erase. refreshFlaps clears both
+		// once the last firing ages out of the window, so a resolved record can report
+		// Flapping for at most FlapWindow after it clears.
 		t.stats.ResolvedTotal++
 		t.stats.ResolutionSecondsSum += now.Sub(r.FiringSince).Seconds()
 		t.stats.ResolutionSecondsCount++

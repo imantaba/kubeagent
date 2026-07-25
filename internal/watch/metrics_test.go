@@ -58,8 +58,8 @@ func sampleResult() *scan.Result {
 		},
 		PVCIssues:        []pvchealth.Issue{{Namespace: "shop", Name: "data-pvc", Phase: "Pending", Reason: "ProvisioningFailed"}},
 		StuckTerminating: []termhealth.Issue{{Kind: "Namespace", Name: "legacy-ns", Age: "3h", Reason: "NamespaceFinalizersRemaining — x"}},
-		PDBIssues:        []pdbhealth.Issue{{Namespace: "shop", Name: "api"}},
-		HPAIssues:        []hpahealth.Issue{{Namespace: "shop", Name: "api-hpa"}},
+		PDBIssues:        []pdbhealth.Issue{{Namespace: "shop", Name: "api", Category: "blocking"}},
+		HPAIssues:        []hpahealth.Issue{{Namespace: "shop", Name: "api-hpa", Category: "capped"}},
 		WebhookIssues: []webhookhealth.Issue{
 			{Kind: "ValidatingWebhookConfiguration", Config: "policy-webhook", Webhook: "w", Problem: "no-endpoints", Reason: "backend missing"},
 			{Kind: "ValidatingWebhookConfiguration", Config: "slow-webhook", Webhook: "s.io", Problem: "high-timeout", Reason: "timeoutSeconds too high"},

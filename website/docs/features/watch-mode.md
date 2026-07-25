@@ -218,6 +218,96 @@ workload recovered — check whether a `NEW` line for the same object arrived in
 the same reconcile. Mean time to resolution follows the same rule: it measures
 how long each distinct failure mode fired, not how long the object was broken.
 
+## Alerting
+
+The daemon can push transitions to a webhook instead of waiting to be scraped. It
+stays read-only toward the cluster: alerting adds exactly one egress destination,
+the URL you configure.
+
+**One alert per object, not per issue.** An alert opens when an object acquires
+its first issue, updates when its issue set changes, and clears only when the
+object has no active issues at all. This is deliberate: because tracking is keyed
+on the issue, a workload whose failure mode evolves —
+`Degraded` → `ErrImagePull` → `ImagePullBackOff` — logs a `RESOLVED` for each
+superseded mode while it is still broken. Rolled up per object, that is one alert
+that stays firing until the Deployment actually recovers.
+
+Enable it by setting the URL in the environment:
+
+```bash
+export KUBEAGENT_ALERT_WEBHOOK=<WEBHOOK_URL>
+kubeagent watch --alert-format slack
+```
+
+There is no `--alert-webhook` flag on purpose: a Slack incoming-webhook URL is a
+bearer token in URL form, and a flag would put it in the pod spec's args and in
+`ps` output. Only `scheme://host` is ever logged.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--alert-format` | `json` | `json`, `slack`, or `alertmanager` |
+| `--alert-repeat` | `4h`, or `60s` for `alertmanager` | Re-send interval for still-firing alerts |
+
+The re-send is what makes a dropped notification self-healing: a receiver that was
+down when the alert opened learns about it on the next repeat.
+
+### Payloads
+
+`json` — kubeagent's native body:
+
+```json
+{
+  "status": "firing",
+  "reason": "changed",
+  "kind": "Deployment",
+  "namespace": "shop",
+  "name": "web",
+  "issues": ["ImagePullBackOff"],
+  "firingSince": "2026-07-25T10:04:11Z",
+  "flapping": false
+}
+```
+
+`reason` is `new`, `changed`, `repeat`, or `resolved`. A resolved body carries an
+empty `issues` array and a `resolvedAt`.
+
+`slack` — an incoming-webhook body: `*FIRING* Deployment/shop/web` with the issue
+list and firing time, or `*RESOLVED* Deployment/shop/web (fired for 4m12s)`.
+
+`alertmanager` — a `POST /api/v2/alerts` array. Labels are `alertname`
+(`KubeagentIssue`), `kind`, `namespace`, and `name`; the issue list is an
+**annotation**, because a label that changes as the failure evolves would create a
+second alert instead of updating the open one. A bare host URL gets
+`/api/v2/alerts` appended.
+
+Alertmanager expires an alert `resolve_timeout` (5m by default) after the last
+POST, so the re-send interval must stay under it — `--alert-repeat` above `4m`
+with this format is a startup error.
+
+### No severity
+
+kubeagent has no severity model, so no payload claims one. Route on what is
+actually known, and derive severity in Alertmanager if you want it:
+
+```yaml
+route:
+  routes:
+    - matchers: [alertname="KubeagentIssue", issues=~".*CrashLoopBackOff.*"]
+      receiver: pager
+```
+
+### Delivery
+
+Sends run on their own goroutine behind a 64-slot queue, so a hung receiver never
+stalls the reconcile loop. Each POST gets three attempts (1s then 2s backoff);
+a 4xx is not retried. Drops are counted, never silent:
+
+| Series | Meaning |
+|--------|---------|
+| `kubeagent_alerts_sent_total{status,outcome}` | Deliveries by `firing`/`resolved` and `ok`/`failed` |
+| `kubeagent_alerts_dropped_total{reason}` | `queue_full` or `retries_exhausted` |
+| `kubeagent_alert_last_success_timestamp_seconds` | Last successful delivery (0 if none) |
+
 **Known limitation:** a node named via `--expected-nodes` that is absent from
 the cluster is **not** tracked as an issue, and never appears in `/issues` or
 the per-issue metrics. The cluster-health detector reports it only as the
@@ -269,10 +359,11 @@ default `0.80`) to enable the daemon disk-usage check. This requires the
 `kubeagent_node_fs_usage_ratio{node}` and
 `kubeagent_volumes_over_disk_threshold` in addition to the standard metrics.
 
-## Alerting
+## Prometheus alerting rules
 
-Point Prometheus at the metrics Service (it carries the `prometheus.io/scrape`
-annotations) and alert on what matters, e.g.:
+Independent of the webhook [Alerting](#alerting) above, you can also point
+Prometheus at the metrics Service (it carries the `prometheus.io/scrape`
+annotations) and alert on the gauges directly, e.g.:
 
 ```yaml
 - alert: KubeagentClusterDegraded

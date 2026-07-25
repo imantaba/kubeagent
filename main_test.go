@@ -658,6 +658,28 @@ func TestRunWatch_SLOTargetRoundsToExactRatio(t *testing.T) {
 	// unrounded division is not bit-identical to the intended ratio, through
 	// the real watch.Config runWatch builds — not a proxy computation — so a
 	// regression in the rounding itself, not just its presence, gets caught.
+	//
+	// The 99.9994 row pins the 8-decimal-place constant itself: a mutant that
+	// coarsens the rounding (e.g. 1e8 -> 1e5) still rounds 99.9, 99.99,
+	// 99.999, and 99.95 correctly, so none of the first four rows can catch
+	// it. 99.9994's ratio (0.999994) needs all 6 of its decimal digits kept,
+	// and — unlike 99.9999 below — rounding it at 5 places (0.99999) doesn't
+	// reach the 1.0 boundary, so the boundary guard has nothing to correct:
+	// a coarser rounding constant is exposed directly, uncorrected.
+	//
+	// 99.9999 -> 0.999999 documents the comment's own six-nines claim, but by
+	// itself does NOT pin the constant the way 99.9994 does: 99.9999's ratio
+	// sits close enough to 1.0 that rounding it at *any* coarser scale that
+	// still overshoots 1.0 (5 places included) trips the boundary guard,
+	// which then substitutes the exact quotient — which is exactly what this
+	// row expects. So this row mainly documents the comment's example and
+	// exercises the guard on a value one order of magnitude short of the
+	// fallback boundary; 99.9994 is what actually catches a coarsened
+	// constant.
+	//
+	// 99.9999999 -> 0.999999999 exercises the fallback path itself: at 8
+	// places this rounds up to exactly 1.0, outside the valid ratio range, so
+	// runWatch must take the exact (unrounded) quotient instead.
 	cases := []struct {
 		target string
 		want   float64
@@ -666,6 +688,9 @@ func TestRunWatch_SLOTargetRoundsToExactRatio(t *testing.T) {
 		{"99.99", 0.9999},
 		{"99.999", 0.99999},
 		{"99.95", 0.9995},
+		{"99.9994", 0.999994},
+		{"99.9999", 0.999999},
+		{"99.9999999", 0.999999999},
 	}
 	for _, c := range cases {
 		kc := deadKubeconfigPath(t)
@@ -676,6 +701,49 @@ func TestRunWatch_SLOTargetRoundsToExactRatio(t *testing.T) {
 		if cfg.SLOTarget != c.want {
 			t.Errorf("--slo-target %s: cfg.SLOTarget = %v, want exactly %v", c.target, cfg.SLOTarget, c.want)
 		}
+	}
+}
+
+func TestRunWatch_TinyNonzeroSLOTargetIsNotLaunderedToOff(t *testing.T) {
+	// The mirror image of TestRunWatch_DefaultSLOTargetReachesConfigAsZero: 0
+	// is validateSLOTarget's explicit "SLO tracking off" sentinel, but a tiny
+	// nonzero percentage must never collapse into that sentinel merely
+	// because rounding the ratio to 8 decimal places lands on 0. Without the
+	// boundary guard, --slo-target 0.0000001 divides to roughly 1e-9, rounds
+	// to exactly 0 at 8 decimal places, and reaches watch.Config
+	// indistinguishable from "the operator never set --slo-target" — silently
+	// turning SLO tracking off instead of turning it on at a (nonsensically
+	// strict, but explicitly requested) near-zero error budget.
+	//
+	// validateSLOTarget itself would accept this target: it is > 0 and < 1,
+	// so it takes neither the "== 0, disabled" branch nor either rejection
+	// branch. The right observable behavior is therefore that it reaches
+	// watch.Config as the exact, unrounded quotient — not that it gets
+	// rejected.
+	//
+	// want is computed here the same way runWatch computes it: runtime
+	// float64 division of a float64 variable, not a source constant
+	// expression. Go evaluates a constant expression like 0.0000001/100 at
+	// effectively infinite precision and rounds only once at the end, which
+	// is not always bit-identical to two chained IEEE 754 float64 operations
+	// (parsing the flag, then dividing by 100 at runtime) — a hardcoded
+	// literal would risk asserting the wrong bits.
+	var target float64 = 0.0000001
+	want := target / 100
+	if want == 0 {
+		t.Fatal("test bug: want computed as exactly 0, this test could not detect laundering to the sentinel")
+	}
+
+	kc := deadKubeconfigPath(t)
+	cfg, err := captureWatchConfig(t, []string{"--slo-target", "0.0000001", "--kubeconfig", kc, "--metrics-addr", "127.0.0.1:0"})
+	if err != nil {
+		t.Fatalf("runWatch(--slo-target 0.0000001) returned an unexpected error: %v", err)
+	}
+	if cfg.SLOTarget == 0 {
+		t.Fatal("cfg.SLOTarget = 0, want nonzero: a tiny nonzero --slo-target must not be laundered into the \"SLO tracking off\" sentinel")
+	}
+	if cfg.SLOTarget != want {
+		t.Fatalf("cfg.SLOTarget = %v, want exactly %v (the exact, unrounded quotient)", cfg.SLOTarget, want)
 	}
 }
 

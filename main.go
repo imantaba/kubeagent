@@ -347,9 +347,29 @@ func runWatch(args []string) error {
 	// kubeagent_slo_target_ratio. The numeric error is around 1e-16 and
 	// changes no decision the burn-rate arithmetic makes, but the displayed
 	// value is one no operator typed, so round to 8 decimal places, which
-	// sits past six-nines (99.9999 -> 0.999999) and so truncates no
-	// realistic SLO target. 0 stays 0, which means off.
-	sloRatio := math.Round(*sloTarget/100*1e8) / 1e8
+	// sits past six-nines (99.9999 -> 0.999999).
+	//
+	// Rounding is a display concern only, and must never change which side of
+	// validateSLOTarget's two boundaries a target falls on: 0 is its explicit
+	// "SLO tracking off" sentinel, and target >= 1 is rejected outright. A
+	// target typed close enough to either boundary rounds past it at 8
+	// places — 99.9999999 divides to 0.999999999, which rounds up to exactly
+	// 1.0, and a tiny nonzero percentage divides to something that rounds
+	// down to exactly 0 — so the rounded value is used only when it agrees
+	// with the exact (unrounded) quotient about which side of both
+	// boundaries it falls on. When it disagrees, the exact quotient is passed
+	// through instead, unrounded, so validateSLOTarget always classifies the
+	// value the operator actually typed rather than an artifact of display
+	// rounding. (-0.0 == 0.0 in Go, so a negative target that rounds to -0
+	// still compares equal to the exact-quotient's 0-ness here; it only takes
+	// the fallback, and reaches validateSLOTarget unrounded, when the target
+	// is nonzero — which is exactly when validateSLOTarget needs to see it to
+	// reject it.)
+	exact := *sloTarget / 100
+	sloRatio := math.Round(exact*1e8) / 1e8
+	if (sloRatio == 0) != (exact == 0) || (sloRatio >= 1) != (exact >= 1) {
+		sloRatio = exact
+	}
 
 	client, err := cluster.NewInClusterOrKubeconfig(*kubeconfig, *contextName)
 	if err != nil {

@@ -686,3 +686,22 @@ func TestPrioritize_CensusCountsFailedStatusAsBadEvenWhenFullyReady(t *testing.T
 		t.Errorf("Census.Good = %d, want 0: a fully-ready workload with Status==Failed is not available", res.Census.Good)
 	}
 }
+
+func TestPrioritize_CensusCountsScaledToZeroAsGood(t *testing.T) {
+	// Ready(0) < Desired(0) is false and workloadStatus(0, 0) is "Scaled Down",
+	// not "Failed", so Flagged() is false and this workload counts as Good
+	// forever. That is the intended reading, not an oversight: an operator who
+	// deliberately scaled a Deployment to zero replicas is not experiencing an
+	// outage, so the SLI must not dent availability for it. Pinned here so the
+	// decision cannot silently flip to "Scaled Down counts as bad" later.
+	in := []Workload{
+		{Namespace: "a", Name: "paused", Kind: "Deployment", Ready: 0, Desired: 0, Status: "Scaled Down"},
+	}
+	res := Prioritize(in, Opts{})
+	if res.Census.Total != 1 {
+		t.Fatalf("Census.Total = %d, want 1", res.Census.Total)
+	}
+	if res.Census.Good != 1 {
+		t.Errorf("Census.Good = %d, want 1: a scaled-to-zero workload is intentional, not an outage", res.Census.Good)
+	}
+}

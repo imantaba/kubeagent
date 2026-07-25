@@ -58,6 +58,25 @@ func TestRender_SLOSeries(t *testing.T) {
 	}
 }
 
+// TestRender_SLOAvailabilityHelpTextMatchesThePredicate pins the HELP text on
+// kubeagent_slo_availability_ratio to the real predicate. This series' HELP
+// string used to describe the pre-fix "no findings" numerator (the exact
+// defect this branch corrected in Prioritize) and nothing caught it drifting
+// out of sync with the code — it is the most operator-visible artifact of the
+// whole feature, baked into every /metrics scrape.
+func TestRender_SLOAvailabilityHelpTextMatchesThePredicate(t *testing.T) {
+	m := newMetrics()
+	m.updateSLO(true, 0.999,
+		slo.Report{Window: slo.Fast, Availability: 0.99, BurnRate: 10, Coverage: 1},
+		slo.Report{Window: slo.Slow, Availability: 0.995, BurnRate: 5, Coverage: 0.75},
+	)
+	out := m.render()
+	want := "# HELP kubeagent_slo_availability_ratio Time-weighted fraction of workload-seconds that are not flagged, over the window\n"
+	if !strings.Contains(out, want) {
+		t.Errorf("missing HELP line %q in:\n%s", want, out)
+	}
+}
+
 func TestRender_ErrorBudgetRemaining(t *testing.T) {
 	cases := []struct {
 		name     string

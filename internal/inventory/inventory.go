@@ -412,6 +412,11 @@ type Result struct {
 // carries its findings forever, permanently denting a figure it has no business
 // influencing.
 //
+// A Deployment or StatefulSet scaled to zero replicas is counted Good, not
+// excluded: Ready(0) < Desired(0) is false and its Status is "Scaled Down", not
+// "Failed", so Flagged() is false — deliberately, since an operator-initiated
+// scale-down is not an outage and must not dent the SLI.
+//
 // json:"-" because inventory.Result is serialized by `scan --output json`, whose
 // shape is a documented contract. The census feeds the watch SLI, not the report.
 type Census struct {

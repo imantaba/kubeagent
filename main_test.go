@@ -7,7 +7,6 @@ import (
 	"errors"
 	"flag"
 	"io"
-	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -631,17 +630,52 @@ func TestRunWatch_ValidSLOTargetReachesConfigAsARatio(t *testing.T) {
 	// watch.Config at all: every other SLO test in this file only exercises
 	// the rejection path (an out-of-range target failing validateSLOTarget).
 	//
-	// A tolerance is used instead of == because 99.9/100 in float64 is not
-	// guaranteed to be bit-identical to the literal 0.999 — don't tighten this
-	// to an equality check; it may happen to pass on this platform's FPU and
-	// fail on another's.
+	// This used to compare with a tolerance instead of ==, because plain
+	// float64 division (*sloTarget / 100) is not guaranteed to be
+	// bit-identical to the literal 0.999. runWatch now rounds the ratio to 8
+	// decimal places specifically to land on the value an operator typed, so
+	// exact equality is the stronger assertion here: it fails the instant
+	// that rounding is dropped, where a tolerance check would silently keep
+	// passing.
 	kc := deadKubeconfigPath(t)
 	cfg, err := captureWatchConfig(t, []string{"--slo-target", "99.9", "--kubeconfig", kc, "--metrics-addr", "127.0.0.1:0"})
 	if err != nil {
 		t.Fatalf("runWatch returned an unexpected error: %v", err)
 	}
-	if diff := math.Abs(cfg.SLOTarget - 0.999); diff > 1e-12 {
-		t.Fatalf("cfg.SLOTarget = %v, want ~0.999 (within 1e-12), diff = %v", cfg.SLOTarget, diff)
+	if cfg.SLOTarget != 0.999 {
+		t.Fatalf("cfg.SLOTarget = %v, want exactly 0.999", cfg.SLOTarget)
+	}
+}
+
+func TestRunWatch_SLOTargetRoundsToExactRatio(t *testing.T) {
+	// kubeagent_slo_target_ratio is rendered with %g, which prints the
+	// shortest string that round-trips the double — so whatever
+	// *sloTarget/100 actually produces in float64 is what an operator
+	// scraping the daemon sees. Plain division puts several of the most
+	// common SLO targets one bit off the value the operator typed (e.g.
+	// 99.9/100 -> 0.9990000000000001), so runWatch rounds the ratio to 8
+	// decimal places. This exercises that rounding for four targets whose
+	// unrounded division is not bit-identical to the intended ratio, through
+	// the real watch.Config runWatch builds — not a proxy computation — so a
+	// regression in the rounding itself, not just its presence, gets caught.
+	cases := []struct {
+		target string
+		want   float64
+	}{
+		{"99.9", 0.999},
+		{"99.99", 0.9999},
+		{"99.999", 0.99999},
+		{"99.95", 0.9995},
+	}
+	for _, c := range cases {
+		kc := deadKubeconfigPath(t)
+		cfg, err := captureWatchConfig(t, []string{"--slo-target", c.target, "--kubeconfig", kc, "--metrics-addr", "127.0.0.1:0"})
+		if err != nil {
+			t.Fatalf("runWatch(--slo-target %s) returned an unexpected error: %v", c.target, err)
+		}
+		if cfg.SLOTarget != c.want {
+			t.Errorf("--slo-target %s: cfg.SLOTarget = %v, want exactly %v", c.target, cfg.SLOTarget, c.want)
+		}
 	}
 }
 

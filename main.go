@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/signal"
 	"strconv"
@@ -339,8 +340,16 @@ func runWatch(args []string) error {
 	}
 
 	// The flag is a percentage because that is how an SRE writes an SLO; the
-	// tracker works in ratios. 0 stays 0, which means off.
-	sloRatio := *sloTarget / 100
+	// tracker works in ratios. Plain division isn't enough: 99.9/100 in
+	// float64 lands on 0.9990000000000001, not 0.999, and metrics.go renders
+	// gauges with %g, which prints the shortest string that round-trips the
+	// double — so that exact artifact is what would go out on the wire as
+	// kubeagent_slo_target_ratio. The numeric error is around 1e-16 and
+	// changes no decision the burn-rate arithmetic makes, but the displayed
+	// value is one no operator typed, so round to 8 decimal places, which
+	// sits past six-nines (99.9999 -> 0.999999) and so truncates no
+	// realistic SLO target. 0 stays 0, which means off.
+	sloRatio := math.Round(*sloTarget/100*1e8) / 1e8
 
 	client, err := cluster.NewInClusterOrKubeconfig(*kubeconfig, *contextName)
 	if err != nil {

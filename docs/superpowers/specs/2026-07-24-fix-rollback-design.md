@@ -201,3 +201,63 @@ audit file.
   rollback check.
 - **Docs:** `website/docs/features/remediation.md`, `README.md`, `CHANGELOG.md`,
   `website/docs/roadmap.md` (Theme-D slice-4 shipped bullet; Theme D complete).
+
+## Amendment (2026-07-25) — content-based drift bond for `RolloutForward`
+
+**Status:** approved · **Trigger:** the full chaos gate caught `--rollback` refusing every real
+rollback before v0.54.0 shipped.
+
+### What was wrong
+
+The original design bonded `applyRolloutForward` on revision *numbers*: refuse unless the
+Deployment is still at `CurrentRevision` (= the record's `toRevision`). Verified live on a
+throwaway Kind cluster, real Kubernetes never produces that state:
+
+| After a template-restore fix | Observed |
+|---|---|
+| Deployment revision | a **brand-new** number (revs 1,2 → fix → **3**), never `toRevision` |
+| The ReplicaSet that held `toRevision` | **re-annotated** to the new revision (rev 1 → rev 3) |
+| The pre-fix template (`fromRevision`) | **survives** at its own revision (rev 2) |
+
+So the numeric bond can never match — every real rollback refuses — and looking the RS up by
+`toRevision` fails too, because that RS was re-annotated. The unit tests missed this because they
+hand-built a Deployment already at `revision == toRevision`.
+
+### The corrected bond
+
+`applyRolloutForward` keeps the same guard *sequence* (precondition → RBAC preflight → single
+write) but the precondition becomes content-based:
+
+1. **Find the restore target** by `TargetRevision` (= `fromRevision`) among the owned
+   ReplicaSets — empirically this survives the fix. Missing → `Refused`
+   (`"revision N no longer exists; no write made"`).
+2. **Nothing to undo:** if the Deployment's current pod template already equals the target
+   template (hash-stripped, via `templatesEqual`) → `Refused`
+   (`"already at the pre-fix revision; no write made"`).
+3. **Drift:** the Deployment's current per-container images must still match the **post-fix
+   images recorded in the audit record's `Changes`** (each `image (<container>)` change's `To`
+   value). Any mismatch → `Refused`
+   (`"state changed since the fix (container X is now <img>, the fix left it at <img>) — no write made"`).
+   This is the accurate meaning of "the fix's effect is still in place", uses data slice 1 already
+   records, and is timing-independent.
+
+`CurrentRevision` stays on the Action for display/audit but is **no longer** a precondition.
+`applyCordon` is unchanged (its already-cordoned check is inherently content-based).
+
+### Testing amendments
+
+- Regression test built on **realistic post-fix state**: Deployment at a brand-new revision (3)
+  whose template matches the post-fix images, with the pre-fix template still at
+  `fromRevision` (2) and the formerly-`toRevision` RS **re-annotated to 3** — the rollback must
+  apply and restore the pre-fix image. This test fails against the old numeric bond.
+- Drift test: same fixtures, but a third party has since changed the image → `Refused`, zero
+  writes.
+- Already-rolled-back test: Deployment template already equals the target → `Refused`, zero writes.
+- The chaos scenario must show a genuine round trip (`after --fix` ≠ `after --rollback`, and at
+  least one `rollback` audit record).
+
+### Chaos harness amendment
+
+`chaos/run.sh`'s rollout scenario patches `maxUnavailable=100%` before setting the bad image, so
+the workload is a real outage (`Ready < Desired`). Without it `remediate.Plan` correctly declines
+to remediate an available workload and the 9b round trip is vacuous.

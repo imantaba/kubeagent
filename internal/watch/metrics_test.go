@@ -67,7 +67,8 @@ func sampleResult() *scan.Result {
 		DNS:           dnshealth.Report{Status: "degraded", ServfailRatio: 0.12},
 		Certificates: &certhealth.Report{WarnDays: 30, Checked: 4,
 			Expired:  []certhealth.Cert{{Namespace: "shop", Name: "shop-tls", Days: -3}},
-			Expiring: []certhealth.Cert{{Namespace: "infra", Name: "api-tls", Days: 12}}},
+			Expiring: []certhealth.Cert{{Namespace: "infra", Name: "api-tls", Days: 12}},
+			Invalid:  []certhealth.Invalid{{Namespace: "infra", Name: "broken-tls", Detail: "invalid certificate data"}}},
 	}
 }
 

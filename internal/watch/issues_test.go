@@ -43,6 +43,7 @@ func TestIssueKeys_CoversEverySource(t *testing.T) {
 		"Cluster/coredns:DNSDegraded",
 		"Secret/shop/shop-tls:CertExpired",
 		"Secret/infra/api-tls:CertExpiring",
+		"Secret/infra/broken-tls:CertInvalid",
 		"Volume/n1:DiskOverThreshold",
 	} {
 		if !got[want] {

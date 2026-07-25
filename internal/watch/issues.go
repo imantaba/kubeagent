@@ -13,6 +13,12 @@ import (
 // issues, and the advisory config reports (NodeReserve, PVCReclaim,
 // SecurityIssues) — those describe standing configuration, not incidents that
 // fire and resolve, so tracking them would make MTTR meaningless.
+//
+// Known gap: nodes declared via --expected-nodes but absent from the cluster
+// (Health.NodesExpectedAbsent) are not tracked. ClusterHealth exposes them only
+// as a counter and a free-text NodeIssues sentence, with no stable per-node key
+// to project. Tracking them needs a structured field on the detector, which is
+// a separate change.
 func issueKeys(res *scan.Result) []watchstate.Key {
 	seen := map[watchstate.Key]bool{}
 	var keys []watchstate.Key
@@ -86,6 +92,9 @@ func issueKeys(res *scan.Result) []watchstate.Key {
 		}
 		for _, c := range res.Certificates.Expiring {
 			add("Secret", c.Namespace, c.Name, "CertExpiring")
+		}
+		for _, c := range res.Certificates.Invalid {
+			add("Secret", c.Namespace, c.Name, "CertInvalid")
 		}
 	}
 	for _, v := range res.DiskUsage.Over {

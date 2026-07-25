@@ -167,7 +167,7 @@ func firing(o Object, a *openAlert, g *group, reason Reason) Notification {
 		Object:      o,
 		Status:      StatusFiring,
 		Reason:      reason,
-		Issues:      g.issues,
+		Issues:      append([]string(nil), g.issues...), // copy: caller must not alias openAlert.issues
 		FiringSince: a.firingSince,
 		Flapping:    g.flapping,
 	}

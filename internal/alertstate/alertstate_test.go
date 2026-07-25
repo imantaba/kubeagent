@@ -197,6 +197,27 @@ func TestRoll_MultipleObjectsSortedAndIndependent(t *testing.T) {
 	}
 }
 
+// TestRoll_ReturnedIssuesDoNotAliasRollerState guards against the caller's
+// Notification.Issues sharing backing storage with the Roller's internal
+// openAlert.issues. If it did, a downstream consumer (an encoder or sender)
+// mutating the returned slice in place would corrupt the roller's stored
+// state, and the next Roll would compare against that corrupted state and
+// wrongly decide the issue set changed.
+func TestRoll_ReturnedIssuesDoNotAliasRollerState(t *testing.T) {
+	r := New(Options{Repeat: time.Hour})
+	active := []watchstate.Record{rec("Deployment", "shop", "web", "Degraded", base)}
+
+	got := r.Roll(active, base)
+	if len(got) != 1 {
+		t.Fatalf("first Roll returned %d notifications, want 1: %+v", len(got), got)
+	}
+	got[0].Issues[0] = "Mutated"
+
+	if next := r.Roll(active, base.Add(time.Minute)); len(next) != 0 {
+		t.Errorf("mutating the returned Issues slice leaked into the roller's state, spuriously emitting %+v", next)
+	}
+}
+
 func TestRoll_DuplicateIssuesCollapse(t *testing.T) {
 	r := New(Options{Repeat: time.Hour})
 	got := r.Roll([]watchstate.Record{

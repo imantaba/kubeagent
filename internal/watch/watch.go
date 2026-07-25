@@ -9,8 +9,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"sort"
-	"strings"
 	"time"
 
 	"k8s.io/client-go/informers"
@@ -18,6 +16,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 
 	"github.com/imantaba/kubeagent/internal/scan"
+	"github.com/imantaba/kubeagent/internal/watchstate"
 )
 
 // Config configures the daemon.
@@ -98,14 +97,11 @@ func Run(ctx context.Context, client kubernetes.Interface, cfg Config) error {
 	log.Printf("kubeagent: watching cluster (namespace=%q, heartbeat=%s); metrics on %s", scopeLabel(cfg.Namespace), cfg.Heartbeat, cfg.MetricsAddr)
 
 	opts := scan.Options{Namespace: cfg.Namespace, IncludeCron: cfg.IncludeCron, IncludeRestarts: cfg.IncludeRestarts, DiskUsage: cfg.DiskUsage, DiskThreshold: cfg.DiskThreshold, QuotaThreshold: cfg.QuotaThreshold, NodeHeartbeatThreshold: cfg.NodeHeartbeatThreshold, ExpectedNodes: cfg.ExpectedNodes, KubeletHealth: cfg.KubeletHealth, ControlPlaneHealth: cfg.ControlPlaneHealth, DNSHealth: cfg.DNSHealth, DNSServfailRatio: cfg.DNSServfailRatio, Certs: cfg.Certs, CertWarnDays: cfg.CertWarnDays, WebhookTimeoutThreshold: cfg.WebhookTimeoutThreshold}
-	var cl changeLogger
+	tr := watchstate.New(watchstate.Options{})
 	reconcile := func() {
 		start := time.Now()
 		res, err := scan.Evaluate(ctx, client, opts)
-		m.update(&res, time.Since(start), time.Now(), err)
-		if cl.changed(&res, err) {
-			log.Printf("kubeagent: %s", describe(&res, err))
-		}
+		applyResult(m, tr, &res, time.Since(start), time.Now(), err)
 	}
 	reconcile() // initial snapshot
 	m.markReady()
@@ -145,57 +141,36 @@ func scopeLabel(ns string) string {
 	return ns
 }
 
-// changeLogger suppresses steady-state log spam: it logs only when the health
-// picture changes vs the previous reconcile.
-type changeLogger struct {
-	prev   string
-	inited bool
-}
-
-func (c *changeLogger) changed(res *scan.Result, err error) bool {
-	sig := signature(res, err)
-	if c.inited && sig == c.prev {
-		return false
-	}
-	c.inited = true
-	c.prev = sig
-	return true
-}
-
-// signature is a compact, stable fingerprint of the evaluation outcome.
-func signature(res *scan.Result, err error) string {
+// applyResult folds one evaluation into the metrics and the issue tracker, and
+// logs whatever changed. A failed evaluation never reaches the tracker: an
+// evaluation error is not "all clear", and treating it as one would resolve every
+// tracked issue, then re-fire them all on the next success.
+func applyResult(m *metrics, tr *watchstate.Tracker, res *scan.Result, dur time.Duration, now time.Time, err error) {
+	m.update(res, dur, now, err)
 	if err != nil {
-		return "err:" + err.Error()
+		log.Printf("kubeagent: evaluation error: %v", err)
+		return
 	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "%s|%d/%d|", res.Health.Verdict, res.Health.NodesReady, res.Health.NodesTotal)
-	var flagged []string
-	for _, w := range res.Inventory.Workloads {
-		if w.Flagged() {
-			issues := make([]string, 0, len(w.Findings))
-			for _, f := range w.Findings {
-				issues = append(issues, f.Issue)
-			}
-			sort.Strings(issues)
-			flagged = append(flagged, w.Namespace+"/"+w.Name+":"+strings.Join(issues, ","))
-		}
-	}
-	sort.Strings(flagged)
-	b.WriteString(strings.Join(flagged, ";"))
-	return b.String()
+	d := tr.Observe(issueKeys(res), now)
+	m.updateIssues(tr, now)
+	logDelta(res, d, len(tr.Active()), tr.FlapWindow())
 }
 
-// describe is a one-line human summary for the log.
-func describe(res *scan.Result, err error) string {
-	if err != nil {
-		return "evaluation error: " + err.Error()
+// logDelta prints one line per transition plus a summary. A reconcile that
+// changed nothing prints nothing, so steady state stays quiet.
+func logDelta(res *scan.Result, d watchstate.Delta, active int, flapWindow time.Duration) {
+	if len(d.New) == 0 && len(d.Resolved) == 0 && len(d.NewlyFlapping) == 0 {
+		return
 	}
-	n := 0
-	for _, w := range res.Inventory.Workloads {
-		if w.Flagged() {
-			n++
-		}
+	for _, r := range d.New {
+		log.Printf("kubeagent: NEW %s", r.Key)
 	}
-	return fmt.Sprintf("cluster %s (%d/%d nodes ready) — %d workload(s) flagged, %d service issue(s)",
-		res.Health.Verdict, res.Health.NodesReady, res.Health.NodesTotal, n, len(res.ServiceIssues))
+	for _, r := range d.Resolved {
+		log.Printf("kubeagent: RESOLVED %s (fired for %s)", r.Key, r.ResolvedAt.Sub(r.FiringSince).Round(time.Second))
+	}
+	for _, r := range d.NewlyFlapping {
+		log.Printf("kubeagent: FLAPPING %s (%d firings in %s)", r.Key, r.RecentFirings, flapWindow)
+	}
+	log.Printf("kubeagent: cluster %s (%d/%d nodes ready) — %d issue(s) active, %d new, %d resolved",
+		res.Health.Verdict, res.Health.NodesReady, res.Health.NodesTotal, active, len(d.New), len(d.Resolved))
 }

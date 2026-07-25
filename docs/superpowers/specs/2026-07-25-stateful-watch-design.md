@@ -159,6 +159,7 @@ func issueKeys(res *scan.Result) []watchstate.Key
 | `ControlPlane.Status == "unhealthy"` | `Cluster` | `` | `control-plane` | `Unhealthy` |
 | `DNS.Status == "degraded"` | `Cluster` | `` | `coredns` | `DNSDegraded` |
 | `Certificates.Expired` / `.Expiring` (nil-safe) | `Secret` | `Namespace` | `Name` | `CertExpired` / `CertExpiring` |
+| `Certificates.Invalid` (nil-safe) | `Secret` | `Namespace` | `Name` | `CertInvalid` |
 | `DiskUsage.Over` | `Volume` | `Namespace` | `Node` when `Kind == "node"`, else `Name` | `DiskOverThreshold` |
 
 Deliberate choices in the mapping:
@@ -171,6 +172,12 @@ Deliberate choices in the mapping:
   `realIngressIssues`) — a parked backend is not an incident.
 - **Advisory/config reports are excluded**: `NodeReserve`, `PVCReclaim`, and
   `SecurityIssues` describe standing configuration, not incidents that fire and resolve.
+- **Known gap — expected-but-absent nodes are not tracked.** A node declared via
+  `--expected-nodes` and missing from the cluster is a genuine incident, but
+  `clusterhealth.ClusterHealth` reports it only as the `NodesExpectedAbsent` counter plus a
+  free-text `NodeIssues` sentence, so there is no stable key to follow. Parsing the sentence
+  would be brittle, and giving the detector a structured field would change
+  `scan --output json` — outside this slice. Tracking it stays a follow-up.
   Tracking them would make MTTR meaningless.
 
 ### 3. Reconcile-loop wiring

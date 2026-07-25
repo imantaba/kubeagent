@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
@@ -468,9 +469,14 @@ func Inverse(kind, namespace, name string, fromRevision, toRevision int) (Action
 }
 
 // applyRolloutForward restores a Deployment to the revision it had before a fix, using
-// the same guarded sequence as applyRolloutUndo: state precondition (the deployment is
-// still where the fix left it and the target revision still exists), then the RBAC
-// preflight, then the single write.
+// a content-based drift bond (Amendment 2026-07-25): find the target RS by TargetRevision,
+// verify the Deployment template is not already at the target, verify the Deployment's
+// per-container images still match the post-fix images recorded on the Action's Changes,
+// then the RBAC preflight, then the single write.
+//
+// CurrentRevision is kept on the Action for display/audit but is NOT a precondition —
+// Kubernetes assigns a brand-new revision after a template-restore fix, so the numeric
+// bond can never match.
 func applyRolloutForward(ctx context.Context, client kubernetes.Interface, a Action) Result {
 	res := Result{Action: a}
 	if protectedNamespaces[a.Namespace] {
@@ -482,18 +488,13 @@ func applyRolloutForward(ctx context.Context, client kubernetes.Interface, a Act
 		res.Err = fmt.Errorf("get deployment: %w", err)
 		return res
 	}
-	if curRev := revFromAnnotations(dep.Annotations); curRev != a.CurrentRevision {
-		res.Detail = fmt.Sprintf(
-			"state changed since the fix (revision %d is now current; the fix left it at %d) — no write made",
-			curRev, a.CurrentRevision)
-		res.Refused = true
-		return res
-	}
 	rsList, err := client.AppsV1().ReplicaSets(a.Namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		res.Err = fmt.Errorf("list replicasets: %w", err)
 		return res
 	}
+
+	// 1. Find the restore target by TargetRevision (= fromRevision; survives the fix).
 	var target *appsv1.ReplicaSet
 	for i := range rsList.Items {
 		rs := &rsList.Items[i]
@@ -507,6 +508,42 @@ func applyRolloutForward(ctx context.Context, client kubernetes.Interface, a Act
 		res.Refused = true
 		return res
 	}
+
+	// 2. Nothing to undo: Deployment template is already the target template.
+	if templatesEqual(dep.Spec.Template, target.Spec.Template) {
+		res.Detail = "already at the pre-fix revision; no write made"
+		res.Refused = true
+		return res
+	}
+
+	// 3. Drift: the Deployment's current per-container images must still match the
+	// post-fix images recorded in the Action's Changes.  Any mismatch means a third
+	// party has changed something since the fix — refuse rather than clobber.
+	const imagePrefix = "image ("
+	for _, c := range a.Changes {
+		if !strings.HasPrefix(c.Field, imagePrefix) {
+			continue
+		}
+		// Parse "image (<containerName>)" → containerName
+		name := strings.TrimSuffix(strings.TrimPrefix(c.Field, imagePrefix), ")")
+		want := c.To // what the fix left as the post-fix image
+		// Find the container by name in the current Deployment template.
+		var actual string
+		for _, container := range dep.Spec.Template.Spec.Containers {
+			if container.Name == name {
+				actual = container.Image
+				break
+			}
+		}
+		if actual != want {
+			res.Detail = fmt.Sprintf(
+				"state changed since the fix (container %q is now %s; the fix left it at %s) — no write made",
+				name, actual, want)
+			res.Refused = true
+			return res
+		}
+	}
+
 	allowed, reason, err := Preflight(ctx, client, a)
 	if err != nil {
 		res.Err = fmt.Errorf("permission preflight failed: %w", err)

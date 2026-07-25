@@ -692,15 +692,20 @@ func TestApply_RolloutForwardRestoresRevision(t *testing.T) {
 }
 
 func TestApply_RolloutForwardRefusesOnDrift(t *testing.T) {
+	// The new content-based drift bond: the Action carries the post-fix image the fix
+	// left (nginx:1.27 for container "c").  A third party has since deployed nginx:other,
+	// so the image drift check must refuse with zero writes.
 	cur := depObj("shop", "web", "nginx:other", "6") // moved on since the fix
-	r4 := rsWithImage("shop", "web-4", "web", "4", "nginx:1.27")
 	r5 := rsWithImage("shop", "web-5", "web", "5", "nginx:2.0")
-	cli := fake.NewSimpleClientset(cur, &r4, &r5)
+	r6 := rsWithImage("shop", "web-6", "web", "6", "nginx:other")
+	cli := fake.NewSimpleClientset(cur, &r5, &r6)
 	allowFix(cli)
 	a, _ := Inverse("RolloutUndo", "shop", "web", 5, 4)
+	// Record the post-fix image so the drift check has data.
+	a.Changes = append(a.Changes, Change{Field: "image (c)", From: "nginx:2.0", To: "nginx:1.27"})
 	res := Apply(context.Background(), cli, a)
 	if res.Applied || !res.Refused {
-		t.Fatalf("drift must refuse, got %+v", res)
+		t.Fatalf("image drift must refuse, got %+v", res)
 	}
 	for _, act := range cli.Actions() {
 		if act.GetVerb() == "update" {
@@ -767,6 +772,101 @@ func TestApply_CordonRefusesWhenAlreadyCordoned(t *testing.T) {
 	for _, act := range cli.Actions() {
 		if act.GetVerb() == "update" {
 			t.Fatal("refusal must make no write")
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Content-based drift bond tests for applyRolloutForward (Amendment 2026-07-25)
+// ---------------------------------------------------------------------------
+
+// buildPostFixFixtures returns the realistic post-fix cluster state:
+//
+//   - Deployment shop/web at revision "3" with post-fix image nginx:1.27
+//   - RS at revision "2" with pre-fix image nginx:2.0  (the restore target)
+//   - RS at revision "3" with post-fix image nginx:1.27 (the re-annotated RS, was rev 1)
+//
+// The Action is the inverse of RolloutUndo(fromRevision=2, toRevision=1), i.e.
+// RolloutForward with TargetRevision=2, CurrentRevision=1, plus the recorded
+// post-fix image change appended so the drift check has data.
+func buildPostFixFixtures() (*fake.Clientset, Action) {
+	// Deployment is now at the brand-new revision 3 with post-fix image
+	cur := depObj("shop", "web", "nginx:1.27", "3")
+	// RS that was re-annotated to rev 3 (formerly the toRevision RS)
+	rs3 := rsWithImage("shop", "web-3", "web", "3", "nginx:1.27")
+	// RS at rev 2 = the pre-fix template that survives (the restore target)
+	rs2 := rsWithImage("shop", "web-2", "web", "2", "nginx:2.0")
+	cli := fake.NewSimpleClientset(cur, &rs3, &rs2)
+
+	// Inverse("RolloutUndo","shop","web", fromRevision=2, toRevision=1) gives
+	// Action{Kind:"RolloutForward", TargetRevision:2, CurrentRevision:1}
+	a, _ := Inverse("RolloutUndo", "shop", "web", 2, 1)
+	// Append the recorded post-fix image change so drift check has data
+	a.Changes = append(a.Changes, Change{Field: "image (c)", From: "nginx:2.0", To: "nginx:1.27"})
+	return cli, a
+}
+
+// TestApply_RolloutForwardWorksOnRealisticPostFixState is the primary regression
+// test: real Kubernetes never produces Deployment.revision == toRevision after a
+// fix, so the old numeric bond always refused. The new content-based bond must
+// find the pre-fix RS by TargetRevision (2), verify the post-fix image matches
+// the audit record, and apply the restore.
+func TestApply_RolloutForwardWorksOnRealisticPostFixState(t *testing.T) {
+	cli, a := buildPostFixFixtures()
+	allowFix(cli)
+	res := Apply(context.Background(), cli, a)
+	if !res.Applied || res.Err != nil {
+		t.Fatalf("expected the rollback to apply on realistic post-fix state, got %+v", res)
+	}
+	out, _ := cli.AppsV1().Deployments("shop").Get(context.Background(), "web", metav1.GetOptions{})
+	if got := out.Spec.Template.Spec.Containers[0].Image; got != "nginx:2.0" {
+		t.Errorf("image after rollback = %q, want nginx:2.0 (pre-fix image restored)", got)
+	}
+}
+
+// TestApply_RolloutForwardRefusesWhenSomeoneElseChangedTheImage tests drift:
+// the Deployment's current image is nginx:9.9 (a third party deployed something)
+// while the audit record says the fix left it at nginx:1.27 — must refuse, zero writes.
+func TestApply_RolloutForwardRefusesWhenSomeoneElseChangedTheImage(t *testing.T) {
+	_, a := buildPostFixFixtures()
+	// Third-party has since deployed nginx:9.9 — not what the fix left
+	cur := depObj("shop", "web", "nginx:9.9", "3")
+	rs3 := rsWithImage("shop", "web-3", "web", "3", "nginx:9.9")
+	rs2 := rsWithImage("shop", "web-2", "web", "2", "nginx:2.0")
+	cli := fake.NewSimpleClientset(cur, &rs3, &rs2)
+	allowFix(cli)
+	res := Apply(context.Background(), cli, a)
+	if res.Applied || !res.Refused {
+		t.Fatalf("image drift must refuse, got %+v", res)
+	}
+	for _, act := range cli.Actions() {
+		if act.GetVerb() == "update" {
+			t.Fatalf("drift refusal must make zero writes; saw update verb")
+		}
+	}
+}
+
+// TestApply_RolloutForwardRefusesWhenAlreadyRolledBack tests the "nothing to undo"
+// guard: the Deployment template already equals the target (pre-fix) template —
+// must refuse with a detail mentioning "already", zero writes.
+func TestApply_RolloutForwardRefusesWhenAlreadyRolledBack(t *testing.T) {
+	_, a := buildPostFixFixtures()
+	// Deployment is already at the pre-fix image nginx:2.0, at some revision 4
+	cur := depObj("shop", "web", "nginx:2.0", "4")
+	rs4 := rsWithImage("shop", "web-4", "web", "4", "nginx:2.0")
+	rs2 := rsWithImage("shop", "web-2", "web", "2", "nginx:2.0")
+	cli := fake.NewSimpleClientset(cur, &rs4, &rs2)
+	allowFix(cli)
+	res := Apply(context.Background(), cli, a)
+	if res.Applied || !res.Refused {
+		t.Fatalf("already-at-target must refuse, got %+v", res)
+	}
+	if !strings.Contains(res.Detail, "already") {
+		t.Errorf("detail = %q, want it to mention \"already\"", res.Detail)
+	}
+	for _, act := range cli.Actions() {
+		if act.GetVerb() == "update" {
+			t.Fatalf("already-rolled-back refusal must make zero writes; saw update verb")
 		}
 	}
 }

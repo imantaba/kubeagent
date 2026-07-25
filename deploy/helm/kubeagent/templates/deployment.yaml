@@ -73,8 +73,8 @@ spec:
             - name: KUBEAGENT_ALERT_WEBHOOK
               valueFrom:
                 secretKeyRef:
-                  name: {{ required "alerts.existingSecret is required when alerts.enabled is true" .Values.alerts.existingSecret }}
-                  key: {{ .Values.alerts.secretKey }}
+                  name: {{ required "alerts.existingSecret is required when alerts.enabled is true" .Values.alerts.existingSecret | quote }}
+                  key: {{ .Values.alerts.secretKey | quote }}
             {{- end }}
           ports:
             - name: metrics

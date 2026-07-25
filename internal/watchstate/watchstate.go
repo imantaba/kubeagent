@@ -81,6 +81,7 @@ type Stats struct {
 type Tracker struct {
 	opts    Options
 	records map[Key]*Record
+	firings map[Key][]time.Time // firing timestamps inside FlapWindow
 	stats   Stats
 }
 
@@ -98,13 +99,16 @@ func New(o Options) *Tracker {
 	if o.FlapThreshold <= 0 {
 		o.FlapThreshold = defaultFlapThreshold
 	}
-	return &Tracker{opts: o, records: map[Key]*Record{}}
+	return &Tracker{opts: o, records: map[Key]*Record{}, firings: map[Key][]time.Time{}}
 }
 
 // Observe folds one evaluation's issue set into the tracker and reports what
 // changed. Keys may repeat and arrive in any order; duplicates collapse and the
 // returned slices are sorted by Key.String().
 func (t *Tracker) Observe(keys []Key, now time.Time) Delta {
+	t.purge(now)
+	t.refreshFlaps(now)
+
 	seen := make(map[Key]bool, len(keys))
 	uniq := make([]Key, 0, len(keys))
 	for _, k := range keys {
@@ -120,6 +124,10 @@ func (t *Tracker) Observe(keys []Key, now time.Time) Delta {
 	for _, k := range uniq {
 		r, ok := t.records[k]
 		if !ok {
+			if len(t.records) >= t.opts.MaxTracked {
+				t.stats.DroppedTotal++
+				continue
+			}
 			r = &Record{Key: k, FirstSeen: now}
 			t.records[k] = r
 		}
@@ -128,11 +136,17 @@ func (t *Tracker) Observe(keys []Key, now time.Time) Delta {
 			d.Ongoing = append(d.Ongoing, *r)
 			continue
 		}
+		wasFlapping := r.Flapping
 		r.Active = true
 		r.FiringSince = now
 		r.ResolvedAt = time.Time{}
 		r.Firings++
 		t.stats.NewTotal++
+		t.recordFiring(r, now)
+		if r.Flapping && !wasFlapping {
+			t.stats.FlapTotal++
+			d.NewlyFlapping = append(d.NewlyFlapping, *r)
+		}
 		d.New = append(d.New, *r)
 	}
 
@@ -148,7 +162,65 @@ func (t *Tracker) Observe(keys []Key, now time.Time) Delta {
 		d.Resolved = append(d.Resolved, *r)
 	}
 	sortRecords(d.Resolved)
+	sortRecords(d.NewlyFlapping)
+	sortRecords(d.New)
+	sortRecords(d.Ongoing)
 	return d
+}
+
+// FlapWindow is the window flap detection counts firings over. The daemon reports
+// it alongside a FLAPPING log line.
+func (t *Tracker) FlapWindow() time.Duration { return t.opts.FlapWindow }
+
+// purge deletes resolved records whose retention window has passed, freeing the
+// cap slots they occupied. A purged record never reappears in a Delta.
+func (t *Tracker) purge(now time.Time) {
+	for k, r := range t.records {
+		if !r.Active && !r.ResolvedAt.IsZero() && now.Sub(r.ResolvedAt) > t.opts.RetainResolved {
+			delete(t.records, k)
+			delete(t.firings, k)
+		}
+	}
+}
+
+// refreshFlaps drops firing timestamps that have aged out of the window and
+// recomputes the flap state, so an issue that stopped flapping un-flags itself
+// even while it keeps firing.
+func (t *Tracker) refreshFlaps(now time.Time) {
+	cutoff := now.Add(-t.opts.FlapWindow)
+	for k, times := range t.firings {
+		kept := make([]time.Time, 0, len(times))
+		for _, ts := range times {
+			if ts.After(cutoff) {
+				kept = append(kept, ts)
+			}
+		}
+		if len(kept) == 0 {
+			delete(t.firings, k)
+		} else {
+			t.firings[k] = kept
+		}
+		if r, ok := t.records[k]; ok {
+			r.RecentFirings = len(kept)
+			r.Flapping = len(kept) >= t.opts.FlapThreshold
+		}
+	}
+}
+
+// recordFiring appends this firing to the key's history (trimmed to the window)
+// and updates the record's flap state.
+func (t *Tracker) recordFiring(r *Record, now time.Time) {
+	cutoff := now.Add(-t.opts.FlapWindow)
+	times := append(t.firings[r.Key], now)
+	kept := make([]time.Time, 0, len(times))
+	for _, ts := range times {
+		if ts.After(cutoff) {
+			kept = append(kept, ts)
+		}
+	}
+	t.firings[r.Key] = kept
+	r.RecentFirings = len(kept)
+	r.Flapping = len(kept) >= t.opts.FlapThreshold
 }
 
 // Active returns the currently-firing records, sorted, as copies.

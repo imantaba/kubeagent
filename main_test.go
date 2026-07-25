@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"io"
 	"os"
 	"path/filepath"
@@ -451,6 +452,14 @@ users:
 // these tests can cancel runWatch's signal.NotifyContext. Bounding the wait
 // turns that failure mode into a fast, clear test failure instead of a
 // multi-minute hang that also leaves a port bound.
+//
+// Contract: callers MUST pass an ephemeral --metrics-addr (127.0.0.1:0). On
+// timeout, the abandoned goroutine keeps running for the lifetime of the test
+// binary — including, if it got past validation, holding whatever address it
+// was given open for the rest of the run. Passing the real default (:8080)
+// would leak a bound listener that a later test binding the same address would
+// then fail to acquire, surfacing as an unrelated "address already in use"
+// error layered on top of that test's actual failure.
 func runWatchBounded(t *testing.T, args []string, timeout time.Duration) error {
 	t.Helper()
 	done := make(chan error, 1)
@@ -475,7 +484,7 @@ func TestRunWatch_SLOTargetIsAPercentageNotARatio(t *testing.T) {
 	// to a substring like strings.Contains(err.Error(), "invalid --slo-target")
 	// — that would pass whether or not the conversion happened.
 	kc := deadKubeconfigPath(t)
-	err := runWatchBounded(t, []string{"--slo-target", "100", "--kubeconfig", kc}, 3*time.Second)
+	err := runWatchBounded(t, []string{"--slo-target", "100", "--kubeconfig", kc, "--metrics-addr", "127.0.0.1:0"}, 3*time.Second)
 	if err == nil {
 		t.Fatal("expected a validation error for --slo-target 100")
 	}
@@ -515,13 +524,48 @@ func TestRunWatch_SLOTargetFromEnv(t *testing.T) {
 	// this time with no flag given at all.
 	t.Setenv("KUBEAGENT_SLO_TARGET", "100")
 	kc := deadKubeconfigPath(t)
-	err := runWatchBounded(t, []string{"--kubeconfig", kc}, 3*time.Second)
+	err := runWatchBounded(t, []string{"--kubeconfig", kc, "--metrics-addr", "127.0.0.1:0"}, 3*time.Second)
 	if err == nil {
 		t.Fatal("expected a validation error for KUBEAGENT_SLO_TARGET=100")
 	}
 	want := "invalid --slo-target: 100% (must be greater than 0 and less than 100)"
 	if err.Error() != want {
 		t.Fatalf("error = %q, want exactly %q", err.Error(), want)
+	}
+}
+
+func TestRunWatch_SLOTargetDefaultsToOff(t *testing.T) {
+	// Guards the commit's promise that upgrading without --slo-target changes
+	// nothing: the flag's default must be the literal zero value, 0, which
+	// validateSLOTarget treats as "disabled". A default of, say, 50 would still
+	// be a valid target — it would pass validation and silently turn SLO
+	// tracking on for every operator who upgrades without touching the flag.
+	//
+	// --help is the only way to observe a flag.Float64 default without either
+	// starting the daemon (which requires a live target that has since fallen
+	// through validation) or reaching into the flag.FlagSet's internals. Go's
+	// flag.PrintDefaults appends a literal " (default X)" suffix to a flag's
+	// usage line only when the default is NOT the type's zero value; at the
+	// zero value it prints just the usage text. So the trailing "\n" right
+	// after the usage string is exactly what discriminates "off by default"
+	// from "on by default": with a non-zero default (e.g. 50), this same line
+	// would instead read '...(0 = SLO tracking off) (default 50)\n'. A future
+	// maintainer must not loosen this to a substring/Contains check without
+	// the terminator — this branch has already shipped three prefix-matching
+	// assertions that passed for the wrong reason.
+	t.Setenv("KUBEAGENT_SLO_TARGET", "")
+	stderr := captureStderr(t, func() {
+		err := runWatch([]string{"--help"})
+		if !errors.Is(err, flag.ErrHelp) {
+			t.Fatalf("runWatch([--help]) error = %v, want flag.ErrHelp", err)
+		}
+	})
+	if !strings.Contains(stderr, "-slo-target float") {
+		t.Fatalf("expected --help output to describe -slo-target as a float flag, got: %q", stderr)
+	}
+	want := "availability SLO as a percentage, e.g. 99.9 (0 = SLO tracking off)\n"
+	if !strings.Contains(stderr, want) {
+		t.Fatalf("expected --help output to show --slo-target defaulting to off (no non-zero default suffix), got: %q", stderr)
 	}
 }
 

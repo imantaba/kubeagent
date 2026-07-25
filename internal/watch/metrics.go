@@ -1,6 +1,7 @@
 package watch
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/ingresshealth"
 	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/svchealth"
+	"github.com/imantaba/kubeagent/internal/watchstate"
 )
 
 // realServiceIssues counts Service issues that need attention, excluding
@@ -37,6 +39,15 @@ func realIngressIssues(issues []ingresshealth.RouteIssue) int {
 		}
 	}
 	return n
+}
+
+// issueSnapshot is the tracker's state as of the last reconcile. Ages are
+// measured from At, so /metrics and /issues never disagree about an issue's age.
+type issueSnapshot struct {
+	At       time.Time
+	Active   []watchstate.Record
+	Resolved []watchstate.Record
+	Stats    watchstate.Stats
 }
 
 // metrics holds the latest evaluation snapshot and renders it as Prometheus text.
@@ -75,6 +86,7 @@ type metrics struct {
 	certsRan              bool
 	certsExpired          int
 	certsExpiring         int
+	issues                issueSnapshot
 }
 
 func newMetrics() *metrics { return &metrics{findings: map[string]int{}} }
@@ -158,6 +170,14 @@ func (m *metrics) isReady() bool {
 	return m.ready
 }
 
+// updateIssues records the tracker state for rendering. now becomes the snapshot's
+// reference time for every age it reports.
+func (m *metrics) updateIssues(tr *watchstate.Tracker, now time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.issues = issueSnapshot{At: now, Active: tr.Active(), Resolved: tr.RecentlyResolved(), Stats: tr.Stats()}
+}
+
 func (m *metrics) render() string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -167,6 +187,9 @@ func (m *metrics) render() string {
 	}
 	counter := func(name, help string, v int64) {
 		fmt.Fprintf(&b, "# HELP %s %s\n# TYPE %s counter\n%s %d\n", name, help, name, name, v)
+	}
+	counterF := func(name, help string, v float64) {
+		fmt.Fprintf(&b, "# HELP %s %s\n# TYPE %s counter\n%s %g\n", name, help, name, name, v)
 	}
 	gauge("kubeagent_cluster_healthy", "1 if the cluster verdict is Healthy, else 0", m.healthy)
 	gauge("kubeagent_nodes_ready", "Number of Ready nodes", float64(m.nodesReady))
@@ -196,6 +219,30 @@ func (m *metrics) render() string {
 	sort.Strings(issues)
 	for _, k := range issues {
 		fmt.Fprintf(&b, "kubeagent_findings{issue=%q} %d\n", k, m.findings[k])
+	}
+	flapping := 0
+	for _, r := range m.issues.Active {
+		if r.Flapping {
+			flapping++
+		}
+	}
+	gauge("kubeagent_issues_active", "Issues currently firing, tracked across reconciles", float64(len(m.issues.Active)))
+	gauge("kubeagent_issues_flapping", "Active issues that have crossed the flap threshold", float64(flapping))
+	counter("kubeagent_issues_new_total", "Issue firings observed since start", m.issues.Stats.NewTotal)
+	counter("kubeagent_issues_resolved_total", "Issue firings that resolved since start", m.issues.Stats.ResolvedTotal)
+	counter("kubeagent_issues_flapping_total", "Times an issue crossed the flap threshold since start", m.issues.Stats.FlapTotal)
+	counter("kubeagent_issues_dropped_total", "New issues left untracked because the tracker is at capacity", m.issues.Stats.DroppedTotal)
+	counterF("kubeagent_issue_resolution_seconds_sum", "Seconds issues spent firing before resolving (MTTR numerator)", m.issues.Stats.ResolutionSecondsSum)
+	counter("kubeagent_issue_resolution_seconds_count", "Issue firings that resolved (MTTR denominator)", m.issues.Stats.ResolutionSecondsCount)
+	if len(m.issues.Active) > 0 {
+		fmt.Fprintf(&b, "# HELP kubeagent_issue_active 1 while this issue instance is firing\n# TYPE kubeagent_issue_active gauge\n")
+		for _, r := range m.issues.Active {
+			fmt.Fprintf(&b, "kubeagent_issue_active{%s} 1\n", issueLabels(r.Key))
+		}
+		fmt.Fprintf(&b, "# HELP kubeagent_issue_age_seconds Seconds since this issue instance started firing\n# TYPE kubeagent_issue_age_seconds gauge\n")
+		for _, r := range m.issues.Active {
+			fmt.Fprintf(&b, "kubeagent_issue_age_seconds{%s} %d\n", issueLabels(r.Key), ageSeconds(r.FiringSince, m.issues.At))
+		}
 	}
 	if len(m.nodeFSRatio) > 0 {
 		names := make([]string, 0, len(m.nodeFSRatio))
@@ -227,6 +274,15 @@ func (m *metrics) handler() http.Handler {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 		io.WriteString(w, m.render())
 	})
+	mux.HandleFunc("/issues", func(w http.ResponseWriter, _ *http.Request) {
+		body, err := m.issuesJSON()
+		if err != nil {
+			http.Error(w, "encoding issues", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(body)
+	})
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, "ok") })
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
 		if !m.isReady() {
@@ -236,4 +292,99 @@ func (m *metrics) handler() http.Handler {
 		io.WriteString(w, "ok")
 	})
 	return mux
+}
+
+func issueLabels(k watchstate.Key) string {
+	return fmt.Sprintf("kind=%q,namespace=%q,name=%q,issue=%q", k.Kind, k.Namespace, k.Name, k.Issue)
+}
+
+// ageSeconds is whole seconds from since to at, floored at zero (a snapshot can
+// never legitimately predate the firing it describes).
+func ageSeconds(since, at time.Time) int64 {
+	s := int64(at.Sub(since).Seconds())
+	if s < 0 {
+		return 0
+	}
+	return s
+}
+
+// issueView is one record as served by /issues. The pointer fields distinguish
+// "not applicable" from a legitimate zero: active records carry ageSeconds and
+// omit resolution data, resolved records the reverse.
+type issueView struct {
+	Kind              string `json:"kind"`
+	Namespace         string `json:"namespace,omitempty"`
+	Name              string `json:"name"`
+	Issue             string `json:"issue"`
+	FirstSeen         string `json:"firstSeen"`
+	FiringSince       string `json:"firingSince"`
+	LastSeen          string `json:"lastSeen"`
+	Firings           int    `json:"firings"`
+	Flapping          bool   `json:"flapping"`
+	AgeSeconds        *int64 `json:"ageSeconds,omitempty"`
+	ResolvedAt        string `json:"resolvedAt,omitempty"`
+	ResolutionSeconds *int64 `json:"resolutionSeconds,omitempty"`
+}
+
+type statsView struct {
+	NewTotal               int64   `json:"newTotal"`
+	ResolvedTotal          int64   `json:"resolvedTotal"`
+	FlapTotal              int64   `json:"flapTotal"`
+	DroppedTotal           int64   `json:"droppedTotal"`
+	ResolutionSecondsSum   float64 `json:"resolutionSecondsSum"`
+	ResolutionSecondsCount int64   `json:"resolutionSecondsCount"`
+}
+
+type issuesView struct {
+	Active   []issueView `json:"active"`
+	Resolved []issueView `json:"resolved"`
+	Stats    statsView   `json:"stats"`
+}
+
+func issueViews(rs []watchstate.Record, at time.Time, resolved bool) []issueView {
+	out := make([]issueView, 0, len(rs))
+	for _, r := range rs {
+		v := issueView{
+			Kind:        r.Key.Kind,
+			Namespace:   r.Key.Namespace,
+			Name:        r.Key.Name,
+			Issue:       r.Key.Issue,
+			FirstSeen:   rfc3339(r.FirstSeen),
+			FiringSince: rfc3339(r.FiringSince),
+			LastSeen:    rfc3339(r.LastSeen),
+			Firings:     r.Firings,
+			Flapping:    r.Flapping,
+		}
+		if resolved {
+			v.ResolvedAt = rfc3339(r.ResolvedAt)
+			secs := ageSeconds(r.FiringSince, r.ResolvedAt)
+			v.ResolutionSeconds = &secs
+		} else {
+			secs := ageSeconds(r.FiringSince, at)
+			v.AgeSeconds = &secs
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+func rfc3339(t time.Time) string { return t.UTC().Format(time.RFC3339) }
+
+// issuesJSON renders the tracked-issue snapshot. Held under the read lock so the
+// reconcile loop cannot swap the snapshot mid-encode.
+func (m *metrics) issuesJSON() ([]byte, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return json.Marshal(issuesView{
+		Active:   issueViews(m.issues.Active, m.issues.At, false),
+		Resolved: issueViews(m.issues.Resolved, m.issues.At, true),
+		Stats: statsView{
+			NewTotal:               m.issues.Stats.NewTotal,
+			ResolvedTotal:          m.issues.Stats.ResolvedTotal,
+			FlapTotal:              m.issues.Stats.FlapTotal,
+			DroppedTotal:           m.issues.Stats.DroppedTotal,
+			ResolutionSecondsSum:   m.issues.Stats.ResolutionSecondsSum,
+			ResolutionSecondsCount: m.issues.Stats.ResolutionSecondsCount,
+		},
+	})
 }

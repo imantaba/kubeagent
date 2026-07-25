@@ -182,7 +182,9 @@ Each mutation must break at least one test. A mutation that leaves the suite gre
 #     Expected: TestPrioritize_CensusCountsHiddenHealthyWorkloads fails.
 ```
 
-Apply each, run `go test ./internal/inventory -run TestPrioritize`, record the exact failure, then revert with `git checkout -- internal/inventory/inventory.go` and confirm `git status --short` is clean before the next.
+Apply each, run `go test ./internal/inventory -run TestPrioritize`, record the exact failure, then revert.
+
+**Revert by editing the mutation back out, not with `git checkout -- <path>`.** Until this task's own commit lands, the file's HEAD version has none of your work in it, so a whole-file checkout discards the implementation along with the mutation. Confirm with `git diff` that the file matches your intended state before applying the next mutation.
 
 - [ ] **Step 7: Full verification**
 
@@ -438,7 +440,7 @@ Expected: pass, including the new regression test.
 # Expected: TestApplyResult_HealthyClusterStillRecordsASample fails on Coverage.
 ```
 
-Apply, run, record the exact failure, revert with `git checkout -- internal/watch/watch.go`, confirm `git status --short` shows only intended changes.
+Apply, run, record the exact failure, then revert by editing the mutation back out — not with `git checkout -- <path>`, which would discard this task's uncommitted implementation along with the mutation. Confirm with `git diff` that the file matches your intended state.
 
 - [ ] **Step 8: Full verification**
 

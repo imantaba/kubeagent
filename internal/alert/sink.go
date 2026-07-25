@@ -56,8 +56,9 @@ type Sink struct {
 	done        chan struct{}
 	backoffBase time.Duration
 
-	mu    sync.Mutex
-	stats Stats
+	mu      sync.Mutex
+	started bool
+	stats   Stats
 }
 
 // DefaultRepeat is the re-send interval for a format when the operator did not
@@ -99,8 +100,17 @@ func New(cfg Config, c *http.Client) (*Sink, error) {
 	}, nil
 }
 
-// Start launches the sender goroutine, which runs until ctx is cancelled.
+// Start launches the sender goroutine, which runs until ctx is cancelled. The
+// sink has one sender: after the first call, Start is a no-op.
 func (s *Sink) Start(ctx context.Context) {
+	s.mu.Lock()
+	if s.started {
+		s.mu.Unlock()
+		return
+	}
+	s.started = true
+	s.mu.Unlock()
+
 	go func() {
 		defer close(s.done)
 		for {
@@ -115,8 +125,17 @@ func (s *Sink) Start(ctx context.Context) {
 }
 
 // Close waits for the sender goroutine to exit. The caller cancels the context
-// passed to Start first.
-func (s *Sink) Close() { <-s.done }
+// passed to Start first. Close on a sink whose Start was never called returns
+// immediately instead of blocking forever.
+func (s *Sink) Close() {
+	s.mu.Lock()
+	started := s.started
+	s.mu.Unlock()
+	if !started {
+		return
+	}
+	<-s.done
+}
 
 // Enqueue hands a notification to the sender without blocking. When the queue is
 // full the oldest queued notification is dropped: the newest state is the useful

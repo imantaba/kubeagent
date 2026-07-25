@@ -2,6 +2,7 @@ package alert
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -172,8 +173,11 @@ func TestSink_QueueFullDropsAndCounts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	for i := 0; i < queueSize+5; i++ {
-		s.Enqueue(firingNotif)
+	const total = queueSize + 5
+	for i := 0; i < total; i++ {
+		n := firingNotif
+		n.Object.Name = fmt.Sprintf("web-%02d", i)
+		s.Enqueue(n)
 	}
 	if got := s.Stats().DroppedQueueFull; got != 5 {
 		t.Errorf("DroppedQueueFull = %d, want 5", got)
@@ -181,6 +185,66 @@ func TestSink_QueueFullDropsAndCounts(t *testing.T) {
 	if got := len(s.queue); got != queueSize {
 		t.Errorf("queue depth = %d, want %d", got, queueSize)
 	}
+
+	var got []string
+	for drained := false; !drained; {
+		select {
+		case n := <-s.queue:
+			got = append(got, n.Object.Name)
+		default:
+			drained = true
+		}
+	}
+	var want []string
+	for i := total - queueSize; i < total; i++ {
+		want = append(want, fmt.Sprintf("web-%02d", i))
+	}
+	if len(got) != len(want) {
+		t.Fatalf("drained %d surviving notifications, want %d: %v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("surviving names = %v, want %v", got, want)
+		}
+	}
+}
+
+// waitOrTimeout runs work in a goroutine and fails the test if it has not
+// signalled done within the deadline. It exists so a regression in Start/Close
+// fails the test instead of hanging the suite forever.
+func waitOrTimeout(t *testing.T, what string, work func()) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		work()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatalf("timed out waiting for %s", what)
+	}
+}
+
+func TestSink_CloseWithoutStartDoesNotBlock(t *testing.T) {
+	s, err := New(Config{URL: "https://example.test/hook", Format: FormatJSON, Repeat: time.Hour}, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	waitOrTimeout(t, "Close on a never-started sink", s.Close)
+}
+
+func TestSink_DoubleStartIsSafe(t *testing.T) {
+	s, err := New(Config{URL: "https://example.test/hook", Format: FormatJSON, Repeat: time.Hour}, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s.Start(ctx)
+	s.Start(ctx)
+	cancel()
+
+	waitOrTimeout(t, "Close after a double Start", s.Close)
 }
 
 func TestNew_Validation(t *testing.T) {

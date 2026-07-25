@@ -177,6 +177,35 @@ func TestReport_CoverageReflectsPartialWindow(t *testing.T) {
 	approx(t, r.Coverage, 0.3, "coverage")
 }
 
+func TestReport_CoverageProratesEdgeBucket(t *testing.T) {
+	// fill lays down 30 bucket-aligned minutes of data: [base, base+30m), one
+	// full bucket per minute. Query the fast (1h) window at base+29m20s — 20s
+	// into the last filled bucket — so the window's trailing edge lands
+	// mid-bucket, the way a live reconcile loop's now actually does: it is
+	// essentially never minute-aligned.
+	//
+	// from = now - 1h = base-30m40s, well before any data, so the leading edge
+	// touches an empty bucket and contributes nothing under either rule — this
+	// test isolates the trailing edge.
+	//
+	// The 29 buckets [base, base+29m) sit entirely inside [from, now) and count
+	// for a full 60s each = 1740s. The last filled bucket, [base+29m,
+	// base+30m), is covered only from base+29m to now = base+29m20s: 20s.
+	//
+	// Prorated (what coverage() must do): (1740 + 20) / 3600 = 1760/3600 ≈
+	// 0.48889. Whole-bucket counting (sum()'s cruder rule, wrong here because it
+	// would credit the uncovered 40s of that last bucket): 30*60 / 3600 =
+	// 1800/3600 = 0.5. The two disagree by a full percentage point, so a
+	// regression to whole-bucket counting cannot hide behind float tolerance.
+	tr := New(Options{Target: 0.999})
+	fill(tr, base, 30*time.Minute, 0, 10)
+	now := base.Add(29*time.Minute + 20*time.Second)
+
+	r := tr.Report(Fast, now)
+	want := 1760.0 / 3600.0
+	approx(t, r.Coverage, want, "coverage must prorate the partial edge bucket, not count it whole like sum() does")
+}
+
 func TestReport_WindowExcludesDataOlderThanTheWindow(t *testing.T) {
 	// Two hours of total breakage, then two hours of perfect health. The fast
 	// (1h) window must see only the healthy stretch; the slow (6h) window sees both.

@@ -287,14 +287,20 @@ down when the alert opened learns about it on the next repeat.
 `reason` is `new`, `changed`, `repeat`, or `resolved`. A resolved body carries an
 empty `issues` array and a `resolvedAt`.
 
+`firingSince` is when the **object** broke, not when the issues currently listed
+appeared. It only ever moves earlier: the issue that opened the alert can resolve
+while the object stays broken, so the alert keeps the original break time rather
+than restarting the clock on each new failure mode.
+
 `slack` — an incoming-webhook body: `*FIRING* Deployment/shop/web` with the issue
 list and firing time, or `*RESOLVED* Deployment/shop/web (fired for 4m12s)`.
 
 `alertmanager` — a `POST /api/v2/alerts` array. Labels are `alertname`
-(`KubeagentIssue`), `kind`, `namespace`, and `name`; the issue list is an
-**annotation**, because a label that changes as the failure evolves would create a
-second alert instead of updating the open one. A bare host URL gets
-`/api/v2/alerts` appended.
+(`KubeagentIssue`), `kind`, `name`, and — only for a namespaced object —
+`namespace`; a cluster-scoped alert such as a `Node` carries no `namespace`
+label at all. The issue list is an **annotation**, because a label that changes
+as the failure evolves would create a second alert instead of updating the open
+one. A bare host URL gets `/api/v2/alerts` appended.
 
 Alertmanager expires an alert `resolve_timeout` (5m by default) after the last
 POST, so the re-send interval must stay under it — `--alert-repeat` above `4m`
@@ -308,8 +314,19 @@ actually known, and derive severity in Alertmanager if you want it:
 ```yaml
 route:
   routes:
-    - matchers: [alertname="KubeagentIssue", issues=~".*CrashLoopBackOff.*"]
+    - matchers: [alertname="KubeagentIssue", namespace="payments"]
       receiver: pager
+```
+
+Route on **labels only**. Alertmanager's routing tree cannot match annotations,
+so a matcher on `issues` never fires — that is the cost of keeping the issue
+list out of the label set. The labels available to route on are `alertname`,
+`kind`, `name`, and `namespace`. Reach for `issues` in the notification
+template, where annotations are in scope:
+
+```text
+{{ range .Alerts }}{{ .Labels.kind }}/{{ .Labels.name }}: {{ .Annotations.issues }}
+{{ end }}
 ```
 
 ### Delivery

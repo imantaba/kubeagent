@@ -54,13 +54,31 @@ func Run(ctx context.Context, client kubernetes.Interface, cfg Config) error {
 	// listening and WaitForCacheSync is underway, a reachable-but-unresponsive API
 	// server can block that sync forever, hiding the config error behind what looks
 	// like a cluster hang.
-	al, err := newAlerter(ctx, cfg)
+	//
+	// The sink runs off its own cancellable context, alertCtx, rather than ctx
+	// directly: al.sink.Close() blocks on <-s.done, which only closes once the
+	// sender goroutine observes its context's Done channel. Every step between
+	// here and the main loop below must therefore be able to fail and return
+	// without hanging on that Close — including a step that runs before ctx is
+	// ever cancelled.
+	//
+	// The two defers below make that true, and the order is load-bearing: defers
+	// run LIFO, so deferring stopAlerts() *after* al.sink.Close() makes stopAlerts
+	// the one that runs FIRST on the way out. That cancels alertCtx and lets the
+	// sender goroutine exit, so the Close() that runs second never blocks — even
+	// on a Run() exit (say, a future fallible step added in this window) that
+	// leaves ctx itself still live. Swap the order and Close() would run first,
+	// waiting forever on a cancel that hasn't happened yet.
+	alertCtx, stopAlerts := context.WithCancel(ctx)
+	al, err := newAlerter(alertCtx, cfg)
 	if err != nil {
+		stopAlerts()
 		return err
 	}
 	if al != nil {
-		defer al.sink.Close()
+		defer al.sink.Close() // deferred first, so it runs second — after stopAlerts
 	}
+	defer stopAlerts() // deferred last, so it runs first and unblocks Close
 
 	m := newMetrics()
 

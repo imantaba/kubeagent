@@ -247,6 +247,33 @@ func TestSink_DoubleStartIsSafe(t *testing.T) {
 	waitOrTimeout(t, "Close after a double Start", s.Close)
 }
 
+// TestSink_CloseUnblocksWhenOnlyTheChildContextIsCancelled pins the exact
+// property that watch.Run's alerter-construction defer ordering depends on.
+// Run gives the sink its own context, derived from Run's own ctx, precisely so
+// that an early return which leaves ctx itself live can still unblock Close():
+// Close() blocks on <-s.done, and s.done only closes once the sender goroutine
+// observes its own context's Done channel. If Close() needed the *parent*
+// context to be cancelled too, any early return from Run that happens before
+// ctx is ever cancelled — including a future fallible step added between
+// alerter construction and the main loop — would hang forever. This test
+// proves the mechanism directly: cancelling only a child context, with the
+// parent still live, is enough to unblock Close().
+func TestSink_CloseUnblocksWhenOnlyTheChildContextIsCancelled(t *testing.T) {
+	parent, cancelParent := context.WithCancel(context.Background())
+	defer cancelParent() // parent stays live for the whole assertion; cancelled only for test cleanup
+
+	child, cancelChild := context.WithCancel(parent)
+
+	s, err := New(Config{URL: "https://example.test/hook", Format: FormatJSON, Repeat: time.Hour}, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	s.Start(child)
+	cancelChild() // cancel only the child — the parent is never touched before Close returns
+
+	waitOrTimeout(t, "Close() after cancelling only the child context, with the parent still live", s.Close)
+}
+
 func TestNew_Validation(t *testing.T) {
 	tests := []struct {
 		name    string

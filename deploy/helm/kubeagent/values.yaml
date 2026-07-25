@@ -80,3 +80,17 @@ certs:
 
 webhookLatency:
   timeoutThreshold: 15
+
+alerts:
+  # Route watch transitions to an outbound webhook (one alert per broken object).
+  # The URL is a credential, so it is never set here: point existingSecret at a
+  # Secret that already holds it. The daemon stays read-only toward the cluster.
+  enabled: false
+  # json | slack | alertmanager
+  format: json
+  # Re-send interval for still-firing alerts. Empty = the format default
+  # (4h, or 60s for alertmanager, which expires alerts after resolve_timeout).
+  repeat: ""
+  # Name of an existing Secret holding the webhook URL. Required when enabled.
+  existingSecret: ""
+  secretKey: webhook-url

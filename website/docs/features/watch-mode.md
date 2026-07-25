@@ -200,6 +200,24 @@ zero, and every counter (`kubeagent_issues_new_total`,
 `kubeagent_issues_resolved_total`, and the rest) resets to zero. Don't read a
 burst of `NEW` lines right after a restart as a fresh incident storm.
 
+**A failure mode that changes is a different issue.** The issue name is part of
+the key, so a workload whose failure evolves reports the old mode resolved and
+the new one new — a bad image walks through `Degraded`, `ErrImagePull`, and
+`ImagePullBackOff`, and each step logs a `RESOLVED` for the previous mode
+alongside the `NEW`:
+
+```text
+kubeagent: NEW Deployment/shop/web:ErrImagePull
+kubeagent: RESOLVED Deployment/shop/web:Degraded (fired for 2s)
+kubeagent: NEW Deployment/shop/web:ImagePullBackOff
+kubeagent: RESOLVED Deployment/shop/web:ErrImagePull (fired for 15s)
+```
+
+A `RESOLVED` line therefore means *that issue* stopped firing, not that the
+workload recovered — check whether a `NEW` line for the same object arrived in
+the same reconcile. Mean time to resolution follows the same rule: it measures
+how long each distinct failure mode fired, not how long the object was broken.
+
 **Known limitation:** a node named via `--expected-nodes` that is absent from
 the cluster is **not** tracked as an issue, and never appears in `/issues` or
 the per-issue metrics. The cluster-health detector reports it only as the

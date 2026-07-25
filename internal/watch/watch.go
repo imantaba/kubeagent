@@ -49,6 +49,19 @@ type Config struct {
 // Run starts the metrics server and the informer-driven control loop, blocking
 // until ctx is cancelled.
 func Run(ctx context.Context, client kubernetes.Interface, cfg Config) error {
+	// Validate the alert configuration before anything else starts. A bad
+	// --alert-format or --alert-repeat must fail fast: once the metrics server is
+	// listening and WaitForCacheSync is underway, a reachable-but-unresponsive API
+	// server can block that sync forever, hiding the config error behind what looks
+	// like a cluster hang.
+	al, err := newAlerter(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	if al != nil {
+		defer al.sink.Close()
+	}
+
 	m := newMetrics()
 
 	srv := &http.Server{Addr: cfg.MetricsAddr, Handler: m.handler()}
@@ -102,13 +115,6 @@ func Run(ctx context.Context, client kubernetes.Interface, cfg Config) error {
 	log.Printf("kubeagent: watching cluster (namespace=%q, heartbeat=%s); metrics on %s", scopeLabel(cfg.Namespace), cfg.Heartbeat, cfg.MetricsAddr)
 
 	opts := scan.Options{Namespace: cfg.Namespace, IncludeCron: cfg.IncludeCron, IncludeRestarts: cfg.IncludeRestarts, DiskUsage: cfg.DiskUsage, DiskThreshold: cfg.DiskThreshold, QuotaThreshold: cfg.QuotaThreshold, NodeHeartbeatThreshold: cfg.NodeHeartbeatThreshold, ExpectedNodes: cfg.ExpectedNodes, KubeletHealth: cfg.KubeletHealth, ControlPlaneHealth: cfg.ControlPlaneHealth, DNSHealth: cfg.DNSHealth, DNSServfailRatio: cfg.DNSServfailRatio, Certs: cfg.Certs, CertWarnDays: cfg.CertWarnDays, WebhookTimeoutThreshold: cfg.WebhookTimeoutThreshold}
-	al, err := newAlerter(ctx, cfg)
-	if err != nil {
-		return err
-	}
-	if al != nil {
-		defer al.sink.Close()
-	}
 	tr := watchstate.New(watchstate.Options{})
 	reconcile := func() {
 		start := time.Now()

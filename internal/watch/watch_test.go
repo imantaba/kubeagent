@@ -17,7 +17,9 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	ktesting "k8s.io/client-go/testing"
 
 	"github.com/imantaba/kubeagent/internal/alert"
 	"github.com/imantaba/kubeagent/internal/alertstate"
@@ -180,6 +182,72 @@ func TestRun_GracefulShutdown(t *testing.T) {
 	_, connErr := http.Get(readyz) //nolint:noctx
 	if connErr == nil {
 		t.Error("expected connection refused after shutdown, but GET /readyz succeeded")
+	}
+}
+
+// TestRun_RejectsBadAlertConfigBeforeStartingAnything pins that alert
+// configuration is validated before anything else starts. A bad --alert-format
+// or an alertmanager --alert-repeat above 4m must fail Run() immediately — not
+// after WaitForCacheSync, which can block forever against a reachable-but-
+// unresponsive API server and hide the operator's config mistake behind what
+// looks like a cluster hang.
+//
+// The fake clientset's own List calls are instant, which would let even the
+// buggy ordering slip under a timing deadline by accident. So every List is
+// blocked here — standing in for an API server that accepts the connection but
+// never answers — which is exactly the condition the fix must not be sensitive
+// to. Validation that truly runs first never touches the client at all, so it
+// returns regardless; validation that runs after WaitForCacheSync hangs with it.
+func TestRun_RejectsBadAlertConfigBeforeStartingAnything(t *testing.T) {
+	// Grab a free port so parallel test runs never collide (same convention as
+	// TestRun_GracefulShutdown). Validation must fail before this is ever bound,
+	// but reserving a real address keeps the test honest either way.
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen: %v", err)
+	}
+	addr := l.Addr().String()
+	l.Close()
+
+	client := fake.NewSimpleClientset()
+	blockList := make(chan struct{})
+	t.Cleanup(func() { close(blockList) })
+	client.PrependReactor("list", "*", func(ktesting.Action) (bool, runtime.Object, error) {
+		<-blockList // never returns during the test: simulates an unresponsive API server
+		return false, nil, nil
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	const webhookURL = "https://example.invalid/hook"
+	cfg := Config{
+		MetricsAddr: addr,
+		Heartbeat:   time.Hour,
+		Debounce:    50 * time.Millisecond,
+		AlertURL:    webhookURL,
+		AlertFormat: "alertmanager",
+		AlertRepeat: 10 * time.Minute, // exceeds the 4m alertmanager maximum
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- Run(ctx, client, cfg) }()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("Run() returned a nil error for an invalid alert configuration")
+		}
+		if !strings.Contains(err.Error(), "4m0s") {
+			t.Errorf("error = %q, want it to mention the 4m maximum", err)
+		}
+		if strings.Contains(err.Error(), webhookURL) {
+			t.Errorf("error = %q, must not echo the webhook URL (it is a credential)", err)
+		}
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("Run() did not return promptly for an invalid alert configuration — " +
+			"validation is not failing fast, before the informers start (List calls are " +
+			"blocked, standing in for an unresponsive API server)")
 	}
 }
 

@@ -53,9 +53,10 @@ type bucket struct {
 
 // Tracker accumulates the SLI into a fixed ring.
 type Tracker struct {
-	opts Options
-	ring []bucket
-	last time.Time // the last accepted sample's instant; zero before the first
+	opts        Options
+	ring        []bucket
+	last        time.Time // the last accepted sample's instant; zero before the first
+	firingSince time.Time // start of the current breach; zero when not firing
 }
 
 // New returns a Tracker with the ring preallocated. Memory is fixed for the
@@ -150,4 +151,115 @@ func (t *Tracker) sum(from, to time.Time) (good, total float64) {
 		total += slot.total
 	}
 	return good, total
+}
+
+// Window names one of the two fixed burn windows.
+type Window string
+
+const (
+	Fast Window = "fast" // 1h — catches a sharp outage quickly
+	Slow Window = "slow" // 6h — refuses to page for a blip that already passed
+)
+
+// duration returns the window's length.
+func (w Window) duration() time.Duration {
+	if w == Slow {
+		return slowWindow
+	}
+	return fastWindow
+}
+
+// threshold returns the burn multiple at which the window is considered hot.
+func (w Window) threshold() float64 {
+	if w == Slow {
+		return slowBurnThreshold
+	}
+	return fastBurnThreshold
+}
+
+// Report is one window's computed state.
+type Report struct {
+	Window       Window
+	Availability float64 // good/total over the window; 1 when the window has no data
+	BurnRate     float64 // (1-Availability)/(1-Target); 0 when the window has no data
+	Coverage     float64 // fraction of the window carrying samples, 0..1
+}
+
+// Report computes the window's state as of now. A window with no data reports
+// perfect availability and zero burn: absence of evidence is not evidence of an
+// outage, and Coverage is the field that says so.
+func (t *Tracker) Report(w Window, now time.Time) Report {
+	span := w.duration()
+	from := now.Add(-span)
+	good, total := t.sum(from, now)
+	r := Report{Window: w, Availability: 1, Coverage: t.coverage(from, now)}
+	if total <= 0 {
+		return r
+	}
+	r.Availability = good / total
+	r.BurnRate = (1 - r.Availability) / (1 - t.opts.Target)
+	return r
+}
+
+// coverage is the fraction of [from, now) that carries samples. A bucket counts
+// when it recorded any weight; the partial buckets at either edge count in
+// proportion to how much of them the window covers.
+func (t *Tracker) coverage(from, now time.Time) float64 {
+	span := now.Sub(from).Seconds()
+	if span <= 0 {
+		return 0
+	}
+	var covered float64
+	for b := from.Truncate(bucketWidth); b.Before(now); b = b.Add(bucketWidth) {
+		slot := t.slot(b)
+		if !slot.start.Equal(b) || slot.total <= 0 {
+			continue
+		}
+		lo, hi := b, b.Add(bucketWidth)
+		if lo.Before(from) {
+			lo = from
+		}
+		if hi.After(now) {
+			hi = now
+		}
+		covered += hi.Sub(lo).Seconds()
+	}
+	return covered / span
+}
+
+// Verdict is the alert decision as of now.
+type Verdict struct {
+	Firing      bool
+	FiringSince time.Time // zero when not firing
+	Fast, Slow  Report
+}
+
+// Verdict evaluates the multi-window firing rule and tracks the firing edge.
+//
+// All four conditions must hold. The two burn thresholds together are what makes
+// this multi-window: the fast window alone would page for a blip that has already
+// passed, and the slow window alone would take hours to notice a total outage.
+//
+// The coverage gate exists because state is in-memory and resets on restart. A
+// daemon that started five minutes ago has five minutes of history inside what it
+// calls a one-hour window, and any badness in it computes to a 100% burn — it
+// would page on every rollout of the daemon itself. Requiring 60% of both windows
+// means the slow one must be ~3.6h warm before it can page.
+//
+// Verdict mutates the firing edge, so call it once per reconcile.
+func (t *Tracker) Verdict(now time.Time) Verdict {
+	v := Verdict{Fast: t.Report(Fast, now), Slow: t.Report(Slow, now)}
+	v.Firing = v.Fast.BurnRate >= Fast.threshold() &&
+		v.Slow.BurnRate >= Slow.threshold() &&
+		v.Fast.Coverage >= minCoverage &&
+		v.Slow.Coverage >= minCoverage
+	if !v.Firing {
+		t.firingSince = time.Time{}
+		return v
+	}
+	if t.firingSince.IsZero() {
+		t.firingSince = now
+	}
+	v.FiringSince = t.firingSince
+	return v
 }

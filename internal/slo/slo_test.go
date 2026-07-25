@@ -12,7 +12,10 @@ var base = time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
 
 func approx(t *testing.T, got, want float64, what string) {
 	t.Helper()
-	if math.Abs(got-want) > 1e-9 {
+	// math.IsNaN is checked explicitly because every comparison against NaN
+	// (including >) is false in Go: a NaN got would otherwise slip past
+	// math.Abs(got-want) > 1e-9 and report a false pass.
+	if math.IsNaN(got) || math.Abs(got-want) > 1e-9 {
 		t.Errorf("%s = %v, want %v", what, got, want)
 	}
 }
@@ -124,5 +127,179 @@ func TestNew_DefaultsMaxSampleGap(t *testing.T) {
 func TestTarget(t *testing.T) {
 	if got := New(Options{Target: 0.995}).Target(); got != 0.995 {
 		t.Errorf("Target() = %v, want 0.995", got)
+	}
+}
+
+// fill drives the tracker across span with one sample per minute, each reporting
+// `bad` of `total` workloads broken. Returns the instant after the last sample.
+func fill(tr *Tracker, start time.Time, span time.Duration, bad, total int) time.Time {
+	now := start
+	tr.Observe(total-bad, total, now) // baseline, no weight
+	for elapsed := time.Duration(0); elapsed < span; elapsed += time.Minute {
+		now = now.Add(time.Minute)
+		tr.Observe(total-bad, total, now)
+	}
+	return now
+}
+
+func TestReport_FullyHealthyWindow(t *testing.T) {
+	tr := New(Options{Target: 0.999})
+	now := fill(tr, base, 2*time.Hour, 0, 100)
+	r := tr.Report(Fast, now)
+	approx(t, r.Availability, 1, "availability")
+	approx(t, r.BurnRate, 0, "burn rate")
+	approx(t, r.Coverage, 1, "coverage")
+}
+
+func TestReport_BurnRateScalesWithBreakage(t *testing.T) {
+	// 1 of 100 workloads broken = 99% availability. Against a 99.9% target the
+	// error budget is 0.1%, so burn = 0.01/0.001 = 10x.
+	tr := New(Options{Target: 0.999})
+	now := fill(tr, base, 2*time.Hour, 1, 100)
+	r := tr.Report(Fast, now)
+	approx(t, r.Availability, 0.99, "availability")
+	approx(t, r.BurnRate, 10, "burn rate")
+}
+
+func TestReport_EmptyWindowIsHealthyNotBurning(t *testing.T) {
+	tr := New(Options{Target: 0.999})
+	r := tr.Report(Fast, base)
+	approx(t, r.Availability, 1, "availability with no data")
+	approx(t, r.BurnRate, 0, "burn rate with no data")
+	approx(t, r.Coverage, 0, "coverage with no data")
+}
+
+func TestReport_CoverageReflectsPartialWindow(t *testing.T) {
+	// 18 minutes of samples inside a 60-minute window = 30% coverage.
+	tr := New(Options{Target: 0.999})
+	now := fill(tr, base, 18*time.Minute, 0, 10)
+	r := tr.Report(Fast, now)
+	approx(t, r.Coverage, 0.3, "coverage")
+}
+
+func TestReport_WindowExcludesDataOlderThanTheWindow(t *testing.T) {
+	// Two hours of total breakage, then two hours of perfect health. The fast
+	// (1h) window must see only the healthy stretch; the slow (6h) window sees both.
+	tr := New(Options{Target: 0.999})
+	now := fill(tr, base, 2*time.Hour, 10, 10)
+	tr.last = time.Time{} // re-baseline so the gap between phases carries no weight
+	now = fill(tr, now, 2*time.Hour, 0, 10)
+
+	fastR := tr.Report(Fast, now)
+	approx(t, fastR.Availability, 1, "fast availability")
+	slowR := tr.Report(Slow, now)
+	approx(t, slowR.Availability, 0.5, "slow availability")
+}
+
+func TestVerdict_FiresWhenEveryConditionHolds(t *testing.T) {
+	// 5 of 100 broken = 95% availability = 50x burn, well past both thresholds.
+	// Six hours of samples gives both windows full coverage.
+	tr := New(Options{Target: 0.999})
+	now := fill(tr, base, 6*time.Hour, 5, 100)
+	v := tr.Verdict(now)
+	if !v.Firing {
+		t.Fatalf("Verdict.Firing = false, want true (fast=%+v slow=%+v)", v.Fast, v.Slow)
+	}
+	if !v.FiringSince.Equal(now) {
+		t.Errorf("FiringSince = %v, want %v", v.FiringSince, now)
+	}
+}
+
+func TestVerdict_FiringSinceHoldsAcrossConsecutiveFirings(t *testing.T) {
+	tr := New(Options{Target: 0.999})
+	now := fill(tr, base, 6*time.Hour, 5, 100)
+	first := tr.Verdict(now)
+	later := tr.Verdict(now.Add(time.Minute))
+	if !later.Firing {
+		t.Fatal("second Verdict stopped firing")
+	}
+	if !later.FiringSince.Equal(first.FiringSince) {
+		t.Errorf("FiringSince moved: %v -> %v", first.FiringSince, later.FiringSince)
+	}
+}
+
+func TestVerdict_ClearsAndResetsFiringSince(t *testing.T) {
+	tr := New(Options{Target: 0.999})
+	now := fill(tr, base, 6*time.Hour, 5, 100)
+	if !tr.Verdict(now).Firing {
+		t.Fatal("expected the breach to fire")
+	}
+	tr.last = time.Time{}
+	now = fill(tr, now, 6*time.Hour, 0, 100) // fully healthy for a whole slow window
+	v := tr.Verdict(now)
+	if v.Firing {
+		t.Fatal("Verdict.Firing = true after full recovery, want false")
+	}
+	if !v.FiringSince.IsZero() {
+		t.Errorf("FiringSince = %v after clearing, want zero", v.FiringSince)
+	}
+}
+
+// TestVerdict_EachConditionIsLoadBearing is the mutation guard. The firing rule
+// is a four-way conjunction; a test suite that only checks the all-true case
+// would pass against an implementation that dropped any one conjunct. Each case
+// below withholds exactly one condition and must not fire.
+func TestVerdict_EachConditionIsLoadBearing(t *testing.T) {
+	cases := []struct {
+		name     string
+		build    func() (*Tracker, time.Time)
+		withheld string
+	}{
+		{
+			name:     "fast burn below threshold",
+			withheld: "fast.BurnRate >= 14.4",
+			build: func() (*Tracker, time.Time) {
+				// 6h of breakage at 1% bad: slow burn 10x (over 6), fast burn 10x
+				// (under 14.4). Only the fast threshold is unmet.
+				tr := New(Options{Target: 0.999})
+				return tr, fill(tr, base, 6*time.Hour, 1, 100)
+			},
+		},
+		{
+			name:     "slow burn below threshold",
+			withheld: "slow.BurnRate >= 6",
+			build: func() (*Tracker, time.Time) {
+				// 6h healthy, then 1h at 2% bad. Fast burn is 0.02/0.001 = 20x,
+				// past 14.4. The slow window spreads that one bad hour over six,
+				// giving 0.02/6/0.001 = 3.33x, under 6. Only the slow threshold
+				// is unmet. (5% bad would give a slow burn of 8.33x and still
+				// fire — the margin here is deliberately narrow.)
+				tr := New(Options{Target: 0.999})
+				now := fill(tr, base, 6*time.Hour, 0, 100)
+				tr.last = time.Time{}
+				return tr, fill(tr, now, time.Hour, 2, 100)
+			},
+		},
+		{
+			name:     "fast coverage below the gate",
+			withheld: "fast.Coverage >= 0.6",
+			build: func() (*Tracker, time.Time) {
+				// 6h of breakage, then a 50-minute silent gap: the fast window is
+				// only 10/60 covered while the slow window stays warm.
+				tr := New(Options{Target: 0.999})
+				now := fill(tr, base, 6*time.Hour, 5, 100)
+				return tr, now.Add(50 * time.Minute)
+			},
+		},
+		{
+			name:     "slow coverage below the gate",
+			withheld: "slow.Coverage >= 0.6",
+			build: func() (*Tracker, time.Time) {
+				// A freshly started daemon: 1h of breakage is enough for the fast
+				// window but only 1/6 of the slow one.
+				tr := New(Options{Target: 0.999})
+				return tr, fill(tr, base, time.Hour, 5, 100)
+			},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			tr, now := c.build()
+			v := tr.Verdict(now)
+			if v.Firing {
+				t.Errorf("Firing = true with %s unmet; the condition is not load-bearing (fast=%+v slow=%+v)",
+					c.withheld, v.Fast, v.Slow)
+			}
+		})
 	}
 }

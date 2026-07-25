@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.56.0] - 2026-07-25
+
 ### Added
 
 - `watch` alerting: the daemon can POST one alert per broken object to a webhook
@@ -778,7 +780,8 @@ infrastructure (a documentation site and a pre-release chaos-test harness).
 - CI (vet/test/build on push & PR) and a release workflow publishing a
   linux/amd64 tarball + `SHA256SUMS` to a GitHub Release.
 
-[Unreleased]: https://github.com/imantaba/kubeagent/compare/v0.55.0...HEAD
+[Unreleased]: https://github.com/imantaba/kubeagent/compare/v0.56.0...HEAD
+[0.56.0]: https://github.com/imantaba/kubeagent/compare/v0.55.0...v0.56.0
 [0.55.0]: https://github.com/imantaba/kubeagent/compare/v0.54.0...v0.55.0
 [0.54.0]: https://github.com/imantaba/kubeagent/compare/v0.53.0...v0.54.0
 [0.53.0]: https://github.com/imantaba/kubeagent/compare/v0.52.0...v0.53.0

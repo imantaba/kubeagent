@@ -210,6 +210,11 @@ scenario_09_rollout() {   # bad image -> ImagePullBackOff
   kubectl --context "$CTX" create ns chaos-rollout --dry-run=client -o yaml | kubectl --context "$CTX" apply -f - >/dev/null
   kubectl --context "$CTX" -n chaos-rollout apply -f chaos/manifests/app.yaml >/dev/null
   kubectl --context "$CTX" -n chaos-rollout rollout status deploy web --timeout=90s >/dev/null 2>&1 || true
+  # force a real outage: with the default strategy the old replicas keep serving, and
+  # kubeagent deliberately does not remediate a workload that still meets its replica
+  # target — so take the old pods down with the rollout to make Ready < Desired.
+  kubectl --context "$CTX" -n chaos-rollout patch deploy web --type=strategic \
+    -p '{"spec":{"strategy":{"rollingUpdate":{"maxUnavailable":"100%"}}}}' >/dev/null
   kubectl --context "$CTX" -n chaos-rollout set image deploy/web web=nginx:does-not-exist-9999 >/dev/null
   sleep 18
   { scan 2>&1 || true; } | record "9. Faulty rolling deployment (bad image)" "detected: ImagePullBackOff"

@@ -1,7 +1,9 @@
 package watch
 
 import (
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -26,6 +28,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/svchealth"
 	"github.com/imantaba/kubeagent/internal/termhealth"
+	"github.com/imantaba/kubeagent/internal/watchstate"
 	"github.com/imantaba/kubeagent/internal/webhookhealth"
 )
 
@@ -55,8 +58,8 @@ func sampleResult() *scan.Result {
 		},
 		PVCIssues:        []pvchealth.Issue{{Namespace: "shop", Name: "data-pvc", Phase: "Pending", Reason: "ProvisioningFailed"}},
 		StuckTerminating: []termhealth.Issue{{Kind: "Namespace", Name: "legacy-ns", Age: "3h", Reason: "NamespaceFinalizersRemaining — x"}},
-		PDBIssues:        []pdbhealth.Issue{{Namespace: "shop", Name: "api"}},
-		HPAIssues:        []hpahealth.Issue{{Namespace: "shop", Name: "api-hpa"}},
+		PDBIssues:        []pdbhealth.Issue{{Namespace: "shop", Name: "api", Category: "blocking"}},
+		HPAIssues:        []hpahealth.Issue{{Namespace: "shop", Name: "api-hpa", Category: "capped"}},
 		WebhookIssues: []webhookhealth.Issue{
 			{Kind: "ValidatingWebhookConfiguration", Config: "policy-webhook", Webhook: "w", Problem: "no-endpoints", Reason: "backend missing"},
 			{Kind: "ValidatingWebhookConfiguration", Config: "slow-webhook", Webhook: "s.io", Problem: "high-timeout", Reason: "timeoutSeconds too high"},
@@ -67,7 +70,8 @@ func sampleResult() *scan.Result {
 		DNS:           dnshealth.Report{Status: "degraded", ServfailRatio: 0.12},
 		Certificates: &certhealth.Report{WarnDays: 30, Checked: 4,
 			Expired:  []certhealth.Cert{{Namespace: "shop", Name: "shop-tls", Days: -3}},
-			Expiring: []certhealth.Cert{{Namespace: "infra", Name: "api-tls", Days: 12}}},
+			Expiring: []certhealth.Cert{{Namespace: "infra", Name: "api-tls", Days: 12}},
+			Invalid:  []certhealth.Invalid{{Namespace: "infra", Name: "broken-tls", Detail: "invalid certificate data"}}},
 	}
 }
 
@@ -146,4 +150,157 @@ func get(t *testing.T, url string) int {
 	}
 	defer resp.Body.Close()
 	return resp.StatusCode
+}
+
+// trackerWithFixture returns a tracker holding one active issue (60s old at
+// `at`) and one resolved issue (fired 30s), for the metrics/JSON assertions.
+func trackerWithFixture() (*watchstate.Tracker, time.Time) {
+	base := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
+	api := watchstate.Key{Kind: "Deployment", Namespace: "prod", Name: "api", Issue: "CrashLoopBackOff"}
+	svc := watchstate.Key{Kind: "Service", Namespace: "prod", Name: "api", Issue: "NoEndpoints"}
+	tr := watchstate.New(watchstate.Options{})
+	tr.Observe([]watchstate.Key{api, svc}, base)
+	tr.Observe([]watchstate.Key{api}, base.Add(30*time.Second)) // svc resolves after 30s
+	at := base.Add(60 * time.Second)
+	tr.Observe([]watchstate.Key{api}, at)
+	return tr, at
+}
+
+func TestMetrics_RendersIssueSeries(t *testing.T) {
+	m := newMetrics()
+	tr, at := trackerWithFixture()
+	m.updateIssues(tr, at)
+	out := m.render()
+	for _, want := range []string{
+		"kubeagent_issues_active 1",
+		"kubeagent_issues_flapping 0",
+		"kubeagent_issues_new_total 2",
+		"kubeagent_issues_resolved_total 1",
+		"kubeagent_issues_flapping_total 0",
+		"kubeagent_issues_dropped_total 0",
+		"kubeagent_issue_resolution_seconds_sum 30",
+		"kubeagent_issue_resolution_seconds_count 1",
+		`kubeagent_issue_active{kind="Deployment",namespace="prod",name="api",issue="CrashLoopBackOff"} 1`,
+		`kubeagent_issue_age_seconds{kind="Deployment",namespace="prod",name="api",issue="CrashLoopBackOff"} 60`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("metrics missing %q in:\n%s", want, out)
+		}
+	}
+	// The resolved issue must not linger as an active series.
+	if strings.Contains(out, `kubeagent_issue_active{kind="Service"`) {
+		t.Errorf("resolved issue still rendered as active:\n%s", out)
+	}
+}
+
+func TestMetrics_IssueSeriesAbsentBeforeFirstUpdate(t *testing.T) {
+	out := newMetrics().render()
+	if strings.Contains(out, "kubeagent_issue_active{") {
+		t.Errorf("per-issue series rendered with no issues:\n%s", out)
+	}
+	if !strings.Contains(out, "kubeagent_issues_active 0") {
+		t.Errorf("aggregate gauge must still render as 0:\n%s", out)
+	}
+}
+
+func TestMetrics_IssuesEndpointShape(t *testing.T) {
+	m := newMetrics()
+	tr, at := trackerWithFixture()
+	m.updateIssues(tr, at)
+	srv := httptest.NewServer(m.handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/issues")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /issues: status %d, want 200", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+	var body struct {
+		Active []struct {
+			Kind        string `json:"kind"`
+			Namespace   string `json:"namespace"`
+			Name        string `json:"name"`
+			Issue       string `json:"issue"`
+			FirstSeen   string `json:"firstSeen"`
+			FiringSince string `json:"firingSince"`
+			LastSeen    string `json:"lastSeen"`
+			Firings     int    `json:"firings"`
+			Flapping    bool   `json:"flapping"`
+			AgeSeconds  *int64 `json:"ageSeconds"`
+			ResolvedAt  string `json:"resolvedAt"`
+		} `json:"active"`
+		Resolved []struct {
+			Kind              string `json:"kind"`
+			Name              string `json:"name"`
+			Issue             string `json:"issue"`
+			ResolvedAt        string `json:"resolvedAt"`
+			ResolutionSeconds *int64 `json:"resolutionSeconds"`
+			AgeSeconds        *int64 `json:"ageSeconds"`
+		} `json:"resolved"`
+		Stats struct {
+			NewTotal               int64   `json:"newTotal"`
+			ResolvedTotal          int64   `json:"resolvedTotal"`
+			FlapTotal              int64   `json:"flapTotal"`
+			DroppedTotal           int64   `json:"droppedTotal"`
+			ResolutionSecondsSum   float64 `json:"resolutionSecondsSum"`
+			ResolutionSecondsCount int64   `json:"resolutionSecondsCount"`
+		} `json:"stats"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decoding /issues: %v", err)
+	}
+	if len(body.Active) != 1 || len(body.Resolved) != 1 {
+		t.Fatalf("active=%d resolved=%d, want 1 and 1", len(body.Active), len(body.Resolved))
+	}
+	a := body.Active[0]
+	if a.Kind != "Deployment" || a.Namespace != "prod" || a.Name != "api" || a.Issue != "CrashLoopBackOff" {
+		t.Errorf("active identity = %+v", a)
+	}
+	if a.FirstSeen != "2026-07-25T10:00:00Z" || a.FiringSince != "2026-07-25T10:00:00Z" || a.LastSeen != "2026-07-25T10:01:00Z" {
+		t.Errorf("active timestamps = %+v, want RFC3339 UTC", a)
+	}
+	if a.AgeSeconds == nil || *a.AgeSeconds != 60 {
+		t.Errorf("active ageSeconds = %v, want 60", a.AgeSeconds)
+	}
+	if a.ResolvedAt != "" {
+		t.Errorf("active record must omit resolvedAt, got %q", a.ResolvedAt)
+	}
+	r := body.Resolved[0]
+	if r.ResolvedAt != "2026-07-25T10:00:30Z" {
+		t.Errorf("resolvedAt = %q, want 2026-07-25T10:00:30Z", r.ResolvedAt)
+	}
+	if r.ResolutionSeconds == nil || *r.ResolutionSeconds != 30 {
+		t.Errorf("resolutionSeconds = %v, want 30", r.ResolutionSeconds)
+	}
+	if r.AgeSeconds != nil {
+		t.Errorf("resolved record must omit ageSeconds, got %v", r.AgeSeconds)
+	}
+	if body.Stats.NewTotal != 2 || body.Stats.ResolvedTotal != 1 || body.Stats.ResolutionSecondsSum != 30 {
+		t.Errorf("stats = %+v", body.Stats)
+	}
+}
+
+func TestMetrics_IssuesEndpointEmptyArrays(t *testing.T) {
+	srv := httptest.NewServer(newMetrics().handler())
+	defer srv.Close()
+	resp, err := http.Get(srv.URL + "/issues")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"active":[]`, `"resolved":[]`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("empty tracker must render %s, got %s", want, raw)
+		}
+	}
 }

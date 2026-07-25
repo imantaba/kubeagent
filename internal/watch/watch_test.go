@@ -1,9 +1,14 @@
 package watch
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"log"
 	"net"
 	"net/http"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,39 +17,92 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
-	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/scan"
+	"github.com/imantaba/kubeagent/internal/watchstate"
 )
 
-func TestChangeLogger_OnlyLogsOnChange(t *testing.T) {
-	healthy := &scan.Result{Health: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 3, NodesTotal: 3}}
-	degraded := &scan.Result{Health: clusterhealth.ClusterHealth{Verdict: "Degraded", NodesReady: 2, NodesTotal: 3},
-		Inventory: inventory.Result{Workloads: []inventory.Workload{{Namespace: "s", Name: "w", Ready: 0, Desired: 1}}}}
+// captureLog redirects the standard logger for the duration of fn.
+func captureLog(t *testing.T, fn func()) string {
+	t.Helper()
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+	fn()
+	return buf.String()
+}
 
-	var cl changeLogger
-	if !cl.changed(healthy, nil) {
-		t.Error("first observation should count as a change")
+// TestApplyResult_EvaluationErrorNeverReachesTheTracker pins the core invariant:
+// a failed evaluation is not "all clear". If the error path reached Observe, one
+// API blip would resolve every issue and re-fire them all on the next success —
+// corrupting MTTR, inflating flap counts, and (once alerting lands) paging the
+// on-call for a network hiccup.
+func TestApplyResult_EvaluationErrorNeverReachesTheTracker(t *testing.T) {
+	m := newMetrics()
+	tr := watchstate.New(watchstate.Options{})
+	at := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
+
+	captureLog(t, func() { applyResult(m, tr, sampleResult(), time.Millisecond, at, nil) })
+	before := len(tr.Active())
+	if before == 0 {
+		t.Fatal("fixture must produce active issues")
 	}
-	if cl.changed(healthy, nil) {
-		t.Error("identical observation should NOT count as a change")
+
+	out := captureLog(t, func() {
+		applyResult(m, tr, &scan.Result{}, time.Millisecond, at.Add(time.Minute), errors.New("boom"))
+	})
+	if got := len(tr.Active()); got != before {
+		t.Errorf("active issues %d -> %d; an evaluation error must resolve nothing", before, got)
 	}
-	if !cl.changed(degraded, nil) {
-		t.Error("verdict flip should count as a change")
+	if s := tr.Stats(); s.ResolvedTotal != 0 {
+		t.Errorf("ResolvedTotal = %d, want 0", s.ResolvedTotal)
+	}
+	if !strings.Contains(out, "evaluation error: boom") {
+		t.Errorf("error must be logged, got %q", out)
 	}
 }
 
-func TestSignature_DistinguishesFindingsAndErrors(t *testing.T) {
-	a := &scan.Result{Health: clusterhealth.ClusterHealth{Verdict: "Healthy"}}
-	if signature(a, nil) == signature(a, errDummy) {
-		t.Error("error vs no-error must produce different signatures")
+func TestApplyResult_LogsTransitionsAndStaysQuietInSteadyState(t *testing.T) {
+	m := newMetrics()
+	tr := watchstate.New(watchstate.Options{})
+	at := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
+
+	first := captureLog(t, func() { applyResult(m, tr, sampleResult(), time.Millisecond, at, nil) })
+	if !strings.Contains(first, "NEW Deployment/shop/web:CrashLoopBackOff") {
+		t.Errorf("first sighting must log a NEW line, got %q", first)
+	}
+	if !strings.Contains(first, "issue(s) active,") {
+		t.Errorf("summary line missing from %q", first)
+	}
+
+	steady := captureLog(t, func() { applyResult(m, tr, sampleResult(), time.Millisecond, at.Add(time.Minute), nil) })
+	if steady != "" {
+		t.Errorf("an unchanged reconcile must log nothing, got %q", steady)
+	}
+
+	cleared := captureLog(t, func() {
+		applyResult(m, tr, &scan.Result{}, time.Millisecond, at.Add(2*time.Minute), nil)
+	})
+	if !strings.Contains(cleared, "RESOLVED Deployment/shop/web:CrashLoopBackOff (fired for 2m0s)") {
+		t.Errorf("clearing must log a RESOLVED line with the firing duration, got %q", cleared)
 	}
 }
 
-var errDummy = errStr("x")
-
-type errStr string
-
-func (e errStr) Error() string { return string(e) }
+func TestLogDelta_ReportsFlapping(t *testing.T) {
+	res := &scan.Result{Health: clusterhealth.ClusterHealth{Verdict: "Degraded", NodesReady: 2, NodesTotal: 3}}
+	rec := watchstate.Record{
+		Key:           watchstate.Key{Kind: "Deployment", Namespace: "prod", Name: "api", Issue: "CrashLoopBackOff"},
+		RecentFirings: 3,
+	}
+	out := captureLog(t, func() {
+		logDelta(res, watchstate.Delta{NewlyFlapping: []watchstate.Record{rec}}, 1, 30*time.Minute)
+	})
+	if !strings.Contains(out, "FLAPPING Deployment/prod/api:CrashLoopBackOff (3 firings in 30m0s)") {
+		t.Errorf("flap line missing from %q", out)
+	}
+	if !strings.Contains(out, "cluster Degraded (2/3 nodes ready) — 1 issue(s) active, 0 new, 0 resolved") {
+		t.Errorf("summary line missing from %q", out)
+	}
+}
 
 // TestRun_GracefulShutdown verifies that Run() starts up correctly (informers
 // sync, first reconcile completes, /readyz returns 200) and then shuts down

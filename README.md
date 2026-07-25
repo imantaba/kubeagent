@@ -20,7 +20,7 @@
 - 🤖 **Optional `--explain`** — one Claude API call summarizes findings in plain English (never sends pod specs, env, or secrets).
 - 🔍 **Optional `--investigate`** — agentic read-only follow-up reads (bounded tool-use loop: describe objects, list events, hop to related resources) to chase a root cause and emit a grounded fix; Anthropic-only, supersedes `--explain`.
 - 📦 **Single Go binary** — built on `client-go`, the same library `kubectl` uses. No CRDs, no in-cluster agent required.
-- 📊 **`watch` daemon** — run it in-cluster for continuous read-only diagnosis with Prometheus metrics.
+- 📊 **`watch` daemon** — run it in-cluster for continuous read-only diagnosis; tracks issue state across reconciles (new/resolved/flapping, MTTR) and serves it as Prometheus metrics plus a read-only `/issues` endpoint.
 
 ```bash
 go install github.com/imantaba/kubeagent@latest
@@ -358,8 +358,10 @@ through the same guard rails.
 **strictly read-only** daemon. It opens an informer against the cluster (using
 the in-cluster service account, or `--kubeconfig` as fallback), re-runs the
 deterministic diagnosis whenever the watch stream signals a change (debounced),
-and also re-runs on a periodic heartbeat — emitting findings as structured log
-lines and exposing them as Prometheus metrics.
+and also re-runs on a periodic heartbeat. It tracks each issue's state across
+reconciles — new, resolved, flapping, and time-to-resolution — logging only the
+transitions (steady state stays quiet) and exposing them as Prometheus metrics
+and a read-only `/issues` JSON endpoint.
 
 ```bash
 ./kubeagent watch                        # in-cluster defaults
@@ -373,7 +375,8 @@ Endpoints exposed on `--metrics-addr`:
 
 | Path | Description |
 | ---- | ----------- |
-| `/metrics` | Prometheus metrics (unhealthy pod/node counts, scan duration, etc.) |
+| `/metrics` | Prometheus metrics (unhealthy pod/node counts, scan duration, issue-tracking series, etc.) |
+| `/issues` | JSON list of currently-active and recently-resolved tracked issues, plus lifetime stats |
 | `/healthz` | Liveness probe — returns 200 when the daemon is running |
 | `/readyz` | Readiness probe — returns 200 after the first scan completes |
 

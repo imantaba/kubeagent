@@ -55,9 +55,184 @@ The daemon serves Prometheus text on `--metrics-addr` (default `:8080`):
 `/healthz` and `/readyz` back the liveness/readiness probes; `/readyz` turns
 200 only after the informer caches sync and the first evaluation completes.
 
-Logs are **change-gated**: the daemon writes a line only when the health
-picture changes (a verdict flip, a workload newly flagged or cleared) — steady
-state is silent.
+Logs are **change-gated**: the daemon writes a line only when tracked issue
+state changes — an issue going new, resolving, or starting to flap — not on
+every reconcile. See "Issue tracking" below for the exact line shapes.
+
+## Issue tracking (state across reconciles)
+
+Watch mode remembers issue state across reconciles, so each cycle reports
+*what changed* instead of re-announcing the whole picture every time.
+
+### What the daemon remembers
+
+Each tracked issue is identified by `(kind, namespace, name, issue)` — for
+example `Deployment/shop/web:CrashLoopBackOff`, or the cluster-scoped
+`Node/worker-2:KubeletUnhealthy` (no namespace). Every reconcile projects the
+evaluation into that set of keys and folds it into an in-memory tracker, which
+reports the transitions: which issues are newly firing, which resolved since
+the last cycle, and which are flapping (firing repeatedly within a short
+window).
+
+A failed evaluation never touches this state: an API error is not "all
+clear," so it neither resolves the issues that were firing nor re-fires them
+once the API recovers — only a successful evaluation updates the tracker.
+(The evaluation error is still logged and still counted in
+`kubeagent_scan_errors_total`.)
+
+### Log output
+
+The daemon logs one line per transition, in this order, followed by a summary
+line — and only when something changed:
+
+```
+kubeagent: NEW Deployment/shop/web:CrashLoopBackOff
+kubeagent: RESOLVED Deployment/shop/web:CrashLoopBackOff (fired for 4m12s)
+kubeagent: FLAPPING Deployment/shop/web:CrashLoopBackOff (3 firings in 30m0s)
+kubeagent: cluster Degraded (2/3 nodes ready) — 4 issue(s) active, 1 new, 1 resolved
+```
+
+A reconcile where nothing changed — the same issues still firing, nothing new,
+nothing resolved, nothing newly flapping — logs **nothing at all**. Steady
+state stays quiet.
+
+### Metrics
+
+Alongside the point-in-time gauges above, the daemon exposes ten series that
+track issue lifecycle:
+
+| Metric | Type | Meaning |
+|--------|------|---------|
+| `kubeagent_issues_active` | gauge | Issues currently firing, tracked across reconciles |
+| `kubeagent_issues_flapping` | gauge | Active issues that have crossed the flap threshold |
+| `kubeagent_issues_new_total` | counter | Issue firings observed since start |
+| `kubeagent_issues_resolved_total` | counter | Issue firings that resolved since start |
+| `kubeagent_issues_flapping_total` | counter | Times an issue crossed the flap threshold since start |
+| `kubeagent_issues_dropped_total` | counter | New issues left untracked because the tracker is at capacity |
+| `kubeagent_issue_resolution_seconds_sum` | counter | Seconds issues spent firing before resolving (MTTR numerator) |
+| `kubeagent_issue_resolution_seconds_count` | counter | Issue firings that resolved (MTTR denominator) |
+| `kubeagent_issue_active{kind,namespace,name,issue}` | gauge | 1 while this issue instance is firing |
+| `kubeagent_issue_age_seconds{kind,namespace,name,issue}` | gauge | Seconds since this issue instance started firing |
+
+There is no dedicated MTTR series — compute mean time to resolution as
+`kubeagent_issue_resolution_seconds_sum / kubeagent_issue_resolution_seconds_count`.
+
+### `/issues`
+
+`GET /issues` on `--metrics-addr` returns the same tracked state as JSON:
+
+```bash
+curl -s localhost:8080/issues | jq .
+```
+
+```json
+{
+  "active": [
+    {
+      "kind": "Deployment",
+      "namespace": "shop",
+      "name": "web",
+      "issue": "CrashLoopBackOff",
+      "firstSeen": "2026-07-25T10:00:00Z",
+      "firingSince": "2026-07-25T10:12:00Z",
+      "lastSeen": "2026-07-25T10:16:12Z",
+      "firings": 2,
+      "flapping": false,
+      "ageSeconds": 252
+    }
+  ],
+  "resolved": [
+    {
+      "kind": "Service",
+      "namespace": "shop",
+      "name": "api-svc",
+      "issue": "NoEndpoints",
+      "firstSeen": "2026-07-25T10:00:00Z",
+      "firingSince": "2026-07-25T10:00:00Z",
+      "lastSeen": "2026-07-25T10:04:00Z",
+      "firings": 1,
+      "flapping": false,
+      "resolvedAt": "2026-07-25T10:04:12Z",
+      "resolutionSeconds": 252
+    }
+  ],
+  "stats": {
+    "newTotal": 7,
+    "resolvedTotal": 3,
+    "flapTotal": 1,
+    "droppedTotal": 0,
+    "resolutionSecondsSum": 812,
+    "resolutionSecondsCount": 3
+  }
+}
+```
+
+Fields: `kind` / `namespace` / `name` / `issue` identify the tracked instance
+(`namespace` is omitted entirely for a cluster-scoped issue, e.g. `Node`);
+`firstSeen` is the first time this key was ever observed; `firingSince` is
+when the *current* firing started (a re-fire after resolving moves this
+forward, `firstSeen` does not); `lastSeen` is the last reconcile that observed
+it; `firings` counts inactive→active transitions; `flapping` is whether it has
+crossed the flap threshold. `ageSeconds` (seconds since `firingSince`) appears
+only on records in `active`; `resolvedAt` and `resolutionSeconds` appear only
+on records in `resolved`. `stats` mirrors the six counter metrics above
+(`newTotal`, `resolvedTotal`, `flapTotal`, `droppedTotal`,
+`resolutionSecondsSum`, `resolutionSecondsCount`). Both `active` and
+`resolved` are `[]`, never `null`, when there is nothing to report.
+
+### Limits and restart semantics
+
+Retention and flap detection use fixed defaults; there are no flags to tune
+them:
+
+- up to **500** issues tracked at once — a new issue beyond that cap is left
+  untracked, not reported, and counted in `kubeagent_issues_dropped_total`;
+- a resolved issue stays visible in `/issues` and countable in `/metrics` for
+  **1 hour** after it resolves, then is purged;
+- flapping is judged over a **30-minute** window, at **3** firings inside that
+  window to cross the threshold.
+
+State is **in-memory only** — nothing is written to disk, and there is no
+persistence across restarts. After the daemon restarts, the first reconcile
+reports every issue that is currently firing as `NEW` (even if it had already
+been firing for hours before the restart), every age starts counting from
+zero, and every counter (`kubeagent_issues_new_total`,
+`kubeagent_issues_resolved_total`, and the rest) resets to zero. Don't read a
+burst of `NEW` lines right after a restart as a fresh incident storm.
+
+**A failure mode that changes is a different issue.** The issue name is part of
+the key, so a workload whose failure evolves reports the old mode resolved and
+the new one new — a bad image walks through `Degraded`, `ErrImagePull`, and
+`ImagePullBackOff`, and each step logs a `RESOLVED` for the previous mode
+alongside the `NEW`:
+
+```text
+kubeagent: NEW Deployment/shop/web:ErrImagePull
+kubeagent: RESOLVED Deployment/shop/web:Degraded (fired for 2s)
+kubeagent: NEW Deployment/shop/web:ImagePullBackOff
+kubeagent: RESOLVED Deployment/shop/web:ErrImagePull (fired for 15s)
+```
+
+A `RESOLVED` line therefore means *that issue* stopped firing, not that the
+workload recovered — check whether a `NEW` line for the same object arrived in
+the same reconcile. Mean time to resolution follows the same rule: it measures
+how long each distinct failure mode fired, not how long the object was broken.
+
+**Known limitation:** a node named via `--expected-nodes` that is absent from
+the cluster is **not** tracked as an issue, and never appears in `/issues` or
+the per-issue metrics. The cluster-health detector reports it only as the
+`kubeagent_nodes_expected_absent` counter plus free-text prose in the cluster
+summary, with no stable per-node identity to key a tracked record on. It still
+shows up in `scan` output and in that counter — it just doesn't participate in
+NEW/RESOLVED/FLAPPING tracking. Giving the detector a structured field to fix
+this is a separate, future change.
+
+### Still read-only
+
+Issue tracking adds no new API calls and no writes: the tracker only consumes
+the same evaluation `scan` already performs, entirely in memory, and
+`/issues` is a read-only view over it. Watch mode's RBAC (`get`/`list`/`watch`
+only) is unchanged.
 
 ## Run it
 

@@ -352,9 +352,9 @@ setting a target with no `KUBEAGENT_ALERT_WEBHOOK` configured still renders the
 series, it just never pages. The two are separate switches.
 
 `--slo-target` must be greater than 0 and less than 100 (`NaN`/`Inf` included in
-the rejection); a value outside that range is a startup error, checked at the
-same point as alert-config validation, before anything that could hide the
-failure behind a slow informer cache sync.
+the rejection); a value outside that range is a startup error, checked first of
+all — ahead of the alert config, the metrics server, and the informers — so the
+failure cannot hide behind a slow cache sync.
 
 ### The SLI and the arithmetic
 

@@ -258,15 +258,25 @@ func TestLatestEvictsAtTheCap(t *testing.T) {
 	defer func() { cancel(); e.Close() }()
 
 	e.Consider(watchstate.Delta{}, clusterhealth.ClusterHealth{}, nil, nil, t0)
+	// The queue holds queueSize jobs and Enqueue drops rather than blocks when
+	// it is full, so firing maxLatest+25 objects at once loses most of them and
+	// the store never reaches the cap. Pace the producer instead: wait for each
+	// explanation to land before sending the next, until the store is full.
 	for i := 0; i < maxLatest+25; i++ {
 		e.Consider(watchstate.Delta{New: []watchstate.Record{
 			newRecord("Deployment", "shop", "w"+string(rune('a'+i%26))+string(rune('a'+i/26)), "Degraded", t0),
 		}}, clusterhealth.ClusterHealth{}, flaggedWeb(), nil, t0.Add(time.Duration(i)*time.Second))
+		want := i + 1
+		if want > maxLatest {
+			want = maxLatest
+		}
+		waitFor(t, "the store to reach the next explanation", func() bool { return len(e.Latest()) >= want })
 	}
-	waitFor(t, "the store to fill", func() bool { return len(e.Latest()) >= maxLatest })
+	// The last 25 may still be in flight; hold the window open so an insert that
+	// pushed past the cap would show up.
 	time.Sleep(100 * time.Millisecond)
-	if got := len(e.Latest()); got > maxLatest {
-		t.Errorf("stored %d explanations, want at most %d", got, maxLatest)
+	if got := len(e.Latest()); got != maxLatest {
+		t.Errorf("stored %d explanations, want exactly the cap of %d", got, maxLatest)
 	}
 }
 

@@ -113,7 +113,7 @@ spec:
             - name: ANTHROPIC_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.explain.existingSecret | quote }}
+                  name: {{ required "explain.existingSecret is required when explain.enabled is true and explain.endpoint is empty" .Values.explain.existingSecret | quote }}
                   key: {{ .Values.explain.secretKey | quote }}
             {{- end }}
             {{- end }}

@@ -45,6 +45,7 @@ type IncidentExplainer interface {
 
 // Explanation is one delivered explanation, as served by /explanations.
 type Explanation struct {
+	Cluster     string
 	Kind        string
 	Namespace   string
 	Name        string
@@ -181,7 +182,7 @@ func (e *Explainer) Close() {
 // clean-to-flagged transition, which the per-object cooldown absorbs: a second
 // finding minutes later is inside the cooldown, and a new failure mode an hour
 // later is an escalation that deserves a fresh explanation.
-func (e *Explainer) Consider(d watchstate.Delta, cluster clusterhealth.ClusterHealth,
+func (e *Explainer) Consider(clusterName string, d watchstate.Delta, health clusterhealth.ClusterHealth,
 	flagged []inventory.Workload, serviceIssues []svchealth.Issue, now time.Time) {
 	if e == nil {
 		return
@@ -194,7 +195,7 @@ func (e *Explainer) Consider(d watchstate.Delta, cluster clusterhealth.ClusterHe
 		return
 	}
 
-	for _, obj := range objectsFrom(d.New) {
+	for _, obj := range objectsFrom(clusterName, d.New) {
 		if !e.th.Allow(obj.key, now) {
 			continue
 		}
@@ -202,7 +203,7 @@ func (e *Explainer) Consider(d watchstate.Delta, cluster clusterhealth.ClusterHe
 			obj:         obj.obj,
 			issues:      obj.issues,
 			firingSince: obj.firingSince,
-			prompt:      explain.BuildIncidentPrompt(obj.obj.String(), obj.issues, cluster, flagged, serviceIssues),
+			prompt:      explain.BuildIncidentPrompt(obj.obj.String(), obj.issues, health, flagged, serviceIssues),
 		}
 		select {
 		case e.jobs <- j:
@@ -274,7 +275,8 @@ func (e *Explainer) run(ctx context.Context, j job) {
 
 	now := time.Now()
 	e.store(Explanation{
-		Kind: j.obj.Kind, Namespace: j.obj.Namespace, Name: j.obj.Name,
+		Cluster: j.obj.Cluster,
+		Kind:    j.obj.Kind, Namespace: j.obj.Namespace, Name: j.obj.Name,
 		Issues: j.issues, ExplainedAt: now, Model: e.model, Text: text,
 	})
 	if e.notify != nil {
@@ -299,7 +301,7 @@ func (e *Explainer) store(x Explanation) {
 			delete(e.latest, k)
 		}
 	}
-	key := x.Kind + "/" + x.Namespace + "/" + x.Name
+	key := x.Cluster + "/" + x.Kind + "/" + x.Namespace + "/" + x.Name
 	if _, replacing := e.latest[key]; !replacing {
 		for len(e.latest) >= maxLatest {
 			oldestKey, oldestAt := "", time.Time{}
@@ -324,17 +326,19 @@ type objectRef struct {
 
 // objectsFrom folds per-issue records into one entry per object, in a stable
 // order so a storm produces a deterministic admission sequence rather than one
-// that depends on map iteration.
-func objectsFrom(records []watchstate.Record) []objectRef {
+// that depends on map iteration. The cluster is part of the key: one Explainer
+// serves every cluster, so two clusters running the same namespace and name
+// would otherwise share a cooldown slot.
+func objectsFrom(cluster string, records []watchstate.Record) []objectRef {
 	index := map[string]*objectRef{}
 	var order []string
 	for _, r := range records {
-		key := r.Key.Kind + "/" + r.Key.Namespace + "/" + r.Key.Name
+		key := cluster + "/" + r.Key.Kind + "/" + r.Key.Namespace + "/" + r.Key.Name
 		ref, ok := index[key]
 		if !ok {
 			ref = &objectRef{
 				key: key,
-				obj: alertstate.Object{Kind: r.Key.Kind, Namespace: r.Key.Namespace, Name: r.Key.Name},
+				obj: alertstate.Object{Cluster: cluster, Kind: r.Key.Kind, Namespace: r.Key.Namespace, Name: r.Key.Name},
 			}
 			index[key] = ref
 			order = append(order, key)

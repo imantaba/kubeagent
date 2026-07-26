@@ -58,6 +58,9 @@ type Config struct {
 	ExplainBudget           int           // model calls per hour, and the burst capacity
 }
 
+// defaultClusterName labels the target built without an explicit --context.
+const defaultClusterName = "local"
+
 // Run starts the metrics server and the informer-driven control loop, blocking
 // until ctx is cancelled.
 func Run(ctx context.Context, client kubernetes.Interface, cfg Config) error {
@@ -349,7 +352,7 @@ func applyResult(m *metrics, tr *watchstate.Tracker, al *alerter, ex *oncall.Exp
 	al.notify(tr, now)
 	// The object alert has already been enqueued above, LLM-free. Only now is
 	// the model considered, and only for objects the throttle admits.
-	ex.Consider(d, res.Health, flaggedWorkloads(res), res.ServiceIssues, now)
+	ex.Consider(defaultClusterName, d, res.Health, flaggedWorkloads(res), res.ServiceIssues, now)
 	if sloTr != nil && sloN != nil {
 		c := res.Inventory.Census
 		sloTr.Observe(c.Good, c.Total, now)

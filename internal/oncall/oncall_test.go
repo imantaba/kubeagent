@@ -120,7 +120,7 @@ func TestColdStartExplainsNothing(t *testing.T) {
 		newRecord("Deployment", "shop", "web", "ImagePullBackOff", t0),
 		newRecord("Deployment", "shop", "cart", "CrashLoopBackOff", t0),
 	}}
-	e.Consider(d, clusterhealth.ClusterHealth{}, flaggedWeb(), nil, t0)
+	e.Consider("", d, clusterhealth.ClusterHealth{}, flaggedWeb(), nil, t0)
 
 	time.Sleep(100 * time.Millisecond)
 	if fc.callCount() != 0 {
@@ -135,12 +135,12 @@ func TestOneObjectWithTwoNewIssuesGetsOneCall(t *testing.T) {
 	e, fc, rec, cancel := harness(t, Config{Cooldown: time.Hour, Budget: 20})
 	defer func() { cancel(); e.Close() }()
 
-	e.Consider(watchstate.Delta{}, clusterhealth.ClusterHealth{}, nil, nil, t0) // prime
+	e.Consider("", watchstate.Delta{}, clusterhealth.ClusterHealth{}, nil, nil, t0) // prime
 	d := watchstate.Delta{New: []watchstate.Record{
 		newRecord("Deployment", "shop", "web", "Degraded", t0),
 		newRecord("Deployment", "shop", "web", "ImagePullBackOff", t0),
 	}}
-	e.Consider(d, clusterhealth.ClusterHealth{}, flaggedWeb(), nil, t0)
+	e.Consider("", d, clusterhealth.ClusterHealth{}, flaggedWeb(), nil, t0)
 
 	waitFor(t, "one notification", func() bool { return len(rec.all()) == 1 })
 	if fc.callCount() != 1 {
@@ -173,8 +173,8 @@ func TestModelErrorCountsAsFailedAndSendsNothing(t *testing.T) {
 	})
 	defer func() { cancel(); e.Close() }()
 
-	e.Consider(watchstate.Delta{}, clusterhealth.ClusterHealth{}, nil, nil, t0)
-	e.Consider(watchstate.Delta{New: []watchstate.Record{
+	e.Consider("", watchstate.Delta{}, clusterhealth.ClusterHealth{}, nil, nil, t0)
+	e.Consider("", watchstate.Delta{New: []watchstate.Record{
 		newRecord("Deployment", "shop", "web", "ImagePullBackOff", t0),
 	}}, clusterhealth.ClusterHealth{}, flaggedWeb(), nil, t0)
 
@@ -193,8 +193,8 @@ func TestEmptyModelOutputIsAFailure(t *testing.T) {
 	})
 	defer func() { cancel(); e.Close() }()
 
-	e.Consider(watchstate.Delta{}, clusterhealth.ClusterHealth{}, nil, nil, t0)
-	e.Consider(watchstate.Delta{New: []watchstate.Record{
+	e.Consider("", watchstate.Delta{}, clusterhealth.ClusterHealth{}, nil, nil, t0)
+	e.Consider("", watchstate.Delta{New: []watchstate.Record{
 		newRecord("Deployment", "shop", "web", "ImagePullBackOff", t0),
 	}}, clusterhealth.ClusterHealth{}, flaggedWeb(), nil, t0)
 
@@ -212,13 +212,13 @@ func TestQueueFullCountsDroppedNotThrottled(t *testing.T) {
 	e, _, _, cancel := harness(t, Config{Cooldown: 0, Budget: 1000, Client: fc})
 	defer func() { close(release); cancel(); e.Close() }()
 
-	e.Consider(watchstate.Delta{}, clusterhealth.ClusterHealth{}, nil, nil, t0)
+	e.Consider("", watchstate.Delta{}, clusterhealth.ClusterHealth{}, nil, nil, t0)
 
 	var recs []watchstate.Record
 	for i := 0; i < 40; i++ {
 		recs = append(recs, newRecord("Deployment", "shop", "w"+string(rune('a'+i)), "Degraded", t0))
 	}
-	e.Consider(watchstate.Delta{New: recs}, clusterhealth.ClusterHealth{}, flaggedWeb(), nil, t0)
+	e.Consider("", watchstate.Delta{New: recs}, clusterhealth.ClusterHealth{}, flaggedWeb(), nil, t0)
 
 	s := e.Stats(t0)
 	if s.Dropped == 0 {
@@ -233,8 +233,8 @@ func TestThrottledObjectsNeverReachTheModel(t *testing.T) {
 	e, fc, _, cancel := harness(t, Config{Cooldown: time.Hour, Budget: 1})
 	defer func() { cancel(); e.Close() }()
 
-	e.Consider(watchstate.Delta{}, clusterhealth.ClusterHealth{}, nil, nil, t0)
-	e.Consider(watchstate.Delta{New: []watchstate.Record{
+	e.Consider("", watchstate.Delta{}, clusterhealth.ClusterHealth{}, nil, nil, t0)
+	e.Consider("", watchstate.Delta{New: []watchstate.Record{
 		newRecord("Deployment", "shop", "web", "Degraded", t0),
 		newRecord("Deployment", "shop", "cart", "Degraded", t0),
 	}}, clusterhealth.ClusterHealth{}, flaggedWeb(), nil, t0)
@@ -257,13 +257,13 @@ func TestLatestEvictsAtTheCap(t *testing.T) {
 	e, _, _, cancel := harness(t, Config{Cooldown: 0, Budget: 100000})
 	defer func() { cancel(); e.Close() }()
 
-	e.Consider(watchstate.Delta{}, clusterhealth.ClusterHealth{}, nil, nil, t0)
+	e.Consider("", watchstate.Delta{}, clusterhealth.ClusterHealth{}, nil, nil, t0)
 	// The queue holds queueSize jobs and Enqueue drops rather than blocks when
 	// it is full, so firing maxLatest+25 objects at once loses most of them and
 	// the store never reaches the cap. Pace the producer instead: wait for each
 	// explanation to land before sending the next, until the store is full.
 	for i := 0; i < maxLatest+25; i++ {
-		e.Consider(watchstate.Delta{New: []watchstate.Record{
+		e.Consider("", watchstate.Delta{New: []watchstate.Record{
 			newRecord("Deployment", "shop", "w"+string(rune('a'+i%26))+string(rune('a'+i/26)), "Degraded", t0),
 		}}, clusterhealth.ClusterHealth{}, flaggedWeb(), nil, t0.Add(time.Duration(i)*time.Second))
 		want := i + 1
@@ -283,7 +283,7 @@ func TestLatestEvictsAtTheCap(t *testing.T) {
 func TestNilExplainerIsANoOp(t *testing.T) {
 	var e *Explainer
 	e.Start(context.Background())
-	e.Consider(watchstate.Delta{New: []watchstate.Record{
+	e.Consider("", watchstate.Delta{New: []watchstate.Record{
 		newRecord("Deployment", "shop", "web", "Degraded", t0),
 	}}, clusterhealth.ClusterHealth{}, nil, nil, t0)
 	if got := e.Latest(); got != nil {
@@ -293,6 +293,42 @@ func TestNilExplainerIsANoOp(t *testing.T) {
 		t.Errorf("Stats on a nil explainer = %+v, want the zero value", got)
 	}
 	e.Close()
+}
+
+// TestConsiderKeysThrottleAndStorePerCluster pins the one place cluster
+// identity cannot live at the boundary. The Explainer is shared across every
+// cluster because the hourly budget is a cost control, and cost is a property
+// of the process. Its cooldown map and its served store are keyed by object, so
+// without the cluster in that key, shop/web in prod-eu and shop/web in prod-us
+// share one cooldown slot and overwrite each other on /explanations.
+func TestConsiderKeysThrottleAndStorePerCluster(t *testing.T) {
+	e, fc, _, cancel := harness(t, Config{Cooldown: time.Hour, Budget: 10}) // long enough that a second call for the SAME key is refused
+	defer func() { cancel(); e.Close() }()
+
+	d := watchstate.Delta{New: []watchstate.Record{
+		newRecord("Deployment", "shop", "web", "ImagePullBackOff", t0),
+	}}
+
+	// The first Consider per cluster is the cold-start prime and explains
+	// nothing; primed is per-Explainer, so only the very first call overall
+	// needs to be a throwaway.
+	e.Consider("prod-eu", watchstate.Delta{}, clusterhealth.ClusterHealth{}, nil, nil, t0)
+	e.Consider("prod-eu", d, clusterhealth.ClusterHealth{}, nil, nil, t0)
+	e.Consider("prod-us", d, clusterhealth.ClusterHealth{}, nil, nil, t0)
+
+	waitFor(t, "both clusters' model calls", func() bool { return fc.callCount() == 2 })
+
+	latest := e.Latest()
+	if len(latest) != 2 {
+		t.Fatalf("Latest() has %d entries, want 2 (one per cluster)", len(latest))
+	}
+	seen := map[string]bool{}
+	for _, x := range latest {
+		seen[x.Cluster] = true
+	}
+	if !seen["prod-eu"] || !seen["prod-us"] {
+		t.Errorf("Latest() clusters = %v, want both prod-eu and prod-us", seen)
+	}
 }
 
 func TestCloseBeforeStartReturnsImmediately(t *testing.T) {

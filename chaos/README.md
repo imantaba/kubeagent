@@ -46,7 +46,7 @@ The key is read from the environment only; it is never written to the report.
 | 1 | etcd quorum loss | `docker stop` the control-plane node | connectivity diagnosis (connection refused) — a **boundary** |
 | 2 | Expired certificates | **skipped** (can't be forced on Kind) | n/a — TLS branch is unit-tested |
 | 3 | Disk full (control plane) | `kubectl cordon` + an unschedulable pod | P1 node `SchedulingDisabled` + `Unschedulable` |
-| 4 | NetworkPolicy block | Calico deny-all + a never-Ready app | degraded workload + NetworkPolicy hint |
+| 4 | NetworkPolicy block | an app whose readiness is one in-cluster HTTP call away, then a Calico deny-all — and then the policy is deleted again | degraded workload with a `ProbeFailure` finding while the policy is in force, healthy before it and healthy again after it, so the policy is shown to be the **cause**. No NetworkPolicy hint: `netpolicy.Annotate` suppresses it when a detector already accounts for the workload |
 | 5 | Broken DNS | bad Corefile → CoreDNS CrashLoop | P1 cluster `Degraded` + CrashLoopBackOff |
 | 6 | Cloud LB failure | `type: LoadBalancer` Service (no provider) | Service issues — no external address |
 | 7 | OOMKilled | memory-hog Deployment, 64Mi limit | OOMKilled + container requests/limits |
@@ -56,6 +56,7 @@ The key is read from the environment only; it is never written to the report.
 | 11 | Kubelet health probe | `systemctl stop containerd` on a worker (kubelet stays up) | node NotReady (base scan); `--kubelet-health` probes every kubelet via `nodes/proxy` and does **not** false-positive — kubelet `/healthz` stays `ok` (only ping/log/syncloop, not the runtime) — a **boundary** |
 | 12 | Stateful watch daemon | run `kubeagent watch` on a loopback metrics address with alerting pointed at a local receiver, then inject and repair the bad-image outage | one `NEW` transition line, one `RESOLVED` line with the firing duration, the incident on `/issues` (active while firing, under `resolved` afterwards), and exactly one resolved alert delivered — the firing alert survives the whole failure-mode walk |
 | 13 | SLO burn rate | run `kubeagent watch --slo-target 99.9` on a loopback metrics address, then break the only workload | SLO burn-rate series track real breakage; a cold daemon does not page (coverage gate) |
+| 14 | On-incident explanations | run `kubeagent watch --explain --explain-budget 1` against a local stub endpoint, then break two objects at once | exactly one model call and one `reason=explanation` notification — the budget throttles the rest — with the explanation on `/explanations`, the plain firing alerts unaffected, no pod/node detail in any prompt, and no endpoint path in any log line |
 
 ### Validating `--fix` (remediation)
 

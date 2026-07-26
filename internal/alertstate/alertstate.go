@@ -45,10 +45,11 @@ const (
 type Reason string
 
 const (
-	ReasonNew      Reason = "new"      // object acquired its first issue
-	ReasonChanged  Reason = "changed"  // issue set changed while firing
-	ReasonRepeat   Reason = "repeat"   // periodic re-send, issue set unchanged
-	ReasonResolved Reason = "resolved" // object has no active issues
+	ReasonNew         Reason = "new"         // object acquired its first issue
+	ReasonChanged     Reason = "changed"     // issue set changed while firing
+	ReasonRepeat      Reason = "repeat"      // periodic re-send, issue set unchanged
+	ReasonResolved    Reason = "resolved"    // object has no active issues
+	ReasonExplanation Reason = "explanation" // model-written follow-up for an object already firing
 )
 
 // Notification is one message to deliver.
@@ -60,6 +61,10 @@ type Notification struct {
 	ResolvedAt  time.Time // zero unless resolved
 	Flapping    bool      // any constituent issue is flapping
 	Reason      Reason
+	// Text is explanation prose, set only when Reason is ReasonExplanation. It
+	// is model-written and therefore untrusted: every encoder must emit it as
+	// JSON-encoded data, never concatenated into markup.
+	Text string
 }
 
 // Options tunes the re-send cadence. A zero Repeat takes the default, following

@@ -479,10 +479,10 @@ func TestApplyResult_ErrorDoesNotSample(t *testing.T) {
 
 	// A healthy sample to establish the baseline, then a minute of healthy time.
 	captureLog(t, func() {
-		applyResult(m, tr, nil, sloTr, sloN, healthy, time.Millisecond, sloBase, nil)
+		applyResult(m, tr, nil, nil, sloTr, sloN, healthy, time.Millisecond, sloBase, nil)
 	})
 	captureLog(t, func() {
-		applyResult(m, tr, nil, sloTr, sloN, healthy, time.Millisecond, sloBase.Add(time.Minute), nil)
+		applyResult(m, tr, nil, nil, sloTr, sloN, healthy, time.Millisecond, sloBase.Add(time.Minute), nil)
 	})
 	before := sloTr.Report(slo.Fast, sloBase.Add(time.Minute))
 
@@ -491,7 +491,7 @@ func TestApplyResult_ErrorDoesNotSample(t *testing.T) {
 	// sample.
 	for i := 2; i <= 62; i++ {
 		captureLog(t, func() {
-			applyResult(m, tr, nil, sloTr, sloN, sampleResult(), time.Millisecond,
+			applyResult(m, tr, nil, nil, sloTr, sloN, sampleResult(), time.Millisecond,
 				sloBase.Add(time.Duration(i)*time.Minute), errors.New("boom"))
 		})
 	}
@@ -519,7 +519,7 @@ func TestApplyResult_SLODisabledIsInert(t *testing.T) {
 		t.Fatal("newSLOTracker returned a tracker with --slo-target unset")
 	}
 	captureLog(t, func() {
-		applyResult(m, tr, nil, sloTr, sloN, sampleResult(), time.Millisecond, sloBase, nil)
+		applyResult(m, tr, nil, nil, sloTr, sloN, sampleResult(), time.Millisecond, sloBase, nil)
 	})
 	if strings.Contains(m.render(), "kubeagent_slo_") {
 		t.Error("SLO series rendered with SLO tracking off")
@@ -587,7 +587,7 @@ func TestApplyResult_ConcurrentWithRender(t *testing.T) {
 		defer wg.Done()
 		for i := 0; i < n; i++ {
 			now := sloBase.Add(time.Duration(i) * time.Minute)
-			applyResult(m, tr, nil, sloTr, sloN, sampleResult(), time.Millisecond, now, nil)
+			applyResult(m, tr, nil, nil, sloTr, sloN, sampleResult(), time.Millisecond, now, nil)
 		}
 	}()
 	go func() {
@@ -614,7 +614,7 @@ func TestApplyResult_MismatchedSLOPairDoesNotPanic(t *testing.T) {
 	sloTr, _ := newSLOTracker(Config{SLOTarget: 0.999, Heartbeat: time.Minute, AlertRepeat: time.Hour})
 
 	captureLog(t, func() {
-		applyResult(m, tr, nil, sloTr, nil, sampleResult(), time.Millisecond, sloBase, nil)
+		applyResult(m, tr, nil, nil, sloTr, nil, sampleResult(), time.Millisecond, sloBase, nil)
 	})
 }
 
@@ -646,13 +646,13 @@ func TestApplyResult_FastAndSlowWindowsDoNotSwap(t *testing.T) {
 	now := sloBase
 	for i := 0; i < 300; i++ { // 5 healthy hours
 		captureLog(t, func() {
-			applyResult(m, tr, nil, sloTr, sloN, healthy, time.Millisecond, now, nil)
+			applyResult(m, tr, nil, nil, sloTr, sloN, healthy, time.Millisecond, now, nil)
 		})
 		now = now.Add(time.Minute)
 	}
 	for i := 0; i < 60; i++ { // 1 broken hour
 		captureLog(t, func() {
-			applyResult(m, tr, nil, sloTr, sloN, broken, time.Millisecond, now, nil)
+			applyResult(m, tr, nil, nil, sloTr, sloN, broken, time.Millisecond, now, nil)
 		})
 		now = now.Add(time.Minute)
 	}
@@ -697,7 +697,7 @@ func TestApplyResult_RendersSLOSeriesThroughTheRealPath(t *testing.T) {
 		Census:    inventory.Census{Good: 1, Total: 1},
 	}}
 	captureLog(t, func() {
-		applyResult(m, tr, nil, sloTr, sloN, healthy, time.Millisecond, sloBase, nil)
+		applyResult(m, tr, nil, nil, sloTr, sloN, healthy, time.Millisecond, sloBase, nil)
 	})
 
 	out := m.render()

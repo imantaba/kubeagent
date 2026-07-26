@@ -1,7 +1,9 @@
 // Package watch runs kubeagent as an in-cluster, read-only daemon: it watches the
 // cluster via informers, re-runs the deterministic evaluation on change (debounced)
 // and on a heartbeat, and surfaces the result as structured logs and Prometheus
-// metrics. No writes, no LLM.
+// metrics. No writes. The LLM is opt-in, off by default, and sees only findings
+// the daemon has already collected — it triggers no additional cluster reads and
+// needs no additional RBAC.
 package watch
 
 import (
@@ -17,6 +19,8 @@ import (
 
 	"github.com/imantaba/kubeagent/internal/alert"
 	"github.com/imantaba/kubeagent/internal/alertstate"
+	"github.com/imantaba/kubeagent/internal/explain"
+	"github.com/imantaba/kubeagent/internal/oncall"
 	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/slo"
 	"github.com/imantaba/kubeagent/internal/watchstate"
@@ -46,6 +50,12 @@ type Config struct {
 	AlertFormat             string        // "json" | "slack" | "alertmanager"
 	AlertRepeat             time.Duration // re-send interval for still-firing alerts
 	SLOTarget               float64       // availability SLO as a ratio in (0,1); 0 disables SLO tracking
+	Explain                 bool          // opt-in on-incident explanations; off by default
+	ExplainModel            string        // resolved model name
+	ExplainEndpoint         string        // OpenAI-compatible endpoint; empty selects Anthropic
+	ExplainAPIKey           string        // bearer token for a local endpoint; ignored by Anthropic
+	ExplainCooldown         time.Duration // per-object minimum gap between explanations
+	ExplainBudget           int           // model calls per hour, and the burst capacity
 }
 
 // Run starts the metrics server and the informer-driven control loop, blocking
@@ -57,6 +67,9 @@ func Run(ctx context.Context, client kubernetes.Interface, cfg Config) error {
 	// reachable-but-unresponsive API server can block that sync forever, hiding
 	// the config error behind what looks like a cluster hang.
 	if err := validateSLOTarget(cfg.SLOTarget); err != nil {
+		return err
+	}
+	if err := validateExplain(cfg); err != nil {
 		return err
 	}
 
@@ -81,9 +94,23 @@ func Run(ctx context.Context, client kubernetes.Interface, cfg Config) error {
 		return err
 	}
 	if al != nil {
-		defer al.sink.Close() // deferred first, so it runs second — after stopAlerts
+		defer func() { noteTeardown("sinkClose"); al.sink.Close() }() // deferred first, so it runs last
 	}
-	defer stopAlerts() // deferred last, so it runs first and unblocks Close
+	defer func() { noteTeardown("stopAlerts"); stopAlerts() }()
+
+	// The explainer is a producer for the alert sink, so it must be stopped
+	// before the sink is. Defers run LIFO, so deferring these two after the
+	// alert pair puts them first on the way out: stopExplain cancels any call
+	// in flight, ex.Close waits for the worker, and only then does stopAlerts
+	// let the sender drain and sink.Close return. Reversed, an explanation
+	// finishing during shutdown would be enqueued into a sink whose sender had
+	// already returned — never delivered, and never counted as a drop.
+	explainCtx, stopExplain := context.WithCancel(ctx)
+	ex := newExplainer(explainCtx, cfg, al)
+	if ex != nil {
+		defer func() { noteTeardown("explainerClose"); ex.Close() }()
+	}
+	defer func() { noteTeardown("stopExplain"); stopExplain() }()
 
 	m := newMetrics()
 
@@ -147,7 +174,7 @@ func Run(ctx context.Context, client kubernetes.Interface, cfg Config) error {
 	reconcile := func() {
 		start := time.Now()
 		res, err := scan.Evaluate(ctx, client, opts)
-		applyResult(m, tr, al, sloTr, sloN, &res, time.Since(start), time.Now(), err)
+		applyResult(m, tr, al, ex, sloTr, sloN, &res, time.Since(start), time.Now(), err)
 	}
 	reconcile() // initial snapshot
 	m.markReady()
@@ -185,6 +212,58 @@ func scopeLabel(ns string) string {
 		return "all"
 	}
 	return ns
+}
+
+// validateExplain checks the explanation limits. A zero cooldown is legal and
+// disables the per-object gap, leaving the budget as the only limit.
+func validateExplain(cfg Config) error {
+	if !cfg.Explain {
+		return nil
+	}
+	if cfg.ExplainBudget < 1 {
+		return fmt.Errorf("--explain-budget must be at least 1 call per hour, got %d", cfg.ExplainBudget)
+	}
+	if cfg.ExplainCooldown < 0 {
+		return fmt.Errorf("--explain-cooldown cannot be negative, got %s", cfg.ExplainCooldown)
+	}
+	return nil
+}
+
+// newExplainer builds the explainer from the config, returning nil when
+// --explain is off. It is handed no Kubernetes client: the explainer sees only
+// findings the daemon has already collected.
+func newExplainer(ctx context.Context, cfg Config, al *alerter) *oncall.Explainer {
+	if !cfg.Explain {
+		return nil
+	}
+	ex := oncall.New(oncall.Config{
+		Client:   explain.NewFromConfig(cfg.ExplainModel, cfg.ExplainEndpoint, cfg.ExplainAPIKey),
+		Model:    cfg.ExplainModel,
+		Cooldown: cfg.ExplainCooldown,
+		Budget:   cfg.ExplainBudget,
+		Notify:   al.enqueue,
+	})
+	ex.Start(ctx)
+	backend := "anthropic"
+	if cfg.ExplainEndpoint != "" {
+		// The endpoint may carry a token in its URL, so only scheme://host is
+		// ever logged — the same rule the alert webhook follows.
+		backend = alert.RedactURL(cfg.ExplainEndpoint)
+	}
+	log.Printf("kubeagent: on-incident explanations enabled (model=%s, backend=%s, cooldown=%s, budget=%d/h)",
+		cfg.ExplainModel, backend, cfg.ExplainCooldown, cfg.ExplainBudget)
+	return ex
+}
+
+// teardownOrder records Run's teardown steps when non-nil. Run's defer order is
+// load-bearing — the explainer produces for the alert sink, so it must stop
+// first — and the order is otherwise unobservable from outside the function.
+var teardownOrder func(step string)
+
+func noteTeardown(step string) {
+	if teardownOrder != nil {
+		teardownOrder(step)
+	}
 }
 
 // alerter routes tracker state to the outbound sink. A nil *alerter means no
@@ -253,7 +332,7 @@ func newAlerter(ctx context.Context, cfg Config) (*alerter, error) {
 // sloTr and sloN are always produced together by newSLOTracker (both nil, or
 // both set), but the signature does not enforce that, so both are checked here
 // rather than trusting the pairing: sloN.step on a nil sloN would panic.
-func applyResult(m *metrics, tr *watchstate.Tracker, al *alerter, sloTr *slo.Tracker, sloN *sloNotifier, res *scan.Result, dur time.Duration, now time.Time, err error) {
+func applyResult(m *metrics, tr *watchstate.Tracker, al *alerter, ex *oncall.Explainer, sloTr *slo.Tracker, sloN *sloNotifier, res *scan.Result, dur time.Duration, now time.Time, err error) {
 	m.update(res, dur, now, err)
 	if err != nil {
 		log.Printf("kubeagent: evaluation error: %v", err)
@@ -261,6 +340,9 @@ func applyResult(m *metrics, tr *watchstate.Tracker, al *alerter, sloTr *slo.Tra
 	}
 	d := tr.Observe(issueKeys(res), now)
 	al.notify(tr, now)
+	// The object alert has already been enqueued above, LLM-free. Only now is
+	// the model considered, and only for objects the throttle admits.
+	ex.Consider(d, res.Health, flaggedWorkloads(res), res.ServiceIssues, now)
 	if sloTr != nil && sloN != nil {
 		c := res.Inventory.Census
 		sloTr.Observe(c.Good, c.Total, now)
@@ -273,6 +355,7 @@ func applyResult(m *metrics, tr *watchstate.Tracker, al *alerter, sloTr *slo.Tra
 	}
 	m.updateIssues(tr, now)
 	m.updateAlerts(al.stats())
+	m.updateExplain(ex != nil, ex.Stats(now), ex.Latest())
 	logDelta(res, d, len(tr.Active()), tr.FlapWindow())
 }
 

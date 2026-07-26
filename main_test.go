@@ -1326,7 +1326,12 @@ func TestRunWatchWiresExplainConfig(t *testing.T) {
 	}
 	defer func() { watchRun = orig }()
 
-	if err := runWatch([]string{"--explain", "--explain-cooldown", "30m", "--explain-budget", "5", "--model", "test-model"}); err != nil {
+	// The dead kubeconfig keeps this hermetic: runWatch builds a real clientset
+	// before it reaches the stubbed watchRun, so without one the test passes only
+	// on a machine that happens to have ~/.kube/config.
+	args := []string{"--kubeconfig", deadKubeconfigPath(t),
+		"--explain", "--explain-cooldown", "30m", "--explain-budget", "5", "--model", "test-model"}
+	if err := runWatch(args); err != nil {
 		t.Fatalf("runWatch: %v", err)
 	}
 	if !got.Explain {
@@ -1356,7 +1361,7 @@ func TestRunWatchDefaultsExplainOff(t *testing.T) {
 	}
 	defer func() { watchRun = orig }()
 
-	if err := runWatch(nil); err != nil {
+	if err := runWatch([]string{"--kubeconfig", deadKubeconfigPath(t)}); err != nil {
 		t.Fatalf("runWatch: %v", err)
 	}
 	if got.Explain {

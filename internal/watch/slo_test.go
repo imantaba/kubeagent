@@ -253,20 +253,20 @@ func firing(since time.Time) slo.Verdict {
 }
 
 func TestSLONotifier_SilentWhileNotFiring(t *testing.T) {
-	n := newSLONotifier(time.Hour)
+	n := newSLONotifier(defaultClusterName, time.Hour)
 	if _, ok := n.step(slo.Verdict{}, sloBase); ok {
 		t.Error("emitted a notification while the verdict was not firing")
 	}
 }
 
 func TestSLONotifier_EmitsOnTheFiringEdge(t *testing.T) {
-	n := newSLONotifier(time.Hour)
+	n := newSLONotifier(defaultClusterName, time.Hour)
 	got, ok := n.step(firing(sloBase), sloBase)
 	if !ok {
 		t.Fatal("no notification on the firing edge")
 	}
 	want := alertstate.Notification{
-		Object:      alertstate.Object{Kind: "SLO", Name: "error-budget"},
+		Object:      alertstate.Object{Cluster: defaultClusterName, Kind: "SLO", Name: "error-budget"},
 		Status:      alertstate.StatusFiring,
 		Issues:      []string{"ErrorBudgetBurn"},
 		FiringSince: sloBase,
@@ -287,7 +287,7 @@ func TestSLONotifier_EmitsOnTheFiringEdge(t *testing.T) {
 }
 
 func TestSLONotifier_SilentWhileStillFiringInsideRepeat(t *testing.T) {
-	n := newSLONotifier(time.Hour)
+	n := newSLONotifier(defaultClusterName, time.Hour)
 	n.step(firing(sloBase), sloBase)
 	if _, ok := n.step(firing(sloBase), sloBase.Add(59*time.Minute)); ok {
 		t.Error("re-sent inside the repeat interval")
@@ -295,7 +295,7 @@ func TestSLONotifier_SilentWhileStillFiringInsideRepeat(t *testing.T) {
 }
 
 func TestSLONotifier_RepeatsAfterTheInterval(t *testing.T) {
-	n := newSLONotifier(time.Hour)
+	n := newSLONotifier(defaultClusterName, time.Hour)
 	n.step(firing(sloBase), sloBase)
 	got, ok := n.step(firing(sloBase), sloBase.Add(time.Hour))
 	if !ok {
@@ -310,7 +310,7 @@ func TestSLONotifier_RepeatsAfterTheInterval(t *testing.T) {
 }
 
 func TestSLONotifier_EmitsResolvedOnce(t *testing.T) {
-	n := newSLONotifier(time.Hour)
+	n := newSLONotifier(defaultClusterName, time.Hour)
 	n.step(firing(sloBase), sloBase)
 	clear := sloBase.Add(2 * time.Hour)
 	got, ok := n.step(slo.Verdict{}, clear)
@@ -332,7 +332,7 @@ func TestSLONotifier_EmitsResolvedOnce(t *testing.T) {
 }
 
 func TestSLONotifier_ReFiresAfterResolving(t *testing.T) {
-	n := newSLONotifier(time.Hour)
+	n := newSLONotifier(defaultClusterName, time.Hour)
 	n.step(firing(sloBase), sloBase)
 	n.step(slo.Verdict{}, sloBase.Add(time.Hour))
 	second := sloBase.Add(2 * time.Hour)
@@ -358,7 +358,7 @@ func TestSLONotifier_ReFiresAfterResolving(t *testing.T) {
 // through an already-firing window is exactly when that happens — so the two
 // timestamps differ and the notification must carry the breach's own start.
 func TestSLONotifier_FiringSinceComesFromTheVerdictNotNow(t *testing.T) {
-	n := newSLONotifier(time.Hour)
+	n := newSLONotifier(defaultClusterName, time.Hour)
 	began := sloBase.Add(-30 * time.Minute)
 	observedAt := sloBase
 	got, ok := n.step(firing(began), observedAt)
@@ -378,7 +378,7 @@ func TestSLONotifier_FiringSinceComesFromTheVerdictNotNow(t *testing.T) {
 // as the breach persists — exactly what alertstate.New's own `Repeat <= 0`
 // guard exists to prevent for object alerts.
 func TestSLONotifier_ZeroRepeatUsesTheDefault(t *testing.T) {
-	n := newSLONotifier(0)
+	n := newSLONotifier(defaultClusterName, 0)
 	n.step(firing(sloBase), sloBase)
 	if _, ok := n.step(firing(sloBase), sloBase.Add(time.Second)); ok {
 		t.Error("re-sent one second after the firing edge with a zero repeat; want the default interval honored")
@@ -399,7 +399,7 @@ func TestSLONotifier_ZeroRepeatUsesTheDefault(t *testing.T) {
 // after it, which would fire immediately if lastSent were never updated on the
 // repeat path.
 func TestSLONotifier_RepeatClockRestartsAfterARepeat(t *testing.T) {
-	n := newSLONotifier(time.Hour)
+	n := newSLONotifier(defaultClusterName, time.Hour)
 	n.step(firing(sloBase), sloBase)
 	n.step(firing(sloBase), sloBase.Add(time.Hour)) // first re-send
 
@@ -423,7 +423,7 @@ func TestSLONotifier_RepeatClockRestartsAfterARepeat(t *testing.T) {
 // repeat notifications, so a future change that starts stamping `now` into
 // ResolvedAt on a still-firing send would be caught.
 func TestSLONotifier_ResolvedAtZeroWhileFiring(t *testing.T) {
-	n := newSLONotifier(time.Hour)
+	n := newSLONotifier(defaultClusterName, time.Hour)
 
 	got, ok := n.step(firing(sloBase), sloBase)
 	if !ok {
@@ -467,7 +467,9 @@ func TestSLONotifier_ResolvedAtZeroWhileFiring(t *testing.T) {
 func TestApplyResult_ErrorDoesNotSample(t *testing.T) {
 	m := newMetrics([]string{defaultClusterName})
 	tr := watchstate.New(watchstate.Options{})
-	sloTr, sloN := newSLOTracker(Config{SLOTarget: 0.999, Heartbeat: time.Minute, AlertRepeat: time.Hour})
+	sloTr, sloN := newSLOTracker(defaultClusterName, Config{SLOTarget: 0.999, Heartbeat: time.Minute, AlertRepeat: time.Hour})
+	w := testWorker(m, tr)
+	w.sloTr, w.sloN = sloTr, sloN
 
 	// applyResult reads Inventory.Census, not Inventory.Workloads, to feed
 	// Tracker.Observe; Workloads is set here only for realism (a partially
@@ -479,10 +481,10 @@ func TestApplyResult_ErrorDoesNotSample(t *testing.T) {
 
 	// A healthy sample to establish the baseline, then a minute of healthy time.
 	captureLog(t, func() {
-		applyResult(m, tr, nil, nil, sloTr, sloN, healthy, time.Millisecond, sloBase, nil)
+		w.applyResult(healthy, time.Millisecond, sloBase, nil)
 	})
 	captureLog(t, func() {
-		applyResult(m, tr, nil, nil, sloTr, sloN, healthy, time.Millisecond, sloBase.Add(time.Minute), nil)
+		w.applyResult(healthy, time.Millisecond, sloBase.Add(time.Minute), nil)
 	})
 	before := sloTr.Report(slo.Fast, sloBase.Add(time.Minute))
 
@@ -491,7 +493,7 @@ func TestApplyResult_ErrorDoesNotSample(t *testing.T) {
 	// sample.
 	for i := 2; i <= 62; i++ {
 		captureLog(t, func() {
-			applyResult(m, tr, nil, nil, sloTr, sloN, sampleResult(), time.Millisecond,
+			w.applyResult(sampleResult(), time.Millisecond,
 				sloBase.Add(time.Duration(i)*time.Minute), errors.New("boom"))
 		})
 	}
@@ -514,12 +516,13 @@ func TestApplyResult_ErrorDoesNotSample(t *testing.T) {
 func TestApplyResult_SLODisabledIsInert(t *testing.T) {
 	m := newMetrics([]string{defaultClusterName})
 	tr := watchstate.New(watchstate.Options{})
-	sloTr, sloN := newSLOTracker(Config{Heartbeat: time.Minute})
+	sloTr, sloN := newSLOTracker(defaultClusterName, Config{Heartbeat: time.Minute})
 	if sloTr != nil || sloN != nil {
 		t.Fatal("newSLOTracker returned a tracker with --slo-target unset")
 	}
+	w := testWorker(m, tr)
 	captureLog(t, func() {
-		applyResult(m, tr, nil, nil, sloTr, sloN, sampleResult(), time.Millisecond, sloBase, nil)
+		w.applyResult(sampleResult(), time.Millisecond, sloBase, nil)
 	})
 	if strings.Contains(m.render(), "kubeagent_slo_") {
 		t.Error("SLO series rendered with SLO tracking off")
@@ -578,7 +581,9 @@ func TestApplyResult_ConcurrentWithRender(t *testing.T) {
 
 	m := newMetrics([]string{defaultClusterName})
 	tr := watchstate.New(watchstate.Options{})
-	sloTr, sloN := newSLOTracker(Config{SLOTarget: 0.999, Heartbeat: time.Minute, AlertRepeat: time.Hour})
+	sloTr, sloN := newSLOTracker(defaultClusterName, Config{SLOTarget: 0.999, Heartbeat: time.Minute, AlertRepeat: time.Hour})
+	w := testWorker(m, tr)
+	w.sloTr, w.sloN = sloTr, sloN
 
 	const n = 500
 	var wg sync.WaitGroup
@@ -587,7 +592,7 @@ func TestApplyResult_ConcurrentWithRender(t *testing.T) {
 		defer wg.Done()
 		for i := 0; i < n; i++ {
 			now := sloBase.Add(time.Duration(i) * time.Minute)
-			applyResult(m, tr, nil, nil, sloTr, sloN, sampleResult(), time.Millisecond, now, nil)
+			w.applyResult(sampleResult(), time.Millisecond, now, nil)
 		}
 	}()
 	go func() {
@@ -611,10 +616,12 @@ func TestApplyResult_ConcurrentWithRender(t *testing.T) {
 func TestApplyResult_MismatchedSLOPairDoesNotPanic(t *testing.T) {
 	m := newMetrics([]string{defaultClusterName})
 	tr := watchstate.New(watchstate.Options{})
-	sloTr, _ := newSLOTracker(Config{SLOTarget: 0.999, Heartbeat: time.Minute, AlertRepeat: time.Hour})
+	sloTr, _ := newSLOTracker(defaultClusterName, Config{SLOTarget: 0.999, Heartbeat: time.Minute, AlertRepeat: time.Hour})
+	w := testWorker(m, tr)
+	w.sloTr = sloTr
 
 	captureLog(t, func() {
-		applyResult(m, tr, nil, nil, sloTr, nil, sampleResult(), time.Millisecond, sloBase, nil)
+		w.applyResult(sampleResult(), time.Millisecond, sloBase, nil)
 	})
 }
 
@@ -635,7 +642,9 @@ func TestApplyResult_MismatchedSLOPairDoesNotPanic(t *testing.T) {
 func TestApplyResult_FastAndSlowWindowsDoNotSwap(t *testing.T) {
 	m := newMetrics([]string{defaultClusterName})
 	tr := watchstate.New(watchstate.Options{})
-	sloTr, sloN := newSLOTracker(Config{SLOTarget: 0.999, Heartbeat: time.Minute, AlertRepeat: time.Hour})
+	sloTr, sloN := newSLOTracker(defaultClusterName, Config{SLOTarget: 0.999, Heartbeat: time.Minute, AlertRepeat: time.Hour})
+	w := testWorker(m, tr)
+	w.sloTr, w.sloN = sloTr, sloN
 
 	healthy := &scan.Result{Inventory: inventory.Result{
 		Workloads: []inventory.Workload{{Name: "a"}},
@@ -646,13 +655,13 @@ func TestApplyResult_FastAndSlowWindowsDoNotSwap(t *testing.T) {
 	now := sloBase
 	for i := 0; i < 300; i++ { // 5 healthy hours
 		captureLog(t, func() {
-			applyResult(m, tr, nil, nil, sloTr, sloN, healthy, time.Millisecond, now, nil)
+			w.applyResult(healthy, time.Millisecond, now, nil)
 		})
 		now = now.Add(time.Minute)
 	}
 	for i := 0; i < 60; i++ { // 1 broken hour
 		captureLog(t, func() {
-			applyResult(m, tr, nil, nil, sloTr, sloN, broken, time.Millisecond, now, nil)
+			w.applyResult(broken, time.Millisecond, now, nil)
 		})
 		now = now.Add(time.Minute)
 	}
@@ -691,14 +700,16 @@ func TestApplyResult_FastAndSlowWindowsDoNotSwap(t *testing.T) {
 func TestApplyResult_RendersSLOSeriesThroughTheRealPath(t *testing.T) {
 	m := newMetrics([]string{defaultClusterName})
 	tr := watchstate.New(watchstate.Options{})
-	sloTr, sloN := newSLOTracker(Config{SLOTarget: 0.999, Heartbeat: time.Minute, AlertRepeat: time.Hour})
+	sloTr, sloN := newSLOTracker(defaultClusterName, Config{SLOTarget: 0.999, Heartbeat: time.Minute, AlertRepeat: time.Hour})
+	w := testWorker(m, tr)
+	w.sloTr, w.sloN = sloTr, sloN
 
 	healthy := &scan.Result{Inventory: inventory.Result{
 		Workloads: []inventory.Workload{{Name: "a"}},
 		Census:    inventory.Census{Good: 1, Total: 1},
 	}}
 	captureLog(t, func() {
-		applyResult(m, tr, nil, nil, sloTr, sloN, healthy, time.Millisecond, sloBase, nil)
+		w.applyResult(healthy, time.Millisecond, sloBase, nil)
 	})
 
 	out := m.render()

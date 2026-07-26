@@ -401,7 +401,7 @@ func runWatch(args []string) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return watchRun(ctx, client, watch.Config{
+	return watchRun(ctx, []watch.Target{{Name: "local", Client: client}}, watch.Config{
 		Namespace:               namespace,
 		MetricsAddr:             *metricsAddr,
 		Heartbeat:               *heartbeat,

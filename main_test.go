@@ -19,7 +19,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
 
@@ -596,7 +595,7 @@ func captureWatchConfig(t *testing.T, args []string) (watch.Config, error) {
 	t.Helper()
 	var captured watch.Config
 	orig := watchRun
-	watchRun = func(_ context.Context, _ kubernetes.Interface, cfg watch.Config) error {
+	watchRun = func(_ context.Context, _ []watch.Target, cfg watch.Config) error {
 		captured = cfg
 		return nil
 	}
@@ -1320,7 +1319,7 @@ func TestRunWatchWiresExplainConfig(t *testing.T) {
 
 	var got watch.Config
 	orig := watchRun
-	watchRun = func(_ context.Context, _ kubernetes.Interface, cfg watch.Config) error {
+	watchRun = func(_ context.Context, _ []watch.Target, cfg watch.Config) error {
 		got = cfg
 		return nil
 	}
@@ -1355,7 +1354,7 @@ func TestRunWatchDefaultsExplainOff(t *testing.T) {
 
 	var got watch.Config
 	orig := watchRun
-	watchRun = func(_ context.Context, _ kubernetes.Interface, cfg watch.Config) error {
+	watchRun = func(_ context.Context, _ []watch.Target, cfg watch.Config) error {
 		got = cfg
 		return nil
 	}
@@ -1382,7 +1381,7 @@ func TestRunWatchExplainWithoutCredentialsFailsFast(t *testing.T) {
 	t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "")
 
 	orig := watchRun
-	watchRun = func(context.Context, kubernetes.Interface, watch.Config) error {
+	watchRun = func(context.Context, []watch.Target, watch.Config) error {
 		t.Fatal("the daemon must not start without credentials")
 		return nil
 	}
@@ -1403,7 +1402,7 @@ func TestRunWatchLocalEndpointNeedsAModelName(t *testing.T) {
 	t.Setenv("KUBEAGENT_MODEL", "")
 
 	orig := watchRun
-	watchRun = func(context.Context, kubernetes.Interface, watch.Config) error {
+	watchRun = func(context.Context, []watch.Target, watch.Config) error {
 		t.Fatal("the daemon must not start without a model name")
 		return nil
 	}

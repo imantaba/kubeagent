@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -81,6 +82,77 @@ func TestApplyResult_EvaluationErrorNeverReachesTheTracker(t *testing.T) {
 	}
 	if !strings.Contains(out, "[local] evaluation error: boom") {
 		t.Errorf("error must be logged, got %q", out)
+	}
+}
+
+// TestApplyResult_EvaluationErrorIsRedactedInLogAndTheServedJSON pins the fix for
+// the multi-cluster hub's credential leak: a watched cluster's API server URL
+// comes from its kubeconfig, which can validly embed basic-auth userinfo or an
+// auth-proxy token in the query string. client-go surfaces an unreachable
+// server as a *url.Error whose Error() stringifies the full request URL, so
+// both the daemon's log stream and the /issues roster must see the redacted
+// (scheme://host-only) form, never the raw one — while still naming the host
+// and the underlying cause so the operator can tell what actually went wrong.
+func TestApplyResult_EvaluationErrorIsRedactedInLogAndTheServedJSON(t *testing.T) {
+	m := newMetrics([]string{defaultClusterName})
+	tr := watchstate.New(watchstate.Options{})
+	at := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
+	w := testWorker(m, tr)
+
+	// Fake, non-resolvable fixture values only: a .invalid host with obviously
+	// fake userinfo and an obviously fake query-string token.
+	const scheme, host = "https", "cluster.invalid:6443"
+	userinfoErr := &url.Error{Op: "Get", URL: scheme + "://admin:s3cr3t@" + host + "/api", Err: errors.New("connection refused")}
+	queryErr := &url.Error{Op: "Get", URL: scheme + "://" + host + "/api?access_token=t0psecret", Err: errors.New("net/http: TLS handshake timeout")}
+
+	leaks := []string{"admin", "s3cr3t", "access_token", "t0psecret"}
+
+	for _, tc := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"userinfo", userinfoErr, "connection refused"},
+		{"query string", queryErr, "TLS handshake timeout"},
+	} {
+		out := captureLog(t, func() {
+			w.applyResult(&scan.Result{}, time.Millisecond, at, tc.err)
+		})
+		for _, leak := range leaks {
+			if strings.Contains(out, leak) {
+				t.Errorf("%s: log line leaked credential material %q: %q", tc.name, leak, out)
+			}
+		}
+		if !strings.Contains(out, scheme+"://"+host) {
+			t.Errorf("%s: log line must still name the host, got %q", tc.name, out)
+		}
+		if !strings.Contains(out, tc.want) {
+			t.Errorf("%s: log line must stay diagnostic (%q), got %q", tc.name, tc.want, out)
+		}
+
+		body, err := m.issuesJSON()
+		if err != nil {
+			t.Fatalf("%s: issuesJSON: %v", tc.name, err)
+		}
+		for _, leak := range leaks {
+			if strings.Contains(string(body), leak) {
+				t.Errorf("%s: served /issues JSON leaked credential material %q: %s", tc.name, leak, body)
+			}
+		}
+		if !strings.Contains(string(body), scheme+"://"+host) {
+			t.Errorf("%s: served /issues JSON must still name the host: %s", tc.name, body)
+		}
+	}
+
+	// A non-URL error (RBAC, TLS-without-a-URL, a plain scan error) must survive
+	// intact: over-redacting it to "error" would make the feature useless for
+	// the operator it exists to serve.
+	plain := errors.New("etcd is unhealthy: at least one member is unreachable")
+	out := captureLog(t, func() {
+		w.applyResult(&scan.Result{}, time.Millisecond, at, plain)
+	})
+	if !strings.Contains(out, "etcd is unhealthy: at least one member is unreachable") {
+		t.Errorf("non-url error must survive unredacted, got %q", out)
 	}
 }
 

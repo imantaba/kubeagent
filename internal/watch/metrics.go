@@ -172,7 +172,13 @@ func (m *metrics) update(cluster string, res *scan.Result, dur time.Duration, no
 	if err != nil {
 		c.scanErrors++
 		c.up = false
-		c.lastError = err.Error()
+		// A watched cluster's API server URL comes from its kubeconfig, which can
+		// validly embed basic-auth userinfo or an auth-proxy token in the query
+		// string, and client-go's *url.Error stringifies that full URL. Redact
+		// here, at capture, so both the served /issues roster and the log line in
+		// applyResult get the scheme://host-only form and neither has to remember
+		// to do it itself.
+		c.lastError = alert.RedactError(err)
 		return
 	}
 	c.up = true

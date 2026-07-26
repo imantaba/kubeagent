@@ -72,6 +72,51 @@ func TestResolveURL_ErrorsNeverEchoTheURL(t *testing.T) {
 	}
 }
 
+func TestRedactError_URLErrorKeepsSchemeHostAndUnderlyingCause(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		wantHas  []string
+		wantMiss []string
+	}{
+		{
+			name:     "userinfo in the request URL",
+			err:      &url.Error{Op: "Get", URL: "https://admin:s3cret@cluster.invalid:6443/api", Err: errors.New("connection refused")},
+			wantHas:  []string{"https://cluster.invalid:6443", "connection refused"},
+			wantMiss: []string{"admin", "s3cret"},
+		},
+		{
+			name:     "token in the query string",
+			err:      &url.Error{Op: "Get", URL: "https://cluster.invalid:6443/api?access_token=topsecret", Err: errors.New("net/http: TLS handshake timeout")},
+			wantHas:  []string{"https://cluster.invalid:6443", "TLS handshake timeout"},
+			wantMiss: []string{"access_token", "topsecret"},
+		},
+		{
+			name:    "non-url error passes through unchanged, not scrubbed to uselessness",
+			err:     errors.New("etcd is unhealthy: at least one member is unreachable"),
+			wantHas: []string{"etcd is unhealthy: at least one member is unreachable"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := RedactError(tc.err)
+			for _, want := range tc.wantHas {
+				if !strings.Contains(got, want) {
+					t.Errorf("RedactError(%v) = %q, want it to contain %q", tc.err, got, want)
+				}
+			}
+			for _, unwanted := range tc.wantMiss {
+				if strings.Contains(got, unwanted) {
+					t.Errorf("RedactError(%v) = %q, leaked credential material %q", tc.err, got, unwanted)
+				}
+			}
+		})
+	}
+	if got := RedactError(nil); got != "" {
+		t.Errorf("RedactError(nil) = %q, want empty", got)
+	}
+}
+
 func TestSanitizeErr_StripsTheURLNetHTTPEmbeds(t *testing.T) {
 	inner := errors.New("connection refused")
 	err := sanitizeErr(&url.Error{Op: "Post", URL: slackish, Err: inner})

@@ -25,6 +25,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/alertstate"
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/oncall"
 	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/slo"
 	"github.com/imantaba/kubeagent/internal/watchstate"
@@ -663,5 +664,38 @@ func TestRunTeardownOrderStopsTheExplainerBeforeTheSink(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("teardown steps = %v, want %v", got, want)
 		}
+	}
+}
+
+// TestNewExplainerRedactsTheEndpointCredential pins the credential-redaction
+// rule (see alert.RedactURL) for the watch enablement log line: an endpoint
+// URL is treated as a bearer credential, so the log must carry no more of it
+// than scheme://host.
+func TestNewExplainerRedactsTheEndpointCredential(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	cfg := Config{
+		Explain:         true,
+		ExplainEndpoint: "http://127.0.0.1:1/v1/chat/completions?token=<PLACEHOLDER>",
+		ExplainModel:    "test-model",
+		ExplainBudget:   20,
+		ExplainCooldown: time.Hour,
+	}
+
+	var ex *oncall.Explainer
+	out := captureLog(t, func() {
+		ex = newExplainer(ctx, cfg, nil)
+	})
+	cancel()
+	ex.Close()
+
+	if !strings.Contains(out, "backend=http://127.0.0.1:1,") {
+		t.Errorf("log = %q, want the redacted backend http://127.0.0.1:1", out)
+	}
+	if strings.Contains(out, "/v1/chat/completions") {
+		t.Errorf("log = %q, leaked the endpoint path", out)
+	}
+	if strings.Contains(out, "token=") || strings.Contains(out, "<PLACEHOLDER>") {
+		t.Errorf("log = %q, leaked the credential", out)
 	}
 }

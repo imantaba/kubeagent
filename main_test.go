@@ -1344,6 +1344,10 @@ func TestRunWatchWiresExplainConfig(t *testing.T) {
 }
 
 func TestRunWatchDefaultsExplainOff(t *testing.T) {
+	t.Setenv("KUBEAGENT_EXPLAIN", "")
+	t.Setenv("KUBEAGENT_EXPLAIN_COOLDOWN", "")
+	t.Setenv("KUBEAGENT_EXPLAIN_BUDGET", "")
+
 	var got watch.Config
 	orig := watchRun
 	watchRun = func(_ context.Context, _ kubernetes.Interface, cfg watch.Config) error {
@@ -1400,8 +1404,12 @@ func TestRunWatchLocalEndpointNeedsAModelName(t *testing.T) {
 	}
 	defer func() { watchRun = orig }()
 
-	if err := runWatch([]string{"--explain"}); err == nil {
+	err := runWatch([]string{"--explain"})
+	if err == nil {
 		t.Fatal("want an error naming --model, got nil")
+	}
+	if !strings.Contains(err.Error(), "--model") {
+		t.Errorf("error = %q, want it to name the missing --model flag", err)
 	}
 }
 

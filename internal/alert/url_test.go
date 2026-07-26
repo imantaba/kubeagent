@@ -96,6 +96,19 @@ func TestRedactError_URLErrorKeepsSchemeHostAndUnderlyingCause(t *testing.T) {
 			err:     errors.New("etcd is unhealthy: at least one member is unreachable"),
 			wantHas: []string{"etcd is unhealthy: at least one member is unreachable"},
 		},
+		{
+			// A redirect chain can leave one *url.Error wrapping another, and
+			// stringifying the inner one directly would republish the URL the
+			// outer one just had scrubbed.
+			name: "a nested url.Error is redacted too, not just the outer one",
+			err: &url.Error{Op: "Get", URL: "https://cluster.invalid:6443/api", Err: &url.Error{
+				Op:  "Get",
+				URL: "https://admin:s3cret@cluster.invalid:6443/redirected?access_token=topsecret",
+				Err: errors.New("connection refused"),
+			}},
+			wantHas:  []string{"https://cluster.invalid:6443", "connection refused"},
+			wantMiss: []string{"admin", "s3cret", "access_token", "topsecret"},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

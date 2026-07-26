@@ -32,13 +32,17 @@ func RedactURL(raw string) string {
 // A non-*url.Error passes through unchanged: most failures reaching this point
 // (RBAC, TLS, timeouts) carry no URL at all, and scrubbing them down to "error"
 // would make the message useless to the operator it exists for.
+//
+// The cause is redacted recursively rather than stringified: a redirect chain
+// leaves one *url.Error wrapping another, and calling Err.Error() directly would
+// republish the inner URL the outer one just had scrubbed.
 func RedactError(err error) string {
 	if err == nil {
 		return ""
 	}
 	var ue *url.Error
 	if errors.As(err, &ue) {
-		return ue.Op + " " + RedactURL(ue.URL) + ": " + ue.Err.Error()
+		return ue.Op + " " + RedactURL(ue.URL) + ": " + RedactError(ue.Err)
 	}
 	return err.Error()
 }

@@ -837,6 +837,10 @@ func TestRun_OneBrokenClusterDoesNotStopTheOthers(t *testing.T) {
 	// first (failing) reconcile — that block is exactly what proves the daemon's
 	// readiness does not wait on it either. Shrinking the bound here is what
 	// keeps that real wait in milliseconds instead of the production 30s.
+	//
+	// This save/defer-restore has no lock: it relies on this test never running
+	// with t.Parallel() (nor any other test in this package). Do not add
+	// t.Parallel() here without giving cacheSyncTimeout a real guard first.
 	origTimeout := cacheSyncTimeout
 	cacheSyncTimeout = 200 * time.Millisecond
 	defer func() { cacheSyncTimeout = origTimeout }()
@@ -873,6 +877,103 @@ func TestRun_OneBrokenClusterDoesNotStopTheOthers(t *testing.T) {
 	}
 	if !strings.Contains(body, "kubeagent_clusters_total 2") {
 		t.Errorf("both clusters must be counted\n%s", body)
+	}
+
+	cancel()
+	select {
+	case err := <-runErr:
+		if err != nil {
+			t.Fatalf("Run returned %v, want nil", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not return within 10s of cancellation")
+	}
+}
+
+// TestRun_ExplainRunsAcrossMultipleClusters exercises --explain with more than
+// one target, which no other test in this package did: the existing
+// multi-target test, TestRun_OneBrokenClusterDoesNotStopTheOthers, never sets
+// Explain, so its ex is nil and every oncall method short-circuits on its
+// nil-receiver guard before touching any shared state. Here two clusterWorker
+// goroutines really do call Consider/Stats/Latest on the one shared
+// *oncall.Explainer concurrently — this is the path go test -race must clear
+// (see internal/oncall's TestExplainerConcurrentConsiderStatsLatestIsRaceFree
+// and TestThrottleConcurrentUseIsRaceFree for the isolated version of the same
+// bug).
+//
+// Both clusters start with nothing broken so their first reconcile — the
+// cold-start snapshot that the Explainer discards no matter which cluster's
+// worker reaches it first — settles before either cluster has anything worth
+// explaining. Only once both are past that point does the test create a
+// crashing pod in each cluster, so the resulting explanations are genuine
+// new-incident transitions, not the swallowed initial snapshot.
+func TestRun_ExplainRunsAcrossMultipleClusters(t *testing.T) {
+	var mu sync.Mutex
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		io.WriteString(w, `{"choices":[{"message":{"content":"explanation text"}}]}`)
+	}))
+	defer srv.Close()
+
+	east := fake.NewSimpleClientset()
+	west := fake.NewSimpleClientset()
+
+	addr := freeLoopbackAddr(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- Run(ctx, []Target{{Name: "east", Client: east}, {Name: "west", Client: west}}, Config{
+			MetricsAddr:     addr,
+			Heartbeat:       time.Hour,
+			Debounce:        10 * time.Millisecond,
+			Explain:         true,
+			ExplainEndpoint: srv.URL,
+			ExplainModel:    "test-model",
+			ExplainBudget:   1000,
+			ExplainCooldown: 0,
+		})
+	}()
+
+	waitForReady(t, "http://"+addr+"/readyz")
+	// Let both clusters' cold-start reconcile land before introducing a real
+	// incident in either.
+	time.Sleep(100 * time.Millisecond)
+
+	crashPod := func() *corev1.Pod {
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "web-1", Namespace: "shop", Labels: map[string]string{"app": "web"}},
+			Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
+				Name: "web", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+			}}},
+		}
+	}
+	if _, err := east.CoreV1().Pods("shop").Create(context.Background(), crashPod(), metav1.CreateOptions{}); err != nil {
+		t.Fatalf("creating the crash pod in east: %v", err)
+	}
+	if _, err := west.CoreV1().Pods("shop").Create(context.Background(), crashPod(), metav1.CreateOptions{}); err != nil {
+		t.Fatalf("creating the crash pod in west: %v", err)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		got := calls
+		mu.Unlock()
+		if got >= 2 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	mu.Lock()
+	got := calls
+	mu.Unlock()
+	if got < 2 {
+		t.Fatalf("model calls = %d, want at least 2 (one explanation per cluster)", got)
 	}
 
 	cancel()

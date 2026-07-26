@@ -28,6 +28,11 @@ import (
 // A var, not a const: a broken-cluster test needs to observe this bound being
 // hit without spending the real 30s on it, and shrinking it for the duration of
 // one test is simpler and more honest than mocking WaitForCacheSync itself.
+//
+// That override (see TestRun_OneBrokenClusterDoesNotStopTheOthers) writes this
+// package var with a bare save/defer-restore and no lock, which is only safe
+// because no test in this package runs with t.Parallel(). If a future test adds
+// t.Parallel() to any test in this package, this seam needs a real guard first.
 var cacheSyncTimeout = 30 * time.Second
 
 // clusterLogf prefixes a daemon log line with the cluster it concerns. Without

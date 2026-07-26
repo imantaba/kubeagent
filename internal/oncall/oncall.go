@@ -88,6 +88,15 @@ type job struct {
 // notifications, bounded by a throttle and a small job queue. A nil *Explainer
 // is a valid, inert explainer: every method is a no-op, so the reconcile loop
 // needs no conditional.
+//
+// One Explainer is shared by every clusterWorker goroutine (internal/watch
+// hands them all the same pointer), because the hourly budget it enforces is a
+// cost control on the whole process, not on any one cluster — so it IS safe
+// for concurrent use. mu guards every field below it, including primed and
+// dropped: both were once touched only by Consider on a single reconcile
+// goroutine, but Task 4 put one Consider call per cluster on its own
+// goroutine, all racing on the same Explainer. th is its own type with its own
+// internal lock, so it needs no protection here beyond never being replaced.
 type Explainer struct {
 	client  IncidentExplainer
 	model   string
@@ -97,12 +106,9 @@ type Explainer struct {
 	jobs    chan job
 	done    chan struct{}
 
-	// primed guards the cold start and is touched only by Consider, on the
-	// reconcile goroutine. dropped likewise.
+	mu      sync.Mutex
 	primed  bool
 	dropped int64
-
-	mu      sync.Mutex
 	started bool
 	failed  int64
 	latest  map[string]Explanation
@@ -189,9 +195,14 @@ func (e *Explainer) Consider(clusterName string, d watchstate.Delta, health clus
 	}
 	// The first reconcile is the initial snapshot, not a set of transitions.
 	// Explaining it would spend the whole budget on pre-existing problems every
-	// time the daemon restarts.
-	if !e.primed {
-		e.primed = true
+	// time the daemon restarts. "First" is process-wide, not per cluster: every
+	// clusterWorker calls Consider on this same Explainer, so whichever one gets
+	// here first claims the cold-start skip for all of them.
+	e.mu.Lock()
+	primed := e.primed
+	e.primed = true
+	e.mu.Unlock()
+	if !primed {
 		return
 	}
 
@@ -211,8 +222,12 @@ func (e *Explainer) Consider(clusterName string, d watchstate.Delta, health clus
 			// Admitted but not run: the token and the cooldown stamp are
 			// already spent. Counted separately from a throttle refusal
 			// because the cause and the operator's response differ — a full
-			// queue means the endpoint is slow, not that policy said no.
+			// queue means the endpoint is slow, not that policy said no. The
+			// send above never blocks (there is always a default case), so
+			// this lock is held only long enough to bump one counter.
+			e.mu.Lock()
 			e.dropped++
+			e.mu.Unlock()
 			log.Printf("kubeagent: explanation queue full, dropped %s", obj.obj)
 		}
 	}
@@ -242,12 +257,13 @@ func (e *Explainer) Stats(now time.Time) Stats {
 	allowed, throttled := e.th.Counters()
 	e.mu.Lock()
 	failed := e.failed
+	dropped := e.dropped
 	e.mu.Unlock()
 	return Stats{
 		Allowed:         allowed,
 		Throttled:       throttled,
 		Failed:          failed,
-		Dropped:         e.dropped,
+		Dropped:         dropped,
 		BudgetRemaining: e.th.Remaining(now),
 	}
 }

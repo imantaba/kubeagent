@@ -3,6 +3,7 @@ package oncall
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -329,6 +330,43 @@ func TestConsiderKeysThrottleAndStorePerCluster(t *testing.T) {
 	if !seen["prod-eu"] || !seen["prod-us"] {
 		t.Errorf("Latest() clusters = %v, want both prod-eu and prod-us", seen)
 	}
+}
+
+// TestExplainerConcurrentConsiderStatsLatestIsRaceFree pins that one shared
+// *Explainer is safe for the concurrent use Task 4 subjects it to: every
+// clusterWorker goroutine calls Consider, Stats and Latest on the SAME
+// Explainer, because the hourly budget is a process-wide cost control, not a
+// per-cluster one (internal/watch/cluster.go hands every worker the same
+// pointer). Before the guard existed, this reliably failed under
+// go test -race: primed and dropped were read/written with no synchronization,
+// and Consider's calls into the shared Throttle raced the same way
+// TestThrottleConcurrentUseIsRaceFree pins directly.
+//
+// internal/watch's TestRun_ExplainRunsAcrossMultipleClusters exercises the same
+// scenario through the real daemon end-to-end; this test isolates it to the
+// package that owns the fix.
+func TestExplainerConcurrentConsiderStatsLatestIsRaceFree(t *testing.T) {
+	e, _, _, cancel := harness(t, Config{Cooldown: 0, Budget: 1000000})
+	defer func() { cancel(); e.Close() }()
+
+	clusters := []string{"prod-eu", "prod-us", "prod-ap"}
+	var wg sync.WaitGroup
+	for _, cluster := range clusters {
+		wg.Add(1)
+		go func(cluster string) {
+			defer wg.Done()
+			for i := 0; i < 100; i++ {
+				now := t0.Add(time.Duration(i) * time.Millisecond)
+				d := watchstate.Delta{New: []watchstate.Record{
+					newRecord("Deployment", "shop", fmt.Sprintf("w%d", i), "Degraded", now),
+				}}
+				e.Consider(cluster, d, clusterhealth.ClusterHealth{}, nil, nil, now)
+				e.Stats(now)
+				e.Latest()
+			}
+		}(cluster)
+	}
+	wg.Wait()
 }
 
 func TestCloseBeforeStartReturnsImmediately(t *testing.T) {

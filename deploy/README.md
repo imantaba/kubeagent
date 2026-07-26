@@ -198,8 +198,10 @@ fields, and the config-error-vs-runtime-failure isolation model.
   all Linux capabilities dropped.
 - The `ClusterRole` grants **only** `get`, `list`, and `watch` — no `create`,
   `update`, `patch`, `delete`, or `deletecollection` anywhere.
-- No LLM or external API calls are made; `kubeagent watch` is a purely
-  deterministic, offline daemon.
+- Read-only means read-only *toward the cluster*. The deterministic core makes
+  no outbound calls at all, and without `--explain` the daemon runs entirely
+  offline. With `--explain` it makes an outbound HTTPS call to the model
+  provider — an egress decision to make deliberately, not a cluster operation.
 - Multi-cluster mode adds no new RBAC: remote access rides entirely on the
   credentials inside the mounted kubeconfig Secret, not this cluster's
   ServiceAccount. Each of those credentials must itself be read-only.

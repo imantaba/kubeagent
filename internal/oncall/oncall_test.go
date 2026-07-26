@@ -239,7 +239,11 @@ func TestThrottledObjectsNeverReachTheModel(t *testing.T) {
 		newRecord("Deployment", "shop", "cart", "Degraded", t0),
 	}}, clusterhealth.ClusterHealth{}, flaggedWeb(), nil, t0)
 
-	waitFor(t, "the allowed call", func() bool { return e.Stats(t0).Allowed == 1 })
+	// Stats().Allowed is stamped synchronously inside Consider, so waiting on it
+	// says nothing about the worker. Wait on the model call itself, then hold
+	// the window open: the assertion below is negative — a broken throttle would
+	// show up as a second call, and only elapsed time can prove it never comes.
+	waitFor(t, "the model call", func() bool { return fc.callCount() >= 1 })
 	time.Sleep(100 * time.Millisecond)
 	if fc.callCount() != 1 {
 		t.Errorf("made %d model calls with a budget of 1, want 1", fc.callCount())

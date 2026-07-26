@@ -18,19 +18,23 @@ import (
 )
 
 // Object identifies the thing an alert is about. Namespace is empty for
-// cluster-scoped objects.
+// cluster-scoped objects. Cluster names the cluster the object lives in: the
+// daemon can watch several, and two clusters routinely run a Deployment with
+// the same namespace and name.
 type Object struct {
+	Cluster   string
 	Kind      string
 	Namespace string
 	Name      string
 }
 
-// String renders "Deployment/shop/web", or "Node/worker-2" when cluster-scoped.
+// String renders "prod-eu/Deployment/shop/web", or "prod-eu/Node/worker-2" when
+// cluster-scoped.
 func (o Object) String() string {
 	if o.Namespace == "" {
-		return o.Kind + "/" + o.Name
+		return o.Cluster + "/" + o.Kind + "/" + o.Name
 	}
-	return o.Kind + "/" + o.Namespace + "/" + o.Name
+	return o.Cluster + "/" + o.Kind + "/" + o.Namespace + "/" + o.Name
 }
 
 // Status is what the receiver is being told.
@@ -67,10 +71,12 @@ type Notification struct {
 	Text string
 }
 
-// Options tunes the re-send cadence. A zero Repeat takes the default, following
-// the same convention as watchstate.Options.
+// Options tunes the re-send cadence and names the cluster this roller serves.
+// A zero Repeat takes the default, following the same convention as
+// watchstate.Options.
 type Options struct {
-	Repeat time.Duration
+	Repeat  time.Duration
+	Cluster string
 }
 
 const defaultRepeat = 4 * time.Hour
@@ -108,7 +114,7 @@ type group struct {
 func (r *Roller) Roll(active []watchstate.Record, now time.Time) []Notification {
 	groups := map[Object]*group{}
 	for _, rec := range active {
-		o := Object{Kind: rec.Key.Kind, Namespace: rec.Key.Namespace, Name: rec.Key.Name}
+		o := Object{Cluster: r.opts.Cluster, Kind: rec.Key.Kind, Namespace: rec.Key.Namespace, Name: rec.Key.Name}
 		g, ok := groups[o]
 		if !ok {
 			g = &group{firingSince: rec.FiringSince}

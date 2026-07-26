@@ -612,6 +612,53 @@ helm upgrade --install kubeagent deploy/helm/kubeagent \
 API key and any endpoint URL are both credentials and must come from a
 Secret, never from `values.yaml`.
 
+## Watching several clusters
+
+```bash
+kubeagent watch --context prod-eu --context prod-us --context staging
+```
+
+One informer set per cluster runs inside a single process behind one HTTP
+endpoint. Every metric series carries a `cluster` label, `/issues` and
+`/explanations` carry a `cluster` field, and every alert names its cluster.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--context <name>` | current-context | Cluster to watch. **Repeat the flag** to watch several clusters from one daemon. |
+| `--cluster-name <name>` | `local` | Name for the default cluster — the one watched when no `--context` is given. Becomes its `cluster` metric label. |
+| `--include-local` | off | Also watch the default cluster alongside every `--context`. A no-op when no `--context` is given. |
+
+The `cluster` label is present even with one cluster, where it defaults to
+`local`. PromQL selectors match regardless of extra labels, so a query written
+against a single-cluster daemon keeps working; a recording rule that groups
+`by (...)` should add `cluster` to the grouping.
+
+**A configuration error is fatal; a cluster failure is not.** A context that is
+not in the kubeconfig stops the daemon at startup — building a client contacts no
+API server, so a failure there is a typo, and silently watching two of the three
+clusters you asked for is worse than not starting. A cluster that becomes
+unreachable at runtime reports `kubeagent_cluster_up 0` and an error on the
+`/issues` roster; its tracked issues stay firing, and every other cluster keeps
+reconciling.
+
+`/readyz` reports ready once every cluster has finished its **first reconcile
+attempt** — success or failure — and never flips afterward on cluster health.
+Readiness answers "can this process serve?", not "is everything fine": tying it
+to cluster health would let one unreachable remote cluster pull the pod out of
+its Service endpoints, stopping Prometheus from scraping it, and so blind you to
+the clusters that are working.
+
+**Credentials.** One process holds read-only credentials for every cluster it
+watches, so the daemon and its kubeconfig Secret are as sensitive as the union of
+those clusters. **Each credential in that kubeconfig must be read-only
+(get/list/watch).** kubeagent issues no writes, but it cannot enforce that from
+inside the pod: a kubeconfig holding a cluster-admin token would give this daemon
+write-capable credentials it never uses but nonetheless holds.
+
+Cross-cutting settings stay global: one webhook, one explanation budget, one
+`--slo-target`. If you need them split per cluster, run one daemon per cluster —
+that still works, and each one labels its series with its own `--cluster-name`.
+
 ## Run it
 
 ```bash
@@ -664,7 +711,8 @@ annotations) and alert on the gauges directly, e.g.:
 
 ## Roadmap
 
-On-incident `--explain` has shipped — see
-[above](#on-incident-explanations-explain). Watch mode's remaining roadmap:
-multi-cluster (an agent per cluster reporting to a hub) and opt-in autonomous
-remediation with stricter rails than the interactive `--fix`.
+On-incident `--explain` and the multi-cluster hub have both shipped — see
+[above](#on-incident-explanations-explain) and
+[Watching several clusters](#watching-several-clusters). Watch mode's
+remaining roadmap: opt-in autonomous remediation with stricter rails than the
+interactive `--fix`.

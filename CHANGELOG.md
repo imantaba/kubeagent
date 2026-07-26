@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Multi-cluster hub.** `kubeagent watch --context prod-eu --context prod-us`
+  runs one informer set per cluster inside a single process, behind one HTTP
+  endpoint. `--context` is now repeatable, `--cluster-name` names the default
+  cluster (the one watched with no `--context`), and `--include-local` adds it
+  alongside the listed contexts. Every metric series carries a `cluster` label,
+  `/issues` and `/explanations` carry a `cluster` field, `/issues` gains a
+  `clusters` roster with each target's up/down state, and every alert names its
+  cluster. A context missing from the kubeconfig is fatal at startup; a cluster
+  that fails at runtime reports `kubeagent_cluster_up 0` and degrades on its own
+  while the others keep reconciling. `/readyz` reports ready once every cluster
+  has finished a first reconcile attempt and never flips on cluster health. The
+  daemon remains strictly read-only toward every cluster: get/list/watch only.
+- The Helm chart gained `multicluster.*`: a kubeconfig mounted read-only from a
+  Secret (never a `values.yaml` literal), one `--context` per listed entry, and
+  the local cluster watched alongside them through its existing ServiceAccount.
+  The chart's ClusterRole is unchanged and still covers the local cluster only —
+  each remote credential must be read-only, which kubeagent cannot enforce from
+  inside the pod.
+- Chaos scenario 15 covers multi-cluster labelling, the cross-cluster merge, and
+  per-cluster degradation with a deliberately dead third target.
+
+### Changed
+
+- Every per-cluster metric series now carries a `cluster` label, including in
+  single-cluster operation, where it defaults to `local`. PromQL selectors match
+  regardless of extra labels, so existing queries keep working; a recording rule
+  that groups `by (...)` should add `cluster`. The alert and explanation series
+  stay unlabelled — one sink and one budget per process, not per cluster.
+- Alert payloads gained a cluster: a `cluster` field in the JSON format, a
+  `cluster` label in the Alertmanager format, and a `prod-eu/Deployment/shop/web`
+  object path in the Slack text.
+
 ## [0.58.1] - 2026-07-26
 
 ### Fixed

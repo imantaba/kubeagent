@@ -157,6 +157,41 @@ producing a daemon that starts and immediately errors. See the
 [watch mode docs](https://k8sproject.top/features/watch-mode/#slo-burn-rate)
 for the SLI definition, the fixed windows/thresholds, and the restart caveat.
 
+## Multi-cluster hub (opt-in)
+
+The daemon can watch several clusters from one process: one informer set per
+context, one process, one `/metrics` endpoint. This needs no extra RBAC —
+remote access rides entirely on the credentials inside the mounted
+kubeconfig, not this cluster's ServiceAccount — and the chart's `ClusterRole`
+still covers the **local** cluster only.
+
+The kubeconfig is a credential and is NEVER a chart value: a `values.yaml`
+file lands in Git, in `helm get values`, and in CI logs, and a kubeconfig
+carries the credentials for every cluster it names. Create a Secret and name
+it in `multicluster.existingSecret`. **Each credential inside that kubeconfig
+must itself be read-only (get/list/watch)** — kubeagent issues no writes, but
+it cannot enforce that from inside the pod: a kubeconfig holding a
+cluster-admin token would give this daemon write-capable credentials it
+never uses but nonetheless holds.
+
+```bash
+kubectl -n kubeagent create secret generic kubeagent-clusters \
+  --from-file=kubeconfig=<PLACEHOLDER>
+
+helm upgrade --install kubeagent deploy/helm/kubeagent -n kubeagent \
+  --set multicluster.enabled=true \
+  --set multicluster.existingSecret=kubeagent-clusters \
+  --set 'multicluster.contexts={prod-eu,prod-us}'
+```
+
+By default the chart also watches the cluster it runs in, alongside the
+listed contexts (`multicluster.includeLocal=true`), labelled by
+`multicluster.localName` (default `local`); set `includeLocal=false` to watch
+only the remote contexts. See the
+[watch mode docs](https://k8sproject.top/features/watch-mode/#watching-several-clusters)
+for the per-cluster metric label, the `/issues` and `/explanations` cluster
+fields, and the config-error-vs-runtime-failure isolation model.
+
 ## Security notes
 
 - The daemon runs as UID 65532 (non-root) with a read-only root filesystem and
@@ -165,3 +200,6 @@ for the SLI definition, the fixed windows/thresholds, and the restart caveat.
   `update`, `patch`, `delete`, or `deletecollection` anywhere.
 - No LLM or external API calls are made; `kubeagent watch` is a purely
   deterministic, offline daemon.
+- Multi-cluster mode adds no new RBAC: remote access rides entirely on the
+  credentials inside the mounted kubeconfig Secret, not this cluster's
+  ServiceAccount. Each of those credentials must itself be read-only.

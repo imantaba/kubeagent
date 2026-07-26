@@ -244,14 +244,21 @@ func newExplainer(ctx context.Context, cfg Config, al *alerter) *oncall.Explaine
 		Notify:   al.enqueue,
 	})
 	ex.Start(ctx)
-	backend := "anthropic"
+	backend, credential := "anthropic", ""
 	if cfg.ExplainEndpoint != "" {
 		// The endpoint may carry a token in its URL, so only scheme://host is
 		// ever logged — the same rule the alert webhook follows.
 		backend = alert.RedactURL(cfg.ExplainEndpoint)
+		// A local model may need no key at all, so an absent one is not an
+		// error — but a mistyped Secret key looks identical from here, and the
+		// chart marks that key optional. Say which case it is, never the value.
+		credential = ", api-key=absent"
+		if cfg.ExplainAPIKey != "" {
+			credential = ", api-key=set"
+		}
 	}
-	log.Printf("kubeagent: on-incident explanations enabled (model=%s, backend=%s, cooldown=%s, budget=%d/h)",
-		cfg.ExplainModel, backend, cfg.ExplainCooldown, cfg.ExplainBudget)
+	log.Printf("kubeagent: on-incident explanations enabled (model=%s, backend=%s%s, cooldown=%s, budget=%d/h)",
+		cfg.ExplainModel, backend, credential, cfg.ExplainCooldown, cfg.ExplainBudget)
 	return ex
 }
 

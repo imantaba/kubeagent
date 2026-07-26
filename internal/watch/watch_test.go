@@ -699,3 +699,61 @@ func TestNewExplainerRedactsTheEndpointCredential(t *testing.T) {
 		t.Errorf("log = %q, leaked the credential", out)
 	}
 }
+
+// TestNewExplainerLogsWhetherTheLocalKeyIsSet covers a silent misconfiguration:
+// a local endpoint may legitimately need no API key, so the Helm chart marks the
+// key's secretKeyRef optional — which means a mistyped Secret key produces no
+// pod-start failure and no error, just unauthenticated model calls. The startup
+// line has to say which case it is, without ever carrying the key itself.
+func TestNewExplainerLogsWhetherTheLocalKeyIsSet(t *testing.T) {
+	base := Config{
+		Explain:         true,
+		ExplainEndpoint: "http://127.0.0.1:1/v1",
+		ExplainModel:    "test-model",
+		ExplainBudget:   20,
+		ExplainCooldown: time.Hour,
+	}
+
+	for _, tc := range []struct {
+		name, key, want, reject string
+	}{
+		{"key set", "<PLACEHOLDER>", "api-key=set", "<PLACEHOLDER>"},
+		{"no key", "", "api-key=absent", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			cfg := base
+			cfg.ExplainAPIKey = tc.key
+
+			var ex *oncall.Explainer
+			out := captureLog(t, func() { ex = newExplainer(ctx, cfg, nil) })
+			cancel()
+			ex.Close()
+
+			if !strings.Contains(out, tc.want) {
+				t.Errorf("log = %q, want it to report %s", out, tc.want)
+			}
+			if tc.reject != "" && strings.Contains(out, tc.reject) {
+				t.Errorf("log = %q, leaked the API key", out)
+			}
+		})
+	}
+}
+
+// TestNewExplainerSaysNothingAboutAKeyOnTheAnthropicPath guards against a
+// misleading line: on the Anthropic path the key is read from the environment by
+// the explain client, not carried in Config, so reporting it as absent here
+// would be wrong.
+func TestNewExplainerSaysNothingAboutAKeyOnTheAnthropicPath(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cfg := Config{Explain: true, ExplainModel: "test-model", ExplainBudget: 20, ExplainCooldown: time.Hour}
+
+	var ex *oncall.Explainer
+	out := captureLog(t, func() { ex = newExplainer(ctx, cfg, nil) })
+	cancel()
+	ex.Close()
+
+	if strings.Contains(out, "api-key=") {
+		t.Errorf("log = %q, want no api-key field on the anthropic path", out)
+	}
+}

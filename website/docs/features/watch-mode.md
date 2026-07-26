@@ -586,8 +586,9 @@ is set — a local endpoint has no default model name to fall back to.
 
 ### In the chart
 
-The API key is never a chart value — a values file lands in Git, in
-`helm get values`, and in CI logs. Create a Secret and name it:
+Neither the API key nor the endpoint URL is ever a chart value — a values
+file lands in Git, in `helm get values`, and in CI logs. Both live in a
+Secret:
 
 ```bash
 kubectl -n kubeagent create secret generic kubeagent-llm --from-literal=apiKey=<PLACEHOLDER>
@@ -595,9 +596,21 @@ helm upgrade --install kubeagent deploy/helm/kubeagent \
   --set explain.enabled=true --set explain.existingSecret=kubeagent-llm
 ```
 
-The chart refuses to render if `explain.enabled` is true with no local
-`explain.endpoint` and no `explain.existingSecret` set — the API key must come
-from a Secret, never from `values.yaml`.
+For a local model, add the endpoint to the same Secret under its own key and
+point `explain.endpointSecretKey` at it:
+
+```bash
+kubectl -n kubeagent create secret generic kubeagent-llm \
+  --from-literal=apiKey=<PLACEHOLDER> \
+  --from-literal=endpoint=http://ollama.llm.svc.cluster.local:11434/v1
+helm upgrade --install kubeagent deploy/helm/kubeagent \
+  --set explain.enabled=true --set explain.existingSecret=kubeagent-llm \
+  --set explain.endpointSecretKey=endpoint --set explain.model=llama3.1
+```
+
+`explain.existingSecret` is required whenever `explain.enabled` is true — the
+API key and any endpoint URL are both credentials and must come from a
+Secret, never from `values.yaml`.
 
 ## Run it
 

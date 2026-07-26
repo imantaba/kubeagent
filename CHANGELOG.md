@@ -19,10 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/explanations` endpoint serves the latest explanation per object, and five
   `kubeagent_explain_*` series make throttling visible. Works with a local
   OpenAI-compatible model via `KUBEAGENT_EXPLAIN_ENDPOINT`.
-- Helm: `explain.*` values, with the API key wired from a Secret via
-  `secretKeyRef`. The chart refuses to render if explanations are enabled with
-  no local `explain.endpoint` and no `explain.existingSecret` — the key must
-  come from a Secret, never from `values.yaml`.
+- Helm: `explain.*` values, with the API key and the endpoint URL both wired
+  from a Secret via `secretKeyRef` — an endpoint URL is a credential too, since
+  it can embed a token. The chart refuses to render if `explain.enabled` is
+  true with no `explain.existingSecret` — nothing comes from `values.yaml`.
 
 ### Changed
 

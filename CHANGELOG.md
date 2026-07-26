@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.58.1] - 2026-07-26
+
+### Fixed
+
+- The two `watch --explain` CLI wiring tests built a real clientset before
+  reaching their stub, so they read whatever kubeconfig the machine happened to
+  have. They passed locally and failed on a runner with no `~/.kube/config`,
+  which broke the 0.58.0 release build — that tag was never published. Both now
+  point at a dead kubeconfig fixture and are hermetic. No shipped behaviour
+  changes; 0.58.1 is 0.58.0 with a green build.
+
 ## [0.58.0] - 2026-07-26
 
 ### Added
@@ -851,7 +862,8 @@ infrastructure (a documentation site and a pre-release chaos-test harness).
 - CI (vet/test/build on push & PR) and a release workflow publishing a
   linux/amd64 tarball + `SHA256SUMS` to a GitHub Release.
 
-[Unreleased]: https://github.com/imantaba/kubeagent/compare/v0.58.0...HEAD
+[Unreleased]: https://github.com/imantaba/kubeagent/compare/v0.58.1...HEAD
+[0.58.1]: https://github.com/imantaba/kubeagent/compare/v0.58.0...v0.58.1
 [0.58.0]: https://github.com/imantaba/kubeagent/compare/v0.57.0...v0.58.0
 [0.57.0]: https://github.com/imantaba/kubeagent/compare/v0.56.0...v0.57.0
 [0.56.0]: https://github.com/imantaba/kubeagent/compare/v0.55.0...v0.56.0

@@ -477,7 +477,7 @@ scenario_14() {   # on-incident explanations: budget throttle, /explanations, lo
     { grep -c '"reason":"new"' "$alerts" 2>/dev/null || echo 0; } | sed 's/^/plain firing notifications: /'
     echo
     echo '--- egress check: no pod name, pod IP or node name in any prompt ---'
-    { grep -cE '"prompt":[^\n]*(10\.[0-9]+\.[0-9]+\.[0-9]+|web-[0-9a-f]{6,}|kubeagent-chaos-worker)' "$calls" 2>/dev/null || true; } \
+    { grep -cE '"prompt":[^\n]*(10\.[0-9]+\.[0-9]+\.[0-9]+|web-[0-9a-z]{6,}|kubeagent-chaos-worker)' "$calls" 2>/dev/null || true; } \
       | sed 's/^/prompts leaking pod or node detail: /'
     echo
     echo '--- endpoint redaction check (only scheme://host may appear in logs) ---'

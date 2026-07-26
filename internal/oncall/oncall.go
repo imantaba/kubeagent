@@ -106,8 +106,12 @@ type Explainer struct {
 	jobs    chan job
 	done    chan struct{}
 
-	mu      sync.Mutex
-	primed  bool
+	mu sync.Mutex
+	// primed tracks which clusters have already had their cold-start reconcile
+	// skipped. Its key space is exactly the configured watch targets, fixed at
+	// daemon startup, so it never grows unbounded the way an operator-facing
+	// map would.
+	primed  map[string]bool
 	dropped int64
 	started bool
 	failed  int64
@@ -128,6 +132,7 @@ func New(cfg Config) *Explainer {
 		th:      NewThrottle(cfg.Cooldown, cfg.Budget),
 		jobs:    make(chan job, queueSize),
 		done:    make(chan struct{}),
+		primed:  map[string]bool{},
 		latest:  map[string]Explanation{},
 	}
 }
@@ -195,12 +200,13 @@ func (e *Explainer) Consider(clusterName string, d watchstate.Delta, health clus
 	}
 	// The first reconcile is the initial snapshot, not a set of transitions.
 	// Explaining it would spend the whole budget on pre-existing problems every
-	// time the daemon restarts. "First" is process-wide, not per cluster: every
-	// clusterWorker calls Consider on this same Explainer, so whichever one gets
-	// here first claims the cold-start skip for all of them.
+	// time the daemon restarts. That is true per cluster, not process-wide:
+	// every clusterWorker reaches its OWN first reconcile independently of the
+	// others, each with its own pre-existing backlog in Delta.New, so the skip
+	// is keyed by clusterName rather than being a single Explainer-wide bool.
 	e.mu.Lock()
-	primed := e.primed
-	e.primed = true
+	primed := e.primed[clusterName]
+	e.primed[clusterName] = true
 	e.mu.Unlock()
 	if !primed {
 		return

@@ -310,10 +310,12 @@ func TestConsiderKeysThrottleAndStorePerCluster(t *testing.T) {
 		newRecord("Deployment", "shop", "web", "ImagePullBackOff", t0),
 	}}
 
-	// The first Consider per cluster is the cold-start prime and explains
-	// nothing; primed is per-Explainer, so only the very first call overall
-	// needs to be a throwaway.
+	// The first Consider per cluster is that cluster's own cold-start prime
+	// and explains nothing; each of prod-eu and prod-us reaches its own first
+	// call independently, so both need their own throwaway before either of
+	// their real transitions is admitted.
 	e.Consider("prod-eu", watchstate.Delta{}, clusterhealth.ClusterHealth{}, nil, nil, t0)
+	e.Consider("prod-us", watchstate.Delta{}, clusterhealth.ClusterHealth{}, nil, nil, t0)
 	e.Consider("prod-eu", d, clusterhealth.ClusterHealth{}, nil, nil, t0)
 	e.Consider("prod-us", d, clusterhealth.ClusterHealth{}, nil, nil, t0)
 
@@ -329,6 +331,54 @@ func TestConsiderKeysThrottleAndStorePerCluster(t *testing.T) {
 	}
 	if !seen["prod-eu"] || !seen["prod-us"] {
 		t.Errorf("Latest() clusters = %v, want both prod-eu and prod-us", seen)
+	}
+}
+
+// TestColdStartSkipIsPerCluster pins the fix for the process-wide cold-start
+// bug: each cluster's first Consider call is ITS OWN initial snapshot and must
+// be skipped independently, not just whichever cluster's worker calls Consider
+// first. Before the fix, cluster B's first reconcile saw primed already true
+// (set by cluster A) and got explained, burning the budget on B's startup
+// backlog exactly as the skip exists to prevent.
+func TestColdStartSkipIsPerCluster(t *testing.T) {
+	e, fc, rec, cancel := harness(t, Config{Cooldown: 0, Budget: 20})
+	defer func() { cancel(); e.Close() }()
+
+	firstA := watchstate.Delta{New: []watchstate.Record{
+		newRecord("Deployment", "shop", "web", "ImagePullBackOff", t0),
+	}}
+	firstB := watchstate.Delta{New: []watchstate.Record{
+		newRecord("Deployment", "shop", "cart", "CrashLoopBackOff", t0),
+	}}
+
+	// Cluster A's first reconcile is its own cold start: skipped.
+	e.Consider("cluster-a", firstA, clusterhealth.ClusterHealth{}, nil, nil, t0)
+	// Cluster B's first reconcile is ALSO its own cold start, independent of
+	// A's — this is exactly what a process-wide bool gets wrong.
+	e.Consider("cluster-b", firstB, clusterhealth.ClusterHealth{}, nil, nil, t0)
+
+	time.Sleep(100 * time.Millisecond)
+	if got := fc.callCount(); got != 0 {
+		t.Fatalf("both clusters' cold starts made %d model calls, want 0", got)
+	}
+	if got := len(rec.all()); got != 0 {
+		t.Fatalf("both clusters' cold starts sent %d notifications, want 0", got)
+	}
+
+	// Each cluster's SECOND reconcile is a genuine transition and must be
+	// admitted normally.
+	secondA := watchstate.Delta{New: []watchstate.Record{
+		newRecord("Deployment", "shop", "web2", "ImagePullBackOff", t0),
+	}}
+	secondB := watchstate.Delta{New: []watchstate.Record{
+		newRecord("Deployment", "shop", "cart2", "CrashLoopBackOff", t0),
+	}}
+	e.Consider("cluster-a", secondA, clusterhealth.ClusterHealth{}, nil, nil, t0)
+	e.Consider("cluster-b", secondB, clusterhealth.ClusterHealth{}, nil, nil, t0)
+
+	waitFor(t, "both clusters' second reconciles to be explained", func() bool { return fc.callCount() == 2 })
+	if got := len(rec.all()); got != 2 {
+		t.Errorf("sent %d notifications, want 2 (one per cluster's second reconcile)", got)
 	}
 }
 

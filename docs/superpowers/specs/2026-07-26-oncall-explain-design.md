@@ -249,9 +249,11 @@ trigger. Same discipline as the SLO slice, where chaos scenario 13 exists
 precisely to prove a cold daemon must not page.
 
 **Shutdown ordering is load-bearing.** The explainer is a *producer* for the
-alert sink, so it must be fully stopped before the sink closes; enqueueing onto a
-closed sink is a panic, not a dropped message. `Run` already encodes one such
-ordering. The explainer slots inside it:
+alert sink, so it must be fully stopped before the sink closes. `alert.Sink`
+never closes its queue channel, so a late `Enqueue` does not panic — it does
+something quieter and worse: the notification lands in a buffer whose sender
+goroutine has already returned, and is never delivered and never counted as a
+drop. `Run` already encodes one such ordering. The explainer slots inside it:
 
 ```text
 defer al.sink.Close()      // deferred 1st → runs 4th  (sink outlives everything)
@@ -355,10 +357,12 @@ summarizer error produces `failed++` and **no** notification; success enqueues
 exactly one notification with `ReasonExplanation` and non-empty `Text`; the
 latest-map evicts at its cap.
 
-**Shutdown ordering.** A real-goroutine test asserting the explainer stops before
-the sink closes, and that a call in flight at cancel cannot enqueue onto a closed
-sink. This is the failure the defer chain exists to prevent, and a comment does
-not survive a refactor.
+**Shutdown ordering.** A real-goroutine test asserting the explainer's worker has
+returned before the sink's `Close()` is reached, so no explanation can be
+enqueued into a sink whose sender has already exited. Asserting "it did not
+panic" would be worthless here — the failure is silent non-delivery, so the test
+must assert the ordering itself. This is what the defer chain exists to prevent,
+and a comment does not survive a refactor.
 
 **`explain.BuildIncidentPrompt` — the egress guard.** Positive assertions that
 the object, its findings, its correlation hints and the cluster context are

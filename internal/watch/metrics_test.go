@@ -555,3 +555,86 @@ func TestIsReadyWaitsForEveryCluster(t *testing.T) {
 		t.Error("must be ready once every cluster has reported")
 	}
 }
+
+// TestIssuesJSONMergesClustersAndNamesEachRecord pins the /issues shape: the
+// arrays merge across clusters with each record naming its own, the stats sum,
+// and a clusters array reports per-target status so an operator can tell "no
+// issues" apart from "that cluster is unreachable".
+func TestIssuesJSONMergesClustersAndNamesEachRecord(t *testing.T) {
+	m := newMetrics([]string{"prod-eu", "prod-us"})
+	at := time.Date(2026, 7, 26, 10, 0, 0, 0, time.UTC)
+
+	eu := watchstate.New(watchstate.Options{})
+	eu.Observe([]watchstate.Key{{Kind: "Deployment", Namespace: "shop", Name: "web", Issue: "CrashLoopBackOff"}}, at)
+	m.update("prod-eu", sampleResult(), time.Millisecond, at, nil)
+	m.updateIssues("prod-eu", eu, at)
+
+	us := watchstate.New(watchstate.Options{})
+	us.Observe([]watchstate.Key{{Kind: "Deployment", Namespace: "shop", Name: "web", Issue: "ImagePullBackOff"}}, at)
+	m.update("prod-us", &scan.Result{}, time.Millisecond, at, errors.New("connection refused"))
+	m.updateIssues("prod-us", us, at)
+
+	body, err := m.issuesJSON()
+	if err != nil {
+		t.Fatalf("issuesJSON: %v", err)
+	}
+	var got struct {
+		Clusters []struct {
+			Name     string `json:"name"`
+			Up       bool   `json:"up"`
+			LastScan string `json:"lastScan"`
+			Error    string `json:"error"`
+		} `json:"clusters"`
+		Active []struct {
+			Cluster string `json:"cluster"`
+			Name    string `json:"name"`
+			Issue   string `json:"issue"`
+		} `json:"active"`
+		Stats struct {
+			NewTotal int64 `json:"newTotal"`
+		} `json:"stats"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+
+	if len(got.Clusters) != 2 {
+		t.Fatalf("clusters has %d entries, want 2", len(got.Clusters))
+	}
+	if got.Clusters[0].Name != "prod-eu" || !got.Clusters[0].Up {
+		t.Errorf("clusters[0] = %+v, want prod-eu up", got.Clusters[0])
+	}
+	if got.Clusters[1].Up {
+		t.Errorf("prod-us must report up=false")
+	}
+	if got.Clusters[1].Error == "" {
+		t.Error("an unreachable cluster must report why")
+	}
+
+	seen := map[string]string{}
+	for _, r := range got.Active {
+		seen[r.Cluster] = r.Issue
+	}
+	if seen["prod-eu"] != "CrashLoopBackOff" || seen["prod-us"] != "ImagePullBackOff" {
+		t.Errorf("active records = %v, want one per cluster with its own issue", seen)
+	}
+	if got.Stats.NewTotal != 2 {
+		t.Errorf("stats.newTotal = %d, want 2 (summed across clusters)", got.Stats.NewTotal)
+	}
+}
+
+func TestExplanationsJSONNamesTheCluster(t *testing.T) {
+	m := newMetrics([]string{"prod-eu"})
+	m.updateExplain(true, oncall.Stats{Allowed: 1}, []oncall.Explanation{{
+		Cluster: "prod-eu", Kind: "Deployment", Namespace: "shop", Name: "web",
+		Issues: []string{"ImagePullBackOff"}, ExplainedAt: time.Date(2026, 7, 26, 10, 0, 0, 0, time.UTC),
+		Model: "test-model", Text: "the image tag does not exist",
+	}})
+	body, err := m.explanationsJSON()
+	if err != nil {
+		t.Fatalf("explanationsJSON: %v", err)
+	}
+	if !strings.Contains(string(body), `"cluster":"prod-eu"`) {
+		t.Errorf("explanations must name the cluster\n%s", body)
+	}
+}

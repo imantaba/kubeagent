@@ -581,6 +581,7 @@ func ageSeconds(since, at time.Time) int64 {
 // "not applicable" from a legitimate zero: active records carry ageSeconds and
 // omit resolution data, resolved records the reverse.
 type issueView struct {
+	Cluster           string `json:"cluster"`
 	Kind              string `json:"kind"`
 	Namespace         string `json:"namespace,omitempty"`
 	Name              string `json:"name"`
@@ -595,6 +596,16 @@ type issueView struct {
 	ResolutionSeconds *int64 `json:"resolutionSeconds,omitempty"`
 }
 
+// clusterView is one watched cluster's status. It exists so an operator can tell
+// "this cluster reported no issues" apart from "this cluster could not be
+// reached" — an empty active list looks identical either way.
+type clusterView struct {
+	Name     string `json:"name"`
+	Up       bool   `json:"up"`
+	LastScan string `json:"lastScan"`
+	Error    string `json:"error,omitempty"`
+}
+
 type statsView struct {
 	NewTotal               int64   `json:"newTotal"`
 	ResolvedTotal          int64   `json:"resolvedTotal"`
@@ -605,15 +616,17 @@ type statsView struct {
 }
 
 type issuesView struct {
-	Active   []issueView `json:"active"`
-	Resolved []issueView `json:"resolved"`
-	Stats    statsView   `json:"stats"`
+	Clusters []clusterView `json:"clusters"`
+	Active   []issueView   `json:"active"`
+	Resolved []issueView   `json:"resolved"`
+	Stats    statsView     `json:"stats"`
 }
 
-func issueViews(rs []watchstate.Record, at time.Time, resolved bool) []issueView {
+func issueViews(cluster string, rs []watchstate.Record, at time.Time, resolved bool) []issueView {
 	out := make([]issueView, 0, len(rs))
 	for _, r := range rs {
 		v := issueView{
+			Cluster:     cluster,
 			Kind:        r.Key.Kind,
 			Namespace:   r.Key.Namespace,
 			Name:        r.Key.Name,
@@ -639,34 +652,38 @@ func issueViews(rs []watchstate.Record, at time.Time, resolved bool) []issueView
 
 func rfc3339(t time.Time) string { return t.UTC().Format(time.RFC3339) }
 
-// issuesJSON renders the tracked-issue snapshot. Held under the read lock so the
-// reconcile loop cannot swap the snapshot mid-encode.
-//
-// Issue state is now kept per cluster (clusterSnapshot.issues), but this
-// endpoint's shape is not: Task 5 is the one that gives /issues a per-record
-// "cluster" field and a cluster roster. Until then, merge every configured
-// cluster's records and stats into the same flat view the endpoint has always
-// served, so today's single-cluster callers see byte-identical output.
+// issuesJSON renders the tracked-issue snapshot across every watched cluster.
+// Held under the read lock so no worker can swap a snapshot mid-encode.
 func (m *metrics) issuesJSON() ([]byte, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	view := issuesView{Active: []issueView{}, Resolved: []issueView{}}
+	out := issuesView{
+		Clusters: make([]clusterView, 0, len(m.names)),
+		Active:   []issueView{},
+		Resolved: []issueView{},
+	}
 	for _, n := range m.names {
 		c := m.clusters[n]
-		view.Active = append(view.Active, issueViews(c.issues.Active, c.issues.At, false)...)
-		view.Resolved = append(view.Resolved, issueViews(c.issues.Resolved, c.issues.At, true)...)
-		view.Stats.NewTotal += c.issues.Stats.NewTotal
-		view.Stats.ResolvedTotal += c.issues.Stats.ResolvedTotal
-		view.Stats.FlapTotal += c.issues.Stats.FlapTotal
-		view.Stats.DroppedTotal += c.issues.Stats.DroppedTotal
-		view.Stats.ResolutionSecondsSum += c.issues.Stats.ResolutionSecondsSum
-		view.Stats.ResolutionSecondsCount += c.issues.Stats.ResolutionSecondsCount
+		cv := clusterView{Name: n, Up: c.up, Error: c.lastError}
+		if c.lastScanUnix != 0 {
+			cv.LastScan = rfc3339(time.Unix(c.lastScanUnix, 0))
+		}
+		out.Clusters = append(out.Clusters, cv)
+		out.Active = append(out.Active, issueViews(n, c.issues.Active, c.issues.At, false)...)
+		out.Resolved = append(out.Resolved, issueViews(n, c.issues.Resolved, c.issues.At, true)...)
+		out.Stats.NewTotal += c.issues.Stats.NewTotal
+		out.Stats.ResolvedTotal += c.issues.Stats.ResolvedTotal
+		out.Stats.FlapTotal += c.issues.Stats.FlapTotal
+		out.Stats.DroppedTotal += c.issues.Stats.DroppedTotal
+		out.Stats.ResolutionSecondsSum += c.issues.Stats.ResolutionSecondsSum
+		out.Stats.ResolutionSecondsCount += c.issues.Stats.ResolutionSecondsCount
 	}
-	return json.Marshal(view)
+	return json.Marshal(out)
 }
 
 // explanationView is one record as served by /explanations.
 type explanationView struct {
+	Cluster     string   `json:"cluster"`
 	Kind        string   `json:"kind"`
 	Namespace   string   `json:"namespace,omitempty"`
 	Name        string   `json:"name"`
@@ -711,6 +728,7 @@ func (m *metrics) explanationsJSON() ([]byte, error) {
 			issues = []string{}
 		}
 		out.Explanations = append(out.Explanations, explanationView{
+			Cluster:     x.Cluster,
 			Kind:        x.Kind,
 			Namespace:   x.Namespace,
 			Name:        x.Name,

@@ -1,8 +1,10 @@
 # kubeagent — Deploy Manifests
 
 This directory contains the Kubernetes manifests to run the `kubeagent watch` daemon
-in-cluster. The daemon is **strictly read-only** (RBAC grants only `get`/`list`/`watch`
-— no write verbs anywhere) and makes **no LLM calls**.
+in-cluster. The daemon is **strictly read-only toward the cluster** (RBAC grants only
+`get`/`list`/`watch` — no write verbs anywhere); its deterministic core makes no
+outbound calls, and only `--explain` adds an outbound HTTPS call to the model
+provider (see the Security notes below).
 
 ## Quick start
 

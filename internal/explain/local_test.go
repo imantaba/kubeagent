@@ -25,7 +25,7 @@ func TestOpenAISummarizer_PostsAndParses(t *testing.T) {
 	defer srv.Close()
 
 	o := openaiSummarizer{endpoint: srv.URL, model: "llama3.1", apiKey: "sekret", http: srv.Client()}
-	out, err := o.summarize(context.Background(), "PROMPT-BODY")
+	out, err := o.summarize(context.Background(), SystemPrompt, "PROMPT-BODY")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestOpenAISummarizer_NoAuthHeaderWhenNoKey(t *testing.T) {
 	}))
 	defer srv.Close()
 	o := openaiSummarizer{endpoint: srv.URL, model: "m", apiKey: "", http: srv.Client()}
-	if _, err := o.summarize(context.Background(), "p"); err != nil {
+	if _, err := o.summarize(context.Background(), SystemPrompt, "p"); err != nil {
 		t.Fatal(err)
 	}
 	if gotAuth != "" {
@@ -81,7 +81,7 @@ func TestOpenAISummarizer_Errors(t *testing.T) {
 		io.WriteString(w, "model overloaded")
 	}))
 	defer srv500.Close()
-	if _, err := (openaiSummarizer{endpoint: srv500.URL, model: "m", http: srv500.Client()}).summarize(context.Background(), "p"); err == nil {
+	if _, err := (openaiSummarizer{endpoint: srv500.URL, model: "m", http: srv500.Client()}).summarize(context.Background(), SystemPrompt, "p"); err == nil {
 		t.Error("want an error on a 500 response")
 	}
 
@@ -89,7 +89,7 @@ func TestOpenAISummarizer_Errors(t *testing.T) {
 		io.WriteString(w, `{"choices":[]}`)
 	}))
 	defer srvEmpty.Close()
-	if _, err := (openaiSummarizer{endpoint: srvEmpty.URL, model: "m", http: srvEmpty.Client()}).summarize(context.Background(), "p"); err == nil {
+	if _, err := (openaiSummarizer{endpoint: srvEmpty.URL, model: "m", http: srvEmpty.Client()}).summarize(context.Background(), SystemPrompt, "p"); err == nil {
 		t.Error("want an error when the response has no choices")
 	}
 
@@ -97,7 +97,7 @@ func TestOpenAISummarizer_Errors(t *testing.T) {
 		io.WriteString(w, "not json at all")
 	}))
 	defer srvBadJSON.Close()
-	if _, err := (openaiSummarizer{endpoint: srvBadJSON.URL, model: "m", http: srvBadJSON.Client()}).summarize(context.Background(), "p"); err == nil {
+	if _, err := (openaiSummarizer{endpoint: srvBadJSON.URL, model: "m", http: srvBadJSON.Client()}).summarize(context.Background(), SystemPrompt, "p"); err == nil {
 		t.Error("want a parse error when the 200 body is not JSON")
 	}
 }

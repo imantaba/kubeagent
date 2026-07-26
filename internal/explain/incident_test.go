@@ -1,0 +1,133 @@
+package explain
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/imantaba/kubeagent/internal/clusterhealth"
+	"github.com/imantaba/kubeagent/internal/diagnose"
+	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/svchealth"
+)
+
+func incidentWorkloads() []inventory.Workload {
+	return []inventory.Workload{
+		{
+			Namespace: "shop", Name: "web", Kind: "Deployment",
+			Desired: 3, Ready: 0, Status: "Degraded", Restarts: 4,
+			Findings: []diagnose.Finding{{
+				Issue: "ImagePullBackOff", Reason: "tag not found", Evidence: "manifest unknown",
+			}},
+			RootCause: "registry ghcr.example (12 workloads failing to pull)",
+			Pods: []inventory.PodRow{{
+				Name: "web-7d9f-abcde", Phase: "Pending", Ready: "0/1",
+				Node: "worker-2", IP: "10.244.3.17", Image: "ghcr.example/web:missing",
+			}},
+		},
+		{
+			Namespace: "shop", Name: "cart", Kind: "Deployment",
+			Desired: 2, Ready: 1, Status: "Degraded",
+			Findings: []diagnose.Finding{{Issue: "CrashLoopBackOff", Reason: "exit 1", Evidence: "restarts 9"}},
+		},
+	}
+}
+
+func TestBuildIncidentPromptNamesTheTargetObject(t *testing.T) {
+	p := BuildIncidentPrompt("Deployment/shop/web", []string{"ImagePullBackOff"},
+		clusterhealth.ClusterHealth{Verdict: "Healthy"}, incidentWorkloads(), nil)
+	if !strings.Contains(p, "Deployment/shop/web") {
+		t.Errorf("prompt must name the object that broke:\n%s", p)
+	}
+	if !strings.Contains(p, "ImagePullBackOff") {
+		t.Errorf("prompt must carry the triggering issues:\n%s", p)
+	}
+}
+
+func TestBuildIncidentPromptCarriesClusterContext(t *testing.T) {
+	p := BuildIncidentPrompt("Deployment/shop/web", []string{"ImagePullBackOff"},
+		clusterhealth.ClusterHealth{Verdict: "Healthy"}, incidentWorkloads(), nil)
+	if !strings.Contains(p, "shop/cart") {
+		t.Errorf("prompt must include the other flagged workloads so the model can correlate:\n%s", p)
+	}
+	if !strings.Contains(p, "registry ghcr.example") {
+		t.Errorf("prompt must include the root-cause attribution kubeagent already computed:\n%s", p)
+	}
+}
+
+func TestBuildIncidentPromptIncludesDegradedClusterAndServiceIssues(t *testing.T) {
+	cluster := clusterhealth.ClusterHealth{
+		Verdict: "Degraded", NodesReady: 2, NodesTotal: 3,
+		NodeIssues: []string{"worker-2 NotReady"},
+	}
+	svc := []svchealth.Issue{{
+		Namespace: "shop", Name: "web", Type: "ClusterIP",
+		Problem: "NoEndpoints", Detail: "0 ready endpoints",
+	}}
+	p := BuildIncidentPrompt("Deployment/shop/web", []string{"ImagePullBackOff"}, cluster, incidentWorkloads(), svc)
+	if !strings.Contains(p, "DEGRADED") || !strings.Contains(p, "worker-2 NotReady") {
+		t.Errorf("prompt must include the degraded cluster verdict:\n%s", p)
+	}
+	if !strings.Contains(p, "NoEndpoints") || !strings.Contains(p, "0 ready endpoints") {
+		t.Errorf("prompt must include the service issue's problem and detail:\n%s", p)
+	}
+}
+
+// The egress guard. Pod rows carry pod names, node names and pod IPs. None of
+// that is needed to explain a failure, so none of it may leave the cluster. A
+// positive-only test would pass just as happily if the builder started
+// serializing whole pod specs.
+func TestBuildIncidentPromptDoesNotLeakPodDetail(t *testing.T) {
+	p := BuildIncidentPrompt("Deployment/shop/web", []string{"ImagePullBackOff"},
+		clusterhealth.ClusterHealth{Verdict: "Healthy"}, incidentWorkloads(), nil)
+	for _, forbidden := range []string{"10.244.3.17", "web-7d9f-abcde", "worker-2"} {
+		if strings.Contains(p, forbidden) {
+			t.Errorf("prompt leaked %q, which no explanation needs:\n%s", forbidden, p)
+		}
+	}
+}
+
+type fakeIncidentSummarizer struct {
+	system string
+	prompt string
+	out    string
+	err    error
+}
+
+func (f *fakeIncidentSummarizer) summarize(_ context.Context, system, prompt string) (string, error) {
+	f.system, f.prompt = system, prompt
+	return f.out, f.err
+}
+
+func TestExplainIncidentUsesTheIncidentSystemPrompt(t *testing.T) {
+	f := &fakeIncidentSummarizer{out: "  the registry tag is missing  "}
+	c := &Client{s: f}
+	got, err := c.ExplainIncident(context.Background(), "PROMPT")
+	if err != nil {
+		t.Fatalf("ExplainIncident: %v", err)
+	}
+	if got != "the registry tag is missing" {
+		t.Errorf("output = %q, want it trimmed", got)
+	}
+	if f.system != IncidentSystemPrompt {
+		t.Errorf("system prompt = %q, want IncidentSystemPrompt", f.system)
+	}
+	if f.prompt != "PROMPT" {
+		t.Errorf("user prompt = %q, want %q", f.prompt, "PROMPT")
+	}
+}
+
+func TestExplainIncidentRejectsEmptyOutput(t *testing.T) {
+	c := &Client{s: &fakeIncidentSummarizer{out: "   \n  "}}
+	if _, err := c.ExplainIncident(context.Background(), "PROMPT"); err == nil {
+		t.Error("an empty explanation must be an error, not a delivered blank message")
+	}
+}
+
+func TestExplainIncidentPropagatesModelErrors(t *testing.T) {
+	c := &Client{s: &fakeIncidentSummarizer{err: errors.New("boom")}}
+	if _, err := c.ExplainIncident(context.Background(), "PROMPT"); err == nil {
+		t.Error("a model error must surface")
+	}
+}

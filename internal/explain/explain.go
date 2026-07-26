@@ -59,10 +59,13 @@ func ResolveModel(flagVal, envVal string) string {
 	return DefaultModel
 }
 
-// summarizer turns a prompt into a single plain-text completion. The
-// Anthropic-backed implementation lives in this package; tests use a fake.
+// summarizer turns a system prompt plus a user prompt into a single plain-text
+// completion. The Anthropic-backed implementation lives in this package; tests
+// use a fake. The system prompt is a parameter rather than a constant because
+// a one-object incident follow-up and a whole-cluster scan summary want
+// different instructions.
 type summarizer interface {
-	summarize(ctx context.Context, prompt string) (string, error)
+	summarize(ctx context.Context, system, prompt string) (string, error)
 }
 
 // Client explains findings via one Claude API call.
@@ -96,7 +99,7 @@ func (c *Client) ExplainInventory(ctx context.Context, cluster clusterhealth.Clu
 	if cluster.Verdict != "Degraded" && len(workloads) == 0 && len(serviceIssues) == 0 {
 		return "", nil
 	}
-	out, err := c.s.summarize(ctx, BuildInventoryPrompt(cluster, summary, facts, serviceIssues, workloads))
+	out, err := c.s.summarize(ctx, SystemPrompt, BuildInventoryPrompt(cluster, summary, facts, serviceIssues, workloads))
 	if err != nil {
 		return "", fmt.Errorf("explaining workloads: %w", err)
 	}
@@ -197,11 +200,11 @@ type anthropicSummarizer struct {
 	model  string
 }
 
-func (a anthropicSummarizer) summarize(ctx context.Context, prompt string) (string, error) {
+func (a anthropicSummarizer) summarize(ctx context.Context, system, prompt string) (string, error) {
 	resp, err := a.client.Messages.New(ctx, anthropic.MessageNewParams{
 		Model:     anthropic.Model(a.model),
 		MaxTokens: 2048,
-		System:    []anthropic.TextBlockParam{{Text: SystemPrompt}},
+		System:    []anthropic.TextBlockParam{{Text: system}},
 		Messages: []anthropic.MessageParam{
 			anthropic.NewUserMessage(anthropic.NewTextBlock(prompt)),
 		},

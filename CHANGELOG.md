@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.57.0] - 2026-07-26
+
 ### Added
 
 - `watch` SLO burn-rate tracking: an opt-in `--slo-target` (a percentage, e.g.
@@ -823,7 +825,8 @@ infrastructure (a documentation site and a pre-release chaos-test harness).
 - CI (vet/test/build on push & PR) and a release workflow publishing a
   linux/amd64 tarball + `SHA256SUMS` to a GitHub Release.
 
-[Unreleased]: https://github.com/imantaba/kubeagent/compare/v0.56.0...HEAD
+[Unreleased]: https://github.com/imantaba/kubeagent/compare/v0.57.0...HEAD
+[0.57.0]: https://github.com/imantaba/kubeagent/compare/v0.56.0...v0.57.0
 [0.56.0]: https://github.com/imantaba/kubeagent/compare/v0.55.0...v0.56.0
 [0.55.0]: https://github.com/imantaba/kubeagent/compare/v0.54.0...v0.55.0
 [0.54.0]: https://github.com/imantaba/kubeagent/compare/v0.53.0...v0.54.0

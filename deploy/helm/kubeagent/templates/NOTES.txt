@@ -1,12 +1,17 @@
 kubeagent watch daemon is installed (release {{ .Release.Name }}, namespace {{ .Release.Namespace }}).
 
 It is STRICTLY READ-ONLY (get/list/watch only) toward the Kubernetes cluster.
+{{- if or .Values.alerts.enabled .Values.explain.enabled }}
+Outbound calls are ON:
+{{- if .Values.alerts.enabled }}
+  - alerts POST to the configured webhook.
+{{- end }}
 {{- if .Values.explain.enabled }}
-On-incident explanations are ON: it will make outbound calls to the
-configured model provider, subject to the configured per-object cooldown
-and hourly budget.
+  - on-incident explanations call the configured model provider, subject to
+    the per-object cooldown and hourly budget.
+{{- end }}
 {{- else }}
-It makes no external calls.
+It makes no outbound calls.
 {{- end }}
 
 Check it:

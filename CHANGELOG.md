@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.59.0] - 2026-07-26
+
 ### Added
 
 - **Multi-cluster hub.** `kubeagent watch --context prod-eu --context prod-us`
@@ -21,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   while the others keep reconciling. `/readyz` reports ready once every cluster
   has finished a first reconcile attempt and never flips on cluster health. The
   daemon remains strictly read-only toward every cluster: get/list/watch only.
+  A failing cluster's error is redacted to `scheme://host` before it reaches the
+  roster or a log line: a kubeconfig server URL can carry basic-auth userinfo or
+  an auth-proxy token, and the `*url.Error` client-go returns would otherwise
+  republish the whole request URL.
 - The Helm chart gained `multicluster.*`: a kubeconfig mounted read-only from a
   Secret (never a `values.yaml` literal), one `--context` per listed entry, and
   the local cluster watched alongside them through its existing ServiceAccount.
@@ -896,7 +902,8 @@ infrastructure (a documentation site and a pre-release chaos-test harness).
 - CI (vet/test/build on push & PR) and a release workflow publishing a
   linux/amd64 tarball + `SHA256SUMS` to a GitHub Release.
 
-[Unreleased]: https://github.com/imantaba/kubeagent/compare/v0.58.1...HEAD
+[Unreleased]: https://github.com/imantaba/kubeagent/compare/v0.59.0...HEAD
+[0.59.0]: https://github.com/imantaba/kubeagent/compare/v0.58.1...v0.59.0
 [0.58.1]: https://github.com/imantaba/kubeagent/compare/v0.58.0...v0.58.1
 [0.58.0]: https://github.com/imantaba/kubeagent/compare/v0.57.0...v0.58.0
 [0.57.0]: https://github.com/imantaba/kubeagent/compare/v0.56.0...v0.57.0

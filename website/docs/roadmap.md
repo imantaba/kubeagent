@@ -391,17 +391,20 @@ These are the north star; every item below is measured against them.
 
 ### Themes (each spans several releases)
 
-- **A · Root-cause, not symptoms** — correlate findings across the resource graph
+- **A · Root-cause, not symptoms** ✅ — correlate findings across the resource graph
   (Deployment → ReplicaSet → Pod → Node; Service → EndpointSlice → Pod; Ingress →
   Service → backend; PVC → PV → StorageClass) so a wall of red collapses to the one
-  thing that's actually wrong, with a confidence score per finding.
-- **B · Deeper & broader diagnosis** — more failure modes: admission-webhook
-  latency, CoreDNS/DNS health, control-plane & etcd health.
-- **C · Principled intelligence** — `--explain` grows from a summary into ranked,
+  thing that's actually wrong, with a confidence score per finding. Theme A is
+  complete: the chain closed with the PVC-provisioning root cause.
+- **B · Deeper & broader diagnosis** ✅ — more failure modes: admission-webhook
+  latency, CoreDNS/DNS health, control-plane & etcd health. Theme B is complete;
+  new detectors still land continuously, they just no longer belong to a theme.
+- **C · Principled intelligence** ✅ — `--explain` grows from a summary into ranked,
   deterministic *remediation suggestions* and on-call runbooks; an opt-in read-only
   investigation mode lets the model request bounded, allow-listed follow-up reads
   (logs, describe, events) to deepen a finding — the deterministic core never
-  changes, and every query is logged. Local-model (offline) explain.
+  changes, and every query is logged. Local-model (offline) explain. Theme C is
+  complete, closed by `--investigate`.
 - **D · Remediation that earns trust** ✅ — `--fix` gains plan/dry-run with a
   diff, an audit log, RBAC preflight (only offer what the caller can actually
   do), and rollback (`--rollback`). Theme D is complete; guarded, policy-gated

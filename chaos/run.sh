@@ -414,6 +414,83 @@ scenario_13_slo() {   # SLO burn rate: series track real breakage, and a cold da
   kubectl --context "$CTX" delete ns "$ns" --wait=true --timeout=120s >/dev/null 2>&1 || true
 }
 
+scenario_14() {   # on-incident explanations: budget throttle, /explanations, local stub (no API key)
+  log "scenario 14: on-incident explanations (budget, throttle, /explanations)"
+  local ns=chaos-explain port=18090 aport=18091 sport=18092
+  local wlog alerts calls wpid apid spid i expl
+
+  wlog="$(mktemp)"; alerts="$(mktemp)"; calls="$(mktemp)"
+
+  # A local receiver proves the notification path; a local OpenAI-compatible
+  # stub proves the model path. No API key is involved anywhere in this
+  # scenario — the endpoint is the only backend the daemon talks to.
+  python3 chaos/alert-receiver.py "$aport" "$alerts" >/dev/null 2>&1 &
+  apid=$!
+  python3 chaos/explain-stub.py "$sport" "$calls" >/dev/null 2>&1 &
+  spid=$!
+
+  kubectl --context "$CTX" create ns "$ns" --dry-run=client -o yaml | kubectl --context "$CTX" apply -f - >/dev/null
+  kubectl --context "$CTX" -n "$ns" apply -f chaos/manifests/app.yaml >/dev/null
+  kubectl --context "$CTX" -n "$ns" rollout status deploy web --timeout=90s >/dev/null 2>&1 || true
+
+  # Budget 1 with no per-object cooldown: two objects break at once, so exactly
+  # one earns an explanation and the rest are throttled. That is the whole
+  # point of the budget, asserted rather than assumed.
+  KUBEAGENT_ALERT_WEBHOOK="http://127.0.0.1:$aport" \
+  KUBEAGENT_EXPLAIN_ENDPOINT="http://127.0.0.1:$sport/v1" \
+  ./kubeagent watch --context "$CTX" -n "$ns" --metrics-addr "127.0.0.1:$port" \
+    --heartbeat 10s --debounce 2s --alert-format json --alert-repeat 1h \
+    --explain --explain-budget 1 --explain-cooldown 0 --model chaos-stub >"$wlog" 2>&1 &
+  wpid=$!
+  for i in $(seq 40); do
+    curl -sf "http://127.0.0.1:$port/readyz" >/dev/null 2>&1 && break
+    sleep 1
+  done
+
+  # The daemon is now primed on a healthy namespace, so what follows is a real
+  # transition rather than a cold-start snapshot.
+  kubectl --context "$CTX" -n "$ns" patch deploy web --type=strategic \
+    -p '{"spec":{"strategy":{"rollingUpdate":{"maxUnavailable":"100%"}}}}' >/dev/null
+  kubectl --context "$CTX" -n "$ns" set image deploy/web web=nginx:does-not-exist-9999 >/dev/null
+  sleep 40
+
+  expl="$(curl -s "http://127.0.0.1:$port/explanations" 2>/dev/null || echo '<unreachable>')"
+  local metrics
+  metrics="$(curl -s "http://127.0.0.1:$port/metrics" 2>/dev/null || echo '')"
+
+  kill "$wpid" >/dev/null 2>&1 || true; wait "$wpid" >/dev/null 2>&1 || true
+  kill "$apid" >/dev/null 2>&1 || true; wait "$apid" >/dev/null 2>&1 || true
+  kill "$spid" >/dev/null 2>&1 || true; wait "$spid" >/dev/null 2>&1 || true
+
+  {
+    echo '--- model calls the daemon actually made (one line per call) ---'
+    printf 'calls: %s\n' "$(wc -l <"$calls" 2>/dev/null || echo 0)"
+    echo
+    echo '--- /explanations ---'
+    printf '%s\n' "$expl" | python3 -m json.tool 2>/dev/null || printf '%s\n' "$expl"
+    echo
+    echo '--- explain metrics ---'
+    { grep -E '^kubeagent_explain_' <<<"$metrics" || echo '<no explain series>'; }
+    echo
+    echo '--- explanation notifications delivered ---'
+    { grep -c '"reason":"explanation"' "$alerts" 2>/dev/null || echo 0; } | sed 's/^/explanation notifications: /'
+    { grep -c '"reason":"new"' "$alerts" 2>/dev/null || echo 0; } | sed 's/^/plain firing notifications: /'
+    echo
+    echo '--- egress check: no pod name, pod IP or node name in any prompt ---'
+    { grep -cE '"prompt":[^\n]*(10\.[0-9]+\.[0-9]+\.[0-9]+|web-[0-9a-f]{6,}|kubeagent-chaos-worker)' "$calls" 2>/dev/null || true; } \
+      | sed 's/^/prompts leaking pod or node detail: /'
+    echo
+    echo '--- endpoint redaction check (only scheme://host may appear in logs) ---'
+    { grep -c "127.0.0.1:$sport/v1" "$wlog" || true; } | sed 's/^/log lines naming the endpoint path: /'
+    echo
+    echo '--- write-path check: the daemon issued no mutating calls ---'
+    { grep -icE '\b(create|update|patch|delete)d?\b' "$wlog" || true; } | sed 's/^/log lines mentioning a write verb: /'
+  } | record "14. On-incident explanations (budget 1, two objects break)" "expect: exactly 1 model call and exactly 1 explanation notification (reason=explanation) even though two objects break — Deployment/$ns/web and its Service — because --explain-budget 1 admits one and throttles the rest. kubeagent_explain_allowed_total must be 1 and kubeagent_explain_throttled_total at least 1; /explanations must carry one entry with non-empty text and model=chaos-stub, alongside the plain firing notifications which are unaffected. No prompt may contain a pod name, pod IP or node name, no log line may carry the endpoint's path, and no write verb may appear. This scenario uses a local stub endpoint, so it proves the transport, the throttle, the notification shape and the egress discipline — it does not exercise the Anthropic backend, which is covered by unit tests only."
+
+  rm -f "$wlog" "$alerts" "$calls"
+  kubectl --context "$CTX" delete ns "$ns" --wait=true --timeout=120s >/dev/null 2>&1 || true
+}
+
 scenario_02_certs() {   # documented skip (can't force cert expiry on Kind)
   log "scenario 2: expired certificates (skipped)"
   printf 'Skipped on Kind: control-plane certificate expiry cannot be forced quickly or safely.\nkubeagent TLS / expired-certificate handling is covered by internal/connectivity unit tests\n(x509 UnknownAuthority / CertificateInvalid / Hostname errors, plus "x509:" / "certificate" / "tls: " substrings).\n' \
@@ -450,7 +527,7 @@ run_scenarios() {
   # etcd/apiserver flap for a while afterwards (and while the API is down even
   # `kubectl wait` can't settle it). Running it last keeps that recovery noise from
   # contaminating the other scenarios' scans.
-  local all=(02_certs 03_diskfull 04_networkpolicy 05_coredns 06_lb 07_oom 08_nsdelete 09_rollout 10_credleak 11_kubelet 12_watch 13_slo 01_etcd)
+  local all=(02_certs 03_diskfull 04_networkpolicy 05_coredns 06_lb 07_oom 08_nsdelete 09_rollout 10_credleak 11_kubelet 12_watch 13_slo 14 01_etcd)
   for s in "${all[@]}"; do
     if [ -z "$ONLY" ] || [ "$ONLY" = "${s%%_*}" ]; then "scenario_$s"; fi
   done

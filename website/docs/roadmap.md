@@ -388,7 +388,7 @@ These are the north star; every item below is measured against them.
 - **E · Continuous operations** — `watch` gains state (regressions, flapping, MTTR,
   "new since last"), webhook alerting (JSON / Slack / Alertmanager shipped;
   PagerDuty remains an open receiver), SLO burn-rate signals (shipped),
-  rate-limited on-incident `--explain`, and a multi-cluster hub.
+  rate-limited on-incident `--explain` (shipped), and a multi-cluster hub.
 - **F · Ecosystem & operators** — first-class awareness of the operators people
   actually run (CloudNativePG, cert-manager, Longhorn/Ceph, Argo CD / Flux GitOps
   drift, Prometheus operator, service meshes), plus cost/right-sizing and

@@ -90,6 +90,14 @@ explain_flag() { [ -n "${ANTHROPIC_API_KEY:-}" ] && echo "--explain" || true; }
 # scan [extra args...] — runs kubeagent scan against the chaos context.
 scan() { ./kubeagent scan --context "$CTX" "$@" $(explain_flag); }
 
+# ready_replicas <namespace> <deployment> — the Deployment's ready replica count,
+# or 0 when the field is absent (a Deployment with no ready pod omits it entirely).
+ready_replicas() {
+  local n
+  n="$(kubectl --context "$CTX" -n "$1" get deploy "$2" -o jsonpath='{.status.readyReplicas}' 2>/dev/null)"
+  echo "${n:-0}"
+}
+
 # record <title> <verdict> ; reads scan (and optional --explain) output from stdin.
 # Scan output is wrapped in a code fence; any --explain markdown (after the
 # "── Explanation ──" marker kubeagent prints) is emitted raw so its own code
@@ -157,10 +165,38 @@ scenario_05_coredns() {   # bad Corefile -> CoreDNS CrashLoop
   kubectl --context "$CTX" -n kube-system rollout status deploy coredns --timeout=120s >/dev/null 2>&1 || true
 }
 
-scenario_04_networkpolicy() {   # Calico-enforced deny-all + a degraded (never-Ready) app
+scenario_04_networkpolicy() {   # Calico-enforced deny-all as the *cause* of a degraded app
   log "scenario 4: NetworkPolicy blocking traffic"
-  kubectl --context "$CTX" create ns chaos-np --dry-run=client -o yaml | kubectl --context "$CTX" apply -f - >/dev/null
-  kubectl --context "$CTX" -n chaos-np apply -f - >/dev/null <<'APP'
+  local ns=chaos-np i baseline broken recovered blocked_scan recovery_scan
+  kubectl --context "$CTX" create ns "$ns" --dry-run=client -o yaml | kubectl --context "$CTX" apply -f - >/dev/null
+  # The probe must be *pod-sourced* for the policy to matter. Calico permits the
+  # kubelet's own probe traffic to a local pod even under a deny-all Ingress
+  # policy, so an httpGet/tcpSocket probe stays green while the policy is in
+  # force (verified on this harness's cluster) — only an exec probe that makes
+  # the pod itself talk to the network is actually blocked, by the Egress half.
+  # Hence: a plain backend to talk to, and a client whose readiness is one
+  # in-cluster HTTP call away.
+  kubectl --context "$CTX" -n "$ns" apply -f - >/dev/null <<'APP'
+apiVersion: v1
+kind: Service
+metadata: { name: backend }
+spec:
+  selector: { app: backend }
+  ports: [{ port: 80, targetPort: 80 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: backend, labels: { app: backend } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: backend } }
+  template:
+    metadata: { labels: { app: backend } }
+    spec:
+      containers:
+        - name: app
+          image: nginx:1.27-alpine
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata: { name: blocked, labels: { app: blocked } }
@@ -173,18 +209,67 @@ spec:
       containers:
         - name: app
           image: nginx:1.27-alpine
-          readinessProbe: { exec: { command: ["false"] }, periodSeconds: 3 }
+          readinessProbe:
+            exec: { command: ["wget", "-q", "-T", "2", "-O", "/dev/null", "http://backend"] }
+            periodSeconds: 3
+            timeoutSeconds: 3
 APP
-  kubectl --context "$CTX" -n chaos-np apply -f - >/dev/null <<'NP'
+  kubectl --context "$CTX" -n "$ns" rollout status deploy backend --timeout=120s >/dev/null 2>&1 || true
+  # Baseline: the client must reach Ready with NO policy in force. If it never
+  # does, the rest of the scenario proves nothing — the recorded output says so
+  # rather than quietly reading like a pass.
+  kubectl --context "$CTX" -n "$ns" rollout status deploy blocked --timeout=120s >/dev/null 2>&1 || true
+  baseline="$(ready_replicas "$ns" blocked)"
+
+  kubectl --context "$CTX" -n "$ns" apply -f - >/dev/null <<'NP'
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata: { name: deny-all }
 spec: { podSelector: {}, policyTypes: [Ingress, Egress] }
 NP
-  sleep 15
-  { scan 2>&1 || true; } | record "4. NetworkPolicy blocking traffic (Calico deny-all)" \
-    "expect: chaos-np/blocked is reported 0/1 Degraded with a ProbeFailure finding, and NO NetworkPolicy hint. The absent hint is correct, not a miss: netpolicy.Annotate (internal/netpolicy/netpolicy.go) attaches policy names only to a workload that is Flagged() with zero detector findings, because the hint exists to explain a degraded workload nothing else accounts for. A failing readiness probe already accounts for this one, so the hint is suppressed by design. KNOWN GAP, tracked for a later slice: the probe here is exec [\"false\"], which fails whether or not the NetworkPolicy exists — deleting deny-all would not change this output. So the scenario proves a degraded workload is detected while a deny-all policy is in force; it does not yet prove the policy is the cause. Making it causal needs a network-dependent probe and its own verification run."
-  kubectl --context "$CTX" delete ns chaos-np --wait=true --timeout=120s >/dev/null 2>&1 || true
+  # Wait for the policy to actually bite (probe period 3s x default threshold 3)
+  # instead of sleeping blind.
+  for i in $(seq 30); do
+    [ "$(ready_replicas "$ns" blocked)" = "0" ] && break
+    sleep 2
+  done
+  broken="$(ready_replicas "$ns" blocked)"
+  blocked_scan="$(scan 2>&1 || true)"
+
+  # Change exactly one thing — remove the policy — and rescan. Nothing else about
+  # the workload is touched, so a recovery here can only be the policy's doing.
+  kubectl --context "$CTX" -n "$ns" delete netpol deny-all >/dev/null 2>&1 || true
+  for i in $(seq 30); do
+    [ "$(ready_replicas "$ns" blocked)" = "1" ] && break
+    sleep 2
+  done
+  recovered="$(ready_replicas "$ns" blocked)"
+  recovery_scan="$(scan 2>&1 || true)"
+
+  {
+    printf 'blocked ready replicas before the policy: %s (must be 1)\n' "$baseline"
+    printf 'blocked ready replicas under deny-all:    %s (must be 0)\n' "$broken"
+    printf 'blocked ready replicas after deletion:    %s (must be 1)\n' "$recovered"
+    echo
+    echo '--- newest readiness-probe failure event (the blocked call, not a rigged "false") ---'
+    { kubectl --context "$CTX" -n "$ns" get events --field-selector reason=Unhealthy \
+        -o custom-columns=MSG:.message --no-headers 2>/dev/null | sort -u | head -1; } \
+      || echo '<no Unhealthy event recorded>'
+    echo
+    echo '--- scan WITH deny-all in force ---'
+    printf '%s\n' "$blocked_scan"
+    echo
+    printf 'chaos-np/blocked lines in that scan: %s\n' \
+      "$(printf '%s\n' "$blocked_scan" | grep -c 'chaos-np/blocked' || true)"
+    echo
+    echo '--- scan after deleting ONLY the NetworkPolicy ---'
+    printf '%s\n' "$recovery_scan"
+    echo
+    printf 'chaos-np/blocked lines in the recovery scan: %s\n' \
+      "$(printf '%s\n' "$recovery_scan" | grep -c 'chaos-np/blocked' || true)"
+  } | record "4. NetworkPolicy blocking traffic (Calico deny-all, causal)" \
+    "expect: the three replica counts read 1 / 0 / 1. That triple is the whole point of this scenario — the workload is healthy before the policy, degraded while it is in force, and healthy again once it is deleted with nothing else changed, so the policy is demonstrably the cause rather than merely present. The Unhealthy event must show the wget call timing out; the old version of this scenario used an exec probe of \"false\", which failed identically with or without the policy and therefore proved nothing. In the scan taken under deny-all, chaos-np/blocked is reported 0/1 Degraded with a ProbeFailure finding and NO NetworkPolicy hint. The absent hint is correct, not a miss: netpolicy.Annotate (internal/netpolicy/netpolicy.go) attaches policy names only to a workload that is Flagged() with zero detector findings, because the hint exists to explain a degraded workload nothing else accounts for. A failing readiness probe already accounts for this one, so the hint is suppressed by design. In the recovery scan, chaos-np/blocked must not appear at all: its line count must be 0 while the count in the first scan is non-zero. Note the CNI subtlety this scenario encodes: Calico still lets the kubelet probe a local pod under a deny-all Ingress policy, so a network-dependent probe here has to be pod-sourced (exec) and blocked by the Egress half."
+  kubectl --context "$CTX" delete ns "$ns" --wait=true --timeout=120s >/dev/null 2>&1 || true
 }
 
 scenario_06_lb() {   # LoadBalancer Service with no provider -> pending (no external address)

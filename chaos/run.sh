@@ -646,7 +646,7 @@ scenario_15_multicluster() {   # one daemon, three targets: two names for this c
     echo '--- per-cluster up/down ---'
     { grep -E '^kubeagent_(cluster_up|clusters_total)' <<<"$metrics" || echo '<no cluster series>'; }
     echo
-    echo '--- the same broken Deployment, once per healthy cluster label ---'
+    echo '--- the same broken workload, once per healthy cluster label ---'
     { grep -E '^kubeagent_issue_active' <<<"$metrics" | grep 'web' || echo '<no active issue series>'; }
     echo
     echo '--- /issues cluster roster ---'
@@ -666,7 +666,7 @@ scenario_15_multicluster() {   # one daemon, three targets: two names for this c
     echo
     echo '--- daemon log tail (last 15 lines) ---'
     tail -n 15 "$wlog" 2>/dev/null || echo '<no daemon log captured>'
-  } | record "15. Multi-cluster hub (three targets, one dead)" "expect: /readyz returns HTTP 200 even though the 'dead' target never reaches its API server — readiness means every cluster finished a first attempt, because a NotReady pod leaves its Service endpoints and Prometheus would then stop scraping the clusters that ARE working. kubeagent_clusters_total is 3; kubeagent_cluster_up is 1 for both $CTX and alias-b and 0 for dead. The broken Deployment appears in kubeagent_issue_active exactly twice — once with cluster=\"$CTX\" and once with cluster=\"alias-b\" — and the /issues cluster roster lists all three with dead carrying a non-empty error. No log line may carry kubeconfig material, and no write verb may appear. Scope: alias-b is a second NAME for the same cluster, so this proves labelling, the cross-cluster merge and the degradation path — the parts most likely to regress — but it does not exercise genuinely divergent cluster state, which would need a second Kind cluster and is covered by unit tests with independent fake clientsets instead. Every daemon log line must also carry a [<cluster>] prefix; with three interleaved reconcile loops an unprefixed line is a bug."
+  } | record "15. Multi-cluster hub (three targets, one dead)" "expect: /readyz returns HTTP 200 even though the 'dead' target never reaches its API server — readiness means every cluster finished a first attempt, because a NotReady pod leaves its Service endpoints and Prometheus would then stop scraping the clusters that ARE working. kubeagent_clusters_total is 3; kubeagent_cluster_up is 1 for both $CTX and alias-b and 0 for dead. The broken workload appears in kubeagent_issue_active once per healthy cluster label — four lines in all: the Deployment's ErrImagePull and its same-named Service's NoEndpoints (the container-name coupling scenario 12 documents), each under cluster=\"$CTX\" and again under cluster=\"alias-b\" — and the /issues cluster roster lists all three with dead carrying a non-empty error. No log line may carry kubeconfig material, and no write verb may appear. Scope: alias-b is a second NAME for the same cluster, so this proves labelling, the cross-cluster merge and the degradation path — the parts most likely to regress — but it does not exercise genuinely divergent cluster state, which would need a second Kind cluster and is covered by unit tests with independent fake clientsets instead. Every daemon log line must also carry a [<cluster>] prefix; with three interleaved reconcile loops an unprefixed line is a bug."
 
   rm -f "$wlog" "$kc"
   kubectl --context "$CTX" delete ns "$ns" --wait=true --timeout=120s >/dev/null 2>&1 || true

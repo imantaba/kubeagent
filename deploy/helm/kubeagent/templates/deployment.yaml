@@ -34,6 +34,31 @@ spec:
             {{- if .Values.watch.namespace }}
             - "--namespace={{ .Values.watch.namespace }}"
             {{- end }}
+            {{- if .Values.multicluster.enabled }}
+            {{- if not .Values.multicluster.existingSecret }}
+            {{- fail "multicluster.existingSecret is required when multicluster.enabled is true (a kubeconfig carries the credentials for every cluster it names, so it must come from a Secret, never from values.yaml)" }}
+            {{- end }}
+            {{- if not .Values.multicluster.contexts }}
+            {{- fail "multicluster.contexts must list at least one context when multicluster.enabled is true" }}
+            {{- end }}
+            {{- if not .Values.multicluster.secretKey }}
+            {{- fail "multicluster.secretKey is required when multicluster.enabled is true" }}
+            {{- end }}
+            - "--kubeconfig=/etc/kubeagent/kubeconfig/{{ .Values.multicluster.secretKey }}"
+            {{- range .Values.multicluster.contexts }}
+            {{- if not . }}
+            {{- fail "multicluster.contexts must not contain an empty entry when multicluster.enabled is true" }}
+            {{- end }}
+            - "--context={{ . }}"
+            {{- end }}
+            {{- if not .Values.multicluster.localName }}
+            {{- fail "multicluster.localName is required when multicluster.enabled is true" }}
+            {{- end }}
+            - "--cluster-name={{ .Values.multicluster.localName }}"
+            {{- if .Values.multicluster.includeLocal }}
+            - "--include-local"
+            {{- end }}
+            {{- end }}
             {{- if .Values.alerts.enabled }}
             - "--alert-format={{ .Values.alerts.format }}"
             {{- if .Values.alerts.repeat }}
@@ -128,6 +153,12 @@ spec:
                   key: {{ .Values.explain.secretKey | quote }}
             {{- end }}
             {{- end }}
+          {{- if .Values.multicluster.enabled }}
+          volumeMounts:
+            - name: cluster-kubeconfig
+              mountPath: /etc/kubeagent/kubeconfig
+              readOnly: true
+          {{- end }}
           ports:
             - name: metrics
               containerPort: {{ .Values.metricsPort }}
@@ -141,6 +172,13 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+      {{- if .Values.multicluster.enabled }}
+      volumes:
+        - name: cluster-kubeconfig
+          secret:
+            secretName: {{ .Values.multicluster.existingSecret | quote }}
+            defaultMode: 0400
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

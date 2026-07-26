@@ -36,6 +36,7 @@ func encode(f Format, n alertstate.Notification) ([]byte, error) {
 type jsonPayload struct {
 	Status      string   `json:"status"`
 	Reason      string   `json:"reason"`
+	Cluster     string   `json:"cluster"`
 	Kind        string   `json:"kind"`
 	Namespace   string   `json:"namespace,omitempty"`
 	Name        string   `json:"name"`
@@ -54,6 +55,7 @@ func encodeJSON(n alertstate.Notification) ([]byte, error) {
 	p := jsonPayload{
 		Status:      string(n.Status),
 		Reason:      string(n.Reason),
+		Cluster:     n.Object.Cluster,
 		Kind:        n.Object.Kind,
 		Namespace:   n.Object.Namespace,
 		Name:        n.Object.Name,
@@ -102,6 +104,7 @@ type amAlert struct {
 func encodeAlertmanager(n alertstate.Notification) ([]byte, error) {
 	labels := map[string]string{
 		"alertname": "KubeagentIssue",
+		"cluster":   n.Object.Cluster,
 		"kind":      n.Object.Kind,
 		"name":      n.Object.Name,
 	}

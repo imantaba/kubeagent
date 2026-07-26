@@ -50,8 +50,11 @@ kubectl -n kubeagent port-forward svc/kubeagent-metrics 8080:8080
 curl localhost:8080/metrics
 ```
 
-The daemon is **strictly read-only** and makes **no external calls**. To pin a
-specific version, set the image tag in `deploy/deployment.yaml` (e.g.
+The daemon is **strictly read-only toward the cluster**. Its deterministic core makes
+no outbound calls, and it runs fully offline unless you opt into
+[`--explain`](features/watch-mode.md#on-incident-explanations-explain), which makes an
+outbound HTTPS call to the model provider — an egress decision, not a cluster
+operation. To pin a specific version, set the image tag in `deploy/deployment.yaml` (e.g.
 `imantaba/kubeagent:v0.58.1`); to build your own image, see
 [`deploy/README.md`](https://github.com/imantaba/kubeagent/blob/main/deploy/README.md).
 

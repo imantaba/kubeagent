@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -19,7 +20,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
 
@@ -596,7 +596,7 @@ func captureWatchConfig(t *testing.T, args []string) (watch.Config, error) {
 	t.Helper()
 	var captured watch.Config
 	orig := watchRun
-	watchRun = func(_ context.Context, _ kubernetes.Interface, cfg watch.Config) error {
+	watchRun = func(_ context.Context, _ []watch.Target, cfg watch.Config) error {
 		captured = cfg
 		return nil
 	}
@@ -1320,7 +1320,7 @@ func TestRunWatchWiresExplainConfig(t *testing.T) {
 
 	var got watch.Config
 	orig := watchRun
-	watchRun = func(_ context.Context, _ kubernetes.Interface, cfg watch.Config) error {
+	watchRun = func(_ context.Context, _ []watch.Target, cfg watch.Config) error {
 		got = cfg
 		return nil
 	}
@@ -1355,7 +1355,7 @@ func TestRunWatchDefaultsExplainOff(t *testing.T) {
 
 	var got watch.Config
 	orig := watchRun
-	watchRun = func(_ context.Context, _ kubernetes.Interface, cfg watch.Config) error {
+	watchRun = func(_ context.Context, _ []watch.Target, cfg watch.Config) error {
 		got = cfg
 		return nil
 	}
@@ -1382,7 +1382,7 @@ func TestRunWatchExplainWithoutCredentialsFailsFast(t *testing.T) {
 	t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "")
 
 	orig := watchRun
-	watchRun = func(context.Context, kubernetes.Interface, watch.Config) error {
+	watchRun = func(context.Context, []watch.Target, watch.Config) error {
 		t.Fatal("the daemon must not start without credentials")
 		return nil
 	}
@@ -1403,7 +1403,7 @@ func TestRunWatchLocalEndpointNeedsAModelName(t *testing.T) {
 	t.Setenv("KUBEAGENT_MODEL", "")
 
 	orig := watchRun
-	watchRun = func(context.Context, kubernetes.Interface, watch.Config) error {
+	watchRun = func(context.Context, []watch.Target, watch.Config) error {
 		t.Fatal("the daemon must not start without a model name")
 		return nil
 	}
@@ -1428,4 +1428,102 @@ func TestUsageMentionsTheExplainFlags(t *testing.T) {
 			t.Errorf("usage does not mention %s", want)
 		}
 	}
+}
+
+// TestContextListCollectsRepeats pins the flag type: --context is repeatable,
+// and each occurrence names one cluster to watch.
+func TestContextListCollectsRepeats(t *testing.T) {
+	var got contextList
+	fs := flag.NewFlagSet("watch", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.Var(&got, "context", "")
+	if err := fs.Parse([]string{"--context", "a", "--context", "b"}); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(got) != 2 || got[0] != "a" || got[1] != "b" {
+		t.Errorf("contextList = %v, want [a b]", got)
+	}
+	if err := fs.Parse([]string{"--context", ""}); err == nil {
+		t.Error("an empty --context must be rejected")
+	}
+}
+
+// TestBuildTargetsNaming pins the three naming rules: no --context means one
+// default target named by --cluster-name; each --context names its own target;
+// and --include-local adds the default target alongside them.
+func TestBuildTargetsNaming(t *testing.T) {
+	kc := multiContextKubeconfigPath(t)
+	t.Setenv("KUBECONFIG", kc)
+
+	tests := []struct {
+		name         string
+		contexts     []string
+		includeLocal bool
+		want         []string
+	}{
+		{"no contexts", nil, false, []string{"local"}},
+		{"one context", []string{"alpha"}, false, []string{"alpha"}},
+		{"two contexts", []string{"alpha", "beta"}, false, []string{"alpha", "beta"}},
+		{"include local", []string{"alpha"}, true, []string{"local", "alpha"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			targets, err := buildTargets(kc, "local", tc.contexts, tc.includeLocal)
+			if err != nil {
+				t.Fatalf("buildTargets: %v", err)
+			}
+			var got []string
+			for _, tg := range targets {
+				got = append(got, tg.Name)
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("target names = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestBuildTargetsRejectsAnUnknownContext pins the fail-fast rule. Building a
+// client contacts no API server, so a failure here is a misspelled context, and
+// silently watching fewer clusters than the operator asked for is the outcome
+// this prevents.
+func TestBuildTargetsRejectsAnUnknownContext(t *testing.T) {
+	kc := multiContextKubeconfigPath(t)
+	t.Setenv("KUBECONFIG", kc)
+	if _, err := buildTargets(kc, "local", []string{"nope"}, false); err == nil {
+		t.Fatal("buildTargets accepted a context that is not in the kubeconfig")
+	}
+}
+
+// multiContextKubeconfigPath writes a kubeconfig with two contexts pointing at a
+// closed loopback port. Every server here is unreachable on purpose: building a
+// clientset performs no network I/O, so these tests stay hermetic.
+func multiContextKubeconfigPath(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "kubeconfig")
+	body := `apiVersion: v1
+kind: Config
+current-context: alpha
+clusters:
+  - name: alpha
+    cluster:
+      server: https://127.0.0.1:1
+  - name: beta
+    cluster:
+      server: https://127.0.0.1:2
+contexts:
+  - name: alpha
+    context: {cluster: alpha, user: alpha}
+  - name: beta
+    context: {cluster: beta, user: beta}
+users:
+  - name: alpha
+    user: {token: <PLACEHOLDER>}
+  - name: beta
+    user: {token: <PLACEHOLDER>}
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("writing kubeconfig: %v", err)
+	}
+	return path
 }

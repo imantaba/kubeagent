@@ -136,3 +136,33 @@ explain:
   # "http://ollama.llm.svc.cluster.local:11434/v1". Setting this selects the
   # local backend and requires explain.model; empty selects Anthropic.
   endpointSecretKey: ""
+
+# Watch several clusters from this one daemon. Each context in the mounted
+# kubeconfig becomes its own informer set, tracker and set of metric series,
+# labelled cluster="<context>", behind this single /metrics endpoint.
+#
+# The kubeconfig is NEVER a value here. A values file lands in Git, in
+# `helm get values`, and in CI logs, and a kubeconfig carries the credentials for
+# every cluster it names. Create a Secret and name it in existingSecret:
+#
+#   kubectl -n kubeagent create secret generic kubeagent-clusters \
+#     --from-file=kubeconfig=<PLACEHOLDER>
+#
+# Each credential inside that kubeconfig MUST be read-only (get/list/watch).
+# kubeagent issues no writes, but it cannot enforce that from inside the pod:
+# a kubeconfig holding a cluster-admin token would give this daemon
+# write-capable credentials it never uses but nonetheless holds.
+multicluster:
+  enabled: false
+  # Name of an existing Secret holding the kubeconfig. Required when enabled.
+  existingSecret: ""
+  # Key within existingSecret holding the kubeconfig document.
+  secretKey: kubeconfig
+  # Contexts within that kubeconfig to watch. At least one is required when
+  # enabled; each becomes a cluster label of the same name.
+  contexts: []
+  # Also watch the cluster this daemon runs in, through its ServiceAccount and
+  # the ClusterRole below.
+  includeLocal: true
+  # The cluster label for that local cluster.
+  localName: local

@@ -29,18 +29,20 @@ detectors, cluster/service health, NetworkPolicy hints, and
 
 ## Metrics
 
-The daemon serves Prometheus text on `--metrics-addr` (default `:8080`):
+The daemon serves Prometheus text on `--metrics-addr` (default `:8080`). Every series
+in this table also carries a `cluster` label (default `local`); see
+[Watching several clusters](#watching-several-clusters):
 
 | Metric | Meaning |
 |--------|---------|
 | `kubeagent_cluster_healthy` | 1 if the cluster verdict is Healthy, else 0 |
 | `kubeagent_nodes_ready` / `kubeagent_nodes_total` | node readiness |
 | `kubeagent_workloads_flagged` | workloads currently needing attention |
-| `kubeagent_findings{issue="..."}` | current findings by type (e.g. `CrashLoopBackOff`, `ImagePullBackOff`, `OOMKilled`, `VolumeAttachError`, `RestartLoop`) |
+| `kubeagent_findings{cluster="...",issue="..."}` | current findings by type (e.g. `CrashLoopBackOff`, `ImagePullBackOff`, `OOMKilled`, `VolumeAttachError`, `RestartLoop`) |
 | `kubeagent_service_issues` | Service issues (no ready endpoints, LB pending); excludes intentionally-empty (parked) Services |
 | `kubeagent_nodes_without_reservations` | Number of nodes whose kubelet reserves no memory (allocatable == capacity) |
 | `kubeagent_pvcs_reclaim_delete` | Number of PVCs whose bound PV has reclaimPolicy Delete |
-| `kubeagent_node_fs_usage_ratio{node}` | Node root-filesystem usage ratio (opt-in; requires `--disk-usage` / `KUBEAGENT_DISK_USAGE=true`) |
+| `kubeagent_node_fs_usage_ratio{cluster,node}` | Node root-filesystem usage ratio (opt-in; requires `--disk-usage` / `KUBEAGENT_DISK_USAGE=true`) |
 | `kubeagent_volumes_over_disk_threshold` | Number of node filesystems and PVCs at or over `--disk-threshold` (opt-in) |
 | `kubeagent_ingress_route_issues` | Number of Ingress routes whose backend Service is missing, has no ready endpoints, or does not expose the referenced port; excludes intentionally-empty (parked) routes |
 | `kubeagent_pvc_pending_issues` | Number of PersistentVolumeClaims stuck Pending because provisioning or binding failed |
@@ -90,10 +92,10 @@ The daemon logs one line per transition, in this order, followed by a summary
 line — and only when something changed:
 
 ```
-kubeagent: NEW Deployment/shop/web:CrashLoopBackOff
-kubeagent: RESOLVED Deployment/shop/web:CrashLoopBackOff (fired for 4m12s)
-kubeagent: FLAPPING Deployment/shop/web:CrashLoopBackOff (3 firings in 30m0s)
-kubeagent: cluster Degraded (2/3 nodes ready) — 4 issue(s) active, 1 new, 1 resolved
+kubeagent: [local] NEW Deployment/shop/web:CrashLoopBackOff
+kubeagent: [local] RESOLVED Deployment/shop/web:CrashLoopBackOff (fired for 4m12s)
+kubeagent: [local] FLAPPING Deployment/shop/web:CrashLoopBackOff (3 firings in 30m0s)
+kubeagent: [local] cluster Degraded (2/3 nodes ready) — 4 issue(s) active, 1 new, 1 resolved
 ```
 
 A reconcile where nothing changed — the same issues still firing, nothing new,
@@ -103,7 +105,8 @@ state stays quiet.
 ### Metrics
 
 Alongside the point-in-time gauges above, the daemon exposes ten series that
-track issue lifecycle:
+track issue lifecycle. Every one of them also carries a `cluster` label (default
+`local`):
 
 | Metric | Type | Meaning |
 |--------|------|---------|
@@ -115,8 +118,8 @@ track issue lifecycle:
 | `kubeagent_issues_dropped_total` | counter | New issues left untracked because the tracker is at capacity |
 | `kubeagent_issue_resolution_seconds_sum` | counter | Seconds issues spent firing before resolving (MTTR numerator) |
 | `kubeagent_issue_resolution_seconds_count` | counter | Issue firings that resolved (MTTR denominator) |
-| `kubeagent_issue_active{kind,namespace,name,issue}` | gauge | 1 while this issue instance is firing |
-| `kubeagent_issue_age_seconds{kind,namespace,name,issue}` | gauge | Seconds since this issue instance started firing |
+| `kubeagent_issue_active{cluster,kind,namespace,name,issue}` | gauge | 1 while this issue instance is firing |
+| `kubeagent_issue_age_seconds{cluster,kind,namespace,name,issue}` | gauge | Seconds since this issue instance started firing |
 
 There is no dedicated MTTR series — compute mean time to resolution as
 `kubeagent_issue_resolution_seconds_sum / kubeagent_issue_resolution_seconds_count`.
@@ -211,10 +214,10 @@ the new one new — a bad image walks through `Degraded`, `ErrImagePull`, and
 alongside the `NEW`:
 
 ```text
-kubeagent: NEW Deployment/shop/web:ErrImagePull
-kubeagent: RESOLVED Deployment/shop/web:Degraded (fired for 2s)
-kubeagent: NEW Deployment/shop/web:ImagePullBackOff
-kubeagent: RESOLVED Deployment/shop/web:ErrImagePull (fired for 15s)
+kubeagent: [local] NEW Deployment/shop/web:ErrImagePull
+kubeagent: [local] RESOLVED Deployment/shop/web:Degraded (fired for 2s)
+kubeagent: [local] NEW Deployment/shop/web:ImagePullBackOff
+kubeagent: [local] RESOLVED Deployment/shop/web:ErrImagePull (fired for 15s)
 ```
 
 A `RESOLVED` line therefore means *that issue* stopped firing, not that the
@@ -279,6 +282,7 @@ down when the alert opened learns about it on the next repeat.
 {
   "status": "firing",
   "reason": "changed",
+  "cluster": "local",
   "kind": "Deployment",
   "namespace": "shop",
   "name": "web",
@@ -296,11 +300,11 @@ appeared. It only ever moves earlier: the issue that opened the alert can resolv
 while the object stays broken, so the alert keeps the original break time rather
 than restarting the clock on each new failure mode.
 
-`slack` — an incoming-webhook body: `*FIRING* Deployment/shop/web` with the issue
-list and firing time, or `*RESOLVED* Deployment/shop/web (fired for 4m12s)`.
+`slack` — an incoming-webhook body: `*FIRING* local/Deployment/shop/web` with the issue
+list and firing time, or `*RESOLVED* local/Deployment/shop/web (fired for 4m12s)`.
 
 `alertmanager` — a `POST /api/v2/alerts` array. Labels are `alertname`
-(`KubeagentIssue`), `kind`, `name`, and — only for a namespaced object —
+(`KubeagentIssue`), `cluster`, `kind`, `name`, and — only for a namespaced object —
 `namespace`; a cluster-scoped alert such as a `Node` carries no `namespace`
 label at all. The issue list is an **annotation**, because a label that changes
 as the failure evolves would create a second alert instead of updating the open
@@ -325,7 +329,7 @@ route:
 Route on **labels only**. Alertmanager's routing tree cannot match annotations,
 so a matcher on `issues` never fires — that is the cost of keeping the issue
 list out of the label set. The labels available to route on are `alertname`,
-`kind`, `name`, and `namespace`. Reach for `issues` in the notification
+`cluster`, `kind`, `name`, and `namespace`. Reach for `issues` in the notification
 template, where annotations are in scope:
 
 ```text
@@ -394,11 +398,11 @@ Rendered only while SLO tracking is on:
 
 | Metric | Labels | Meaning |
 |--------|--------|---------|
-| `kubeagent_slo_target_ratio` | none | Configured availability SLO as a ratio |
-| `kubeagent_slo_availability_ratio` | `window` (`fast`/`slow`) | Time-weighted fraction of workload-seconds that are not flagged, over the window |
-| `kubeagent_slo_burn_rate` | `window` (`fast`/`slow`) | Error-budget consumption multiple (1 = spending exactly at budget) |
-| `kubeagent_slo_window_coverage_ratio` | `window` (`fast`/`slow`) | Fraction of the window carrying samples |
-| `kubeagent_slo_error_budget_remaining_ratio` | none | Budget left over the **slow window only**, clamped to `[0,1]` |
+| `kubeagent_slo_target_ratio` | `cluster` | Configured availability SLO as a ratio |
+| `kubeagent_slo_availability_ratio` | `cluster`, `window` (`fast`/`slow`) | Time-weighted fraction of workload-seconds that are not flagged, over the window |
+| `kubeagent_slo_burn_rate` | `cluster`, `window` (`fast`/`slow`) | Error-budget consumption multiple (1 = spending exactly at budget) |
+| `kubeagent_slo_window_coverage_ratio` | `cluster`, `window` (`fast`/`slow`) | Fraction of the window carrying samples |
+| `kubeagent_slo_error_budget_remaining_ratio` | `cluster` | Budget left over the **slow window only**, clamped to `[0,1]` |
 
 Five metric names, eight samples (three carry both a `fast` and a `slow`
 series). `kubeagent_slo_error_budget_remaining_ratio` is `1 - slowBurnRate`
@@ -465,8 +469,8 @@ backoff, and URL redaction), reusing `--alert-repeat` for its re-send cadence,
 and clears with a single `resolved` notification on the clearing edge:
 
 ```text
-kubeagent: NEW SLO/error-budget:ErrorBudgetBurn (fast=18.2x slow=7.1x, coverage fast=100% slow=95%)
-kubeagent: RESOLVED SLO/error-budget (burn back under threshold; fast=2.1x slow=1.4x)
+kubeagent: [local] NEW SLO/error-budget:ErrorBudgetBurn (fast=18.2x slow=7.1x, coverage fast=100% slow=95%)
+kubeagent: [local] RESOLVED SLO/error-budget (burn back under threshold; fast=2.1x slow=1.4x)
 ```
 
 This alert is **not** an object: it never enters `watchstate` or `alertstate`,
@@ -612,6 +616,53 @@ helm upgrade --install kubeagent deploy/helm/kubeagent \
 API key and any endpoint URL are both credentials and must come from a
 Secret, never from `values.yaml`.
 
+## Watching several clusters
+
+```bash
+kubeagent watch --context prod-eu --context prod-us --context staging
+```
+
+One informer set per cluster runs inside a single process behind one HTTP
+endpoint. Every metric series carries a `cluster` label, `/issues` and
+`/explanations` carry a `cluster` field, and every alert names its cluster.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--context <name>` | current-context | Cluster to watch. **Repeat the flag** to watch several clusters from one daemon. |
+| `--cluster-name <name>` | `local` | Name for the default cluster — the one watched when no `--context` is given. Becomes its `cluster` metric label. |
+| `--include-local` | off | Also watch the default cluster alongside every `--context`. A no-op when no `--context` is given. |
+
+The `cluster` label is present even with one cluster, where it defaults to
+`local`. PromQL selectors match regardless of extra labels, so a query written
+against a single-cluster daemon keeps working; a recording rule that groups
+`by (...)` should add `cluster` to the grouping.
+
+**A configuration error is fatal; a cluster failure is not.** A context that is
+not in the kubeconfig stops the daemon at startup — building a client contacts no
+API server, so a failure there is a typo, and silently watching two of the three
+clusters you asked for is worse than not starting. A cluster that becomes
+unreachable at runtime reports `kubeagent_cluster_up 0` and an error on the
+`/issues` roster; its tracked issues stay firing, and every other cluster keeps
+reconciling.
+
+`/readyz` reports ready once every cluster has finished its **first reconcile
+attempt** — success or failure — and never flips afterward on cluster health.
+Readiness answers "can this process serve?", not "is everything fine": tying it
+to cluster health would let one unreachable remote cluster pull the pod out of
+its Service endpoints, stopping Prometheus from scraping it, and so blind you to
+the clusters that are working.
+
+**Credentials.** One process holds read-only credentials for every cluster it
+watches, so the daemon and its kubeconfig Secret are as sensitive as the union of
+those clusters. **Each credential in that kubeconfig must be read-only
+(get/list/watch).** kubeagent issues no writes, but it cannot enforce that from
+inside the pod: a kubeconfig holding a cluster-admin token would give this daemon
+write-capable credentials it never uses but nonetheless holds.
+
+Cross-cutting settings stay global: one webhook, one explanation budget, one
+`--slo-target`. If you need them split per cluster, run one daemon per cluster —
+that still works, and each one labels its series with its own `--cluster-name`.
+
 ## Run it
 
 ```bash
@@ -623,7 +674,11 @@ kubectl apply -f deploy/
 curl localhost:8080/metrics
 ```
 
-Flags (each with a `KUBEAGENT_*` env fallback): `--metrics-addr` (`:8080`),
+Flags (each with a `KUBEAGENT_*` env fallback, except `--context`, which is
+repeatable and has none): `--context` (repeatable; default: current-context),
+`--cluster-name` / `KUBEAGENT_CLUSTER_NAME` (`local`; see
+[Watching several clusters](#watching-several-clusters)), `--include-local` /
+`KUBEAGENT_INCLUDE_LOCAL` (off by default), `--metrics-addr` (`:8080`),
 `--heartbeat` (`60s`), `--debounce` (`2s`), `--namespace`/`-n` (default all
 namespaces), `--node-heartbeat-threshold` / `KUBEAGENT_NODE_HEARTBEAT_THRESHOLD`
 (`40s`; `0` disables the kubelet-lease staleness check),
@@ -664,7 +719,8 @@ annotations) and alert on the gauges directly, e.g.:
 
 ## Roadmap
 
-On-incident `--explain` has shipped — see
-[above](#on-incident-explanations-explain). Watch mode's remaining roadmap:
-multi-cluster (an agent per cluster reporting to a hub) and opt-in autonomous
-remediation with stricter rails than the interactive `--fix`.
+On-incident `--explain` and the multi-cluster hub have both shipped — see
+[above](#on-incident-explanations-explain) and
+[Watching several clusters](#watching-several-clusters). Watch mode's
+remaining roadmap: opt-in autonomous remediation with stricter rails than the
+interactive `--fix`.

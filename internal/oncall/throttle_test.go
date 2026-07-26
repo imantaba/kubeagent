@@ -1,6 +1,8 @@
 package oncall
 
 import (
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
@@ -133,4 +135,32 @@ func TestStampMapIsPruned(t *testing.T) {
 	if len(th.seen) != 1 {
 		t.Errorf("every stamp predates the cooldown window, so only the newest must remain; got %d", len(th.seen))
 	}
+}
+
+// TestThrottleConcurrentUseIsRaceFree pins that Throttle is safe for the
+// concurrent use one shared Explainer subjects it to: every clusterWorker
+// goroutine calls Allow/Counters/Remaining on the SAME Throttle (keyed by
+// cluster+object, so admission stays independent per cluster while the hourly
+// budget stays one process-wide pool — Task 2's reason for keying the throttle
+// this way instead of giving each cluster its own). Before the guard existed,
+// this reliably failed under go test -race with a concurrent map read/write on
+// seen: prune() ranging over the map while another goroutine's Allow() wrote a
+// new stamp into it.
+func TestThrottleConcurrentUseIsRaceFree(t *testing.T) {
+	th := NewThrottle(time.Millisecond, 1000000)
+	var wg sync.WaitGroup
+	for g := 0; g < 8; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			for i := 0; i < 200; i++ {
+				key := fmt.Sprintf("cluster-%d/Deployment/shop/w%d", g, i%5)
+				now := t0.Add(time.Duration(i) * time.Millisecond)
+				th.Allow(key, now)
+				th.Counters()
+				th.Remaining(now)
+			}
+		}(g)
+	}
+	wg.Wait()
 }

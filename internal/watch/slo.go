@@ -2,7 +2,6 @@ package watch
 
 import (
 	"fmt"
-	"log"
 	"math"
 	"time"
 
@@ -40,6 +39,7 @@ const defaultSLORepeat = 4 * time.Hour
 // its reconcile loop, exactly as it does watchstate.Tracker and
 // alertstate.Roller.
 type sloNotifier struct {
+	cluster  string
 	repeat   time.Duration
 	firing   bool
 	since    time.Time
@@ -57,11 +57,11 @@ type sloNotifier struct {
 // daemon's config, but a zero repeat reaching step unguarded would make
 // now.Sub(n.lastSent) >= n.repeat true on every call — re-sending a webhook
 // notification on every reconcile cycle for as long as the breach persists.
-func newSLONotifier(repeat time.Duration) *sloNotifier {
+func newSLONotifier(cluster string, repeat time.Duration) *sloNotifier {
 	if repeat <= 0 {
 		repeat = defaultSLORepeat
 	}
-	return &sloNotifier{repeat: repeat}
+	return &sloNotifier{cluster: cluster, repeat: repeat}
 }
 
 // step folds one verdict in and reports the notification to send, if any.
@@ -86,7 +86,7 @@ func (n *sloNotifier) step(v slo.Verdict, now time.Time) (alertstate.Notificatio
 // convention alertstate.Notification documents and the encoders rely on.
 func (n *sloNotifier) notification(s alertstate.Status, r alertstate.Reason, resolvedAt time.Time) alertstate.Notification {
 	out := alertstate.Notification{
-		Object:      alertstate.Object{Kind: sloAlertKind, Name: sloAlertName},
+		Object:      alertstate.Object{Cluster: n.cluster, Kind: sloAlertKind, Name: sloAlertName},
 		Status:      s,
 		FiringSince: n.since,
 		ResolvedAt:  resolvedAt,
@@ -116,24 +116,24 @@ func validateSLOTarget(target float64) error {
 
 // newSLOTracker returns the tracker and its notifier, or nils when SLO tracking
 // is off. Like *alerter, the nil case is the switched-off state.
-func newSLOTracker(cfg Config) (*slo.Tracker, *sloNotifier) {
+func newSLOTracker(cluster string, cfg Config) (*slo.Tracker, *sloNotifier) {
 	if cfg.SLOTarget == 0 {
 		return nil, nil
 	}
 	gap := 2 * cfg.Heartbeat
 	tr := slo.New(slo.Options{Target: cfg.SLOTarget, MaxSampleGap: gap})
-	return tr, newSLONotifier(cfg.AlertRepeat)
+	return tr, newSLONotifier(cluster, cfg.AlertRepeat)
 }
 
 // logSLO prints the burn transition. It mirrors logDelta's NEW/RESOLVED shape so
 // the two alert sources read the same way in the daemon's log.
-func logSLO(n alertstate.Notification, v slo.Verdict) {
+func logSLO(cluster string, n alertstate.Notification, v slo.Verdict) {
 	if n.Status == alertstate.StatusResolved {
-		log.Printf("kubeagent: RESOLVED SLO/error-budget (burn back under threshold; fast=%.1fx slow=%.1fx)",
+		clusterLogf(cluster, "RESOLVED SLO/error-budget (burn back under threshold; fast=%.1fx slow=%.1fx)",
 			v.Fast.BurnRate, v.Slow.BurnRate)
 		return
 	}
-	log.Printf("kubeagent: %s SLO/error-budget:ErrorBudgetBurn (fast=%.1fx slow=%.1fx, coverage fast=%.0f%% slow=%.0f%%)",
+	clusterLogf(cluster, "%s SLO/error-budget:ErrorBudgetBurn (fast=%.1fx slow=%.1fx, coverage fast=%.0f%% slow=%.0f%%)",
 		map[alertstate.Reason]string{alertstate.ReasonNew: "NEW", alertstate.ReasonRepeat: "REPEAT"}[n.Reason],
 		v.Fast.BurnRate, v.Slow.BurnRate, v.Fast.Coverage*100, v.Slow.Coverage*100)
 }

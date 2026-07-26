@@ -5,17 +5,28 @@
 // property of the type signatures rather than a convention.
 package oncall
 
-import "time"
+import (
+	"sync"
+	"time"
+)
 
-// Throttle decides which objects earn a model call. It is pure — no I/O, no
-// goroutines, and no wall-clock reads: the caller passes now. A Throttle is not
-// safe for concurrent use; the daemon touches it only from its reconcile loop.
+// Throttle decides which objects earn a model call. It does no I/O and no
+// wall-clock reads of its own — the caller passes now — but it IS safe for
+// concurrent use: one Throttle is shared by every clusterWorker goroutine
+// through the Explainer it belongs to, because the hourly budget it enforces
+// is a process-wide cost control, not a per-cluster one. Task 2 put the
+// cluster name into the caller's key precisely so that sharing is safe —
+// admission stays independent per cluster while the token bucket stays one
+// pool — so the mutex below only has to protect the bookkeeping, never the key
+// space. Every method locks internally; callers never see or manage mu.
 //
 // Two guards, for two different ways spend runs away. The per-object cooldown
 // stops one flapping workload from being re-explained every reconcile. The
 // global token bucket bounds a mass outage, where many distinct objects each
 // legitimately clear their cooldown at once.
 type Throttle struct {
+	mu sync.Mutex
+
 	cooldown time.Duration
 	capacity float64
 	perSec   float64
@@ -48,6 +59,9 @@ func NewThrottle(cooldown time.Duration, budget int) *Throttle {
 // budget checked first, an object that is about to be refused anyway would burn
 // a token some other object needs.
 func (t *Throttle) Allow(key string, now time.Time) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
 	t.refill(now)
 	t.prune(now)
 
@@ -69,12 +83,16 @@ func (t *Throttle) Allow(key string, now time.Time) bool {
 
 // Counters returns the process-lifetime decision counts.
 func (t *Throttle) Counters() (allowed, throttled int64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	return t.allowed, t.throttled
 }
 
 // Remaining projects the tokens available at now without consuming or refilling
 // anything, so a metrics read can never change an admission decision.
 func (t *Throttle) Remaining(now time.Time) float64 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	if t.last.IsZero() {
 		return t.capacity
 	}
@@ -88,6 +106,9 @@ func (t *Throttle) Remaining(now time.Time) float64 {
 	return r
 }
 
+// refill and prune are unexported and touch the same state Allow does with no
+// locking of their own — both are only ever called from inside Allow, already
+// holding t.mu, and a second lock here would deadlock against it.
 func (t *Throttle) refill(now time.Time) {
 	if t.last.IsZero() {
 		t.last = now

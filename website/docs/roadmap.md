@@ -332,9 +332,30 @@
   chart and no flag ever accepting it. The read-only invariant is enforced by
   the explainer's type signature, which takes no Kubernetes client — the
   daemon stays strictly read-only toward the cluster in every configuration;
-  the model call itself is outbound HTTP once enabled. The multi-cluster hub
-  is the remaining Theme E slice. See
+  the model call itself is outbound HTTP once enabled. See
   [Watch mode](features/watch-mode.md#on-incident-explanations-explain).
+
+- **Multi-cluster hub** (Theme E — slice 5) — `kubeagent watch --context
+  prod-eu --context prod-us` runs one informer set per cluster inside a single
+  process, behind one HTTP endpoint. `--context` is repeatable, `--cluster-name`
+  names the default cluster (the one watched with no `--context`), and
+  `--include-local` adds it alongside the listed contexts. Every metric series
+  carries a `cluster` label (defaulting to `local` so single-cluster queries
+  keep working), `/issues` and `/explanations` carry a `cluster` field,
+  `/issues` gains a `clusters` roster with each target's up/down state, and
+  every alert names its cluster — the alert and explanation series themselves
+  stay unlabelled, since there is one sink and one budget per process, not per
+  cluster. A context missing from the kubeconfig is fatal at startup; a
+  cluster that fails at runtime reports `kubeagent_cluster_up 0` and degrades
+  on its own while the others keep reconciling. `/readyz` reports ready once
+  every cluster has finished a first reconcile attempt and never flips on
+  cluster health after that — readiness answers "can this process serve?",
+  not "is everything fine." The Helm chart gained `multicluster.*`: a
+  kubeconfig mounted read-only from a Secret, never a `values.yaml` value.
+  The daemon remains strictly read-only toward every cluster it watches, and
+  this slice adds no new RBAC — remote access rides entirely on the
+  credentials inside the mounted kubeconfig. **Completing Theme E.** See
+  [Watch mode](features/watch-mode.md#watching-several-clusters).
 
 !!! info "Version history"
     [GitHub Releases](https://github.com/imantaba/kubeagent/releases) and the
@@ -385,10 +406,12 @@ These are the north star; every item below is measured against them.
   diff, an audit log, RBAC preflight (only offer what the caller can actually
   do), and rollback (`--rollback`). Theme D is complete; guarded, policy-gated
   autonomous remediation inside `watch` moves to Theme E.
-- **E · Continuous operations** — `watch` gains state (regressions, flapping, MTTR,
-  "new since last"), webhook alerting (JSON / Slack / Alertmanager shipped;
-  PagerDuty remains an open receiver), SLO burn-rate signals (shipped),
-  rate-limited on-incident `--explain` (shipped), and a multi-cluster hub.
+- **E · Continuous operations** ✅ — `watch` gains state (regressions, flapping,
+  MTTR, "new since last"), webhook alerting (JSON / Slack / Alertmanager
+  shipped; PagerDuty remains an open receiver), SLO burn-rate signals
+  (shipped), rate-limited on-incident `--explain` (shipped), and a
+  multi-cluster hub (shipped). Theme E is complete; guarded, policy-gated
+  autonomous remediation inside `watch` is a separate, future track.
 - **F · Ecosystem & operators** — first-class awareness of the operators people
   actually run (CloudNativePG, cert-manager, Longhorn/Ceph, Argo CD / Flux GitOps
   drift, Prometheus operator, service meshes), plus cost/right-sizing and

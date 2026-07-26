@@ -22,7 +22,7 @@ while [ $# -gt 0 ]; do
   esac; shift
 done
 
-# Normalize a numeric --only to the zero-padded form used in scenario keys (01..10).
+# Normalize a numeric --only to the zero-padded form used in scenario keys (01..15).
 if [ -n "$ONLY" ] && printf '%s' "$ONLY" | grep -qE '^[0-9]+$'; then ONLY=$(printf '%02d' "$ONLY"); fi
 
 : "${OUT:=docs/testing/chaos-results.md}"
@@ -593,6 +593,85 @@ scenario_14() {   # on-incident explanations: budget throttle, /explanations, lo
   kubectl --context "$CTX" delete ns "$ns" --wait=true --timeout=120s >/dev/null 2>&1 || true
 }
 
+scenario_15_multicluster() {   # one daemon, three targets: two names for this cluster and one dead endpoint
+  log "scenario 15: multi-cluster hub (labelling, merge, and per-cluster degradation)"
+  local ns=chaos-multi port=18094
+  local wlog kc wpid i ccluster cuser metrics issues
+
+  wlog="$(mktemp)"; kc="$(mktemp)"
+
+  # A second context pointing at the SAME cluster proves labelling and the
+  # cross-cluster merge without paying for a second Kind cluster; a third
+  # context pointing at a closed port proves per-cluster degradation. This does
+  # NOT test genuinely divergent cluster state — see the verdict text.
+  kubectl --context "$CTX" config view --raw --minify --flatten >"$kc"
+  ccluster="$(KUBECONFIG="$kc" kubectl config view -o jsonpath='{.contexts[0].context.cluster}')"
+  cuser="$(KUBECONFIG="$kc" kubectl config view -o jsonpath='{.contexts[0].context.user}')"
+  KUBECONFIG="$kc" kubectl config set-context alias-b --cluster="$ccluster" --user="$cuser" >/dev/null
+  KUBECONFIG="$kc" kubectl config set-cluster dead-cluster --server=https://127.0.0.1:1 >/dev/null
+  KUBECONFIG="$kc" kubectl config set-context dead --cluster=dead-cluster --user="$cuser" >/dev/null
+
+  kubectl --context "$CTX" create ns "$ns" --dry-run=client -o yaml | kubectl --context "$CTX" apply -f - >/dev/null
+  kubectl --context "$CTX" -n "$ns" apply -f chaos/manifests/app.yaml >/dev/null
+  kubectl --context "$CTX" -n "$ns" rollout status deploy web --timeout=90s >/dev/null 2>&1 || true
+
+  ./kubeagent watch --kubeconfig "$kc" \
+    --context "$CTX" --context alias-b --context dead \
+    -n "$ns" --metrics-addr "127.0.0.1:$port" --heartbeat 10s --debounce 2s >"$wlog" 2>&1 &
+  wpid=$!
+  # Readiness must arrive despite the dead target: ready means every cluster
+  # finished a FIRST ATTEMPT, not that every cluster is healthy.
+  for i in $(seq 60); do
+    curl -sf "http://127.0.0.1:$port/readyz" >/dev/null 2>&1 && break
+    sleep 1
+  done
+  local ready_code
+  ready_code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/readyz" 2>/dev/null || echo 000)"
+
+  # Break the workload so there is a real issue to see twice, once per label.
+  kubectl --context "$CTX" -n "$ns" patch deploy web --type=strategic \
+    -p '{"spec":{"strategy":{"rollingUpdate":{"maxUnavailable":"100%"}}}}' >/dev/null
+  kubectl --context "$CTX" -n "$ns" set image deploy/web web=nginx:does-not-exist-9999 >/dev/null
+  sleep 40
+
+  metrics="$(curl -s "http://127.0.0.1:$port/metrics" 2>/dev/null || echo '')"
+  issues="$(curl -s "http://127.0.0.1:$port/issues" 2>/dev/null || echo '<unreachable>')"
+
+  kill "$wpid" >/dev/null 2>&1 || true; wait "$wpid" >/dev/null 2>&1 || true
+
+  {
+    echo "--- /readyz status code with one target permanently dead ---"
+    printf 'HTTP %s\n' "$ready_code"
+    echo
+    echo '--- per-cluster up/down ---'
+    { grep -E '^kubeagent_(cluster_up|clusters_total)' <<<"$metrics" || echo '<no cluster series>'; }
+    echo
+    echo '--- the same broken workload, once per healthy cluster label ---'
+    { grep -E '^kubeagent_issue_active' <<<"$metrics" | grep 'web' || echo '<no active issue series>'; }
+    echo
+    echo '--- /issues cluster roster ---'
+    printf '%s\n' "$issues" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin).get("clusters"), indent=2))' 2>/dev/null \
+      || echo '<could not parse /issues>'
+    echo
+    echo '--- active issues by cluster ---'
+    printf '%s\n' "$issues" | python3 -c 'import json,sys,collections; print(dict(collections.Counter(r["cluster"] for r in json.load(sys.stdin).get("active",[]))))' 2>/dev/null \
+      || echo '<could not parse /issues>'
+    echo
+    echo '--- credential check: no kubeconfig material in any log line ---'
+    { grep -cE 'BEGIN CERTIFICATE|client-key-data|client-certificate-data|token:' "$wlog" || true; } \
+      | sed 's/^/log lines carrying kubeconfig material: /'
+    echo
+    echo '--- write-path check: the daemon issued no mutating calls ---'
+    { grep -icE '\b(create|update|patch|delete)d?\b' "$wlog" || true; } | sed 's/^/log lines mentioning a write verb: /'
+    echo
+    echo '--- daemon log tail (last 15 lines) ---'
+    tail -n 15 "$wlog" 2>/dev/null || echo '<no daemon log captured>'
+  } | record "15. Multi-cluster hub (three targets, one dead)" "expect: /readyz returns HTTP 200 even though the 'dead' target never reaches its API server — readiness means every cluster finished a first attempt, because a NotReady pod leaves its Service endpoints and Prometheus would then stop scraping the clusters that ARE working. kubeagent_clusters_total is 3; kubeagent_cluster_up is 1 for both $CTX and alias-b and 0 for dead. The broken workload appears in kubeagent_issue_active once per healthy cluster label — four lines in all: the Deployment's ErrImagePull and its same-named Service's NoEndpoints (the container-name coupling scenario 12 documents), each under cluster=\"$CTX\" and again under cluster=\"alias-b\" — and the /issues cluster roster lists all three with dead carrying a non-empty error. No log line may carry kubeconfig material, and no write verb may appear. Scope: alias-b is a second NAME for the same cluster, so this proves labelling, the cross-cluster merge and the degradation path — the parts most likely to regress — but it does not exercise genuinely divergent cluster state, which would need a second Kind cluster and is covered by unit tests with independent fake clientsets instead. Every daemon log line must also carry a [<cluster>] prefix; with three interleaved reconcile loops an unprefixed line is a bug."
+
+  rm -f "$wlog" "$kc"
+  kubectl --context "$CTX" delete ns "$ns" --wait=true --timeout=120s >/dev/null 2>&1 || true
+}
+
 scenario_02_certs() {   # documented skip (can't force cert expiry on Kind)
   log "scenario 2: expired certificates (skipped)"
   printf 'Skipped on Kind: control-plane certificate expiry cannot be forced quickly or safely.\nkubeagent TLS / expired-certificate handling is covered by internal/connectivity unit tests\n(x509 UnknownAuthority / CertificateInvalid / Hostname errors, plus "x509:" / "certificate" / "tls: " substrings).\n' \
@@ -629,7 +708,7 @@ run_scenarios() {
   # etcd/apiserver flap for a while afterwards (and while the API is down even
   # `kubectl wait` can't settle it). Running it last keeps that recovery noise from
   # contaminating the other scenarios' scans.
-  local all=(02_certs 03_diskfull 04_networkpolicy 05_coredns 06_lb 07_oom 08_nsdelete 09_rollout 10_credleak 11_kubelet 12_watch 13_slo 14 01_etcd)
+  local all=(02_certs 03_diskfull 04_networkpolicy 05_coredns 06_lb 07_oom 08_nsdelete 09_rollout 10_credleak 11_kubelet 12_watch 13_slo 14 15_multicluster 01_etcd)
   for s in "${all[@]}"; do
     if [ -z "$ONLY" ] || [ "$ONLY" = "${s%%_*}" ]; then "scenario_$s"; fi
   done

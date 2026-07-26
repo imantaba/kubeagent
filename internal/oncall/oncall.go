@@ -45,6 +45,7 @@ type IncidentExplainer interface {
 
 // Explanation is one delivered explanation, as served by /explanations.
 type Explanation struct {
+	Cluster     string
 	Kind        string
 	Namespace   string
 	Name        string
@@ -87,6 +88,15 @@ type job struct {
 // notifications, bounded by a throttle and a small job queue. A nil *Explainer
 // is a valid, inert explainer: every method is a no-op, so the reconcile loop
 // needs no conditional.
+//
+// One Explainer is shared by every clusterWorker goroutine (internal/watch
+// hands them all the same pointer), because the hourly budget it enforces is a
+// cost control on the whole process, not on any one cluster — so it IS safe
+// for concurrent use. mu guards every field below it, including primed and
+// dropped: both were once touched only by Consider on a single reconcile
+// goroutine, but Task 4 put one Consider call per cluster on its own
+// goroutine, all racing on the same Explainer. th is its own type with its own
+// internal lock, so it needs no protection here beyond never being replaced.
 type Explainer struct {
 	client  IncidentExplainer
 	model   string
@@ -96,12 +106,13 @@ type Explainer struct {
 	jobs    chan job
 	done    chan struct{}
 
-	// primed guards the cold start and is touched only by Consider, on the
-	// reconcile goroutine. dropped likewise.
-	primed  bool
+	mu sync.Mutex
+	// primed tracks which clusters have already had their cold-start reconcile
+	// skipped. Its key space is exactly the configured watch targets, fixed at
+	// daemon startup, so it never grows unbounded the way an operator-facing
+	// map would.
+	primed  map[string]bool
 	dropped int64
-
-	mu      sync.Mutex
 	started bool
 	failed  int64
 	latest  map[string]Explanation
@@ -121,6 +132,7 @@ func New(cfg Config) *Explainer {
 		th:      NewThrottle(cfg.Cooldown, cfg.Budget),
 		jobs:    make(chan job, queueSize),
 		done:    make(chan struct{}),
+		primed:  map[string]bool{},
 		latest:  map[string]Explanation{},
 	}
 }
@@ -181,20 +193,26 @@ func (e *Explainer) Close() {
 // clean-to-flagged transition, which the per-object cooldown absorbs: a second
 // finding minutes later is inside the cooldown, and a new failure mode an hour
 // later is an escalation that deserves a fresh explanation.
-func (e *Explainer) Consider(d watchstate.Delta, cluster clusterhealth.ClusterHealth,
+func (e *Explainer) Consider(clusterName string, d watchstate.Delta, health clusterhealth.ClusterHealth,
 	flagged []inventory.Workload, serviceIssues []svchealth.Issue, now time.Time) {
 	if e == nil {
 		return
 	}
 	// The first reconcile is the initial snapshot, not a set of transitions.
 	// Explaining it would spend the whole budget on pre-existing problems every
-	// time the daemon restarts.
-	if !e.primed {
-		e.primed = true
+	// time the daemon restarts. That is true per cluster, not process-wide:
+	// every clusterWorker reaches its OWN first reconcile independently of the
+	// others, each with its own pre-existing backlog in Delta.New, so the skip
+	// is keyed by clusterName rather than being a single Explainer-wide bool.
+	e.mu.Lock()
+	primed := e.primed[clusterName]
+	e.primed[clusterName] = true
+	e.mu.Unlock()
+	if !primed {
 		return
 	}
 
-	for _, obj := range objectsFrom(d.New) {
+	for _, obj := range objectsFrom(clusterName, d.New) {
 		if !e.th.Allow(obj.key, now) {
 			continue
 		}
@@ -202,7 +220,7 @@ func (e *Explainer) Consider(d watchstate.Delta, cluster clusterhealth.ClusterHe
 			obj:         obj.obj,
 			issues:      obj.issues,
 			firingSince: obj.firingSince,
-			prompt:      explain.BuildIncidentPrompt(obj.obj.String(), obj.issues, cluster, flagged, serviceIssues),
+			prompt:      explain.BuildIncidentPrompt(obj.obj.String(), obj.issues, health, flagged, serviceIssues),
 		}
 		select {
 		case e.jobs <- j:
@@ -210,8 +228,12 @@ func (e *Explainer) Consider(d watchstate.Delta, cluster clusterhealth.ClusterHe
 			// Admitted but not run: the token and the cooldown stamp are
 			// already spent. Counted separately from a throttle refusal
 			// because the cause and the operator's response differ — a full
-			// queue means the endpoint is slow, not that policy said no.
+			// queue means the endpoint is slow, not that policy said no. The
+			// send above never blocks (there is always a default case), so
+			// this lock is held only long enough to bump one counter.
+			e.mu.Lock()
 			e.dropped++
+			e.mu.Unlock()
 			log.Printf("kubeagent: explanation queue full, dropped %s", obj.obj)
 		}
 	}
@@ -241,12 +263,13 @@ func (e *Explainer) Stats(now time.Time) Stats {
 	allowed, throttled := e.th.Counters()
 	e.mu.Lock()
 	failed := e.failed
+	dropped := e.dropped
 	e.mu.Unlock()
 	return Stats{
 		Allowed:         allowed,
 		Throttled:       throttled,
 		Failed:          failed,
-		Dropped:         e.dropped,
+		Dropped:         dropped,
 		BudgetRemaining: e.th.Remaining(now),
 	}
 }
@@ -274,7 +297,8 @@ func (e *Explainer) run(ctx context.Context, j job) {
 
 	now := time.Now()
 	e.store(Explanation{
-		Kind: j.obj.Kind, Namespace: j.obj.Namespace, Name: j.obj.Name,
+		Cluster: j.obj.Cluster,
+		Kind:    j.obj.Kind, Namespace: j.obj.Namespace, Name: j.obj.Name,
 		Issues: j.issues, ExplainedAt: now, Model: e.model, Text: text,
 	})
 	if e.notify != nil {
@@ -299,7 +323,7 @@ func (e *Explainer) store(x Explanation) {
 			delete(e.latest, k)
 		}
 	}
-	key := x.Kind + "/" + x.Namespace + "/" + x.Name
+	key := x.Cluster + "/" + x.Kind + "/" + x.Namespace + "/" + x.Name
 	if _, replacing := e.latest[key]; !replacing {
 		for len(e.latest) >= maxLatest {
 			oldestKey, oldestAt := "", time.Time{}
@@ -324,17 +348,19 @@ type objectRef struct {
 
 // objectsFrom folds per-issue records into one entry per object, in a stable
 // order so a storm produces a deterministic admission sequence rather than one
-// that depends on map iteration.
-func objectsFrom(records []watchstate.Record) []objectRef {
+// that depends on map iteration. The cluster is part of the key: one Explainer
+// serves every cluster, so two clusters running the same namespace and name
+// would otherwise share a cooldown slot.
+func objectsFrom(cluster string, records []watchstate.Record) []objectRef {
 	index := map[string]*objectRef{}
 	var order []string
 	for _, r := range records {
-		key := r.Key.Kind + "/" + r.Key.Namespace + "/" + r.Key.Name
+		key := cluster + "/" + r.Key.Kind + "/" + r.Key.Namespace + "/" + r.Key.Name
 		ref, ok := index[key]
 		if !ok {
 			ref = &objectRef{
 				key: key,
-				obj: alertstate.Object{Kind: r.Key.Kind, Namespace: r.Key.Namespace, Name: r.Key.Name},
+				obj: alertstate.Object{Cluster: cluster, Kind: r.Key.Kind, Namespace: r.Key.Namespace, Name: r.Key.Name},
 			}
 			index[key] = ref
 			order = append(order, key)

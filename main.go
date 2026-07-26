@@ -61,7 +61,7 @@ func run(args []string) error {
 		return runWatch(args[1:])
 	}
 	if len(args) == 0 || args[0] != "scan" {
-		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--investigate] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--kubelet-health] [--control-plane-health] [--dns-health] [--certs [--cert-warn-days n]] [--logs] [--node-heartbeat-threshold dur] [--expected-nodes a,b,…] [--fix [--dry-run|--yes] [--audit-log path]] [--rollback --audit-log path] | kubeagent watch [--kubeconfig path] [--context name] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] [--alert-format json|slack|alertmanager] [--alert-repeat dur] [--slo-target pct] [--explain [--explain-cooldown dur] [--explain-budget n] [--model name]] | kubeagent version")
+		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--investigate] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--kubelet-health] [--control-plane-health] [--dns-health] [--certs [--cert-warn-days n]] [--logs] [--node-heartbeat-threshold dur] [--expected-nodes a,b,…] [--fix [--dry-run|--yes] [--audit-log path]] [--rollback --audit-log path] | kubeagent watch [--kubeconfig path] [--context name (repeatable)] [--cluster-name name] [--include-local] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] [--alert-format json|slack|alertmanager] [--alert-repeat dur] [--slo-target pct] [--explain [--explain-cooldown dur] [--explain-budget n] [--model name]] | kubeagent version")
 	}
 
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
@@ -308,10 +308,51 @@ func resultInput(res scan.Result) report.Input {
 // can cancel.
 var watchRun = watch.Run
 
+// contextList collects a repeatable --context flag: one occurrence per cluster
+// the daemon should watch.
+type contextList []string
+
+func (c *contextList) String() string { return strings.Join(*c, ",") }
+
+func (c *contextList) Set(v string) error {
+	if v == "" {
+		return fmt.Errorf("--context cannot be empty")
+	}
+	*c = append(*c, v)
+	return nil
+}
+
+// buildTargets resolves the flags to the clusters the daemon will watch.
+// Building a client contacts no API server, so a failure here is a
+// configuration error — a misspelled context — and it is fatal: an operator who
+// asked for three clusters and silently got two is worse off than one whose
+// daemon refused to start.
+func buildTargets(kubeconfig, clusterName string, contexts []string, includeLocal bool) ([]watch.Target, error) {
+	var targets []watch.Target
+	if len(contexts) == 0 || includeLocal {
+		client, err := cluster.NewInClusterOrKubeconfig(kubeconfig, "")
+		if err != nil {
+			return nil, err
+		}
+		targets = append(targets, watch.Target{Name: clusterName, Client: client})
+	}
+	for _, name := range contexts {
+		client, err := cluster.NewClient(kubeconfig, name)
+		if err != nil {
+			return nil, err
+		}
+		targets = append(targets, watch.Target{Name: name, Client: client})
+	}
+	return targets, nil
+}
+
 func runWatch(args []string) error {
 	fs := flag.NewFlagSet("watch", flag.ContinueOnError)
 	kubeconfig := fs.String("kubeconfig", "", "path to kubeconfig for local dev (ignored in-cluster)")
-	contextName := fs.String("context", "", "kubeconfig context for local dev")
+	var contexts contextList
+	fs.Var(&contexts, "context", "kubeconfig context to watch; repeat the flag to watch several clusters from one daemon")
+	clusterName := fs.String("cluster-name", envOr("KUBEAGENT_CLUSTER_NAME", "local"), "name for the default cluster — the one watched when no --context is given; becomes its `cluster` metric label")
+	includeLocal := fs.Bool("include-local", envBool("KUBEAGENT_INCLUDE_LOCAL", false), "also watch the default cluster alongside every --context (no-op when no --context is given)")
 	metricsAddr := fs.String("metrics-addr", envOr("KUBEAGENT_METRICS_ADDR", ":8080"), "address for /metrics, /healthz, /readyz")
 	heartbeat := fs.Duration("heartbeat", envDur("KUBEAGENT_HEARTBEAT", 60*time.Second), "safety-net full re-evaluation interval")
 	debounce := fs.Duration("debounce", envDur("KUBEAGENT_DEBOUNCE", 2*time.Second), "coalescing window for change events")
@@ -394,14 +435,14 @@ func runWatch(args []string) error {
 		sloRatio = exact
 	}
 
-	client, err := cluster.NewInClusterOrKubeconfig(*kubeconfig, *contextName)
+	targets, err := buildTargets(*kubeconfig, *clusterName, contexts, *includeLocal)
 	if err != nil {
 		return err
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return watchRun(ctx, client, watch.Config{
+	return watchRun(ctx, targets, watch.Config{
 		Namespace:               namespace,
 		MetricsAddr:             *metricsAddr,
 		Heartbeat:               *heartbeat,

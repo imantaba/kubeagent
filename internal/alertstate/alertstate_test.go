@@ -171,13 +171,13 @@ func TestRoll_FlappingPropagatesFromAnyIssue(t *testing.T) {
 }
 
 func TestRoll_MultipleObjectsSortedAndIndependent(t *testing.T) {
-	r := New(Options{Repeat: time.Hour})
+	r := New(Options{Repeat: time.Hour, Cluster: "local"})
 	got := r.Roll([]watchstate.Record{
 		rec("Node", "", "worker-2", "KubeletUnhealthy", base),
 		rec("Deployment", "shop", "web", "Degraded", base),
 		rec("Deployment", "api", "gateway", "Degraded", base),
 	}, base)
-	want := []string{"Deployment/api/gateway", "Deployment/shop/web", "Node/worker-2"}
+	want := []string{"local/Deployment/api/gateway", "local/Deployment/shop/web", "local/Node/worker-2"}
 	if len(got) != len(want) {
 		t.Fatalf("got %d notifications, want %d: %+v", len(got), len(want), got)
 	}
@@ -192,8 +192,8 @@ func TestRoll_MultipleObjectsSortedAndIndependent(t *testing.T) {
 		rec("Node", "", "worker-2", "KubeletUnhealthy", base),
 		rec("Deployment", "shop", "web", "Degraded", base),
 	}, base.Add(time.Minute))
-	if len(next) != 1 || next[0].Status != StatusResolved || next[0].Object.String() != "Deployment/api/gateway" {
-		t.Fatalf("got %+v, want only Deployment/api/gateway resolved", next)
+	if len(next) != 1 || next[0].Status != StatusResolved || next[0].Object.String() != "local/Deployment/api/gateway" {
+		t.Fatalf("got %+v, want only local/Deployment/api/gateway resolved", next)
 	}
 }
 
@@ -226,5 +226,36 @@ func TestRoll_DuplicateIssuesCollapse(t *testing.T) {
 	}, base)
 	if len(got) != 1 || len(got[0].Issues) != 1 {
 		t.Fatalf("got %+v, want one notification carrying one issue", got)
+	}
+}
+
+func TestObjectStringNamesTheCluster(t *testing.T) {
+	namespaced := Object{Cluster: "prod-eu", Kind: "Deployment", Namespace: "shop", Name: "web"}
+	if got, want := namespaced.String(), "prod-eu/Deployment/shop/web"; got != want {
+		t.Errorf("String() = %q, want %q", got, want)
+	}
+	clusterScoped := Object{Cluster: "prod-eu", Kind: "Node", Name: "worker-2"}
+	if got, want := clusterScoped.String(), "prod-eu/Node/worker-2"; got != want {
+		t.Errorf("String() = %q, want %q", got, want)
+	}
+}
+
+// TestRollerStampsItsCluster pins the boundary rule: watchstate.Key carries no
+// cluster, because each cluster gets its own tracker and roller. The roller is
+// what turns a cluster-free key into a cluster-qualified alert, so if it stops
+// stamping, two clusters' alerts for the same object name collapse into one.
+func TestRollerStampsItsCluster(t *testing.T) {
+	r := New(Options{Cluster: "prod-us"})
+	at := time.Date(2026, 7, 26, 10, 0, 0, 0, time.UTC)
+	ns := r.Roll([]watchstate.Record{{
+		Key:         watchstate.Key{Kind: "Deployment", Namespace: "shop", Name: "web", Issue: "CrashLoopBackOff"},
+		FiringSince: at,
+		LastSeen:    at,
+	}}, at)
+	if len(ns) != 1 {
+		t.Fatalf("Roll returned %d notifications, want 1", len(ns))
+	}
+	if got := ns[0].Object.Cluster; got != "prod-us" {
+		t.Errorf("Object.Cluster = %q, want %q", got, "prod-us")
 	}
 }

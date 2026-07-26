@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `watch --explain`: opt-in, rate-limited on-incident explanations. When an
+  object breaks, the daemon sends a second, model-written message a few seconds
+  after the page — likely cause, how to confirm, and the deterministic fix.
+  The alert itself still fires immediately and LLM-free; the explanation rides
+  the same webhook sink, so retry, backoff and URL redaction all apply
+  unchanged. New flags `--explain-cooldown` (default `1h`) and
+  `--explain-budget` (default `20`/hour) bound the spend, a new
+  `/explanations` endpoint serves the latest explanation per object, and five
+  `kubeagent_explain_*` series make throttling visible. Works with a local
+  OpenAI-compatible model via `KUBEAGENT_EXPLAIN_ENDPOINT`.
+- Helm: `explain.*` values, with the API key wired from a Secret via
+  `secretKeyRef`. The chart refuses to render if explanations are enabled
+  without one.
+
+### Changed
+
+- The watch daemon's package documentation no longer claims "no LLM". It stays
+  strictly read-only toward the cluster: `--explain` adds no cluster read and no
+  RBAC verb, because the model sees only findings the daemon had already
+  collected.
+
 ## [0.57.0] - 2026-07-26
 
 ### Added

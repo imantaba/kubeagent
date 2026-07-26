@@ -6,9 +6,13 @@ same deterministic diagnosis `scan` produces — as Prometheus metrics and
 structured logs.
 
 !!! note
-    Watch mode is **strictly read-only**: its RBAC grants only `get`, `list`,
-    and `watch` — it can never create, update, patch, or delete anything. It
-    makes **no LLM calls** and works fully offline.
+    Watch mode is **strictly read-only toward the cluster**: its RBAC grants
+    only `get`, `list`, and `watch` — it can never create, update, patch, or
+    delete anything. That holds in every configuration. It makes **no LLM
+    calls and works fully offline** unless you opt into
+    [`--explain`](#on-incident-explanations-explain), which sends findings the
+    daemon already collected — never pod specs, secrets, or logs — to a model
+    over outbound HTTP.
 
 ## How it evaluates
 
@@ -488,6 +492,113 @@ firing condition straight into a Prometheus rule:
     summary: "Error budget burning fast (fast burn {{ $value }}x)"
 ```
 
+## On-incident explanations (`--explain`)
+
+Off by default. When enabled, an object that breaks gets a second, model-written
+message a few seconds after its page: what likely caused it, how to confirm, and
+the deterministic fix kubeagent already computed.
+
+```bash
+export ANTHROPIC_API_KEY=<PLACEHOLDER>
+kubeagent watch --explain --explain-budget 20 --explain-cooldown 1h
+```
+
+There is no `--explain-api-key` flag, on purpose — a process argument is
+world-readable via `/proc`. The key reaches the daemon only through an
+environment variable: `ANTHROPIC_API_KEY` (read directly by the Anthropic SDK),
+or `KUBEAGENT_EXPLAIN_API_KEY` as the bearer token when
+`KUBEAGENT_EXPLAIN_ENDPOINT` points at a local model instead.
+
+The alert itself never waits on the model. It fires immediately and LLM-free,
+exactly as it does without this flag; the explanation is enqueued separately
+through the same webhook sink, referencing the same object, so it lands under
+the original page.
+
+### What the model sees
+
+The object that broke, the other workloads currently flagged, the cluster
+verdict, and the correlation hints kubeagent already computed — so it can say
+"one of twelve workloads failing to pull from the same registry" rather than
+guessing from one object in isolation.
+
+It does **not** see pod specs, environment variables, ConfigMap or Secret
+contents, pod names, pod IPs, node names, or logs. Enabling `--explain` adds no
+cluster read and no RBAC verb: the daemon sends only findings it had already
+collected.
+
+### Cost control
+
+Two limits, for two different ways spend runs away:
+
+| Limit | Default | Guards against |
+|-------|---------|-----------------|
+| `--explain-cooldown` | `1h` | one flapping object being re-explained every reconcile |
+| `--explain-budget` | `20`/hour | a mass outage where many distinct objects break at once |
+
+The budget is a token bucket whose capacity equals its hourly rate, so a real
+mass outage gets its whole allowance at once and then drips. The cooldown is
+checked first, since it costs nothing to check; only a call the throttle
+actually allows gets stamped. Over budget, the call is skipped rather than
+queued — a stale explanation is worse than none — and the skip is counted. A
+restart explains nothing from its first snapshot, so a crash-looping daemon
+cannot spend its budget re-explaining pre-existing problems.
+
+Five series render only while `--explain` is on:
+
+| Metric | Meaning |
+|--------|---------|
+| `kubeagent_explain_allowed_total` | Incident explanations the throttle admitted since start |
+| `kubeagent_explain_throttled_total` | Incident explanations refused by the cooldown or the hourly budget |
+| `kubeagent_explain_failed_total` | Incident explanations whose model call errored or returned no text |
+| `kubeagent_explain_dropped_total` | Incident explanations admitted but dropped because the worker queue was full |
+| `kubeagent_explain_budget_remaining` | Model calls left in the hourly budget |
+
+Watch `kubeagent_explain_budget_remaining` to see why an incident went
+unexplained.
+
+### `/explanations`
+
+The latest explanation per object, alongside the counters:
+
+```bash
+curl -s localhost:8080/explanations | jq .
+```
+
+With `--explain` off, this still returns the same shape — an empty explanation
+list and zeroed counters — rather than `404`, the same contract `/issues`
+follows.
+
+This is model-written prose about your failures, served on the same
+unauthenticated metrics port as `/issues`. Same sensitivity class as `/issues`,
+but worth knowing before you enable it.
+
+### With a local model
+
+No data leaves your network:
+
+```bash
+export KUBEAGENT_EXPLAIN_ENDPOINT=http://ollama.llm.svc.cluster.local:11434/v1
+kubeagent watch --explain --model llama3.1
+```
+
+`--model` (or `KUBEAGENT_MODEL`) is required once `KUBEAGENT_EXPLAIN_ENDPOINT`
+is set — a local endpoint has no default model name to fall back to.
+
+### In the chart
+
+The API key is never a chart value — a values file lands in Git, in
+`helm get values`, and in CI logs. Create a Secret and name it:
+
+```bash
+kubectl -n kubeagent create secret generic kubeagent-llm --from-literal=apiKey=<PLACEHOLDER>
+helm upgrade --install kubeagent deploy/helm/kubeagent \
+  --set explain.enabled=true --set explain.existingSecret=kubeagent-llm
+```
+
+The chart refuses to render if `explain.enabled` is true with no local
+`explain.endpoint` and no `explain.existingSecret` set — the API key must come
+from a Secret, never from `values.yaml`.
+
 ## Run it
 
 ```bash
@@ -540,8 +651,7 @@ annotations) and alert on the gauges directly, e.g.:
 
 ## Roadmap
 
-Watch mode is the first phase of the daemon roadmap. Planned next, each as its
-own guarded step: multi-cluster (an agent per cluster reporting to a hub),
-on-incident `--explain` (rate-limited, key via a Secret — never in the hot
-loop), and opt-in autonomous remediation with stricter rails than the
-interactive `--fix`.
+On-incident `--explain` has shipped — see
+[above](#on-incident-explanations-explain). Watch mode's remaining roadmap:
+multi-cluster (an agent per cluster reporting to a hub) and opt-in autonomous
+remediation with stricter rails than the interactive `--fix`.

@@ -48,6 +48,20 @@ spec:
             {{- end }}
             - "--slo-target={{ $target }}"
             {{- end }}
+            {{- if .Values.explain.enabled }}
+            {{- if and (not .Values.explain.endpoint) (not .Values.explain.existingSecret) }}
+            {{- fail "explain.existingSecret is required when explain.enabled is true and explain.endpoint is empty (the API key must come from a Secret, never from values.yaml)" }}
+            {{- end }}
+            {{- if and .Values.explain.endpoint (not .Values.explain.model) }}
+            {{- fail "explain.model is required when explain.endpoint is set (a local endpoint has no default model name)" }}
+            {{- end }}
+            - "--explain"
+            - "--explain-cooldown={{ .Values.explain.cooldown }}"
+            - "--explain-budget={{ .Values.explain.budget }}"
+            {{- if .Values.explain.model }}
+            - "--model={{ .Values.explain.model }}"
+            {{- end }}
+            {{- end }}
           env:
             - name: KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS
               value: {{ .Values.webhookLatency.timeoutThreshold | quote }}
@@ -83,6 +97,25 @@ spec:
                 secretKeyRef:
                   name: {{ required "alerts.existingSecret is required when alerts.enabled is true" .Values.alerts.existingSecret | quote }}
                   key: {{ .Values.alerts.secretKey | quote }}
+            {{- end }}
+            {{- if .Values.explain.enabled }}
+            {{- if .Values.explain.endpoint }}
+            - name: KUBEAGENT_EXPLAIN_ENDPOINT
+              value: {{ .Values.explain.endpoint | quote }}
+            {{- if .Values.explain.existingSecret }}
+            - name: KUBEAGENT_EXPLAIN_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.explain.existingSecret | quote }}
+                  key: {{ .Values.explain.secretKey | quote }}
+            {{- end }}
+            {{- else }}
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.explain.existingSecret | quote }}
+                  key: {{ .Values.explain.secretKey | quote }}
+            {{- end }}
             {{- end }}
           ports:
             - name: metrics

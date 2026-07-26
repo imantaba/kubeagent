@@ -24,7 +24,7 @@ import (
 var sloBase = time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
 
 func TestRender_OmitsSLOSeriesWhenDisabled(t *testing.T) {
-	m := newMetrics()
+	m := newMetrics([]string{"local"})
 	out := m.render()
 	if strings.Contains(out, "kubeagent_slo_") {
 		t.Error("SLO series rendered while SLO tracking is off; --slo-target unset must mean no series")
@@ -32,20 +32,20 @@ func TestRender_OmitsSLOSeriesWhenDisabled(t *testing.T) {
 }
 
 func TestRender_SLOSeries(t *testing.T) {
-	m := newMetrics()
-	m.updateSLO(true, 0.999,
+	m := newMetrics([]string{"local"})
+	m.updateSLO("local", true, 0.999,
 		slo.Report{Window: slo.Fast, Availability: 0.99, BurnRate: 10, Coverage: 1},
 		slo.Report{Window: slo.Slow, Availability: 0.995, BurnRate: 5, Coverage: 0.75},
 	)
 	out := m.render()
 	for _, want := range []string{
-		"kubeagent_slo_target_ratio 0.999",
-		`kubeagent_slo_availability_ratio{window="fast"} 0.99`,
-		`kubeagent_slo_availability_ratio{window="slow"} 0.995`,
-		`kubeagent_slo_burn_rate{window="fast"} 10`,
-		`kubeagent_slo_burn_rate{window="slow"} 5`,
-		`kubeagent_slo_window_coverage_ratio{window="fast"} 1`,
-		`kubeagent_slo_window_coverage_ratio{window="slow"} 0.75`,
+		`kubeagent_slo_target_ratio{cluster="local"} 0.999`,
+		`kubeagent_slo_availability_ratio{cluster="local",window="fast"} 0.99`,
+		`kubeagent_slo_availability_ratio{cluster="local",window="slow"} 0.995`,
+		`kubeagent_slo_burn_rate{cluster="local",window="fast"} 10`,
+		`kubeagent_slo_burn_rate{cluster="local",window="slow"} 5`,
+		`kubeagent_slo_window_coverage_ratio{cluster="local",window="fast"} 1`,
+		`kubeagent_slo_window_coverage_ratio{cluster="local",window="slow"} 0.75`,
 	} {
 		// want must match a complete rendered line, not merely a prefix of one:
 		// render() terminates every sample with "\n", so anchoring on that
@@ -65,8 +65,8 @@ func TestRender_SLOSeries(t *testing.T) {
 // out of sync with the code — it is the most operator-visible artifact of the
 // whole feature, baked into every /metrics scrape.
 func TestRender_SLOAvailabilityHelpTextMatchesThePredicate(t *testing.T) {
-	m := newMetrics()
-	m.updateSLO(true, 0.999,
+	m := newMetrics([]string{"local"})
+	m.updateSLO("local", true, 0.999,
 		slo.Report{Window: slo.Fast, Availability: 0.99, BurnRate: 10, Coverage: 1},
 		slo.Report{Window: slo.Slow, Availability: 0.995, BurnRate: 5, Coverage: 0.75},
 	)
@@ -83,14 +83,14 @@ func TestRender_ErrorBudgetRemaining(t *testing.T) {
 		slowBurn float64
 		want     string
 	}{
-		{"quarter spent", 0.25, "kubeagent_slo_error_budget_remaining_ratio 0.75"},
-		{"exactly spent", 1, "kubeagent_slo_error_budget_remaining_ratio 0"},
-		{"overspent clamps at zero", 12, "kubeagent_slo_error_budget_remaining_ratio 0"},
+		{"quarter spent", 0.25, `kubeagent_slo_error_budget_remaining_ratio{cluster="local"} 0.75`},
+		{"exactly spent", 1, `kubeagent_slo_error_budget_remaining_ratio{cluster="local"} 0`},
+		{"overspent clamps at zero", 12, `kubeagent_slo_error_budget_remaining_ratio{cluster="local"} 0`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			m := newMetrics()
-			m.updateSLO(true, 0.999,
+			m := newMetrics([]string{"local"})
+			m.updateSLO("local", true, 0.999,
 				slo.Report{Window: slo.Fast},
 				slo.Report{Window: slo.Slow, BurnRate: c.slowBurn},
 			)
@@ -109,17 +109,17 @@ func TestRender_SLODoesNotTouchIssueSeries(t *testing.T) {
 	// The burn signal must never inflate the object-issue gauges. An operator
 	// reading kubeagent_issues_active as "how many objects are broken" must not
 	// see a budget breach counted there.
-	m := newMetrics()
-	m.updateSLO(true, 0.999,
+	m := newMetrics([]string{"local"})
+	m.updateSLO("local", true, 0.999,
 		slo.Report{Window: slo.Fast, BurnRate: 50, Coverage: 1},
 		slo.Report{Window: slo.Slow, BurnRate: 50, Coverage: 1},
 	)
 	out := m.render()
 	// Anchored for the same reason as the other assertions in this file:
-	// "kubeagent_issues_active 0" is a literal prefix of "kubeagent_issues_active 0.5",
-	// so an unanchored Contains would not actually catch the gauge moving off
-	// exactly zero.
-	if !strings.Contains(out, "kubeagent_issues_active 0\n") {
+	// "kubeagent_issues_active{cluster="local"} 0" is a literal prefix of
+	// "kubeagent_issues_active{cluster="local"} 0.5", so an unanchored Contains
+	// would not actually catch the gauge moving off exactly zero.
+	if !strings.Contains(out, `kubeagent_issues_active{cluster="local"} 0`+"\n") {
 		t.Error("kubeagent_issues_active moved off zero because of an SLO update")
 	}
 }
@@ -129,8 +129,8 @@ func TestRender_SLODoesNotTouchIssueSeries(t *testing.T) {
 // nothing would notice a sixth kubeagent_slo_* series being added, or one of
 // the five being renamed while a duplicate under the old name lingers behind.
 func TestRender_SLOMetricSet(t *testing.T) {
-	m := newMetrics()
-	m.updateSLO(true, 0.999,
+	m := newMetrics([]string{"local"})
+	m.updateSLO("local", true, 0.999,
 		slo.Report{Window: slo.Fast, Availability: 0.99, BurnRate: 10, Coverage: 1},
 		slo.Report{Window: slo.Slow, Availability: 0.995, BurnRate: 5, Coverage: 0.75},
 	)
@@ -204,8 +204,8 @@ func TestRender_SLOMetricSet(t *testing.T) {
 // comparison instead of substring matching, so a metric name that happens to
 // prefix another (or be prefixed by one) cannot make the count creep.
 func TestRender_SLOMetricHelpTypeCardinality(t *testing.T) {
-	m := newMetrics()
-	m.updateSLO(true, 0.999,
+	m := newMetrics([]string{"local"})
+	m.updateSLO("local", true, 0.999,
 		slo.Report{Window: slo.Fast, Availability: 0.99, BurnRate: 10, Coverage: 1},
 		slo.Report{Window: slo.Slow, Availability: 0.995, BurnRate: 5, Coverage: 0.75},
 	)
@@ -465,7 +465,7 @@ func TestSLONotifier_ResolvedAtZeroWhileFiring(t *testing.T) {
 // down from 1 — either symptom alone catches the mutant, but Coverage's exact
 // value (0, not merely "less than before") is the tightest check.
 func TestApplyResult_ErrorDoesNotSample(t *testing.T) {
-	m := newMetrics()
+	m := newMetrics([]string{defaultClusterName})
 	tr := watchstate.New(watchstate.Options{})
 	sloTr, sloN := newSLOTracker(Config{SLOTarget: 0.999, Heartbeat: time.Minute, AlertRepeat: time.Hour})
 
@@ -512,7 +512,7 @@ func TestApplyResult_ErrorDoesNotSample(t *testing.T) {
 // TestApplyResult_SLODisabledIsInert proves the nil path: with SLOTarget unset
 // the reconcile loop must not panic and must render no SLO series.
 func TestApplyResult_SLODisabledIsInert(t *testing.T) {
-	m := newMetrics()
+	m := newMetrics([]string{defaultClusterName})
 	tr := watchstate.New(watchstate.Options{})
 	sloTr, sloN := newSLOTracker(Config{Heartbeat: time.Minute})
 	if sloTr != nil || sloN != nil {
@@ -576,7 +576,7 @@ func TestApplyResult_ConcurrentWithRender(t *testing.T) {
 	log.SetOutput(io.Discard)
 	defer log.SetOutput(os.Stderr)
 
-	m := newMetrics()
+	m := newMetrics([]string{defaultClusterName})
 	tr := watchstate.New(watchstate.Options{})
 	sloTr, sloN := newSLOTracker(Config{SLOTarget: 0.999, Heartbeat: time.Minute, AlertRepeat: time.Hour})
 
@@ -609,7 +609,7 @@ func TestApplyResult_ConcurrentWithRender(t *testing.T) {
 // pointers, as applyResult does, keeps the mismatched-pair case inert instead
 // of a crash.
 func TestApplyResult_MismatchedSLOPairDoesNotPanic(t *testing.T) {
-	m := newMetrics()
+	m := newMetrics([]string{defaultClusterName})
 	tr := watchstate.New(watchstate.Options{})
 	sloTr, _ := newSLOTracker(Config{SLOTarget: 0.999, Heartbeat: time.Minute, AlertRepeat: time.Hour})
 
@@ -633,7 +633,7 @@ func TestApplyResult_MismatchedSLOPairDoesNotPanic(t *testing.T) {
 // independently at the same instant, rather than against hand-picked
 // constants, ties the assertion to whatever the tracker actually computed.
 func TestApplyResult_FastAndSlowWindowsDoNotSwap(t *testing.T) {
-	m := newMetrics()
+	m := newMetrics([]string{defaultClusterName})
 	tr := watchstate.New(watchstate.Options{})
 	sloTr, sloN := newSLOTracker(Config{SLOTarget: 0.999, Heartbeat: time.Minute, AlertRepeat: time.Hour})
 
@@ -663,13 +663,14 @@ func TestApplyResult_FastAndSlowWindowsDoNotSwap(t *testing.T) {
 		t.Fatal("test setup did not separate fast and slow availability; fixture needs adjusting")
 	}
 
-	if m.slo.Fast.Availability != wantFast.Availability {
+	got := m.clusters[defaultClusterName].slo
+	if got.Fast.Availability != wantFast.Availability {
 		t.Errorf("m.slo.Fast.Availability = %v, want %v (sloTr's fast report): applyResult must pass v.Fast into the fast slot",
-			m.slo.Fast.Availability, wantFast.Availability)
+			got.Fast.Availability, wantFast.Availability)
 	}
-	if m.slo.Slow.Availability != wantSlow.Availability {
+	if got.Slow.Availability != wantSlow.Availability {
 		t.Errorf("m.slo.Slow.Availability = %v, want %v (sloTr's slow report): applyResult must pass v.Slow into the slow slot",
-			m.slo.Slow.Availability, wantSlow.Availability)
+			got.Slow.Availability, wantSlow.Availability)
 	}
 }
 
@@ -688,7 +689,7 @@ func TestApplyResult_FastAndSlowWindowsDoNotSwap(t *testing.T) {
 // kubeagent_slo_target_ratio renders (or does not) purely on the strength of
 // the enabled flag applyResult passes through.
 func TestApplyResult_RendersSLOSeriesThroughTheRealPath(t *testing.T) {
-	m := newMetrics()
+	m := newMetrics([]string{defaultClusterName})
 	tr := watchstate.New(watchstate.Options{})
 	sloTr, sloN := newSLOTracker(Config{SLOTarget: 0.999, Heartbeat: time.Minute, AlertRepeat: time.Hour})
 
@@ -705,7 +706,7 @@ func TestApplyResult_RendersSLOSeriesThroughTheRealPath(t *testing.T) {
 	// TestRender_SLOSeries: "0.999" ending the line is exactly the configured
 	// target, but an unanchored Contains would also pass against an unrelated
 	// rendered value that merely starts with it.
-	want := "kubeagent_slo_target_ratio 0.999\n"
+	want := `kubeagent_slo_target_ratio{cluster="local"} 0.999` + "\n"
 	if !strings.Contains(out, want) {
 		t.Errorf("applyResult with SLO tracking enabled did not render %q through the real m.updateSLO call site; got:\n%s", want, out)
 	}

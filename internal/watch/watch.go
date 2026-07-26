@@ -115,7 +115,7 @@ func Run(ctx context.Context, client kubernetes.Interface, cfg Config) error {
 	}
 	defer func() { noteTeardown("stopExplain"); stopExplain() }()
 
-	m := newMetrics()
+	m := newMetrics([]string{defaultClusterName})
 
 	srv := &http.Server{Addr: cfg.MetricsAddr, Handler: m.handler()}
 	go func() {
@@ -180,7 +180,7 @@ func Run(ctx context.Context, client kubernetes.Interface, cfg Config) error {
 		applyResult(m, tr, al, ex, sloTr, sloN, &res, time.Since(start), time.Now(), err)
 	}
 	reconcile() // initial snapshot
-	m.markReady()
+	m.markReady(defaultClusterName)
 
 	heartbeat := time.NewTicker(cfg.Heartbeat)
 	defer heartbeat.Stop()
@@ -343,7 +343,7 @@ func newAlerter(ctx context.Context, cfg Config) (*alerter, error) {
 // both set), but the signature does not enforce that, so both are checked here
 // rather than trusting the pairing: sloN.step on a nil sloN would panic.
 func applyResult(m *metrics, tr *watchstate.Tracker, al *alerter, ex *oncall.Explainer, sloTr *slo.Tracker, sloN *sloNotifier, res *scan.Result, dur time.Duration, now time.Time, err error) {
-	m.update(res, dur, now, err)
+	m.update(defaultClusterName, res, dur, now, err)
 	if err != nil {
 		log.Printf("kubeagent: evaluation error: %v", err)
 		return
@@ -357,13 +357,13 @@ func applyResult(m *metrics, tr *watchstate.Tracker, al *alerter, ex *oncall.Exp
 		c := res.Inventory.Census
 		sloTr.Observe(c.Good, c.Total, now)
 		v := sloTr.Verdict(now)
-		m.updateSLO(true, sloTr.Target(), v.Fast, v.Slow)
+		m.updateSLO(defaultClusterName, true, sloTr.Target(), v.Fast, v.Slow)
 		if n, ok := sloN.step(v, now); ok {
 			logSLO(n, v)
 			al.enqueue(n)
 		}
 	}
-	m.updateIssues(tr, now)
+	m.updateIssues(defaultClusterName, tr, now)
 	m.updateAlerts(al.stats())
 	m.updateExplain(ex != nil, ex.Stats(now), ex.Latest())
 	logDelta(res, d, len(tr.Active()), tr.FlapWindow())

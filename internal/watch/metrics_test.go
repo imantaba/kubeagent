@@ -88,36 +88,36 @@ func sampleResult() *scan.Result {
 }
 
 func TestMetrics_RenderReflectsResult(t *testing.T) {
-	m := newMetrics()
-	m.update(sampleResult(), 150*time.Millisecond, time.Unix(1000, 0), nil)
+	m := newMetrics([]string{"local"})
+	m.update("local", sampleResult(), 150*time.Millisecond, time.Unix(1000, 0), nil)
 	out := m.render()
 	for _, want := range []string{
-		"kubeagent_cluster_healthy 0",
-		"kubeagent_nodes_ready 2",
-		"kubeagent_nodes_total 3",
-		"kubeagent_workloads_flagged 1",
-		`kubeagent_findings{issue="CrashLoopBackOff"} 1`,
-		"kubeagent_nodes_without_reservations 1",
-		"kubeagent_nodes_stale_heartbeat 1",
-		"kubeagent_pvcs_reclaim_delete 2",
-		"kubeagent_scans_total 1",
-		`kubeagent_node_fs_usage_ratio{node="n1"} 0.84`,
-		"kubeagent_volumes_over_disk_threshold 1",
-		"kubeagent_ingress_route_issues 1",
-		"kubeagent_service_issues 1",
-		"kubeagent_pvc_pending_issues 1",
-		"kubeagent_resources_stuck_terminating 1",
-		"kubeagent_pdb_blocking_issues 1",
-		"kubeagent_hpa_scaling_issues 1",
-		"kubeagent_admission_webhooks_failing 1",
-		"kubeagent_admission_webhook_latency_risks 1",
-		"kubeagent_resourcequota_issues 1",
-		"kubeagent_nodes_expected_absent 1",
-		"kubeagent_kubelet_unhealthy 1",
-		"kubeagent_control_plane_unhealthy 1",
-		"kubeagent_dns_servfail_ratio 0.12",
-		"kubeagent_certificates_expired 1",
-		"kubeagent_certificates_expiring 1",
+		`kubeagent_cluster_healthy{cluster="local"} 0`,
+		`kubeagent_nodes_ready{cluster="local"} 2`,
+		`kubeagent_nodes_total{cluster="local"} 3`,
+		`kubeagent_workloads_flagged{cluster="local"} 1`,
+		`kubeagent_findings{cluster="local",issue="CrashLoopBackOff"} 1`,
+		`kubeagent_nodes_without_reservations{cluster="local"} 1`,
+		`kubeagent_nodes_stale_heartbeat{cluster="local"} 1`,
+		`kubeagent_pvcs_reclaim_delete{cluster="local"} 2`,
+		`kubeagent_scans_total{cluster="local"} 1`,
+		`kubeagent_node_fs_usage_ratio{cluster="local",node="n1"} 0.84`,
+		`kubeagent_volumes_over_disk_threshold{cluster="local"} 1`,
+		`kubeagent_ingress_route_issues{cluster="local"} 1`,
+		`kubeagent_service_issues{cluster="local"} 1`,
+		`kubeagent_pvc_pending_issues{cluster="local"} 1`,
+		`kubeagent_resources_stuck_terminating{cluster="local"} 1`,
+		`kubeagent_pdb_blocking_issues{cluster="local"} 1`,
+		`kubeagent_hpa_scaling_issues{cluster="local"} 1`,
+		`kubeagent_admission_webhooks_failing{cluster="local"} 1`,
+		`kubeagent_admission_webhook_latency_risks{cluster="local"} 1`,
+		`kubeagent_resourcequota_issues{cluster="local"} 1`,
+		`kubeagent_nodes_expected_absent{cluster="local"} 1`,
+		`kubeagent_kubelet_unhealthy{cluster="local"} 1`,
+		`kubeagent_control_plane_unhealthy{cluster="local"} 1`,
+		`kubeagent_dns_servfail_ratio{cluster="local"} 0.12`,
+		`kubeagent_certificates_expired{cluster="local"} 1`,
+		`kubeagent_certificates_expiring{cluster="local"} 1`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("metrics missing %q in:\n%s", want, out)
@@ -126,26 +126,26 @@ func TestMetrics_RenderReflectsResult(t *testing.T) {
 }
 
 func TestMetrics_UpdateErrorKeepsLastGoodAndCountsError(t *testing.T) {
-	m := newMetrics()
-	m.update(sampleResult(), time.Millisecond, time.Unix(1000, 0), nil)
-	m.update(nil, time.Millisecond, time.Unix(1001, 0), errors.New("boom"))
+	m := newMetrics([]string{"local"})
+	m.update("local", sampleResult(), time.Millisecond, time.Unix(1000, 0), nil)
+	m.update("local", nil, time.Millisecond, time.Unix(1001, 0), errors.New("boom"))
 	out := m.render()
-	if !strings.Contains(out, "kubeagent_scan_errors_total 1") {
+	if !strings.Contains(out, `kubeagent_scan_errors_total{cluster="local"} 1`) {
 		t.Errorf("expected error counter, got:\n%s", out)
 	}
-	if !strings.Contains(out, "kubeagent_workloads_flagged 1") {
+	if !strings.Contains(out, `kubeagent_workloads_flagged{cluster="local"} 1`) {
 		t.Errorf("error update must preserve last-good gauges, got:\n%s", out)
 	}
 }
 
 func TestMetrics_ReadyzGate(t *testing.T) {
-	m := newMetrics()
+	m := newMetrics([]string{"local"})
 	srv := httptest.NewServer(m.handler())
 	defer srv.Close()
 	if code := get(t, srv.URL+"/readyz"); code != http.StatusServiceUnavailable {
 		t.Errorf("readyz before ready: want 503, got %d", code)
 	}
-	m.markReady()
+	m.markReady("local")
 	if code := get(t, srv.URL+"/readyz"); code != http.StatusOK {
 		t.Errorf("readyz after ready: want 200, got %d", code)
 	}
@@ -179,46 +179,46 @@ func trackerWithFixture() (*watchstate.Tracker, time.Time) {
 }
 
 func TestMetrics_RendersIssueSeries(t *testing.T) {
-	m := newMetrics()
+	m := newMetrics([]string{"local"})
 	tr, at := trackerWithFixture()
-	m.updateIssues(tr, at)
+	m.updateIssues("local", tr, at)
 	out := m.render()
 	for _, want := range []string{
-		"kubeagent_issues_active 1",
-		"kubeagent_issues_flapping 0",
-		"kubeagent_issues_new_total 2",
-		"kubeagent_issues_resolved_total 1",
-		"kubeagent_issues_flapping_total 0",
-		"kubeagent_issues_dropped_total 0",
-		"kubeagent_issue_resolution_seconds_sum 30",
-		"kubeagent_issue_resolution_seconds_count 1",
-		`kubeagent_issue_active{kind="Deployment",namespace="prod",name="api",issue="CrashLoopBackOff"} 1`,
-		`kubeagent_issue_age_seconds{kind="Deployment",namespace="prod",name="api",issue="CrashLoopBackOff"} 60`,
+		`kubeagent_issues_active{cluster="local"} 1`,
+		`kubeagent_issues_flapping{cluster="local"} 0`,
+		`kubeagent_issues_new_total{cluster="local"} 2`,
+		`kubeagent_issues_resolved_total{cluster="local"} 1`,
+		`kubeagent_issues_flapping_total{cluster="local"} 0`,
+		`kubeagent_issues_dropped_total{cluster="local"} 0`,
+		`kubeagent_issue_resolution_seconds_sum{cluster="local"} 30`,
+		`kubeagent_issue_resolution_seconds_count{cluster="local"} 1`,
+		`kubeagent_issue_active{cluster="local",kind="Deployment",namespace="prod",name="api",issue="CrashLoopBackOff"} 1`,
+		`kubeagent_issue_age_seconds{cluster="local",kind="Deployment",namespace="prod",name="api",issue="CrashLoopBackOff"} 60`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("metrics missing %q in:\n%s", want, out)
 		}
 	}
 	// The resolved issue must not linger as an active series.
-	if strings.Contains(out, `kubeagent_issue_active{kind="Service"`) {
+	if strings.Contains(out, `kubeagent_issue_active{cluster="local",kind="Service"`) {
 		t.Errorf("resolved issue still rendered as active:\n%s", out)
 	}
 }
 
 func TestMetrics_IssueSeriesAbsentBeforeFirstUpdate(t *testing.T) {
-	out := newMetrics().render()
+	out := newMetrics([]string{"local"}).render()
 	if strings.Contains(out, "kubeagent_issue_active{") {
 		t.Errorf("per-issue series rendered with no issues:\n%s", out)
 	}
-	if !strings.Contains(out, "kubeagent_issues_active 0") {
+	if !strings.Contains(out, `kubeagent_issues_active{cluster="local"} 0`) {
 		t.Errorf("aggregate gauge must still render as 0:\n%s", out)
 	}
 }
 
 func TestMetrics_IssuesEndpointShape(t *testing.T) {
-	m := newMetrics()
+	m := newMetrics([]string{"local"})
 	tr, at := trackerWithFixture()
-	m.updateIssues(tr, at)
+	m.updateIssues("local", tr, at)
 	srv := httptest.NewServer(m.handler())
 	defer srv.Close()
 
@@ -299,7 +299,7 @@ func TestMetrics_IssuesEndpointShape(t *testing.T) {
 }
 
 func TestMetrics_IssuesEndpointEmptyArrays(t *testing.T) {
-	srv := httptest.NewServer(newMetrics().handler())
+	srv := httptest.NewServer(newMetrics([]string{"local"}).handler())
 	defer srv.Close()
 	resp, err := http.Get(srv.URL + "/issues")
 	if err != nil {
@@ -320,7 +320,7 @@ func TestMetrics_IssuesEndpointEmptyArrays(t *testing.T) {
 // TestRender_AlertSeriesAlwaysPresent pins that the three alert series render even
 // when alerting is disabled, so a dashboard does not break when it is switched on.
 func TestRender_AlertSeriesAlwaysPresent(t *testing.T) {
-	m := newMetrics()
+	m := newMetrics([]string{"local"})
 	out := m.render()
 	for _, want := range []string{
 		`kubeagent_alerts_sent_total{status="firing",outcome="ok"} 0`,
@@ -338,7 +338,7 @@ func TestRender_AlertSeriesAlwaysPresent(t *testing.T) {
 }
 
 func TestUpdateAlerts_RendersTheCounters(t *testing.T) {
-	m := newMetrics()
+	m := newMetrics([]string{"local"})
 	m.updateAlerts(alert.Stats{
 		FiringOK: 3, FiringFailed: 1, ResolvedOK: 2, ResolvedFailed: 0,
 		DroppedQueueFull: 7, DroppedRetriesExhausted: 4, LastSuccessUnix: 1770000000,
@@ -359,7 +359,7 @@ func TestUpdateAlerts_RendersTheCounters(t *testing.T) {
 }
 
 func TestExplainMetricsRenderWhenEnabled(t *testing.T) {
-	m := newMetrics()
+	m := newMetrics([]string{"local"})
 	m.updateExplain(true, oncall.Stats{
 		Allowed: 3, Throttled: 30, Failed: 1, Dropped: 2, BudgetRemaining: 17.5,
 	}, nil)
@@ -378,14 +378,14 @@ func TestExplainMetricsRenderWhenEnabled(t *testing.T) {
 }
 
 func TestExplainMetricsAbsentWhenDisabled(t *testing.T) {
-	m := newMetrics()
+	m := newMetrics([]string{"local"})
 	if strings.Contains(m.render(), "kubeagent_explain_") {
 		t.Error("no kubeagent_explain_ series may render when --explain is off")
 	}
 }
 
 func TestExplanationsEndpointServesTheStore(t *testing.T) {
-	m := newMetrics()
+	m := newMetrics([]string{"local"})
 	at := time.Date(2026, 7, 26, 10, 4, 12, 0, time.UTC)
 	m.updateExplain(true, oncall.Stats{Allowed: 1, Throttled: 4, Failed: 0, Dropped: 0},
 		[]oncall.Explanation{{
@@ -436,7 +436,7 @@ func TestExplanationsEndpointServesTheStore(t *testing.T) {
 }
 
 func TestExplanationsEndpointIsEmptyWhenDisabled(t *testing.T) {
-	m := newMetrics()
+	m := newMetrics([]string{"local"})
 	rec := httptest.NewRecorder()
 	m.handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/explanations", nil))
 	if rec.Code != http.StatusOK {
@@ -450,5 +450,108 @@ func TestExplanationsEndpointIsEmptyWhenDisabled(t *testing.T) {
 	}
 	if len(got.Explanations) != 0 {
 		t.Errorf("got %d explanations with --explain off, want 0", len(got.Explanations))
+	}
+}
+
+// TestRenderLabelsEveryPerClusterSeries pins the label contract. It is emitted
+// even with one cluster: a label that only appears once a second cluster is
+// added would break every dashboard on the day an operator adds their second
+// cluster, which is the worst possible moment.
+func TestRenderLabelsEveryPerClusterSeries(t *testing.T) {
+	m := newMetrics([]string{"prod-us", "prod-eu"})
+	at := time.Date(2026, 7, 26, 10, 0, 0, 0, time.UTC)
+	m.update("prod-eu", sampleResult(), time.Millisecond, at, nil)
+	m.update("prod-us", sampleResult(), time.Millisecond, at, nil)
+
+	out := m.render()
+	for _, want := range []string{
+		`kubeagent_cluster_healthy{cluster="prod-eu"}`,
+		`kubeagent_cluster_healthy{cluster="prod-us"}`,
+		`kubeagent_nodes_ready{cluster="prod-eu"}`,
+		`kubeagent_workloads_flagged{cluster="prod-us"}`,
+		`kubeagent_scans_total{cluster="prod-eu"}`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("render() missing %s\n%s", want, out)
+		}
+	}
+
+	// Clusters render in sorted order, so the output is stable across restarts.
+	if strings.Index(out, `kubeagent_cluster_healthy{cluster="prod-eu"}`) >
+		strings.Index(out, `kubeagent_cluster_healthy{cluster="prod-us"}`) {
+		t.Error("clusters must render in sorted order")
+	}
+}
+
+// TestRenderEmitsOneHelpPerFamily pins the exposition format. Prometheus rejects
+// a scrape that repeats HELP for a family, so the header cannot move inside the
+// per-cluster loop.
+func TestRenderEmitsOneHelpPerFamily(t *testing.T) {
+	m := newMetrics([]string{"a", "b", "c"})
+	at := time.Date(2026, 7, 26, 10, 0, 0, 0, time.UTC)
+	for _, c := range []string{"a", "b", "c"} {
+		m.update(c, sampleResult(), time.Millisecond, at, nil)
+	}
+	if got := strings.Count(m.render(), "# HELP kubeagent_nodes_ready "); got != 1 {
+		t.Errorf("HELP for kubeagent_nodes_ready appears %d times, want 1", got)
+	}
+}
+
+// TestRenderLeavesProcessWideSeriesUnlabelled pins the other half of the
+// contract: there is one alert sink and one explanation budget, so labelling
+// their counters per cluster would attribute a process-wide number to a cluster
+// that did not produce it.
+func TestRenderLeavesProcessWideSeriesUnlabelled(t *testing.T) {
+	m := newMetrics([]string{"prod-eu", "prod-us"})
+	m.updateAlerts(alert.Stats{FiringOK: 3})
+	out := m.render()
+	if !strings.Contains(out, `kubeagent_alerts_sent_total{status="firing",outcome="ok"} 3`) {
+		t.Errorf("alert series must keep exactly its existing labels\n%s", out)
+	}
+	if strings.Contains(out, `kubeagent_alerts_sent_total{cluster=`) {
+		t.Error("alert series must not carry a cluster label")
+	}
+	if !strings.Contains(out, "kubeagent_clusters_total 2\n") {
+		t.Errorf("kubeagent_clusters_total must be unlabelled and equal the target count\n%s", out)
+	}
+}
+
+// TestClusterUpReportsPerClusterEvaluationOutcome pins the degradation signal:
+// one cluster erroring must not disturb the others' readings.
+func TestClusterUpReportsPerClusterEvaluationOutcome(t *testing.T) {
+	m := newMetrics([]string{"good", "bad"})
+	at := time.Date(2026, 7, 26, 10, 0, 0, 0, time.UTC)
+	m.update("good", sampleResult(), time.Millisecond, at, nil)
+	m.update("bad", &scan.Result{}, time.Millisecond, at, errors.New("connection refused"))
+
+	out := m.render()
+	if !strings.Contains(out, `kubeagent_cluster_up{cluster="good"} 1`) {
+		t.Errorf("healthy cluster must report up=1\n%s", out)
+	}
+	if !strings.Contains(out, `kubeagent_cluster_up{cluster="bad"} 0`) {
+		t.Errorf("erroring cluster must report up=0\n%s", out)
+	}
+	if !strings.Contains(out, `kubeagent_scan_errors_total{cluster="bad"} 1`) {
+		t.Errorf("the error must be counted against its own cluster\n%s", out)
+	}
+	if !strings.Contains(out, `kubeagent_scan_errors_total{cluster="good"} 0`) {
+		t.Errorf("the healthy cluster must not inherit the error\n%s", out)
+	}
+}
+
+// TestIsReadyWaitsForEveryCluster pins the readiness rule: ready means "every
+// target has finished its first reconcile attempt", never "everything is fine".
+func TestIsReadyWaitsForEveryCluster(t *testing.T) {
+	m := newMetrics([]string{"a", "b"})
+	if m.isReady() {
+		t.Fatal("must not be ready before any cluster reports")
+	}
+	m.markReady("a")
+	if m.isReady() {
+		t.Error("must not be ready with one cluster outstanding")
+	}
+	m.markReady("b")
+	if !m.isReady() {
+		t.Error("must be ready once every cluster has reported")
 	}
 }

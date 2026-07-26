@@ -47,7 +47,7 @@ func captureLog(t *testing.T, fn func()) string {
 // corrupting MTTR, inflating flap counts, and (once alerting lands) paging the
 // on-call for a network hiccup.
 func TestApplyResult_EvaluationErrorNeverReachesTheTracker(t *testing.T) {
-	m := newMetrics()
+	m := newMetrics([]string{defaultClusterName})
 	tr := watchstate.New(watchstate.Options{})
 	at := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
 
@@ -72,7 +72,7 @@ func TestApplyResult_EvaluationErrorNeverReachesTheTracker(t *testing.T) {
 }
 
 func TestApplyResult_LogsTransitionsAndStaysQuietInSteadyState(t *testing.T) {
-	m := newMetrics()
+	m := newMetrics([]string{defaultClusterName})
 	tr := watchstate.New(watchstate.Options{})
 	at := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
 
@@ -289,7 +289,7 @@ func TestApplyResult_EvaluationErrorSendsNoAlert(t *testing.T) {
 	sink.Start(ctx)
 	al := &alerter{roller: alertstate.New(alertstate.Options{Repeat: time.Hour}), sink: sink}
 
-	m := newMetrics()
+	m := newMetrics([]string{defaultClusterName})
 	tr := watchstate.New(watchstate.Options{})
 	at := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
 
@@ -328,7 +328,7 @@ func TestApplyResult_AlertsOnRealFindings(t *testing.T) {
 	sink.Start(ctx)
 	al := &alerter{roller: alertstate.New(alertstate.Options{Repeat: time.Hour}), sink: sink}
 
-	m := newMetrics()
+	m := newMetrics([]string{defaultClusterName})
 	tr := watchstate.New(watchstate.Options{})
 	at := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
 	captureLog(t, func() { applyResult(m, tr, al, nil, nil, nil, sampleResult(), time.Millisecond, at, nil) })
@@ -388,7 +388,7 @@ func TestApplyResult_SLOBurnReachesTheSink(t *testing.T) {
 	sink.Start(ctx)
 	al := &alerter{roller: alertstate.New(alertstate.Options{Repeat: time.Hour}), sink: sink}
 
-	m := newMetrics()
+	m := newMetrics([]string{defaultClusterName})
 	tr := watchstate.New(watchstate.Options{})
 	sloTr, sloN := newSLOTracker(Config{SLOTarget: 0.999, Heartbeat: time.Minute, AlertRepeat: time.Hour})
 
@@ -458,7 +458,7 @@ func TestApplyResult_SLOBurnReachesTheSink(t *testing.T) {
 // drift with exactly when the firing edge lands and is deliberately not
 // asserted on.
 func TestApplyResult_LogsTheBurnTransition(t *testing.T) {
-	m := newMetrics()
+	m := newMetrics([]string{defaultClusterName})
 	tr := watchstate.New(watchstate.Options{})
 	sloTr, sloN := newSLOTracker(Config{SLOTarget: 0.999, Heartbeat: time.Minute, AlertRepeat: time.Hour})
 
@@ -562,7 +562,7 @@ func TestApplyResult_HealthyClusterStillRecordsASample(t *testing.T) {
 	// list is empty, so the old census reported total==0, Observe recorded
 	// nothing, and window coverage never left zero — the coverage gate could
 	// never open and the daemon could never page.
-	m := newMetrics()
+	m := newMetrics([]string{defaultClusterName})
 	tr := watchstate.New(watchstate.Options{})
 	sloTr := slo.New(slo.Options{Target: 0.999, MaxSampleGap: 2 * time.Minute})
 	sloN := newSLONotifier(time.Hour)

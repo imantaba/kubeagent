@@ -36,12 +36,12 @@ type chatResponse struct {
 	} `json:"choices"`
 }
 
-func (o openaiSummarizer) summarize(ctx context.Context, prompt string) (string, error) {
+func (o openaiSummarizer) summarize(ctx context.Context, system, prompt string) (string, error) {
 	body, err := json.Marshal(chatRequest{
 		Model:  o.model,
 		Stream: false,
 		Messages: []chatMessage{
-			{Role: "system", Content: SystemPrompt},
+			{Role: "system", Content: system},
 			{Role: "user", Content: prompt},
 		},
 	})

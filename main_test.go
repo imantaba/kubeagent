@@ -1312,3 +1312,115 @@ func TestRunFixes_DryRunReportsPermissionDenied(t *testing.T) {
 		t.Fatalf("dry-run disposition expected on the denied path, got %+v", recs)
 	}
 }
+
+func TestRunWatchWiresExplainConfig(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "<PLACEHOLDER>")
+	t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "")
+	t.Setenv("KUBEAGENT_MODEL", "")
+
+	var got watch.Config
+	orig := watchRun
+	watchRun = func(_ context.Context, _ kubernetes.Interface, cfg watch.Config) error {
+		got = cfg
+		return nil
+	}
+	defer func() { watchRun = orig }()
+
+	if err := runWatch([]string{"--explain", "--explain-cooldown", "30m", "--explain-budget", "5", "--model", "test-model"}); err != nil {
+		t.Fatalf("runWatch: %v", err)
+	}
+	if !got.Explain {
+		t.Error("Explain must be true")
+	}
+	if got.ExplainCooldown != 30*time.Minute {
+		t.Errorf("cooldown = %s, want 30m", got.ExplainCooldown)
+	}
+	if got.ExplainBudget != 5 {
+		t.Errorf("budget = %d, want 5", got.ExplainBudget)
+	}
+	if got.ExplainModel != "test-model" {
+		t.Errorf("model = %q, want test-model", got.ExplainModel)
+	}
+}
+
+func TestRunWatchDefaultsExplainOff(t *testing.T) {
+	t.Setenv("KUBEAGENT_EXPLAIN", "")
+	t.Setenv("KUBEAGENT_EXPLAIN_COOLDOWN", "")
+	t.Setenv("KUBEAGENT_EXPLAIN_BUDGET", "")
+
+	var got watch.Config
+	orig := watchRun
+	watchRun = func(_ context.Context, _ kubernetes.Interface, cfg watch.Config) error {
+		got = cfg
+		return nil
+	}
+	defer func() { watchRun = orig }()
+
+	if err := runWatch(nil); err != nil {
+		t.Fatalf("runWatch: %v", err)
+	}
+	if got.Explain {
+		t.Error("--explain must be off by default")
+	}
+	if got.ExplainCooldown != time.Hour {
+		t.Errorf("default cooldown = %s, want 1h", got.ExplainCooldown)
+	}
+	if got.ExplainBudget != 20 {
+		t.Errorf("default budget = %d, want 20", got.ExplainBudget)
+	}
+}
+
+// A config error must surface before the daemon starts, not after the metrics
+// server is listening and a cache sync is underway.
+func TestRunWatchExplainWithoutCredentialsFailsFast(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "")
+
+	orig := watchRun
+	watchRun = func(context.Context, kubernetes.Interface, watch.Config) error {
+		t.Fatal("the daemon must not start without credentials")
+		return nil
+	}
+	defer func() { watchRun = orig }()
+
+	err := runWatch([]string{"--explain"})
+	if err == nil {
+		t.Fatal("want an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "ANTHROPIC_API_KEY") {
+		t.Errorf("error = %q, want it to name the missing credential", err)
+	}
+}
+
+func TestRunWatchLocalEndpointNeedsAModelName(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "http://127.0.0.1:11434/v1")
+	t.Setenv("KUBEAGENT_MODEL", "")
+
+	orig := watchRun
+	watchRun = func(context.Context, kubernetes.Interface, watch.Config) error {
+		t.Fatal("the daemon must not start without a model name")
+		return nil
+	}
+	defer func() { watchRun = orig }()
+
+	err := runWatch([]string{"--explain"})
+	if err == nil {
+		t.Fatal("want an error naming --model, got nil")
+	}
+	if !strings.Contains(err.Error(), "--model") {
+		t.Errorf("error = %q, want it to name the missing --model flag", err)
+	}
+}
+
+func TestUsageMentionsTheExplainFlags(t *testing.T) {
+	err := run(nil)
+	if err == nil {
+		t.Fatal("want the usage error")
+	}
+	for _, want := range []string{"--explain-cooldown", "--explain-budget"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("usage does not mention %s", want)
+		}
+	}
+}

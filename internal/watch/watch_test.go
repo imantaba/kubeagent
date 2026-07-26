@@ -25,6 +25,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/alertstate"
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/oncall"
 	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/slo"
 	"github.com/imantaba/kubeagent/internal/watchstate"
@@ -50,14 +51,14 @@ func TestApplyResult_EvaluationErrorNeverReachesTheTracker(t *testing.T) {
 	tr := watchstate.New(watchstate.Options{})
 	at := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
 
-	captureLog(t, func() { applyResult(m, tr, nil, nil, nil, sampleResult(), time.Millisecond, at, nil) })
+	captureLog(t, func() { applyResult(m, tr, nil, nil, nil, nil, sampleResult(), time.Millisecond, at, nil) })
 	before := len(tr.Active())
 	if before == 0 {
 		t.Fatal("fixture must produce active issues")
 	}
 
 	out := captureLog(t, func() {
-		applyResult(m, tr, nil, nil, nil, &scan.Result{}, time.Millisecond, at.Add(time.Minute), errors.New("boom"))
+		applyResult(m, tr, nil, nil, nil, nil, &scan.Result{}, time.Millisecond, at.Add(time.Minute), errors.New("boom"))
 	})
 	if got := len(tr.Active()); got != before {
 		t.Errorf("active issues %d -> %d; an evaluation error must resolve nothing", before, got)
@@ -75,7 +76,7 @@ func TestApplyResult_LogsTransitionsAndStaysQuietInSteadyState(t *testing.T) {
 	tr := watchstate.New(watchstate.Options{})
 	at := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
 
-	first := captureLog(t, func() { applyResult(m, tr, nil, nil, nil, sampleResult(), time.Millisecond, at, nil) })
+	first := captureLog(t, func() { applyResult(m, tr, nil, nil, nil, nil, sampleResult(), time.Millisecond, at, nil) })
 	if !strings.Contains(first, "NEW Deployment/shop/web:CrashLoopBackOff") {
 		t.Errorf("first sighting must log a NEW line, got %q", first)
 	}
@@ -83,13 +84,15 @@ func TestApplyResult_LogsTransitionsAndStaysQuietInSteadyState(t *testing.T) {
 		t.Errorf("summary line missing from %q", first)
 	}
 
-	steady := captureLog(t, func() { applyResult(m, tr, nil, nil, nil, sampleResult(), time.Millisecond, at.Add(time.Minute), nil) })
+	steady := captureLog(t, func() {
+		applyResult(m, tr, nil, nil, nil, nil, sampleResult(), time.Millisecond, at.Add(time.Minute), nil)
+	})
 	if steady != "" {
 		t.Errorf("an unchanged reconcile must log nothing, got %q", steady)
 	}
 
 	cleared := captureLog(t, func() {
-		applyResult(m, tr, nil, nil, nil, &scan.Result{}, time.Millisecond, at.Add(2*time.Minute), nil)
+		applyResult(m, tr, nil, nil, nil, nil, &scan.Result{}, time.Millisecond, at.Add(2*time.Minute), nil)
 	})
 	if !strings.Contains(cleared, "RESOLVED Deployment/shop/web:CrashLoopBackOff (fired for 2m0s)") {
 		t.Errorf("clearing must log a RESOLVED line with the firing duration, got %q", cleared)
@@ -291,7 +294,7 @@ func TestApplyResult_EvaluationErrorSendsNoAlert(t *testing.T) {
 	at := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
 
 	captureLog(t, func() {
-		applyResult(m, tr, al, nil, nil, &scan.Result{}, time.Millisecond, at, errors.New("boom"))
+		applyResult(m, tr, al, nil, nil, nil, &scan.Result{}, time.Millisecond, at, errors.New("boom"))
 	})
 	cancel()
 	sink.Close()
@@ -328,7 +331,7 @@ func TestApplyResult_AlertsOnRealFindings(t *testing.T) {
 	m := newMetrics()
 	tr := watchstate.New(watchstate.Options{})
 	at := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
-	captureLog(t, func() { applyResult(m, tr, al, nil, nil, sampleResult(), time.Millisecond, at, nil) })
+	captureLog(t, func() { applyResult(m, tr, al, nil, nil, nil, sampleResult(), time.Millisecond, at, nil) })
 
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
@@ -392,10 +395,10 @@ func TestApplyResult_SLOBurnReachesTheSink(t *testing.T) {
 	broken := sampleResult() // one broken workload, unchanged for the whole run
 
 	now := sloBase
-	captureLog(t, func() { applyResult(m, tr, al, sloTr, sloN, broken, time.Millisecond, now, nil) })
+	captureLog(t, func() { applyResult(m, tr, al, nil, sloTr, sloN, broken, time.Millisecond, now, nil) })
 	for elapsed := time.Duration(0); elapsed < 6*time.Hour; elapsed += time.Minute {
 		now = now.Add(time.Minute)
-		captureLog(t, func() { applyResult(m, tr, al, sloTr, sloN, broken, time.Millisecond, now, nil) })
+		captureLog(t, func() { applyResult(m, tr, al, nil, sloTr, sloN, broken, time.Millisecond, now, nil) })
 	}
 
 	// hasSLOIdentity is shared by the wait loop and the final assertion below so
@@ -463,10 +466,10 @@ func TestApplyResult_LogsTheBurnTransition(t *testing.T) {
 
 	now := sloBase
 	out := captureLog(t, func() {
-		applyResult(m, tr, nil, sloTr, sloN, broken, time.Millisecond, now, nil)
+		applyResult(m, tr, nil, nil, sloTr, sloN, broken, time.Millisecond, now, nil)
 		for elapsed := time.Duration(0); elapsed < 6*time.Hour; elapsed += time.Minute {
 			now = now.Add(time.Minute)
-			applyResult(m, tr, nil, sloTr, sloN, broken, time.Millisecond, now, nil)
+			applyResult(m, tr, nil, nil, sloTr, sloN, broken, time.Millisecond, now, nil)
 		}
 	})
 
@@ -570,8 +573,8 @@ func TestApplyResult_HealthyClusterStillRecordsASample(t *testing.T) {
 	// Workloads deliberately left empty: that is what a healthy cluster looks like.
 
 	t0 := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
-	applyResult(m, tr, nil, sloTr, sloN, &res, 0, t0, nil)
-	applyResult(m, tr, nil, sloTr, sloN, &res, 0, t0.Add(30*time.Second), nil)
+	applyResult(m, tr, nil, nil, sloTr, sloN, &res, 0, t0, nil)
+	applyResult(m, tr, nil, nil, sloTr, sloN, &res, 0, t0.Add(30*time.Second), nil)
 
 	got := sloTr.Report(slo.Fast, t0.Add(30*time.Second))
 	if got.Coverage <= 0 {
@@ -579,5 +582,178 @@ func TestApplyResult_HealthyClusterStillRecordsASample(t *testing.T) {
 	}
 	if got.Availability != 1 {
 		t.Errorf("Availability = %v, want 1 on an all-good census", got.Availability)
+	}
+}
+
+func TestValidateExplainRejectsBadBudgetAndCooldown(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  Config
+		want string
+	}{
+		{"zero budget", Config{Explain: true, ExplainBudget: 0, ExplainCooldown: time.Hour}, "budget"},
+		{"negative budget", Config{Explain: true, ExplainBudget: -1, ExplainCooldown: time.Hour}, "budget"},
+		{"negative cooldown", Config{Explain: true, ExplainBudget: 20, ExplainCooldown: -time.Second}, "cooldown"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateExplain(tc.cfg)
+			if err == nil {
+				t.Fatalf("want an error mentioning %q, got nil", tc.want)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error = %q, want it to mention %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestValidateExplainAcceptsZeroCooldownAndIsSkippedWhenOff(t *testing.T) {
+	if err := validateExplain(Config{Explain: true, ExplainBudget: 1, ExplainCooldown: 0}); err != nil {
+		t.Errorf("a zero cooldown is legal (budget is then the only limit): %v", err)
+	}
+	if err := validateExplain(Config{Explain: false, ExplainBudget: 0, ExplainCooldown: -1}); err != nil {
+		t.Errorf("validation must not run when --explain is off: %v", err)
+	}
+}
+
+// The explainer produces for the alert sink, so it must be fully stopped before
+// the sink is closed. alert.Sink never closes its queue channel, so a late
+// Enqueue does not panic — it does something quieter and worse: the
+// notification lands in a buffer whose sender has already returned, and is
+// never delivered and never counted as a drop. Asserting "no panic" would
+// therefore prove nothing; the order itself is the assertion.
+func TestRunTeardownOrderStopsTheExplainerBeforeTheSink(t *testing.T) {
+	var mu sync.Mutex
+	var steps []string
+	teardownOrder = func(step string) {
+		mu.Lock()
+		defer mu.Unlock()
+		steps = append(steps, step)
+	}
+	defer func() { teardownOrder = nil }()
+
+	t.Setenv("KUBEAGENT_ALERT_WEBHOOK", "")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Run must tear down immediately
+
+	cfg := Config{
+		MetricsAddr:     "127.0.0.1:0",
+		Heartbeat:       time.Hour,
+		Debounce:        time.Hour,
+		AlertURL:        "http://127.0.0.1:1/hook",
+		AlertFormat:     "json",
+		AlertRepeat:     time.Hour,
+		Explain:         true,
+		ExplainEndpoint: "http://127.0.0.1:1/v1",
+		ExplainModel:    "test-model",
+		ExplainBudget:   20,
+		ExplainCooldown: time.Hour,
+	}
+	if err := Run(ctx, fake.NewSimpleClientset(), cfg); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	mu.Lock()
+	got := append([]string(nil), steps...)
+	mu.Unlock()
+	want := []string{"stopExplain", "explainerClose", "stopAlerts", "sinkClose"}
+	if len(got) != len(want) {
+		t.Fatalf("teardown steps = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("teardown steps = %v, want %v", got, want)
+		}
+	}
+}
+
+// TestNewExplainerRedactsTheEndpointCredential pins the credential-redaction
+// rule (see alert.RedactURL) for the watch enablement log line: an endpoint
+// URL is treated as a bearer credential, so the log must carry no more of it
+// than scheme://host.
+func TestNewExplainerRedactsTheEndpointCredential(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	cfg := Config{
+		Explain:         true,
+		ExplainEndpoint: "http://127.0.0.1:1/v1/chat/completions?token=<PLACEHOLDER>",
+		ExplainModel:    "test-model",
+		ExplainBudget:   20,
+		ExplainCooldown: time.Hour,
+	}
+
+	var ex *oncall.Explainer
+	out := captureLog(t, func() {
+		ex = newExplainer(ctx, cfg, nil)
+	})
+	cancel()
+	ex.Close()
+
+	if !strings.Contains(out, "backend=http://127.0.0.1:1,") {
+		t.Errorf("log = %q, want the redacted backend http://127.0.0.1:1", out)
+	}
+	if strings.Contains(out, "/v1/chat/completions") {
+		t.Errorf("log = %q, leaked the endpoint path", out)
+	}
+	if strings.Contains(out, "token=") || strings.Contains(out, "<PLACEHOLDER>") {
+		t.Errorf("log = %q, leaked the credential", out)
+	}
+}
+
+// TestNewExplainerLogsWhetherTheLocalKeyIsSet covers a silent misconfiguration:
+// a local endpoint may legitimately need no API key, so the Helm chart marks the
+// key's secretKeyRef optional — which means a mistyped Secret key produces no
+// pod-start failure and no error, just unauthenticated model calls. The startup
+// line has to say which case it is, without ever carrying the key itself.
+func TestNewExplainerLogsWhetherTheLocalKeyIsSet(t *testing.T) {
+	base := Config{
+		Explain:         true,
+		ExplainEndpoint: "http://127.0.0.1:1/v1",
+		ExplainModel:    "test-model",
+		ExplainBudget:   20,
+		ExplainCooldown: time.Hour,
+	}
+
+	for _, tc := range []struct {
+		name, key, want, reject string
+	}{
+		{"key set", "<PLACEHOLDER>", "api-key=set", "<PLACEHOLDER>"},
+		{"no key", "", "api-key=absent", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			cfg := base
+			cfg.ExplainAPIKey = tc.key
+
+			var ex *oncall.Explainer
+			out := captureLog(t, func() { ex = newExplainer(ctx, cfg, nil) })
+			cancel()
+			ex.Close()
+
+			if !strings.Contains(out, tc.want) {
+				t.Errorf("log = %q, want it to report %s", out, tc.want)
+			}
+			if tc.reject != "" && strings.Contains(out, tc.reject) {
+				t.Errorf("log = %q, leaked the API key", out)
+			}
+		})
+	}
+}
+
+// TestNewExplainerSaysNothingAboutAKeyOnTheAnthropicPath guards against a
+// misleading line: on the Anthropic path the key is read from the environment by
+// the explain client, not carried in Config, so reporting it as absent here
+// would be wrong.
+func TestNewExplainerSaysNothingAboutAKeyOnTheAnthropicPath(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cfg := Config{Explain: true, ExplainModel: "test-model", ExplainBudget: 20, ExplainCooldown: time.Hour}
+
+	var ex *oncall.Explainer
+	out := captureLog(t, func() { ex = newExplainer(ctx, cfg, nil) })
+	cancel()
+	ex.Close()
+
+	if strings.Contains(out, "api-key=") {
+		t.Errorf("log = %q, want no api-key field on the anthropic path", out)
 	}
 }

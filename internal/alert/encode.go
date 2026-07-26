@@ -40,6 +40,7 @@ type jsonPayload struct {
 	Namespace   string   `json:"namespace,omitempty"`
 	Name        string   `json:"name"`
 	Issues      []string `json:"issues"`
+	Text        string   `json:"text,omitempty"`
 	FiringSince string   `json:"firingSince"`
 	ResolvedAt  string   `json:"resolvedAt,omitempty"`
 	Flapping    bool     `json:"flapping"`
@@ -57,6 +58,7 @@ func encodeJSON(n alertstate.Notification) ([]byte, error) {
 		Namespace:   n.Object.Namespace,
 		Name:        n.Object.Name,
 		Issues:      issues,
+		Text:        n.Text,
 		FiringSince: n.FiringSince.UTC().Format(time.RFC3339),
 		Flapping:    n.Flapping,
 	}
@@ -68,9 +70,12 @@ func encodeJSON(n alertstate.Notification) ([]byte, error) {
 
 func encodeSlack(n alertstate.Notification) ([]byte, error) {
 	var text string
-	if n.Status == alertstate.StatusResolved {
+	switch {
+	case n.Reason == alertstate.ReasonExplanation:
+		text = fmt.Sprintf("*EXPLANATION* %s\n%s", n.Object, n.Text)
+	case n.Status == alertstate.StatusResolved:
 		text = fmt.Sprintf("*RESOLVED* %s (fired for %s)", n.Object, n.ResolvedAt.Sub(n.FiringSince).Round(time.Second))
-	} else {
+	default:
 		text = fmt.Sprintf("*FIRING* %s\nissues: %s\nfiring since %s",
 			n.Object, strings.Join(n.Issues, ", "), n.FiringSince.UTC().Format(time.RFC3339))
 		if n.Flapping {
@@ -110,6 +115,9 @@ func encodeAlertmanager(n alertstate.Notification) ([]byte, error) {
 			"flapping": fmt.Sprintf("%t", n.Flapping),
 		},
 		StartsAt: n.FiringSince.UTC().Format(time.RFC3339),
+	}
+	if n.Text != "" {
+		a.Annotations["explanation"] = n.Text
 	}
 	if n.Status == alertstate.StatusResolved {
 		a.EndsAt = n.ResolvedAt.UTC().Format(time.RFC3339)

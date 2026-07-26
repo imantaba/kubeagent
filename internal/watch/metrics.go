@@ -12,6 +12,7 @@ import (
 
 	"github.com/imantaba/kubeagent/internal/alert"
 	"github.com/imantaba/kubeagent/internal/ingresshealth"
+	"github.com/imantaba/kubeagent/internal/oncall"
 	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/slo"
 	"github.com/imantaba/kubeagent/internal/svchealth"
@@ -60,6 +61,15 @@ type sloSnapshot struct {
 	Fast, Slow slo.Report
 }
 
+// explainSnapshot is the explainer's state as of the last reconcile. Enabled is
+// false when --explain was not set, in which case no explain series render at
+// all — the absence of the series is how an operator sees the feature is off.
+type explainSnapshot struct {
+	Enabled bool
+	Stats   oncall.Stats
+	Latest  []oncall.Explanation
+}
+
 // metrics holds the latest evaluation snapshot and renders it as Prometheus text.
 // All access is mutex-guarded; the daemon updates it from the reconcile loop and
 // the HTTP handler reads it.
@@ -99,6 +109,7 @@ type metrics struct {
 	issues                issueSnapshot
 	alerts                alert.Stats
 	slo                   sloSnapshot
+	explain               explainSnapshot
 }
 
 func newMetrics() *metrics { return &metrics{findings: map[string]int{}} }
@@ -202,6 +213,13 @@ func (m *metrics) updateSLO(enabled bool, target float64, fast, slow slo.Report)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.slo = sloSnapshot{Enabled: enabled, Target: target, Fast: fast, Slow: slow}
+}
+
+// updateExplain folds the explainer's state into the served snapshot.
+func (m *metrics) updateExplain(enabled bool, s oncall.Stats, latest []oncall.Explanation) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.explain = explainSnapshot{Enabled: enabled, Stats: s, Latest: latest}
 }
 
 func (m *metrics) render() string {
@@ -320,6 +338,13 @@ func (m *metrics) render() string {
 		gauge("kubeagent_slo_error_budget_remaining_ratio",
 			"Fraction of the error budget left over the slow window, clamped to [0,1]", remaining)
 	}
+	if m.explain.Enabled {
+		counter("kubeagent_explain_allowed_total", "Incident explanations the throttle admitted since start", m.explain.Stats.Allowed)
+		counter("kubeagent_explain_throttled_total", "Incident explanations refused by the cooldown or the hourly budget", m.explain.Stats.Throttled)
+		counter("kubeagent_explain_failed_total", "Incident explanations whose model call errored or returned no text", m.explain.Stats.Failed)
+		counter("kubeagent_explain_dropped_total", "Incident explanations admitted but dropped because the worker queue was full", m.explain.Stats.Dropped)
+		gauge("kubeagent_explain_budget_remaining", "Model calls left in the hourly budget", m.explain.Stats.BudgetRemaining)
+	}
 	gauge("kubeagent_last_scan_timestamp_seconds", "Unix time of the last evaluation", float64(m.lastScanUnix))
 	gauge("kubeagent_scan_duration_seconds", "Duration of the last evaluation in seconds", m.scanSeconds)
 	counter("kubeagent_scans_total", "Total evaluations run", m.scansTotal)
@@ -327,7 +352,7 @@ func (m *metrics) render() string {
 	return b.String()
 }
 
-// handler serves /metrics, /healthz, and /readyz.
+// handler serves /metrics, /issues, /explanations, /healthz, and /readyz.
 func (m *metrics) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) {
@@ -338,6 +363,15 @@ func (m *metrics) handler() http.Handler {
 		body, err := m.issuesJSON()
 		if err != nil {
 			http.Error(w, "encoding issues", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(body)
+	})
+	mux.HandleFunc("/explanations", func(w http.ResponseWriter, _ *http.Request) {
+		body, err := m.explanationsJSON()
+		if err != nil {
+			http.Error(w, "encoding explanations", http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -447,4 +481,62 @@ func (m *metrics) issuesJSON() ([]byte, error) {
 			ResolutionSecondsCount: m.issues.Stats.ResolutionSecondsCount,
 		},
 	})
+}
+
+// explanationView is one record as served by /explanations.
+type explanationView struct {
+	Kind        string   `json:"kind"`
+	Namespace   string   `json:"namespace,omitempty"`
+	Name        string   `json:"name"`
+	Issues      []string `json:"issues"`
+	ExplainedAt string   `json:"explainedAt"`
+	Model       string   `json:"model"`
+	Text        string   `json:"text"`
+}
+
+type explainStatsView struct {
+	AllowedTotal    int64   `json:"allowedTotal"`
+	ThrottledTotal  int64   `json:"throttledTotal"`
+	FailedTotal     int64   `json:"failedTotal"`
+	DroppedTotal    int64   `json:"droppedTotal"`
+	BudgetRemaining float64 `json:"budgetRemaining"`
+}
+
+type explanationsView struct {
+	Explanations []explanationView `json:"explanations"`
+	Stats        explainStatsView  `json:"stats"`
+}
+
+// explanationsJSON renders the latest explanation per object. With --explain off
+// the list is empty rather than the endpoint absent, so a probe gets a stable
+// shape either way.
+func (m *metrics) explanationsJSON() ([]byte, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := explanationsView{
+		Explanations: []explanationView{},
+		Stats: explainStatsView{
+			AllowedTotal:    m.explain.Stats.Allowed,
+			ThrottledTotal:  m.explain.Stats.Throttled,
+			FailedTotal:     m.explain.Stats.Failed,
+			DroppedTotal:    m.explain.Stats.Dropped,
+			BudgetRemaining: m.explain.Stats.BudgetRemaining,
+		},
+	}
+	for _, x := range m.explain.Latest {
+		issues := x.Issues
+		if issues == nil {
+			issues = []string{}
+		}
+		out.Explanations = append(out.Explanations, explanationView{
+			Kind:        x.Kind,
+			Namespace:   x.Namespace,
+			Name:        x.Name,
+			Issues:      issues,
+			ExplainedAt: x.ExplainedAt.UTC().Format(time.RFC3339),
+			Model:       x.Model,
+			Text:        x.Text,
+		})
+	}
+	return json.Marshal(out)
 }

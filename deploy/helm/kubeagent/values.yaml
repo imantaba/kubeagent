@@ -103,3 +103,36 @@ slo:
   enabled: false
   # Availability target as a percentage. Must be greater than 0 and less than 100.
   target: 99.9
+
+# On-incident explanations. Off by default: this is the only feature that sends
+# anything to a model endpoint. It performs no additional cluster reads and needs
+# no additional RBAC — the model sees only findings the daemon already collected.
+#
+# The API key is NEVER a value here. A values file lands in Git, in
+# `helm get values`, and in CI logs. Create a Secret and name it in
+# existingSecret:
+#
+#   kubectl -n kubeagent create secret generic kubeagent-llm \
+#     --from-literal=apiKey=<PLACEHOLDER>
+explain:
+  enabled: false
+  # Model name. Required when endpointSecretKey is set; otherwise defaults to
+  # the kubeagent default (claude-opus-4-8).
+  model: ""
+  # Minimum gap between explanations for the same object. 0 disables the
+  # per-object gap, leaving budget as the only limit.
+  cooldown: 1h
+  # Model calls per hour, and the burst capacity. At least 1.
+  budget: 20
+  # Name of an existing Secret holding the model credentials. Required when
+  # enabled. Nothing here is set in values.yaml: an API key is a credential,
+  # and so is a model endpoint URL, which can embed a token.
+  existingSecret: ""
+  # Key within existingSecret holding the API key. Read into ANTHROPIC_API_KEY
+  # when endpointSecretKey is empty, and into KUBEAGENT_EXPLAIN_API_KEY when it
+  # is set (where it is optional — a local model may need no key).
+  secretKey: apiKey
+  # Key within existingSecret holding an OpenAI-compatible endpoint URL, e.g.
+  # "http://ollama.llm.svc.cluster.local:11434/v1". Setting this selects the
+  # local backend and requires explain.model; empty selects Anthropic.
+  endpointSecretKey: ""

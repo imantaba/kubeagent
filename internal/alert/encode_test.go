@@ -1,6 +1,8 @@
 package alert
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -124,5 +126,127 @@ func TestEncode_ClusterScopedAlertmanagerOmitsNamespaceLabel(t *testing.T) {
 func TestEncode_UnknownFormatErrors(t *testing.T) {
 	if _, err := encode(Format("teletype"), firingNotif); err == nil {
 		t.Fatal("encode with an unknown format must error")
+	}
+}
+
+func TestEncodeJSONCarriesExplanationText(t *testing.T) {
+	n := alertstate.Notification{
+		Object:      alertstate.Object{Kind: "Deployment", Namespace: "shop", Name: "web"},
+		Status:      alertstate.StatusFiring,
+		Reason:      alertstate.ReasonExplanation,
+		Issues:      []string{"ImagePullBackOff"},
+		FiringSince: time.Date(2026, 7, 26, 10, 0, 0, 0, time.UTC),
+		Text:        "The image tag does not exist in the registry.",
+	}
+	body, err := encode(FormatJSON, n)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	var got struct {
+		Reason string `json:"reason"`
+		Text   string `json:"text"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Reason != "explanation" {
+		t.Errorf("reason = %q, want %q", got.Reason, "explanation")
+	}
+	if got.Text != n.Text {
+		t.Errorf("text = %q, want %q", got.Text, n.Text)
+	}
+}
+
+func TestEncodeJSONOmitsEmptyText(t *testing.T) {
+	n := alertstate.Notification{
+		Object:      alertstate.Object{Kind: "Deployment", Namespace: "shop", Name: "web"},
+		Status:      alertstate.StatusFiring,
+		Reason:      alertstate.ReasonNew,
+		Issues:      []string{"ImagePullBackOff"},
+		FiringSince: time.Date(2026, 7, 26, 10, 0, 0, 0, time.UTC),
+	}
+	body, err := encode(FormatJSON, n)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if strings.Contains(string(body), `"text"`) {
+		t.Errorf("empty Text must be omitted, got %s", body)
+	}
+}
+
+func TestEncodeSlackRendersExplanation(t *testing.T) {
+	n := alertstate.Notification{
+		Object: alertstate.Object{Kind: "Deployment", Namespace: "shop", Name: "web"},
+		Status: alertstate.StatusFiring,
+		Reason: alertstate.ReasonExplanation,
+		Issues: []string{"ImagePullBackOff"},
+		Text:   "The image tag does not exist in the registry.",
+	}
+	body, err := encode(FormatSlack, n)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	var got struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !strings.HasPrefix(got.Text, "*EXPLANATION* Deployment/shop/web") {
+		t.Errorf("slack text = %q, want it to start with the EXPLANATION header", got.Text)
+	}
+	if !strings.Contains(got.Text, n.Text) {
+		t.Errorf("slack text = %q, want it to contain the explanation", got.Text)
+	}
+}
+
+func TestEncodeAlertmanagerAnnotatesExplanation(t *testing.T) {
+	n := alertstate.Notification{
+		Object:      alertstate.Object{Kind: "Deployment", Namespace: "shop", Name: "web"},
+		Status:      alertstate.StatusFiring,
+		Reason:      alertstate.ReasonExplanation,
+		Issues:      []string{"ImagePullBackOff"},
+		FiringSince: time.Date(2026, 7, 26, 10, 0, 0, 0, time.UTC),
+		Text:        "The image tag does not exist in the registry.",
+	}
+	body, err := encode(FormatAlertmanager, n)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	var got []struct {
+		Annotations map[string]string `json:"annotations"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d alerts, want 1", len(got))
+	}
+	if got[0].Annotations["explanation"] != n.Text {
+		t.Errorf("explanation annotation = %q, want %q", got[0].Annotations["explanation"], n.Text)
+	}
+}
+
+// Model output is untrusted text. It must survive encoding as data — never as
+// markup that could restructure the payload a receiver parses.
+func TestEncodeEscapesHostileModelOutput(t *testing.T) {
+	hostile := "\"}]} <script>alert(1)</script>\n*not a header*\x07"
+	for _, f := range []Format{FormatJSON, FormatSlack, FormatAlertmanager} {
+		n := alertstate.Notification{
+			Object:      alertstate.Object{Kind: "Deployment", Namespace: "shop", Name: "web"},
+			Status:      alertstate.StatusFiring,
+			Reason:      alertstate.ReasonExplanation,
+			Issues:      []string{"ImagePullBackOff"},
+			FiringSince: time.Date(2026, 7, 26, 10, 0, 0, 0, time.UTC),
+			Text:        hostile,
+		}
+		body, err := encode(f, n)
+		if err != nil {
+			t.Fatalf("%s: encode: %v", f, err)
+		}
+		var any interface{}
+		if err := json.Unmarshal(body, &any); err != nil {
+			t.Errorf("%s: payload is not valid JSON after hostile text: %v", f, err)
+		}
 	}
 }

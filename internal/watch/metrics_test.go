@@ -22,6 +22,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/nodehealth"
 	"github.com/imantaba/kubeagent/internal/nodereserve"
+	"github.com/imantaba/kubeagent/internal/oncall"
 	"github.com/imantaba/kubeagent/internal/pdbhealth"
 	"github.com/imantaba/kubeagent/internal/pvchealth"
 	"github.com/imantaba/kubeagent/internal/pvcreclaim"
@@ -354,5 +355,100 @@ func TestUpdateAlerts_RendersTheCounters(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing series %q in:\n%s", want, out)
 		}
+	}
+}
+
+func TestExplainMetricsRenderWhenEnabled(t *testing.T) {
+	m := newMetrics()
+	m.updateExplain(true, oncall.Stats{
+		Allowed: 3, Throttled: 30, Failed: 1, Dropped: 2, BudgetRemaining: 17.5,
+	}, nil)
+	out := m.render()
+	for _, want := range []string{
+		"kubeagent_explain_allowed_total 3",
+		"kubeagent_explain_throttled_total 30",
+		"kubeagent_explain_failed_total 1",
+		"kubeagent_explain_dropped_total 2",
+		"kubeagent_explain_budget_remaining 17.5",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("render missing %q", want)
+		}
+	}
+}
+
+func TestExplainMetricsAbsentWhenDisabled(t *testing.T) {
+	m := newMetrics()
+	if strings.Contains(m.render(), "kubeagent_explain_") {
+		t.Error("no kubeagent_explain_ series may render when --explain is off")
+	}
+}
+
+func TestExplanationsEndpointServesTheStore(t *testing.T) {
+	m := newMetrics()
+	at := time.Date(2026, 7, 26, 10, 4, 12, 0, time.UTC)
+	m.updateExplain(true, oncall.Stats{Allowed: 1, Throttled: 4, Failed: 0, Dropped: 0},
+		[]oncall.Explanation{{
+			Kind: "Deployment", Namespace: "shop", Name: "web",
+			Issues: []string{"ImagePullBackOff"}, ExplainedAt: at,
+			Model: "test-model", Text: "the tag is missing",
+		}})
+
+	rec := httptest.NewRecorder()
+	m.handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/explanations", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var got struct {
+		Explanations []struct {
+			Kind        string   `json:"kind"`
+			Namespace   string   `json:"namespace"`
+			Name        string   `json:"name"`
+			Issues      []string `json:"issues"`
+			ExplainedAt string   `json:"explainedAt"`
+			Model       string   `json:"model"`
+			Text        string   `json:"text"`
+		} `json:"explanations"`
+		Stats struct {
+			AllowedTotal   int64 `json:"allowedTotal"`
+			ThrottledTotal int64 `json:"throttledTotal"`
+		} `json:"stats"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v\nbody: %s", err, rec.Body.String())
+	}
+	if len(got.Explanations) != 1 {
+		t.Fatalf("got %d explanations, want 1", len(got.Explanations))
+	}
+	e := got.Explanations[0]
+	if e.Kind != "Deployment" || e.Namespace != "shop" || e.Name != "web" {
+		t.Errorf("object = %s/%s/%s, want Deployment/shop/web", e.Kind, e.Namespace, e.Name)
+	}
+	if e.Text != "the tag is missing" || e.Model != "test-model" {
+		t.Errorf("text/model = %q/%q", e.Text, e.Model)
+	}
+	if e.ExplainedAt != "2026-07-26T10:04:12Z" {
+		t.Errorf("explainedAt = %q, want RFC3339 UTC", e.ExplainedAt)
+	}
+	if got.Stats.AllowedTotal != 1 || got.Stats.ThrottledTotal != 4 {
+		t.Errorf("stats = %+v", got.Stats)
+	}
+}
+
+func TestExplanationsEndpointIsEmptyWhenDisabled(t *testing.T) {
+	m := newMetrics()
+	rec := httptest.NewRecorder()
+	m.handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/explanations", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var got struct {
+		Explanations []interface{} `json:"explanations"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(got.Explanations) != 0 {
+		t.Errorf("got %d explanations with --explain off, want 0", len(got.Explanations))
 	}
 }

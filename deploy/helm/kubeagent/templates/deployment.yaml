@@ -48,6 +48,26 @@ spec:
             {{- end }}
             - "--slo-target={{ $target }}"
             {{- end }}
+            {{- if .Values.explain.enabled }}
+            {{- if not .Values.explain.existingSecret }}
+            {{- fail "explain.existingSecret is required when explain.enabled is true (the API key and any endpoint URL are credentials and must come from a Secret, never from values.yaml)" }}
+            {{- end }}
+            {{- if and .Values.explain.endpointSecretKey (not .Values.explain.model) }}
+            {{- fail "explain.model is required when explain.endpointSecretKey is set (a local endpoint has no default model name)" }}
+            {{- end }}
+            {{- if and (not .Values.explain.endpointSecretKey) (not .Values.explain.secretKey) }}
+            {{- fail "explain.secretKey is required when explain.endpointSecretKey is empty (the Anthropic backend needs an API key)" }}
+            {{- end }}
+            {{- if lt (int .Values.explain.budget) 1 }}
+            {{- fail (printf "explain.budget must be at least 1 model call per hour when explain.enabled is true (got %v)" .Values.explain.budget) }}
+            {{- end }}
+            - "--explain"
+            - "--explain-cooldown={{ .Values.explain.cooldown }}"
+            - "--explain-budget={{ .Values.explain.budget }}"
+            {{- if .Values.explain.model }}
+            - "--model={{ .Values.explain.model }}"
+            {{- end }}
+            {{- end }}
           env:
             - name: KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS
               value: {{ .Values.webhookLatency.timeoutThreshold | quote }}
@@ -83,6 +103,30 @@ spec:
                 secretKeyRef:
                   name: {{ required "alerts.existingSecret is required when alerts.enabled is true" .Values.alerts.existingSecret | quote }}
                   key: {{ .Values.alerts.secretKey | quote }}
+            {{- end }}
+            {{- if .Values.explain.enabled }}
+            {{- $explainSecret := required "explain.existingSecret is required when explain.enabled is true (the API key and any endpoint URL are credentials and must come from a Secret, never from values.yaml)" .Values.explain.existingSecret }}
+            {{- if .Values.explain.endpointSecretKey }}
+            - name: KUBEAGENT_EXPLAIN_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $explainSecret | quote }}
+                  key: {{ .Values.explain.endpointSecretKey | quote }}
+            {{- if .Values.explain.secretKey }}
+            - name: KUBEAGENT_EXPLAIN_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $explainSecret | quote }}
+                  key: {{ .Values.explain.secretKey | quote }}
+                  optional: true
+            {{- end }}
+            {{- else }}
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $explainSecret | quote }}
+                  key: {{ .Values.explain.secretKey | quote }}
+            {{- end }}
             {{- end }}
           ports:
             - name: metrics

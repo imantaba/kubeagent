@@ -1,6 +1,7 @@
 package watch
 
 import (
+	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/watchstate"
 )
@@ -105,4 +106,16 @@ func issueKeys(res *scan.Result) []watchstate.Key {
 		add("Volume", v.Namespace, name, "DiskOverThreshold")
 	}
 	return keys
+}
+
+// flaggedWorkloads is the evaluation's flagged workloads, which is the cluster
+// context an explanation gets. Same predicate the issue tracker uses.
+func flaggedWorkloads(res *scan.Result) []inventory.Workload {
+	var out []inventory.Workload
+	for _, w := range res.Inventory.Workloads {
+		if w.Flagged() {
+			out = append(out, w)
+		}
+	}
+	return out
 }

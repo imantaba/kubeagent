@@ -61,7 +61,7 @@ func run(args []string) error {
 		return runWatch(args[1:])
 	}
 	if len(args) == 0 || args[0] != "scan" {
-		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--investigate] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--kubelet-health] [--control-plane-health] [--dns-health] [--certs [--cert-warn-days n]] [--logs] [--node-heartbeat-threshold dur] [--expected-nodes a,b,…] [--fix [--dry-run|--yes] [--audit-log path]] [--rollback --audit-log path] | kubeagent watch [--kubeconfig path] [--context name] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] [--alert-format json|slack|alertmanager] [--alert-repeat dur] [--slo-target pct] | kubeagent version")
+		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--investigate] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--kubelet-health] [--control-plane-health] [--dns-health] [--certs [--cert-warn-days n]] [--logs] [--node-heartbeat-threshold dur] [--expected-nodes a,b,…] [--fix [--dry-run|--yes] [--audit-log path]] [--rollback --audit-log path] | kubeagent watch [--kubeconfig path] [--context name] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] [--alert-format json|slack|alertmanager] [--alert-repeat dur] [--slo-target pct] [--explain [--explain-cooldown dur] [--explain-budget n] [--model name]] | kubeagent version")
 	}
 
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
@@ -320,6 +320,10 @@ func runWatch(args []string) error {
 	alertFormat := fs.String("alert-format", envOr("KUBEAGENT_ALERT_FORMAT", "json"), "alert payload format: json, slack, or alertmanager")
 	alertRepeat := fs.Duration("alert-repeat", envDur("KUBEAGENT_ALERT_REPEAT", 0), "re-send interval for still-firing alerts (0 = the format default: 4h, or 60s for alertmanager)")
 	sloTarget := fs.Float64("slo-target", envFloat("KUBEAGENT_SLO_TARGET", 0), "availability SLO as a percentage, e.g. 99.9 (0 = SLO tracking off)")
+	explainFlag := fs.Bool("explain", envBool("KUBEAGENT_EXPLAIN", false), "explain new incidents via one LLM call each (needs ANTHROPIC_API_KEY, or KUBEAGENT_EXPLAIN_ENDPOINT for a local OpenAI-compatible model)")
+	explainCooldown := fs.Duration("explain-cooldown", envDur("KUBEAGENT_EXPLAIN_COOLDOWN", time.Hour), "minimum gap between explanations for the same object (0 = no per-object gap)")
+	explainBudget := fs.Int("explain-budget", envInt("KUBEAGENT_EXPLAIN_BUDGET", 20), "model calls per hour, and the burst capacity")
+	model := fs.String("model", "", "model for --explain (default: $KUBEAGENT_MODEL or claude-opus-4-8; the local model name when KUBEAGENT_EXPLAIN_ENDPOINT is set)")
 	var namespace string
 	fs.StringVar(&namespace, "namespace", envOr("KUBEAGENT_NAMESPACE", ""), "namespace to watch (default: all)")
 	fs.StringVar(&namespace, "n", envOr("KUBEAGENT_NAMESPACE", ""), "namespace to watch (shorthand)")
@@ -337,6 +341,25 @@ func runWatch(args []string) error {
 	}
 	if alertURL == "" && (*alertFormat != "json" || *alertRepeat != 0) {
 		fmt.Fprintln(os.Stderr, "kubeagent: --alert-* flags ignored: KUBEAGENT_ALERT_WEBHOOK is not set, so alerting is off")
+	}
+
+	// --explain needs Anthropic, or a local OpenAI-compatible endpoint. Check
+	// before connecting: a credential error must not surface as a daemon that
+	// looks up and then silently never explains anything.
+	explainEndpoint := os.Getenv("KUBEAGENT_EXPLAIN_ENDPOINT")
+	var explainModel string
+	if *explainFlag {
+		if explainEndpoint == "" && os.Getenv("ANTHROPIC_API_KEY") == "" {
+			return fmt.Errorf("--explain needs ANTHROPIC_API_KEY, or set KUBEAGENT_EXPLAIN_ENDPOINT for a local OpenAI-compatible model")
+		}
+		if explainEndpoint != "" {
+			explainModel = firstNonEmpty(*model, os.Getenv("KUBEAGENT_MODEL")) // no Anthropic default for a local model
+			if explainModel == "" {
+				return fmt.Errorf("--explain with KUBEAGENT_EXPLAIN_ENDPOINT needs --model (or KUBEAGENT_MODEL) set to the local model name")
+			}
+		} else {
+			explainModel = explain.ResolveModel(*model, os.Getenv("KUBEAGENT_MODEL"))
+		}
 	}
 
 	// The flag is a percentage because that is how an SRE writes an SLO; the
@@ -401,6 +424,12 @@ func runWatch(args []string) error {
 		AlertFormat:             *alertFormat,
 		AlertRepeat:             repeat,
 		SLOTarget:               sloRatio,
+		Explain:                 *explainFlag,
+		ExplainModel:            explainModel,
+		ExplainEndpoint:         explainEndpoint,
+		ExplainAPIKey:           os.Getenv("KUBEAGENT_EXPLAIN_API_KEY"),
+		ExplainCooldown:         *explainCooldown,
+		ExplainBudget:           *explainBudget,
 	})
 }
 

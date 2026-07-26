@@ -22,7 +22,7 @@ type fakeSummarizer struct {
 	err    error
 }
 
-func (f *fakeSummarizer) summarize(ctx context.Context, prompt string) (string, error) {
+func (f *fakeSummarizer) summarize(ctx context.Context, system, prompt string) (string, error) {
 	f.called = true
 	return f.reply, f.err
 }

@@ -298,8 +298,7 @@
   chart, and never logged beyond `scheme://host`. Delivery is a bounded queue
   with three attempts and counted drops, on its own goroutine, so a hung
   receiver cannot stall the reconcile loop. The daemon stays strictly
-  read-only toward the cluster and calls no LLM. Rate-limited on-incident
-  `--explain` and the multi-cluster hub are the remaining Theme E slices. See
+  read-only toward the cluster and calls no LLM. See
   [Watch mode](features/watch-mode.md#alerting).
 
 - **SLO burn-rate signals** (Theme E — slice 3) — the daemon can now track a
@@ -316,6 +315,26 @@
   it never appears in `/issues` or `kubeagent_issues_*`. Off by default; no
   new RBAC. See
   [Watch mode](features/watch-mode.md#slo-burn-rate).
+
+- **On-incident `--explain`** (Theme E — slice 4) — opt-in, rate-limited
+  explanations for `watch`: when an object breaks, the daemon sends a second,
+  model-written message a few seconds after the object's alert — likely
+  cause, how to confirm, and the deterministic fix kubeagent already computed
+  — through the same webhook sink as a follow-up notification, so retry,
+  backoff, and URL redaction all apply unchanged and the page itself never
+  waits on the model. A per-object cooldown (default `1h`) and an hourly
+  token bucket (default `20`, capacity equal to the rate) bound the spend,
+  and a restart explains nothing from its first snapshot so a crash-looping
+  daemon can't spend its budget re-explaining pre-existing problems. Five
+  `kubeagent_explain_*` series and a read-only `/explanations` endpoint make
+  the throttling visible; works against a local OpenAI-compatible model via
+  `KUBEAGENT_EXPLAIN_ENDPOINT`, with the API key wired from a Secret in the
+  chart and no flag ever accepting it. The read-only invariant is enforced by
+  the explainer's type signature, which takes no Kubernetes client — the
+  daemon stays strictly read-only toward the cluster in every configuration;
+  the model call itself is outbound HTTP once enabled. The multi-cluster hub
+  is the remaining Theme E slice. See
+  [Watch mode](features/watch-mode.md#on-incident-explanations-explain).
 
 !!! info "Version history"
     [GitHub Releases](https://github.com/imantaba/kubeagent/releases) and the
@@ -369,7 +388,7 @@ These are the north star; every item below is measured against them.
 - **E · Continuous operations** — `watch` gains state (regressions, flapping, MTTR,
   "new since last"), webhook alerting (JSON / Slack / Alertmanager shipped;
   PagerDuty remains an open receiver), SLO burn-rate signals (shipped),
-  rate-limited on-incident `--explain`, and a multi-cluster hub.
+  rate-limited on-incident `--explain` (shipped), and a multi-cluster hub.
 - **F · Ecosystem & operators** — first-class awareness of the operators people
   actually run (CloudNativePG, cert-manager, Longhorn/Ceph, Argo CD / Flux GitOps
   drift, Prometheus operator, service meshes), plus cost/right-sizing and

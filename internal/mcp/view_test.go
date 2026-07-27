@@ -72,6 +72,24 @@ func TestFindingsFromResult_DegradedWorkloadWithoutADetectorFindingStillReports(
 	}
 }
 
+func TestFindingsFromResult_HealthyRestartedWorkloadProducesNoFindings(t *testing.T) {
+	res := scan.Result{
+		Inventory: inventory.Result{
+			Workloads: []inventory.Workload{{
+				Namespace: "payments", Name: "api", Kind: "Deployment",
+				Desired: 3, Ready: 3, Status: "Running", Restarts: 4,
+			}},
+		},
+	}
+
+	got := findingsFromResult(res)
+
+	if len(got) != 0 {
+		t.Errorf("findingsFromResult() = %+v, want none — a healthy workload that merely "+
+			"restarted in the past is not a warning a model should act on", got)
+	}
+}
+
 func TestFindingsFromResult_CoversEveryAttentionClassNotJustWorkloads(t *testing.T) {
 	res := scan.Result{
 		ServiceIssues: []svchealth.Issue{{
@@ -138,6 +156,32 @@ func TestCapFindings_TruncatesAndReportsHowMany(t *testing.T) {
 	}
 	if omitted != 7 {
 		t.Errorf("omitted = %d, want 7", omitted)
+	}
+}
+
+func TestCapFindings_SortedCriticalsSurviveTruncationAheadOfWarnings(t *testing.T) {
+	in := make([]Finding, 0, MaxFindings+5)
+	for i := 0; i < 5; i++ {
+		in = append(in, Finding{Severity: "warning", Kind: "Pod", Namespace: "n", Name: fmt.Sprintf("w%03d", i)})
+	}
+	for i := 0; i < MaxFindings; i++ {
+		in = append(in, Finding{Severity: "critical", Kind: "Pod", Namespace: "n", Name: fmt.Sprintf("c%03d", i)})
+	}
+
+	sortFindings(in)
+	got, omitted := capFindings(in)
+
+	if omitted != 5 {
+		t.Fatalf("omitted = %d, want 5", omitted)
+	}
+	if len(got) != MaxFindings {
+		t.Fatalf("len(got) = %d, want %d", len(got), MaxFindings)
+	}
+	for _, f := range got {
+		if f.Severity != "critical" {
+			t.Errorf("got a %q finding in the surviving set: %+v; sorted criticals must survive "+
+				"truncation ahead of warnings", f.Severity, f)
+		}
 	}
 }
 

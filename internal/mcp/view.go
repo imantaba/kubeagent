@@ -81,7 +81,13 @@ func findingsFromResult(res scan.Result) []Finding {
 
 	for _, w := range res.Inventory.Workloads {
 		if len(w.Findings) == 0 {
-			out = append(out, fromWorkload(w))
+			// A workload can reach here unflagged: Prioritize includes
+			// restart-only and idle-cron workloads whenever the triage handler
+			// sets IncludeRestarts/IncludeCron, and those are healthy right now
+			// — reporting them as warnings would be a false positive.
+			if w.Flagged() {
+				out = append(out, fromWorkload(w))
+			}
 			continue
 		}
 		for _, f := range w.Findings {
@@ -161,7 +167,9 @@ func sortFindings(f []Finding) {
 	})
 }
 
-// capFindings truncates to MaxFindings and reports how many were dropped.
+// capFindings truncates to MaxFindings and reports how many were dropped. It
+// truncates in the order given — it does not sort — so a critical finding
+// survives ahead of a warning only if the caller already ran sortFindings.
 func capFindings(f []Finding) ([]Finding, int) {
 	if len(f) <= MaxFindings {
 		return f, 0

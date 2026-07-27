@@ -20,6 +20,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/nodehealth"
 	"github.com/imantaba/kubeagent/internal/nodereserve"
+	"github.com/imantaba/kubeagent/internal/operators"
 	"github.com/imantaba/kubeagent/internal/pdbhealth"
 	"github.com/imantaba/kubeagent/internal/platform"
 	"github.com/imantaba/kubeagent/internal/pvchealth"
@@ -52,6 +53,7 @@ type inventoryReport struct {
 	ControlPlane       *controlplane.Probe         `json:"controlPlane,omitempty"`
 	DNS                *dnshealth.Report           `json:"dns,omitempty"`
 	Certificates       *certhealth.Report          `json:"certificates,omitempty"`
+	Operators          *operators.Report           `json:"operators,omitempty"`
 	StuckTerminating   []termhealth.Issue          `json:"stuckTerminating,omitempty"`
 	PDBIssues          []pdbhealth.Issue           `json:"pdbIssues,omitempty"`
 	HPAIssues          []hpahealth.Issue           `json:"hpaIssues,omitempty"`
@@ -124,6 +126,7 @@ type Input struct {
 	ControlPlane           *controlplane.Probe
 	DNS                    *dnshealth.Report
 	Certificates           *certhealth.Report
+	Operators              *operators.Report
 	StuckTerminating       []termhealth.Issue
 	PDBIssues              []pdbhealth.Issue
 	HPAIssues              []hpahealth.Issue
@@ -159,6 +162,7 @@ func PrintInventory(in Input, format string, w io.Writer) error {
 			ControlPlane:       in.ControlPlane,
 			DNS:                in.DNS,
 			Certificates:       in.Certificates,
+			Operators:          in.Operators,
 			StuckTerminating:   in.StuckTerminating,
 			PDBIssues:          in.PDBIssues,
 			HPAIssues:          in.HPAIssues,
@@ -261,6 +265,10 @@ func printInventoryText(in Input, w io.Writer) error {
 
 	hasCerts := certificatesRender(in.Certificates)
 	if err := printCertificates(in.Certificates, w); err != nil {
+		return err
+	}
+
+	if err := printOperators(in.Operators, w); err != nil {
 		return err
 	}
 
@@ -1167,6 +1175,92 @@ func printCertificates(rep *certhealth.Report, w io.Writer) error {
 	}
 	_, err := fmt.Fprintf(w, "  · %d certificates checked (warn window %dd)\n", rep.Checked, rep.WarnDays)
 	return err
+}
+
+// operatorsRender reports whether the OPERATORS section would print anything.
+func operatorsRender(rep *operators.Report) bool {
+	return rep != nil && len(rep.Operators) > 0
+}
+
+// printOperators renders the advisory OPERATORS section (opt-in --operators):
+// one line per operator, one per resource kind, and the unhealthy resources a
+// kind enumerates. Metadata and state only — no CR spec content ever reaches it.
+func printOperators(rep *operators.Report, w io.Writer) error {
+	if !operatorsRender(rep) {
+		return nil
+	}
+	if _, err := fmt.Fprintln(w, "OPERATORS  (advisory — operator-reported state; no CR spec content)"); err != nil {
+		return err
+	}
+	for _, op := range rep.Operators {
+		line := "  " + op.Operator
+		if len(op.APIVersions) > 0 {
+			line += " (" + strings.Join(op.APIVersions, ", ") + ")"
+		}
+		if _, err := fmt.Fprintln(w, line); err != nil {
+			return err
+		}
+		for _, k := range op.Kinds {
+			switch {
+			case k.Forbidden:
+				if _, err := fmt.Fprintf(w, "    %-16slist forbidden — apply deploy/rbac-operators.yaml\n", k.Kind); err != nil {
+					return err
+				}
+				continue
+			case k.Error != "":
+				if _, err := fmt.Fprintf(w, "    %-16slist failed: %s\n", k.Kind, k.Error); err != nil {
+					return err
+				}
+				continue
+			}
+			if _, err := fmt.Fprintf(w, "    %-16s%s\n", k.Kind, kindSummary(k)); err != nil {
+				return err
+			}
+			for _, r := range k.Unhealthy {
+				name := r.Name
+				if r.Namespace != "" {
+					name = r.Namespace + "/" + r.Name
+				}
+				line := "      ✗ " + name
+				if r.Reason != "" {
+					line += "  " + r.Reason
+				}
+				if _, err := fmt.Fprintln(w, line); err != nil {
+					return err
+				}
+			}
+			if k.Truncated > 0 {
+				if _, err := fmt.Fprintf(w, "      … +%d more unhealthy\n", k.Truncated); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	_, err := fmt.Fprintln(w)
+	return err
+}
+
+// kindSummary renders one kind's counts in a fixed state order, omitting zeros.
+// An adapter with no rule counts its resources without judging them, so its
+// summary says so rather than implying an assessment happened.
+func kindSummary(k operators.KindReport) string {
+	if !k.Judged {
+		return fmt.Sprintf("%d (not assessed)", k.Total())
+	}
+	order := []operators.State{
+		operators.StateHealthy, operators.StateProgressing,
+		operators.StateUnhealthy, operators.StateSuspended, operators.StateUnknown,
+	}
+	var parts []string
+	for _, s := range order {
+		if n := k.Counts[s]; n > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", n, s))
+		}
+	}
+	if len(parts) == 0 {
+		return "0"
+	}
+	return strings.Join(parts, ", ")
 }
 
 // kubeletHealthRenders reports whether the KUBELET HEALTH section would print

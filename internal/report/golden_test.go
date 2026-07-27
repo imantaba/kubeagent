@@ -17,6 +17,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/nodehealth"
 	"github.com/imantaba/kubeagent/internal/nodereserve"
+	"github.com/imantaba/kubeagent/internal/operators"
 	"github.com/imantaba/kubeagent/internal/pdbhealth"
 	"github.com/imantaba/kubeagent/internal/pvchealth"
 	"github.com/imantaba/kubeagent/internal/pvcreclaim"
@@ -110,6 +111,38 @@ func goldenInput(now time.Time) Input {
 		QuotaIssues: []quotahealth.Issue{
 			{Namespace: "shop", Quota: "compute", Resource: "requests.cpu", Used: "4", Hard: "4", Ratio: 1.0, Severity: "exhausted"},
 		},
+		Operators: &operators.Report{Operators: []operators.OperatorReport{
+			{
+				Operator: "cert-manager", APIVersions: []string{"cert-manager.io/v1"},
+				Kinds: []operators.KindReport{
+					{Kind: "Certificate", APIVersion: "cert-manager.io/v1", Judged: true,
+						Counts: map[operators.State]int{operators.StateHealthy: 12, operators.StateUnhealthy: 1},
+						Unhealthy: []operators.Resource{{Operator: "cert-manager", Kind: "Certificate",
+							Namespace: "shop", Name: "web-tls", State: operators.StateUnhealthy,
+							Reason: "Ready=False: IssuerNotFound"}}},
+					{Kind: "ClusterIssuer", APIVersion: "cert-manager.io/v1", Judged: true,
+						Counts: map[operators.State]int{operators.StateHealthy: 1}},
+				},
+			},
+			{
+				Operator: "Flux", APIVersions: []string{"kustomize.toolkit.fluxcd.io/v1", "helm.toolkit.fluxcd.io/v2"},
+				Kinds: []operators.KindReport{
+					{Kind: "Kustomization", APIVersion: "kustomize.toolkit.fluxcd.io/v1", Judged: true,
+						Counts: map[operators.State]int{operators.StateHealthy: 9, operators.StateSuspended: 1}},
+					{Kind: "HelmRelease", APIVersion: "helm.toolkit.fluxcd.io/v2", Judged: true,
+						Counts: map[operators.State]int{operators.StateHealthy: 4}},
+				},
+			},
+			{
+				Operator: "Prometheus operator", APIVersions: []string{"monitoring.coreos.com/v1"},
+				Kinds: []operators.KindReport{
+					{Kind: "Prometheus", APIVersion: "monitoring.coreos.com/v1", Judged: true,
+						Counts: map[operators.State]int{operators.StateHealthy: 1}},
+					{Kind: "ServiceMonitor", APIVersion: "monitoring.coreos.com/v1", Judged: false,
+						Counts: map[operators.State]int{operators.StateUnknown: 214}},
+				},
+			},
+		}},
 	}
 }
 

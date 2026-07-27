@@ -3,6 +3,7 @@ package report
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/nodehealth"
 	"github.com/imantaba/kubeagent/internal/nodereserve"
+	"github.com/imantaba/kubeagent/internal/operators"
 	"github.com/imantaba/kubeagent/internal/pdbhealth"
 	"github.com/imantaba/kubeagent/internal/platform"
 	"github.com/imantaba/kubeagent/internal/pvchealth"
@@ -1961,5 +1963,168 @@ func TestPrintInventory_JSONOmitsRemediationPlanWhenNil(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), "remediationPlan") {
 		t.Error("remediationPlan must be absent when no plan was computed")
+	}
+}
+
+func operatorsFixture() *operators.Report {
+	return &operators.Report{Operators: []operators.OperatorReport{
+		{
+			Operator: "cert-manager", APIVersions: []string{"cert-manager.io/v1"},
+			Kinds: []operators.KindReport{
+				{
+					Kind: "Certificate", APIVersion: "cert-manager.io/v1", Judged: true,
+					Counts: map[operators.State]int{operators.StateHealthy: 12, operators.StateUnhealthy: 1},
+					Unhealthy: []operators.Resource{{
+						Operator: "cert-manager", Kind: "Certificate", Namespace: "shop",
+						Name: "web-tls", State: operators.StateUnhealthy, Reason: "Ready=False: IssuerNotFound",
+					}},
+				},
+				{
+					Kind: "ClusterIssuer", APIVersion: "cert-manager.io/v1", Judged: true,
+					Counts: map[operators.State]int{operators.StateHealthy: 1},
+				},
+			},
+		},
+		{
+			Operator: "Prometheus operator", APIVersions: []string{"monitoring.coreos.com/v1"},
+			Kinds: []operators.KindReport{{
+				Kind: "ServiceMonitor", APIVersion: "monitoring.coreos.com/v1", Judged: false,
+				Counts: map[operators.State]int{operators.StateUnknown: 214},
+			}},
+		},
+	}}
+}
+
+func TestPrintInventory_OperatorsSection(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster:   clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		Operators: operatorsFixture(),
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{
+		"OPERATORS",
+		"cert-manager (cert-manager.io/v1)",
+		"Certificate     12 healthy, 1 unhealthy",
+		"✗ shop/web-tls  Ready=False: IssuerNotFound",
+		"ClusterIssuer   1 healthy",
+		"ServiceMonitor  214 (not assessed)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestPrintInventory_OperatorsSectionOmittedWhenEmpty(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1}}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(buf.String(), "OPERATORS") {
+		t.Errorf("printed the operators section with no report:\n%s", buf.String())
+	}
+
+	buf.Reset()
+	in.Operators = &operators.Report{}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(buf.String(), "OPERATORS") {
+		t.Errorf("printed the operators section with no operators installed:\n%s", buf.String())
+	}
+}
+
+func TestPrintInventory_HealthyOperatorsStillPrintTheAllClear(t *testing.T) {
+	// The section renders on a healthy cluster, so it must not suppress the
+	// all-clear line the way a problem-only section like CERTIFICATES does.
+	var buf bytes.Buffer
+	in := Input{
+		Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		Operators: &operators.Report{Operators: []operators.OperatorReport{{
+			Operator: "Flux", APIVersions: []string{"kustomize.toolkit.fluxcd.io/v1"},
+			Kinds: []operators.KindReport{{
+				Kind: "Kustomization", APIVersion: "kustomize.toolkit.fluxcd.io/v1", Judged: true,
+				Counts: map[operators.State]int{operators.StateHealthy: 9, operators.StateSuspended: 1},
+			}},
+		}}},
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "Kustomization   9 healthy, 1 suspended") {
+		t.Errorf("output missing the kind summary:\n%s", out)
+	}
+	if !strings.Contains(out, "No issues found") {
+		t.Errorf("healthy operators suppressed the all-clear line:\n%s", out)
+	}
+}
+
+func TestPrintInventory_OperatorsForbiddenAndTruncation(t *testing.T) {
+	var unhealthy []operators.Resource
+	for i := 0; i < operators.MaxUnhealthyPerKind; i++ {
+		unhealthy = append(unhealthy, operators.Resource{
+			Kind: "Application", Namespace: "argocd", Name: fmt.Sprintf("app-%02d", i),
+			State: operators.StateUnhealthy, Reason: "health.status=Degraded",
+		})
+	}
+	var buf bytes.Buffer
+	in := Input{
+		Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		Operators: &operators.Report{Operators: []operators.OperatorReport{
+			{
+				Operator: "Argo CD", APIVersions: []string{"argoproj.io/v1alpha1"},
+				Kinds: []operators.KindReport{{
+					Kind: "Application", APIVersion: "argoproj.io/v1alpha1", Judged: true,
+					Counts:    map[operators.State]int{operators.StateUnhealthy: 27},
+					Unhealthy: unhealthy, Truncated: 7,
+				}},
+			},
+			{
+				Operator: "Longhorn", APIVersions: []string{"longhorn.io/v1beta2"},
+				Kinds: []operators.KindReport{{
+					Kind: "Volume", APIVersion: "longhorn.io/v1beta2", Judged: true,
+					Counts: map[operators.State]int{}, Forbidden: true,
+				}},
+			},
+		}},
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "… +7 more unhealthy") {
+		t.Errorf("truncation not reported:\n%s", out)
+	}
+	if !strings.Contains(out, "list forbidden — apply deploy/rbac-operators.yaml") {
+		t.Errorf("forbidden kind not reported:\n%s", out)
+	}
+}
+
+func TestPrintInventory_OperatorsJSON(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster:   clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		Operators: operatorsFixture(),
+	}
+	if err := PrintInventory(in, "json", &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var got struct {
+		Operators *operators.Report `json:"operators"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("decoding: %v", err)
+	}
+	if got.Operators == nil || len(got.Operators.Operators) != 2 {
+		t.Fatalf("operators = %+v, want the two-operator report", got.Operators)
+	}
+	if got.Operators.Operators[0].Kinds[0].Counts[operators.StateHealthy] != 12 {
+		t.Errorf("counts did not round-trip: %+v", got.Operators.Operators[0].Kinds[0].Counts)
 	}
 }

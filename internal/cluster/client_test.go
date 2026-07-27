@@ -97,3 +97,31 @@ func TestNewInClusterOrKubeconfig_FallsBackToKubeconfig(t *testing.T) {
 		t.Fatal("expected a kubeconfig load error in the fallback path, got nil")
 	}
 }
+
+func TestNewDynamicClients_BuildsBothFromAKubeconfig(t *testing.T) {
+	// Client construction contacts no API server: this passes with nothing running.
+	path := twoContextKubeconfig(t)
+	dyn, disco, err := NewDynamicClients(path, "beta")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if dyn == nil {
+		t.Error("dynamic client is nil")
+	}
+	if disco == nil {
+		t.Error("discovery client is nil")
+	}
+}
+
+func TestNewDynamicClients_UnknownContextIsAnError(t *testing.T) {
+	path := twoContextKubeconfig(t)
+	if _, _, err := NewDynamicClients(path, "does-not-exist"); err == nil {
+		t.Fatal("expected an error for an unknown context, got nil")
+	}
+}
+
+func TestNewDynamicClients_BadPathReturnsError(t *testing.T) {
+	if _, _, err := NewDynamicClients("/nonexistent/kubeconfig", ""); err == nil {
+		t.Fatal("expected an error for a missing kubeconfig, got nil")
+	}
+}

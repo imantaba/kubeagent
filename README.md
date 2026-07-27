@@ -21,6 +21,7 @@
 - 🔍 **Optional `--investigate`** — agentic read-only follow-up reads (bounded tool-use loop: describe objects, list events, hop to related resources) to chase a root cause and emit a grounded fix; Anthropic-only, supersedes `--explain`.
 - 📦 **Single Go binary** — built on `client-go`, the same library `kubectl` uses. No CRDs, no in-cluster agent required.
 - 📊 **`watch` daemon** — run it in-cluster for continuous read-only diagnosis; tracks issue state across reconciles (new/resolved/flapping, MTTR) and serves it as Prometheus metrics plus a read-only `/issues` endpoint.
+- 🔌 **MCP server** — `kubeagent mcp` serves the same deterministic diagnosis over the Model Context Protocol on stdio, so another AI agent can call it as a tool.
 
 ```bash
 go install github.com/imantaba/kubeagent@latest
@@ -393,6 +394,16 @@ The daemon makes **no cluster writes**, makes **no LLM/Anthropic calls**, and
 adds **no new dependencies** (informers are part of `client-go`; metrics are
 hand-rolled, no Prometheus library needed). RBAC (`get`/`list`/`watch` only) and
 a Deployment manifest are in [`deploy/`](deploy/).
+
+### MCP server
+
+```bash
+./kubeagent mcp --context my-cluster
+```
+
+`kubeagent mcp` serves kubeagent's read-only diagnosis to an AI agent over the
+[Model Context Protocol](https://modelcontextprotocol.io) on stdio, and it can
+never write to the cluster.
 
 ## Install
 

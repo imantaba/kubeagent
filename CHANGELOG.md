@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **MCP server (`kubeagent mcp`)** — serves kubeagent's deterministic, read-only
+  diagnosis to AI agents over the Model Context Protocol on stdio. Four tools:
+  `kubeagent_triage` (verdict plus findings), `kubeagent_inspect` (one workload,
+  with its events), `kubeagent_advisory` (the opt-in operator, drift, capacity,
+  security and certificate sections), and `list_contexts` (only when started
+  with `--allow-context-switch`). Every result carries a `coverage` block
+  naming what ran, what was skipped and why, and what was read only partially,
+  so a model can tell "nothing is wrong" from "nothing was checked". No tool
+  can reach `--fix`, and the server never calls an LLM.
+
+### Changed
+
+- Redaction (URL and error scrubbing) moved out of `internal/alert` into its
+  own leaf package, `internal/redact`, so it can be shared without pulling in
+  the alerting stack — used by both `internal/watch` and the new
+  `internal/mcp`. CLI output is unchanged.
+- The CLI's optional advisory sections (`--operators`, `--drift`, `--capacity`)
+  now compute their degradations as a structured result in `internal/advisory`
+  instead of writing warnings directly to stderr from `main.go`; `main.go`
+  prints the same two warning sentences from that structured result. CLI
+  output is unchanged.
+
 ## [0.62.0] - 2026-07-27
 
 ### Added

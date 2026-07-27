@@ -66,5 +66,6 @@ nav:
       - Credential lint: features/credential-lint.md
       - Remediation (--fix): features/remediation.md
       - Watch mode (daemon): features/watch-mode.md
+      - MCP server: features/mcp.md
   - Install: install.md
   - Roadmap: roadmap.md

@@ -31,10 +31,15 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   LLM-decided. Without `--fix`, kubeagent never creates, updates, patches, or
   deletes anything.
 - v1 uses the **standard-library `flag`** package only — no Cobra yet.
-- v1 CLI (`scan`) is **sequential** — no goroutines. The `watch` daemon
-  (`internal/watch`) is the documented exception: it runs informers, a heartbeat
-  ticker, and an HTTP server concurrently. It remains **strictly read-only**
-  (get/list/watch only; no writes, no LLM).
+- v1 CLI (`scan`) is **sequential** — no goroutines. `internal/watch` is no
+  longer the only documented long-lived-process exception: the `watch` daemon
+  runs informers, a heartbeat ticker, and an HTTP server concurrently, and
+  `kubeagent mcp` (`internal/mcp`) is a second long-lived server, serving MCP
+  tool calls over stdio for as long as the client stays connected. Both remain
+  **strictly read-only toward the cluster** (get/list/watch only; no writes)
+  and make **no LLM calls**. `internal/mcp` must never import
+  `internal/remediate` or `internal/explain` — there is no code path from the
+  MCP server into a write or into a model call.
 
 ## Commit conventions
 
@@ -80,3 +85,7 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   production contract) lives in
   [website/docs/roadmap.md](website/docs/roadmap.md). Update it when a milestone
   ships or the plan shifts.
+- **Theme G slice 1 has shipped:** the MCP server (`kubeagent mcp`), documented
+  in [website/docs/features/mcp.md](website/docs/features/mcp.md). The rest of
+  Theme G — the `kubectl` krew plugin, a CI/CD gate mode, an interactive TUI,
+  and a shareable HTML report — remains ahead.

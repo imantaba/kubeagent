@@ -18,7 +18,9 @@ func connect(t *testing.T, cfg Config, client kubernetes.Interface) *mcpsdk.Clie
 	t.Helper()
 	ctx := context.Background()
 
-	srv := newServer(cfg, "test", client, func() time.Time { return fixedNow })
+	srv := newServer(cfg, "test", client,
+		func(string) (kubernetes.Interface, error) { return client, nil },
+		func() time.Time { return fixedNow })
 	clientTransport, serverTransport := mcpsdk.NewInMemoryTransports()
 
 	go func() {

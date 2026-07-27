@@ -54,7 +54,7 @@ type InspectOutput struct {
 	Coverage  *Coverage          `json:"coverage"`
 }
 
-func registerInspect(s *mcpsdk.Server, cfg Config, client kubernetes.Interface, now func() time.Time) {
+func registerInspect(s *mcpsdk.Server, cfg Config, base kubernetes.Interface, switchTo clientFactory, now func() time.Time) {
 	tool := &mcpsdk.Tool{
 		Name: "kubeagent_inspect",
 		Description: "Inspect one workload or pod: its status, its pods, kubeagent's findings for it, and " +
@@ -89,8 +89,9 @@ func registerInspect(s *mcpsdk.Server, cfg Config, client kubernetes.Interface, 
 
 	mcpsdk.AddTool(s, tool, guard("kubeagent_inspect",
 		func(ctx context.Context, _ *mcpsdk.CallToolRequest, in InspectInput) (*mcpsdk.CallToolResult, InspectOutput, error) {
-			if in.Context != "" && !cfg.AllowContextSwitch {
-				return nil, InspectOutput{}, errContextSwitchDisabled
+			client, contextName, err := clientFor(cfg, base, switchTo, in.Context)
+			if err != nil {
+				return nil, InspectOutput{}, err
 			}
 
 			res, err := scan.Evaluate(ctx, client, scan.Options{
@@ -103,7 +104,7 @@ func registerInspect(s *mcpsdk.Server, cfg Config, client kubernetes.Interface, 
 				return nil, InspectOutput{}, errors.New("scanning the namespace: " + redact.Error(err))
 			}
 
-			cov := newCoverage(contextLabel(cfg.Context), in.Namespace, now())
+			cov := newCoverage(contextName, in.Namespace, now())
 			cov.markRun("workloads", "pod-diagnosis", "events")
 			cov.markPartial(res.PartialReads)
 

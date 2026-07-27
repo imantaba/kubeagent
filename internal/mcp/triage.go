@@ -41,7 +41,7 @@ type TriageOutput struct {
 var errContextSwitchDisabled = errors.New(
 	"this server was started without --allow-context-switch, so it only answers for the cluster it was started against")
 
-func registerTriage(s *mcpsdk.Server, cfg Config, client kubernetes.Interface, now func() time.Time) {
+func registerTriage(s *mcpsdk.Server, cfg Config, base kubernetes.Interface, switchTo clientFactory, now func() time.Time) {
 	tool := &mcpsdk.Tool{
 		Name: "kubeagent_triage",
 		Description: "Run kubeagent's deterministic read-only diagnosis over a cluster or one namespace and " +
@@ -50,8 +50,9 @@ func registerTriage(s *mcpsdk.Server, cfg Config, client kubernetes.Interface, n
 	}
 	mcpsdk.AddTool(s, tool, guard("kubeagent_triage",
 		func(ctx context.Context, _ *mcpsdk.CallToolRequest, in TriageInput) (*mcpsdk.CallToolResult, TriageOutput, error) {
-			if in.Context != "" && !cfg.AllowContextSwitch {
-				return nil, TriageOutput{}, errContextSwitchDisabled
+			client, contextName, err := clientFor(cfg, base, switchTo, in.Context)
+			if err != nil {
+				return nil, TriageOutput{}, err
 			}
 
 			res, err := scan.Evaluate(ctx, client, scan.Options{
@@ -64,7 +65,7 @@ func registerTriage(s *mcpsdk.Server, cfg Config, client kubernetes.Interface, n
 				return nil, TriageOutput{}, errors.New("scanning the cluster: " + redact.Error(err))
 			}
 
-			cov := newCoverage(contextLabel(cfg.Context), in.Namespace, now())
+			cov := newCoverage(contextName, in.Namespace, now())
 			cov.markRun("workloads", "pod-diagnosis", "services", "ingresses", "persistentvolumeclaims",
 				"terminating", "poddisruptionbudgets", "horizontalpodautoscalers", "webhooks", "resourcequotas")
 			cov.markSkipped("credential-lint", "not run by triage; use the kubeagent CLI")
@@ -93,7 +94,7 @@ func registerTriage(s *mcpsdk.Server, cfg Config, client kubernetes.Interface, n
 			return nil, TriageOutput{
 				Verdict: verdict,
 				Cluster: Cluster{
-					Context: contextLabel(cfg.Context),
+					Context: contextName,
 					Version: platform.Detect(res.Nodes, nil, nil, nil).KubeVersion,
 					Nodes:   len(res.Nodes),
 				},

@@ -54,7 +54,7 @@ func normalizeSections(in []string) []string {
 	return out
 }
 
-func registerAdvisory(s *mcpsdk.Server, cfg Config, client kubernetes.Interface, now func() time.Time) {
+func registerAdvisory(s *mcpsdk.Server, cfg Config, base kubernetes.Interface, switchTo clientFactory, now func() time.Time) {
 	tool := &mcpsdk.Tool{
 		Name: "kubeagent_advisory",
 		Description: "Run kubeagent's opt-in advisory sections: operator health, GitOps drift, scheduling " +
@@ -84,8 +84,9 @@ func registerAdvisory(s *mcpsdk.Server, cfg Config, client kubernetes.Interface,
 
 	mcpsdk.AddTool(s, tool, guard("kubeagent_advisory",
 		func(ctx context.Context, _ *mcpsdk.CallToolRequest, in AdvisoryInput) (*mcpsdk.CallToolResult, AdvisoryOutput, error) {
-			if in.Context != "" && !cfg.AllowContextSwitch {
-				return nil, AdvisoryOutput{}, errContextSwitchDisabled
+			client, contextName, err := clientFor(cfg, base, switchTo, in.Context)
+			if err != nil {
+				return nil, AdvisoryOutput{}, err
 			}
 
 			want := map[string]bool{}
@@ -94,7 +95,7 @@ func registerAdvisory(s *mcpsdk.Server, cfg Config, client kubernetes.Interface,
 				want[s] = true
 			}
 
-			cov := newCoverage(contextLabel(cfg.Context), in.Namespace, now())
+			cov := newCoverage(contextName, in.Namespace, now())
 			out := AdvisoryOutput{Requested: requested, Sections: map[string]any{}, Coverage: cov}
 
 			// One scan feeds every section: the advisory assessors need the
@@ -161,7 +162,7 @@ func registerAdvisory(s *mcpsdk.Server, cfg Config, client kubernetes.Interface,
 
 				adv := advisory.Assess(ctx, client,
 					func() (dynamic.Interface, discovery.DiscoveryInterface, error) {
-						dyn, disco, err := cluster.NewDynamicClients(cfg.Kubeconfig, cfg.Context)
+						dyn, disco, err := cluster.NewDynamicClients(cfg.Kubeconfig, contextName)
 						if err != nil {
 							// The discarded error carries the kubeconfig path
 							// and context name (internal/cluster's restConfig

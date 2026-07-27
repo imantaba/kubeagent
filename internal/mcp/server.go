@@ -61,14 +61,39 @@ func contextLabel(name string) string {
 	return name
 }
 
+// clientFactory builds a clientset for a named kubeconfig context. It exists
+// so tests can drive context switching without a kubeconfig on disk.
+type clientFactory func(contextName string) (kubernetes.Interface, error)
+
+// clientFor picks the clientset a call should use and the context label its
+// result should report. The error it returns crosses the MCP boundary, so it
+// names the requested context and nothing else — never a kubeconfig path,
+// never an API server address.
+func clientFor(cfg Config, base kubernetes.Interface, switchTo clientFactory, requested string) (kubernetes.Interface, string, error) {
+	if requested == "" {
+		return base, contextLabel(cfg.Context), nil
+	}
+	if !cfg.AllowContextSwitch {
+		return nil, "", errContextSwitchDisabled
+	}
+	client, err := switchTo(requested)
+	if err != nil {
+		return nil, "", fmt.Errorf("connecting to context %q", requested)
+	}
+	return client, requested, nil
+}
+
 // newServer builds the server around an already-connected clientset. Serve is
 // the production entry point; this constructor exists so tests can drive the
 // whole protocol against a fake clientset and a fixed clock.
-func newServer(cfg Config, version string, client kubernetes.Interface, now func() time.Time) *mcpsdk.Server {
+func newServer(cfg Config, version string, client kubernetes.Interface, switchTo clientFactory, now func() time.Time) *mcpsdk.Server {
 	s := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "kubeagent", Version: version}, nil)
-	registerTriage(s, cfg, client, now)
-	registerInspect(s, cfg, client, now)
-	registerAdvisory(s, cfg, client, now)
+	registerTriage(s, cfg, client, switchTo, now)
+	registerInspect(s, cfg, client, switchTo, now)
+	registerAdvisory(s, cfg, client, switchTo, now)
+	if cfg.AllowContextSwitch {
+		registerContexts(s, cfg)
+	}
 	return s
 }
 
@@ -87,6 +112,8 @@ func Serve(ctx context.Context, cfg Config, version string) error {
 		return fmt.Errorf("reaching the API server: %s", redact.Error(err))
 	}
 
-	s := newServer(cfg, version, client, time.Now)
+	s := newServer(cfg, version, client, func(contextName string) (kubernetes.Interface, error) {
+		return cluster.NewClient(cfg.Kubeconfig, contextName)
+	}, time.Now)
 	return s.Run(ctx, &mcpsdk.StdioTransport{})
 }

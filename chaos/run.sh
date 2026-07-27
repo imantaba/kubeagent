@@ -22,7 +22,7 @@ while [ $# -gt 0 ]; do
   esac; shift
 done
 
-# Normalize a numeric --only to the zero-padded form used in scenario keys (01..16).
+# Normalize a numeric --only to the zero-padded form used in scenario keys (01..17).
 if [ -n "$ONLY" ] && printf '%s' "$ONLY" | grep -qE '^[0-9]+$'; then ONLY=$(printf '%02d' "$ONLY"); fi
 
 : "${OUT:=docs/testing/chaos-results.md}"
@@ -789,12 +789,91 @@ OOM
   kubectl --context "$CTX" delete ns chaos-oom --wait=true --timeout=120s >/dev/null 2>&1 || true
 }
 
+scenario_17_gitops() {   # real Flux -> --drift; a failing and a suspended Kustomization
+  log "scenario 17: GitOps drift (--drift)"
+  local ns=chaos-gitops
+  local fluxurl="https://github.com/fluxcd/flux2/releases/download/v2.4.0/install.yaml"
+  kubectl --context "$CTX" apply -f "$fluxurl" >/dev/null 2>&1 || true
+  kubectl --context "$CTX" -n flux-system rollout status deploy/source-controller --timeout=180s >/dev/null 2>&1 || true
+  kubectl --context "$CTX" -n flux-system rollout status deploy/kustomize-controller --timeout=180s >/dev/null 2>&1 || true
+  kubectl --context "$CTX" create ns "$ns" --dry-run=client -o yaml | kubectl --context "$CTX" apply -f - >/dev/null
+
+  # A GitRepository pointing at a host that cannot resolve: source-controller
+  # fails fast with no outbound network and no dependency on a real repo, so the
+  # Kustomization below settles on Ready=False within seconds. The token in the
+  # URL and the distinctive path are the leak probe — neither may appear anywhere
+  # in the report.
+  local i
+  for i in $(seq 6); do
+    kubectl --context "$CTX" -n "$ns" apply -f - >/dev/null 2>&1 <<'GITREPO' && break
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: doomed
+spec:
+  interval: 30s
+  url: https://chaosonlytoken@git.chaos.invalid/org/repo.git
+  ref:
+    branch: main
+GITREPO
+    sleep 5
+  done
+
+  kubectl --context "$CTX" -n "$ns" apply -f - >/dev/null 2>&1 <<'KS' || true
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: doomed
+spec:
+  interval: 30s
+  path: ./overlays/chaosonlytoken
+  prune: false
+  sourceRef:
+    kind: GitRepository
+    name: doomed
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: parked
+spec:
+  suspend: true
+  interval: 30s
+  path: ./overlays/chaosonlytoken
+  prune: false
+  sourceRef:
+    kind: GitRepository
+    name: doomed
+KS
+
+  sleep 45
+  local out body
+  # --drift-age 10s so the 45s-old failure classifies as stale rather than as a
+  # deploy that is still converging: this exercises the threshold, not just the
+  # parser.
+  out="$(scan --drift --drift-age 10s 2>&1 || true)"
+  body="$(scan_body "$out")"
+  {
+    printf '%s\n' "$out"
+    printf '\n--- gate checks ---\n'
+    printf 'GITOPS DRIFT section:            %s\n' "$(printf '%s\n' "$body" | grep -m1 'GITOPS DRIFT' || true)"
+    printf 'Kustomization line:              %s\n' "$(printf '%s\n' "$body" | grep -m1 'Kustomization' || true)"
+    printf 'doomed enumerated:               %s\n' "$(printf '%s\n' "$body" | grep -c "$ns/doomed" || true)"
+    printf 'parked enumerated as suspended:  %s\n' "$(printf '%s\n' "$body" | grep -cE "$ns/parked +suspended" || true)"
+    printf 'repo URL or token in report:     %s\n' "$(printf '%s\n' "$body" | grep -cE 'chaosonlytoken|git\.chaos\.invalid' || true)"
+    printf 'cluster verdict:                 %s\n' "$(printf '%s\n' "$body" | grep -m1 '^Cluster:' || true)"
+  } | record "17. GitOps drift (--drift)" "detected: Flux Kustomization not ready + one suspended; no repo URL or token (0)"
+
+  kubectl --context "$CTX" delete ns "$ns" --wait=true --timeout=120s >/dev/null 2>&1 || true
+  kubectl --context "$CTX" delete -f "$fluxurl" --wait=false >/dev/null 2>&1 || true
+}
+
 run_scenarios() {
   # 01_etcd runs LAST: stopping the control-plane is the most disruptive fault and
   # etcd/apiserver flap for a while afterwards (and while the API is down even
   # `kubectl wait` can't settle it). Running it last keeps that recovery noise from
   # contaminating the other scenarios' scans.
-  local all=(02_certs 03_diskfull 04_networkpolicy 05_coredns 06_lb 07_oom 08_nsdelete 09_rollout 10_credleak 11_kubelet 12_watch 13_slo 14 15_multicluster 16_operators 01_etcd)
+  local all=(02_certs 03_diskfull 04_networkpolicy 05_coredns 06_lb 07_oom 08_nsdelete 09_rollout 10_credleak 11_kubelet 12_watch 13_slo 14 15_multicluster 16_operators 17_gitops 01_etcd)
   for s in "${all[@]}"; do
     if [ -z "$ONLY" ] || [ "$ONLY" = "${s%%_*}" ]; then "scenario_$s"; fi
   done

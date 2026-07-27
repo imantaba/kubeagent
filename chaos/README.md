@@ -20,7 +20,7 @@ its own `kind-kubeagent-chaos` context and never reads your current kubecontext.
 ./chaos/run.sh                 # create cluster, run all scenarios, leave cluster up
 ./chaos/run.sh --recreate      # delete + recreate the cluster first (clean slate)
 ./chaos/run.sh --teardown      # delete the cluster when finished
-./chaos/run.sh --only 7        # run a single scenario (1..16) for debugging
+./chaos/run.sh --only 7        # run a single scenario (1..17) for debugging
 ./chaos/run.sh --out path.md   # write the report somewhere specific
 ```
 
@@ -59,6 +59,7 @@ The key is read from the environment only; it is never written to the report.
 | 14 | On-incident explanations | run `kubeagent watch --explain --explain-budget 1` against a local stub endpoint, then break two objects at once | exactly one model call and one `reason=explanation` notification — the budget throttles the rest — with the explanation on `/explanations`, the plain firing alerts unaffected, no pod/node detail in any prompt, and no endpoint path in any log line |
 | 15 | Multi-cluster hub | one `kubeagent watch` over three targets: this cluster twice under different context names, plus a context pointing at a closed port | `/readyz` still 200 with one target dead, `kubeagent_cluster_up` 1/1/0, `kubeagent_clusters_total 3`, the same broken Deployment listed once per healthy cluster label, and the dead target on the `/issues` roster with an error — a **degradation** test, not a divergent-state test |
 | 16 | Operator/CRD adapters | install real cert-manager, create a `Certificate` referencing an `Issuer` that does not exist, and apply an unrelated CRD kubeagent has no adapter for | `--operators` names the cert-manager `Certificate` with `Ready=False`, the unadapted CRD is **absent** from the report (the discovery gate proven in both directions), no CR `spec` content appears in any line, and the cluster verdict stays driven by core workloads |
+| 17 | GitOps drift | install real Flux (pinned v2.4.0), create a `GitRepository` pointing at an unresolvable host plus a failing and a suspended `Kustomization` | `--drift` names the failing `Kustomization` as stale (past `--drift-age`) and the other as `suspended`; the `GitRepository`'s repo URL and the fake token embedded in it appear **zero** times anywhere in the report. Flux is removed again afterwards |
 
 ### Validating `--fix` (remediation)
 

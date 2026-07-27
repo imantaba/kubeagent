@@ -3,6 +3,7 @@ package cluster
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -82,21 +83,7 @@ func TestContexts_MissingFileErrorDoesNotEchoThePath(t *testing.T) {
 	if err == nil {
 		t.Fatal("Contexts() error = nil, want a load failure")
 	}
-	if filepath.Base(secret) != "" && contains(err.Error(), filepath.Base(secret)) {
+	if filepath.Base(secret) != "" && strings.Contains(err.Error(), filepath.Base(secret)) {
 		t.Errorf("error = %q; a kubeconfig path names a customer and an environment and must not be echoed", err)
 	}
-}
-
-func contains(haystack, needle string) bool {
-	return len(needle) > 0 && len(haystack) >= len(needle) &&
-		(haystack == needle || len(haystack) > 0 && indexOf(haystack, needle) >= 0)
-}
-
-func indexOf(haystack, needle string) int {
-	for i := 0; i+len(needle) <= len(haystack); i++ {
-		if haystack[i:i+len(needle)] == needle {
-			return i
-		}
-	}
-	return -1
 }

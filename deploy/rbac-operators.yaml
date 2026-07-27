@@ -1,0 +1,47 @@
+# Opt-in add-on: grants list access to the operator custom resources `scan
+# --operators` reads. Apply alongside deploy/ for a restricted context; most
+# human kubeconfigs already allow these. Without it, --operators still names
+# which operators are installed (API discovery is open to every authenticated
+# user) and marks each kind as forbidden — a useful answer, not an error.
+#
+# Scan-only: the watch daemon does not read operator CRDs, so this is not wired
+# into the Helm chart. list only — kubeagent never writes to a CRD.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubeagent-operators
+rules:
+  - apiGroups: [cert-manager.io]
+    resources: [certificates, issuers, clusterissuers]
+    verbs: [list]
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [clusters]
+    verbs: [list]
+  - apiGroups: [longhorn.io]
+    resources: [volumes]
+    verbs: [list]
+  - apiGroups: [argoproj.io]
+    resources: [applications]
+    verbs: [list]
+  - apiGroups: [kustomize.toolkit.fluxcd.io]
+    resources: [kustomizations]
+    verbs: [list]
+  - apiGroups: [helm.toolkit.fluxcd.io]
+    resources: [helmreleases]
+    verbs: [list]
+  - apiGroups: [monitoring.coreos.com]
+    resources: [prometheuses, servicemonitors]
+    verbs: [list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubeagent-operators
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubeagent-operators
+subjects:
+  - kind: ServiceAccount
+    name: kubeagent
+    namespace: kubeagent

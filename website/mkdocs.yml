@@ -57,6 +57,7 @@ nav:
       - Failure diagnostics: features/diagnostics.md
       - Resource context: features/resource-context.md
       - Platform facts: features/platform-facts.md
+      - Operator health: features/operators.md
       - Service health: features/service-health.md
       - NetworkPolicy hints: features/networkpolicy.md
       - Connectivity diagnostics: features/connectivity.md

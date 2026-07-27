@@ -222,6 +222,9 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 # change how long an object may differ from Git before --drift calls it stale (default 1h)
 ./kubeagent scan --drift --drift-age 30m
+
+# report scheduling headroom and structurally wrong workload shapes (advisory; no new RBAC)
+./kubeagent scan --capacity
 ```
 
 > `--explain` sends **only** a structured summary to the Claude API: the

@@ -64,14 +64,14 @@ func Summarize(nodes []corev1.Node, pods []corev1.Pod, usage map[string]corev1.R
 func cpuLine(alloc, req, lim, use resource.Quantity, available bool) Line {
 	a := alloc.MilliValue()
 	l := Line{
-		Allocatable: formatCPU(alloc),
-		Requests:    formatCPU(req),
-		Limits:      formatCPU(lim),
+		Allocatable: FormatCPU(alloc),
+		Requests:    FormatCPU(req),
+		Limits:      FormatCPU(lim),
 		RequestsPct: pct(req.MilliValue(), a),
 		LimitsPct:   pct(lim.MilliValue(), a),
 	}
 	if available {
-		l.Usage = formatCPU(use)
+		l.Usage = FormatCPU(use)
 		l.UsagePct = pct(use.MilliValue(), a)
 	}
 	return l
@@ -80,14 +80,14 @@ func cpuLine(alloc, req, lim, use resource.Quantity, available bool) Line {
 func memLine(alloc, req, lim, use resource.Quantity, available bool) Line {
 	a := alloc.Value()
 	l := Line{
-		Allocatable: formatMem(alloc),
-		Requests:    formatMem(req),
-		Limits:      formatMem(lim),
+		Allocatable: FormatMem(alloc),
+		Requests:    FormatMem(req),
+		Limits:      FormatMem(lim),
 		RequestsPct: pct(req.Value(), a),
 		LimitsPct:   pct(lim.Value(), a),
 	}
 	if available {
-		l.Usage = formatMem(use)
+		l.Usage = FormatMem(use)
 		l.UsagePct = pct(use.Value(), a)
 	}
 	return l
@@ -100,13 +100,16 @@ func pct(part, whole int64) int {
 	return int(part * 100 / whole)
 }
 
-// formatCPU renders a quantity as cores with one decimal, e.g. "8.0".
-func formatCPU(q resource.Quantity) string {
+// FormatCPU renders a quantity as cores with one decimal, e.g. "8.0". Exported so
+// internal/capacity renders identical numbers rather than duplicating the rule.
+func FormatCPU(q resource.Quantity) string {
 	return fmt.Sprintf("%.1f", float64(q.MilliValue())/1000)
 }
 
-// formatMem renders a quantity in Gi (or Mi below 1Gi), rounded, e.g. "16Gi".
-func formatMem(q resource.Quantity) string {
+// FormatMem renders a quantity in Gi (or Mi below 1Gi), rounded, e.g. "16Gi".
+// Exported so internal/capacity renders identical numbers rather than duplicating
+// the rule.
+func FormatMem(q resource.Quantity) string {
 	b := q.Value()
 	if b >= 1<<30 {
 		return fmt.Sprintf("%.0fGi", float64(b)/(1<<30))

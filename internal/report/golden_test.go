@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/imantaba/kubeagent/internal/capacity"
 	"github.com/imantaba/kubeagent/internal/certhealth"
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/diagnose"
@@ -182,6 +183,34 @@ func goldenInput(now time.Time) Input {
 						{Kind: "HelmRelease", APIVersion: "helm.toolkit.fluxcd.io/v2",
 							Counts: map[gitops.State]int{gitops.StateSynced: 4}},
 					},
+				},
+			},
+		},
+		Capacity: &capacity.Report{
+			Headroom: &capacity.Headroom{
+				IncludedNodes: 2, TotalNodes: 3,
+				FreeCPU: "5.9", FreeMemory: "8Gi",
+				LargestCPUFit: &capacity.NodeFit{Node: "worker1", CPU: "3.5", Memory: "6Gi"},
+				TightestNode:  &capacity.TightNode{Node: "worker2", Resource: "memory", Pct: 78},
+				NodeLoss: &capacity.NodeLoss{
+					Node: "worker1", Fits: false, Placed: 3,
+					Blocker: "StatefulSet/prod/db", BlockerCPU: "2.1",
+				},
+				Excluded: []capacity.NodeExclusion{
+					{Node: "control-plane-1", Reason: "NoSchedule taint"},
+				},
+			},
+			RightSizing: &capacity.RightSizing{
+				MetricsAvailable: true, PodsReporting: 11, PodsTotal: 12,
+				Rules: []capacity.Rule{
+					{Name: capacity.RuleNoRequests, Owners: []capacity.Owner{
+						{Kind: "Deployment", Namespace: "staging", Name: "web",
+							Observed: "0.0 cores", BestEffort: true},
+					}},
+					{Name: capacity.RuleLimitNoRequest, Owners: []capacity.Owner{
+						{Kind: "Deployment", Namespace: "prod", Name: "cache",
+							Detail: "lim 256Mi", Observed: "240Mi"},
+					}},
 				},
 			},
 		},

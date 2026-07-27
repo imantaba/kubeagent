@@ -22,7 +22,7 @@ while [ $# -gt 0 ]; do
   esac; shift
 done
 
-# Normalize a numeric --only to the zero-padded form used in scenario keys (01..17).
+# Normalize a numeric --only to the zero-padded form used in scenario keys (01..18).
 if [ -n "$ONLY" ] && printf '%s' "$ONLY" | grep -qE '^[0-9]+$'; then ONLY=$(printf '%02d' "$ONLY"); fi
 
 : "${OUT:=docs/testing/chaos-results.md}"
@@ -868,12 +868,101 @@ KS
   kubectl --context "$CTX" delete -f "$fluxurl" --wait=false >/dev/null 2>&1 || true
 }
 
+scenario_18_capacity() {   # --capacity: structural rules on a cluster with no metrics-server
+  log "scenario 18: capacity hints (--capacity)"
+  local ns=chaos-capacity
+  kubectl --context "$CTX" create ns "$ns" --dry-run=client -o yaml | kubectl --context "$CTX" apply -f - >/dev/null
+
+  # Three deliberately wrong shapes, one per structural rule. The 40-core Job can
+  # never be scheduled on this cluster, which is the point: the rule proves it from
+  # the spec without waiting for a Pending pod.
+  kubectl --context "$CTX" -n "$ns" apply -f - >/dev/null <<'SHAPES'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: besteffort
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: besteffort}}
+  template:
+    metadata: {labels: {app: besteffort}}
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.9
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: limitonly
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: limitonly}}
+  template:
+    metadata: {labels: {app: limitonly}}
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.9
+          resources:
+            limits:
+              memory: 256Mi
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: trainer
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: "40"
+SHAPES
+
+  kubectl --context "$CTX" -n "$ns" rollout status deploy/besteffort --timeout=90s >/dev/null 2>&1 || true
+  kubectl --context "$CTX" -n "$ns" rollout status deploy/limitonly --timeout=90s >/dev/null 2>&1 || true
+
+  local out body
+  out="$(scan --capacity 2>&1 || true)"
+  body="$(scan_body "$out")"
+  {
+    printf '%s\n' "$out"
+    printf '\n--- gate checks ---\n'
+    printf 'CAPACITY section:              %s\n' "$(printf '%s\n' "$body" | grep -m1 'CAPACITY' || true)"
+    printf 'headroom schedulable:          %s\n' "$(printf '%s\n' "$body" | grep -m1 'schedulable' || true)"
+    printf 'control-plane excluded:        %s\n' "$(printf '%s\n' "$body" | grep -cE 'control-plane.*NoSchedule taint' || true)"
+    printf 'no requests set (besteffort):  %s\n' "$(printf '%s\n' "$body" | grep -c "Deployment/$ns/besteffort" || true)"
+    printf 'limit, no request (limitonly): %s\n' "$(printf '%s\n' "$body" | grep -c "Deployment/$ns/limitonly" || true)"
+    printf 'never schedulable (trainer):   %s\n' "$(printf '%s\n' "$body" | grep -c "Job/$ns/trainer" || true)"
+    printf 'metrics-server unavailable:    %s\n' "$(printf '%s\n' "$body" | grep -c 'metrics-server unavailable' || true)"
+    # The "not a peak, not a history" footer only renders when MetricsAvailable is
+    # true; with no metrics-server on this cluster that footer never prints, so the
+    # only remaining route for any of these words is the structural-rules output
+    # itself. 0 here means the rules stayed within the section's own vocabulary
+    # rules, not that a peak-shaped phrase happened to be filtered out.
+    printf 'no banned vocabulary:          %s\n' "$(printf '%s\n' "$body" | grep -ciE 'peak|over-requested|oversized|waste' || true)"
+    # Informational only: the Job's request is genuinely unschedulable on this
+    # cluster, so the existing Pending/Unschedulable detector fires a real Finding
+    # and the verdict below is expected to read Degraded. CAPACITY is advisory and
+    # never itself contributes to this line — that is what this gate is checking.
+    printf 'cluster verdict:               %s\n' "$(printf '%s\n' "$body" | grep -m1 '^Cluster:' || true)"
+  } | record "18. Capacity hints (--capacity)" "detected: all three structural rules; metrics-server absent path; banned vocabulary absent (0); CAPACITY itself never drives the verdict (the Pending/Unschedulable finding from the 40-core Job does)"
+
+  kubectl --context "$CTX" delete ns "$ns" --wait=true --timeout=120s >/dev/null 2>&1 || true
+}
+
 run_scenarios() {
   # 01_etcd runs LAST: stopping the control-plane is the most disruptive fault and
   # etcd/apiserver flap for a while afterwards (and while the API is down even
   # `kubectl wait` can't settle it). Running it last keeps that recovery noise from
   # contaminating the other scenarios' scans.
-  local all=(02_certs 03_diskfull 04_networkpolicy 05_coredns 06_lb 07_oom 08_nsdelete 09_rollout 10_credleak 11_kubelet 12_watch 13_slo 14 15_multicluster 16_operators 17_gitops 01_etcd)
+  local all=(02_certs 03_diskfull 04_networkpolicy 05_coredns 06_lb 07_oom 08_nsdelete 09_rollout 10_credleak 11_kubelet 12_watch 13_slo 14 15_multicluster 16_operators 17_gitops 18_capacity 01_etcd)
   for s in "${all[@]}"; do
     if [ -z "$ONLY" ] || [ "$ONLY" = "${s%%_*}" ]; then "scenario_$s"; fi
   done

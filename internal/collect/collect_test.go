@@ -529,3 +529,41 @@ func TestResourceQuotas(t *testing.T) {
 		t.Fatalf("want 3 quotas across all namespaces, got %d", len(all))
 	}
 }
+
+func TestParsePodMetricsSumsContainers(t *testing.T) {
+	body := []byte(`{"items":[
+	  {"metadata":{"namespace":"prod","name":"web-1"},
+	   "containers":[{"name":"app","usage":{"cpu":"120m","memory":"200Mi"}},
+	                 {"name":"sidecar","usage":{"cpu":"30m","memory":"56Mi"}}]},
+	  {"metadata":{"namespace":"staging","name":"api-1"},
+	   "containers":[{"name":"app","usage":{"cpu":"5m","memory":"32Mi"}}]}
+	]}`)
+
+	got, err := parsePodMetrics(body)
+	if err != nil {
+		t.Fatalf("parsePodMetrics: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 pods, got %d", len(got))
+	}
+	cpu := got["prod/web-1"][corev1.ResourceCPU]
+	if cpu.MilliValue() != 150 {
+		t.Errorf("want the two containers summed to 150m, got %s", cpu.String())
+	}
+	mem := got["prod/web-1"][corev1.ResourceMemory]
+	if mem.Value() != 256*1024*1024 {
+		t.Errorf("want 256Mi summed, got %s", mem.String())
+	}
+	if _, ok := got["staging/api-1"]; !ok {
+		t.Error("want the second pod keyed namespace/name")
+	}
+}
+
+func TestParsePodMetricsRejectsBadQuantity(t *testing.T) {
+	body := []byte(`{"items":[{"metadata":{"namespace":"prod","name":"x"},
+	  "containers":[{"name":"app","usage":{"cpu":"not-a-quantity"}}]}]}`)
+
+	if _, err := parsePodMetrics(body); err == nil {
+		t.Error("want an error for an unparseable quantity")
+	}
+}

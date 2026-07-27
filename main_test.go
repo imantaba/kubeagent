@@ -330,6 +330,85 @@ func TestRun_DriftFlagAccepted(t *testing.T) {
 	}
 }
 
+func TestRun_CapacityFlagAccepted(t *testing.T) {
+	// --capacity must be a defined flag: this fails on output-format validation
+	// (before any cluster call), proving the flag parsed rather than erroring with
+	// "flag provided but not defined".
+	err := run([]string{"scan", "--capacity", "--output", "bogus"})
+	if err == nil || !strings.Contains(err.Error(), "unknown output format") {
+		t.Fatalf("want unknown-output-format error (proving the flag parsed), got %v", err)
+	}
+}
+
+// resolveResourcePods backs the resourcePods fallback in run(): when -n is set,
+// capacity headroom and the resources summary need the cluster-wide pod list, so
+// run() refetches it via collect.AllPods and must not silently stay
+// namespace-scoped when that refetch fails (the ordinary cause being an
+// RBAC-restricted service account whose list-pods grant is namespace-scoped).
+func TestResolveResourcePods_WarnsAndFallsBackOnRefetchFailure(t *testing.T) {
+	scoped := []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Namespace: "myteam", Name: "web"}}}
+	cli := fake.NewSimpleClientset()
+	cli.PrependReactor("list", "pods", func(ktesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New(`pods is forbidden: User "sa" cannot list resource "pods" in API group "" at the cluster scope`)
+	})
+
+	pods, warn := resolveResourcePods(context.Background(), cli, "myteam", scoped)
+
+	if len(pods) != 1 || pods[0].Name != "web" {
+		t.Fatalf("want the fallback to keep the namespace-scoped pods, got %+v", pods)
+	}
+	if warn == "" {
+		t.Fatal("want a non-empty warning when the cluster-wide refetch fails")
+	}
+	if !strings.Contains(warn, "kubeagent: warning:") {
+		t.Errorf("want the standard warning idiom, got %q", warn)
+	}
+	if !strings.Contains(warn, `namespace "myteam"`) {
+		t.Errorf("want the warning to name the namespace the numbers are now scoped to, got %q", warn)
+	}
+	if !strings.Contains(strings.ToLower(warn), "capacity") {
+		t.Errorf("want the warning to say capacity headroom is affected, got %q", warn)
+	}
+}
+
+func TestResolveResourcePods_NoWarningWhenNamespaceEmpty(t *testing.T) {
+	scoped := []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "web"}}}
+
+	pods, warn := resolveResourcePods(context.Background(), fake.NewSimpleClientset(), "", scoped)
+
+	if warn != "" {
+		t.Errorf("want no warning for a cluster-wide scan, got %q", warn)
+	}
+	if len(pods) != 1 {
+		t.Errorf("want scoped pods returned unchanged, got %+v", pods)
+	}
+}
+
+func TestResolveResourcePods_RefetchesClusterWideOnSuccess(t *testing.T) {
+	scoped := []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Namespace: "myteam", Name: "web"}}}
+	all := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "other", Name: "api"}}
+	cli := fake.NewSimpleClientset(all)
+
+	pods, warn := resolveResourcePods(context.Background(), cli, "myteam", scoped)
+
+	if warn != "" {
+		t.Errorf("want no warning on success, got %q", warn)
+	}
+	if len(pods) != 1 || pods[0].Namespace != "other" {
+		t.Errorf("want the cluster-wide list substituted, got %+v", pods)
+	}
+}
+
+func TestRun_UsageMentionsCapacityFlag(t *testing.T) {
+	err := run(nil)
+	if err == nil {
+		t.Fatal("expected a usage error with no args")
+	}
+	if !strings.Contains(err.Error(), "[--drift-age dur] [--capacity] [--logs]") {
+		t.Fatalf("expected the usage string to mention --capacity between --drift-age and --logs, got: %v", err)
+	}
+}
+
 // captureStderr redirects os.Stderr for the duration of f and returns what was
 // written to it. runWatch prints its "alert flags ignored" warning directly to
 // os.Stderr rather than through an injectable writer, so tests that need to
@@ -436,8 +515,8 @@ func TestRun_UsageMentionsOperatorsFlag(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a usage error with no args")
 	}
-	if !strings.Contains(err.Error(), "[--certs [--cert-warn-days n]] [--operators] [--drift] [--drift-age dur] [--logs]") {
-		t.Fatalf("expected the usage string to mention --operators between --certs and --logs, got: %v", err)
+	if !strings.Contains(err.Error(), "[--certs [--cert-warn-days n]] [--operators] [--drift] [--drift-age dur]") {
+		t.Fatalf("expected the usage string to mention --operators between --certs and --drift-age, got: %v", err)
 	}
 }
 
@@ -446,8 +525,8 @@ func TestRun_UsageMentionsDriftFlag(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a usage error with no args")
 	}
-	if !strings.Contains(err.Error(), "[--operators] [--drift] [--drift-age dur] [--logs]") {
-		t.Fatalf("expected the usage string to mention --drift/--drift-age between --operators and --logs, got: %v", err)
+	if !strings.Contains(err.Error(), "[--operators] [--drift] [--drift-age dur] [--capacity]") {
+		t.Fatalf("expected the usage string to mention --drift/--drift-age between --operators and --capacity, got: %v", err)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imantaba/kubeagent/internal/capacity"
 	"github.com/imantaba/kubeagent/internal/certhealth"
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/confidence"
@@ -56,6 +57,7 @@ type inventoryReport struct {
 	Certificates       *certhealth.Report          `json:"certificates,omitempty"`
 	Operators          *operators.Report           `json:"operators,omitempty"`
 	GitOps             *gitops.Report              `json:"gitops,omitempty"`
+	Capacity           *capacity.Report            `json:"capacity,omitempty"`
 	StuckTerminating   []termhealth.Issue          `json:"stuckTerminating,omitempty"`
 	PDBIssues          []pdbhealth.Issue           `json:"pdbIssues,omitempty"`
 	HPAIssues          []hpahealth.Issue           `json:"hpaIssues,omitempty"`
@@ -131,7 +133,11 @@ type Input struct {
 	Operators          *operators.Report
 	// GitOps is the advisory GitOps-drift view (opt-in --drift). Nil when the
 	// flag is off, so a default scan's JSON is unchanged.
-	GitOps                 *gitops.Report
+	GitOps *gitops.Report
+	// Capacity is the advisory headroom and right-sizing view (opt-in --capacity).
+	// Nil when the flag is off, so a default scan's output is unchanged. No json
+	// tag: Input is never marshalled — the encoded struct is inventoryReport.
+	Capacity               *capacity.Report
 	StuckTerminating       []termhealth.Issue
 	PDBIssues              []pdbhealth.Issue
 	HPAIssues              []hpahealth.Issue
@@ -169,6 +175,7 @@ func PrintInventory(in Input, format string, w io.Writer) error {
 			Certificates:       in.Certificates,
 			Operators:          in.Operators,
 			GitOps:             in.GitOps,
+			Capacity:           in.Capacity,
 			StuckTerminating:   in.StuckTerminating,
 			PDBIssues:          in.PDBIssues,
 			HPAIssues:          in.HPAIssues,
@@ -279,6 +286,10 @@ func printInventoryText(in Input, w io.Writer) error {
 	}
 
 	if err := printGitOps(in.GitOps, w); err != nil {
+		return err
+	}
+
+	if err := printCapacity(in.Capacity, w); err != nil {
 		return err
 	}
 
@@ -1408,4 +1419,193 @@ func printKubeletHealth(rep *nodehealth.Report, w io.Writer) error {
 		}
 	}
 	return nil
+}
+
+// printCapacity renders the advisory CAPACITY section (opt-in --capacity): the
+// headroom arithmetic over schedulable nodes, then the structural right-sizing
+// rules.
+//
+// Advisory, exactly like OPERATORS and GITOPS DRIFT: it never sets hasAttention,
+// never changes the cluster verdict, and takes no part in the all-clear
+// suppression. Two claims it must never make — money, which no cluster publishes,
+// and a peak, which a single metrics-server sample cannot establish.
+func printCapacity(rep *capacity.Report, w io.Writer) error {
+	if rep == nil || (rep.Headroom == nil && rep.RightSizing == nil) {
+		return nil
+	}
+	if _, err := fmt.Fprint(w,
+		"CAPACITY  (advisory — resource arithmetic on requests; ignores affinity,\n"+
+			"           topology spread, PVC zoning, and PodDisruptionBudgets)\n"); err != nil {
+		return err
+	}
+	if err := printHeadroomBlock(rep.Headroom, w); err != nil {
+		return err
+	}
+	if err := printRightSizingBlock(rep.RightSizing, w); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintln(w)
+	return err
+}
+
+func printHeadroomBlock(h *capacity.Headroom, w io.Writer) error {
+	if h == nil {
+		return nil
+	}
+	if _, err := fmt.Fprintln(w, "  Headroom"); err != nil {
+		return err
+	}
+	// Zero included nodes: buildHeadroom leaves every arithmetic field at its nil/zero
+	// default in that case, and the spec says print the exclusion list and no rows —
+	// "0 free across 0 of N nodes" is an arithmetic statement about an empty set, not
+	// a headroom figure.
+	if h.IncludedNodes > 0 {
+		if err := capacityRow(w, "schedulable", fmt.Sprintf("%s cores, %s free across %d of %d nodes",
+			h.FreeCPU, h.FreeMemory, h.IncludedNodes, h.TotalNodes)); err != nil {
+			return err
+		}
+	}
+	if h.LargestCPUFit != nil {
+		if err := capacityRow(w, "largest pod fit", fmt.Sprintf("%s  %s cores, %s",
+			h.LargestCPUFit.Node, h.LargestCPUFit.CPU, h.LargestCPUFit.Memory)); err != nil {
+			return err
+		}
+	}
+	if h.LargestMemFit != nil {
+		if err := capacityRow(w, "", fmt.Sprintf("%s  %s cores, %s",
+			h.LargestMemFit.Node, h.LargestMemFit.CPU, h.LargestMemFit.Memory)); err != nil {
+			return err
+		}
+	}
+	if h.TightestNode != nil {
+		if err := capacityRow(w, "tightest node", fmt.Sprintf("%s  %d%% of %s requested",
+			h.TightestNode.Node, h.TightestNode.Pct, h.TightestNode.Resource)); err != nil {
+			return err
+		}
+	}
+	if nl := h.NodeLoss; nl != nil {
+		if err := capacityRow(w, "lose "+nl.Node, nodeLossDetail(*nl)); err != nil {
+			return err
+		}
+	}
+	for i, e := range h.Excluded {
+		label := ""
+		if i == 0 {
+			label = "excluded"
+		}
+		if err := capacityRow(w, label, fmt.Sprintf("%s  (%s)", e.Node, e.Reason)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// nodeLossDetail respects the one-sided soundness of first-fit-decreasing: a
+// successful pass is a constructive placement and so proves the requests fit, while
+// a failed pass proves nothing — hence "may not fit", never "does not fit".
+func nodeLossDetail(nl capacity.NodeLoss) string {
+	switch {
+	case nl.SingleNode:
+		return "single node — no node-loss arithmetic possible"
+	case nl.Fits:
+		return fmt.Sprintf("fits — first-fit placed all %d pods", nl.Placed)
+	default:
+		return fmt.Sprintf("may not fit — first-fit could not place %s (%s cores)",
+			nl.Blocker, nl.BlockerCPU)
+	}
+}
+
+func printRightSizingBlock(rs *capacity.RightSizing, w io.Writer) error {
+	if rs == nil || len(rs.Rules) == 0 {
+		return nil
+	}
+	header := "  Right-sizing"
+	if rs.MetricsAvailable {
+		header += fmt.Sprintf("  (metrics-server: %d of %d pods reporting)",
+			rs.PodsReporting, rs.PodsTotal)
+	} else {
+		header += "  (metrics-server unavailable — structural rules only)"
+	}
+	if _, err := fmt.Fprintln(w, header); err != nil {
+		return err
+	}
+	for _, r := range rs.Rules {
+		for i, o := range r.Owners {
+			label := ""
+			if i == 0 {
+				label = capacityRuleLabel(r.Name)
+			}
+			value := fmt.Sprintf("%s/%s/%s", o.Kind, o.Namespace, o.Name)
+			if o.Detail != "" {
+				value += "  " + o.Detail
+			}
+			if o.Observed != "" {
+				value += "  · " + o.Observed + " observed"
+			}
+			if err := capacityRow(w, label, value); err != nil {
+				return err
+			}
+			if o.BestEffort {
+				if _, err := fmt.Fprintln(w,
+					strings.Repeat(" ", capacityValueColumn+2)+"— BestEffort: first evicted under pressure"); err != nil {
+					return err
+				}
+			}
+		}
+		if r.Truncated > 0 {
+			if err := capacityRow(w, "", fmt.Sprintf("… +%d more", r.Truncated)); err != nil {
+				return err
+			}
+		}
+	}
+	if rs.MetricsAvailable {
+		if _, err := fmt.Fprintf(w,
+			"\n    one sample per pod, ~30s average — not a peak, not a history\n"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// capacityRuleLabel maps a rule constant to its human label. The constants are
+// stable JSON keys; these strings are presentation only.
+func capacityRuleLabel(n capacity.RuleName) string {
+	switch n {
+	case capacity.RuleNoRequests:
+		return "no requests set"
+	case capacity.RuleLimitNoRequest:
+		return "limit, no request"
+	case capacity.RuleNeverSchedulable:
+		return "never schedulable"
+	default:
+		return string(n)
+	}
+}
+
+// capacityLabelWidth is the label column's fixed width in capacityRow. The
+// longest labels the section emits — "limit, no request" and "never
+// schedulable" — are both 17 characters. 19 keeps both clear of the
+// two-space floor below, so every row's value lands in the same column;
+// pick a narrower width and one of those two labels trips the floor and
+// pushes its value one column right of everything else.
+const capacityLabelWidth = 19
+
+// capacityIndent is the section's fixed left margin, in front of the label
+// column.
+const capacityIndent = 4
+
+// capacityValueColumn is the column the value starts in, derived from the
+// indent and label width so it never drifts out of sync with capacityRow.
+const capacityValueColumn = capacityIndent + capacityLabelWidth
+
+// capacityRow prints one label/value line at the section's fixed indent. An empty
+// label produces a continuation line aligned under the previous value. Labels wider
+// than the column still get two separating spaces rather than running together.
+func capacityRow(w io.Writer, label, value string) error {
+	pad := capacityLabelWidth - len(label)
+	if pad < 2 {
+		pad = 2
+	}
+	_, err := fmt.Fprintf(w, "    %s%s%s\n", label, strings.Repeat(" ", pad), value)
+	return err
 }

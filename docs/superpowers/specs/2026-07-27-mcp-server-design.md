@@ -110,7 +110,10 @@ to each tool. The operator picks the blast radius, not the model.
 `github.com/modelcontextprotocol/go-sdk` v1.6.1 (released 2026-05-22), the
 official Go SDK.
 
-This takes the project from 4 direct dependencies to 5. Importing only the
+This takes the project from 4 direct dependencies to 6: the SDK itself, and
+`github.com/google/jsonschema-go`, which becomes direct because the tool schemas
+are written out explicitly — an inferred schema cannot express an `enum`, and the
+`kind` and `sections` arguments need one. Importing only the
 `.../go-sdk/mcp` package — the sole package this design uses — pulls six
 indirect modules, of which `golang.org/x/oauth2` and `golang.org/x/sys` are
 already in kubeagent's graph. **Four modules are genuinely new:**

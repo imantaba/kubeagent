@@ -94,6 +94,30 @@ func TestRuleNeverSchedulableComparesAgainstLargestIncludedNode(t *testing.T) {
 	}
 }
 
+// A heterogeneous cluster: one node has lots of CPU and little memory, the other
+// has little CPU and lots of memory. A container that requests more CPU than the
+// small-CPU node and more memory than the small-memory node fits under BOTH
+// cluster-wide maxima individually, yet no single node can ever hold it together
+// — a pod lands on exactly one node. The rule must still catch this.
+func TestRuleNeverSchedulableHeterogeneousNodes(t *testing.T) {
+	nodes := []corev1.Node{
+		node("big-cpu", "16", "8Gi"),
+		node("big-mem", "4", "64Gi"),
+	}
+	pods := []corev1.Pod{ownedBy(pod("batch", "odd-shape", "big-cpu", "10", "30Gi"), "Job", "odd-shape")}
+
+	rep := Assess(nodes, pods, nil, nil, "")
+
+	r := ruleByName(t, rep.RightSizing, RuleNeverSchedulable)
+	if len(r.Owners) != 1 || r.Owners[0].Name != "odd-shape" {
+		t.Fatalf("want the mixed-shape container flagged, got %+v", r.Owners)
+	}
+	if !strings.Contains(r.Owners[0].Detail, "10.0 cores") ||
+		!strings.Contains(r.Owners[0].Detail, "30Gi") {
+		t.Errorf("want both quantities named in the detail, got %q", r.Owners[0].Detail)
+	}
+}
+
 // A request that exactly equals allocatable is schedulable, not "never".
 func TestRuleNeverSchedulableExcludesExactFit(t *testing.T) {
 	pods := []corev1.Pod{pod("batch", "fits", "", "16", "1Gi")}
@@ -217,6 +241,38 @@ func TestRightSizingNilWhenNothingFlagged(t *testing.T) {
 
 	if rep.RightSizing != nil && len(rep.RightSizing.Rules) > 0 {
 		t.Errorf("want no rules for a well-formed workload, got %+v", rep.RightSizing.Rules)
+	}
+}
+
+// Two distinct owners can share a namespace and name but differ in kind — an
+// ownerless Pod/prod/worker and a Job/prod/worker, both bare. The comparator must
+// treat Kind as a final tiebreaker so the sort is total; otherwise the slice built
+// from a randomized map range keeps whatever relative order it arrived in, and
+// output would vary between runs of an otherwise-identical scan.
+func TestRightSizingOrderIsTotalAcrossKinds(t *testing.T) {
+	pods := []corev1.Pod{
+		pod("prod", "worker", "worker1", "", ""),
+		ownedBy(pod("prod", "worker-x", "worker1", "", ""), "Job", "worker"),
+	}
+	nodes := []corev1.Node{node("worker1", "4", "16Gi")}
+	want := []string{"Job/prod/worker", "Pod/prod/worker"}
+
+	// Go randomizes map iteration order per range statement, so repeated calls in
+	// one process do exercise the bug: build the report several times and require
+	// the same order every time, not just once by luck.
+	for i := 0; i < 10; i++ {
+		rep := Assess(nodes, pods, nil, nil, "")
+		r := ruleByName(t, rep.RightSizing, RuleNoRequests)
+		if len(r.Owners) != 2 {
+			t.Fatalf("run %d: want 2 owners, got %+v", i, r.Owners)
+		}
+		got := []string{}
+		for _, o := range r.Owners {
+			got = append(got, o.Kind+"/"+o.Namespace+"/"+o.Name)
+		}
+		if strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Fatalf("run %d: want deterministic order %v, got %v", i, want, got)
+		}
 	}
 }
 

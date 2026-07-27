@@ -25,16 +25,6 @@ func buildRightSizing(pods []corev1.Pod, replicaSets []appsv1.ReplicaSet,
 		RuleNeverSchedulable: {},
 	}
 
-	var biggest nodeCapacity
-	for _, n := range included {
-		if n.cpuAlloc > biggest.cpuAlloc {
-			biggest.cpuAlloc = n.cpuAlloc
-		}
-		if n.memAlloc > biggest.memAlloc {
-			biggest.memAlloc = n.memAlloc
-		}
-	}
-
 	for _, p := range pods {
 		if terminal(p) || (namespace != "" && p.Namespace != namespace) {
 			continue
@@ -60,7 +50,7 @@ func buildRightSizing(pods []corev1.Pod, replicaSets []appsv1.ReplicaSet,
 			}
 		}
 		if len(included) > 0 {
-			if detail := exceedsLargestNode(p, biggest); detail != "" {
+			if detail := exceedsLargestNode(p, included); detail != "" {
 				e := o
 				e.Detail = detail
 				if _, ok := matches[RuleNeverSchedulable][key]; !ok {
@@ -85,7 +75,14 @@ func buildRightSizing(pods []corev1.Pod, replicaSets []appsv1.ReplicaSet,
 			if owners[a].Namespace != owners[b].Namespace {
 				return owners[a].Namespace < owners[b].Namespace
 			}
-			return owners[a].Name < owners[b].Name
+			if owners[a].Name != owners[b].Name {
+				return owners[a].Name < owners[b].Name
+			}
+			// Namespace and name alone are not a total order: two distinct owners
+			// (e.g. an ownerless Pod and a same-named Job) can share both. Kind
+			// breaks the tie so the sort is total and output is deterministic
+			// regardless of the map iteration order the slice was built from.
+			return owners[a].Kind < owners[b].Kind
 		})
 		r := Rule{Name: name}
 		if len(owners) > maxOwnersPerRule {
@@ -132,17 +129,43 @@ func limitWithoutRequest(p corev1.Pod) string {
 	return ""
 }
 
-// exceedsLargestNode returns a detail string when a container requests more of a
-// resource than the largest included node can ever offer.
-func exceedsLargestNode(p corev1.Pod, biggest nodeCapacity) string {
-	for _, c := range p.Spec.Containers {
-		if cpu := c.Resources.Requests.Cpu().MilliValue(); cpu > biggest.cpuAlloc {
-			return fmt.Sprintf("req %s cores > largest node (%s cores)",
-				formatMilliCPU(cpu), formatMilliCPU(biggest.cpuAlloc))
+// exceedsLargestNode returns a detail string when a container can never be placed
+// on any included node. A pod lands on exactly one node, so a container must fit
+// one node's CPU and memory together — checking each resource against the
+// cluster-wide maximum independently (possibly from two different nodes) would
+// miss a request that fits neither node's own pair. See headroom.go's NodeFit,
+// which applies the same same-node rule to the free-capacity side.
+func exceedsLargestNode(p corev1.Pod, included []nodeCapacity) string {
+	var maxCPU, maxMem int64
+	for _, n := range included {
+		if n.cpuAlloc > maxCPU {
+			maxCPU = n.cpuAlloc
 		}
-		if mem := c.Resources.Requests.Memory().Value(); mem > biggest.memAlloc {
+		if n.memAlloc > maxMem {
+			maxMem = n.memAlloc
+		}
+	}
+	for _, c := range p.Spec.Containers {
+		cpu := c.Resources.Requests.Cpu().MilliValue()
+		mem := c.Resources.Requests.Memory().Value()
+		if cpu > maxCPU {
+			return fmt.Sprintf("req %s cores > largest node (%s cores)",
+				formatMilliCPU(cpu), formatMilliCPU(maxCPU))
+		}
+		if mem > maxMem {
 			return fmt.Sprintf("req %s > largest node (%s)",
-				formatBytes(mem), formatBytes(biggest.memAlloc))
+				formatBytes(mem), formatBytes(maxMem))
+		}
+		fitsSomeNode := false
+		for _, n := range included {
+			if cpu <= n.cpuAlloc && mem <= n.memAlloc {
+				fitsSomeNode = true
+				break
+			}
+		}
+		if !fitsSomeNode {
+			return fmt.Sprintf("req %s cores + %s fits no single node",
+				formatMilliCPU(cpu), formatBytes(mem))
 		}
 	}
 	return ""

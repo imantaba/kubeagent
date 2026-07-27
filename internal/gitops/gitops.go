@@ -22,8 +22,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/imantaba/kubeagent/internal/alert"
 	"github.com/imantaba/kubeagent/internal/operators"
+	"github.com/imantaba/kubeagent/internal/redact"
 )
 
 // State is one reconciled object's convergence, as its own reconciler reports it.
@@ -172,7 +172,7 @@ func kindReport(f operators.Fetched, assess assessor, now time.Time, threshold t
 	if f.Err != nil {
 		// A cluster's API URL can carry userinfo or an auth-proxy token, and
 		// client-go wraps it in a *url.Error. Reduce it to scheme://host.
-		k.Error = alert.RedactError(f.Err)
+		k.Error = redact.Error(f.Err)
 	}
 	if k.Forbidden || k.Error != "" {
 		return k, true

@@ -10,9 +10,9 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 
-	"github.com/imantaba/kubeagent/internal/alert"
 	"github.com/imantaba/kubeagent/internal/alertstate"
 	"github.com/imantaba/kubeagent/internal/oncall"
+	"github.com/imantaba/kubeagent/internal/redact"
 	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/slo"
 	"github.com/imantaba/kubeagent/internal/watchstate"
@@ -196,7 +196,7 @@ func (w *clusterWorker) applyResult(res *scan.Result, dur time.Duration, now tim
 		// Same redaction as metrics.update: the log stream is a second consumer
 		// of the same raw error, and a *url.Error's Error() carries the full
 		// request URL — kubeconfig userinfo or an auth-proxy token included.
-		clusterLogf(w.name, "evaluation error: %s", alert.RedactError(err))
+		clusterLogf(w.name, "evaluation error: %s", redact.Error(err))
 		return
 	}
 	d := w.tr.Observe(issueKeys(res), now)

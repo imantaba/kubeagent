@@ -13,6 +13,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/alert"
 	"github.com/imantaba/kubeagent/internal/ingresshealth"
 	"github.com/imantaba/kubeagent/internal/oncall"
+	"github.com/imantaba/kubeagent/internal/redact"
 	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/slo"
 	"github.com/imantaba/kubeagent/internal/svchealth"
@@ -178,7 +179,7 @@ func (m *metrics) update(cluster string, res *scan.Result, dur time.Duration, no
 		// here, at capture, so both the served /issues roster and the log line in
 		// applyResult get the scheme://host-only form and neither has to remember
 		// to do it itself.
-		c.lastError = alert.RedactError(err)
+		c.lastError = redact.Error(err)
 		return
 	}
 	c.up = true

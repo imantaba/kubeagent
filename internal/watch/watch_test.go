@@ -766,7 +766,7 @@ func TestRunTeardownOrderStopsTheExplainerBeforeTheSink(t *testing.T) {
 }
 
 // TestNewExplainerRedactsTheEndpointCredential pins the credential-redaction
-// rule (see alert.RedactURL) for the watch enablement log line: an endpoint
+// rule (see redact.URL) for the watch enablement log line: an endpoint
 // URL is treated as a bearer credential, so the log must carry no more of it
 // than scheme://host.
 func TestNewExplainerRedactsTheEndpointCredential(t *testing.T) {

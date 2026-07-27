@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -112,7 +113,11 @@ func TestAssessOmitsEmptyKindsButKeepsDenialsAndErrors(t *testing.T) {
 		{Adapter: adapterFor(t, "applications"), APIVersion: "argoproj.io/v1alpha1"},
 		{Adapter: adapterFor(t, "kustomizations"), APIVersion: "kustomize.toolkit.fluxcd.io/v1", Forbidden: true},
 		{Adapter: adapterFor(t, "helmreleases"), APIVersion: "helm.toolkit.fluxcd.io/v2",
-			Err: errors.New("Get \"https://tok3n@10.0.0.1:6443/apis\": connection refused")},
+			Err: &url.Error{
+				Op:  "Get",
+				URL: "https://tok3n@10.0.0.1:6443/apis",
+				Err: errors.New("connection refused"),
+			}},
 	}, assessNow, time.Hour)
 
 	if len(rep.Reconcilers) != 2 {

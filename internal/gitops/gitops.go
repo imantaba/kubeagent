@@ -19,7 +19,11 @@
 package gitops
 
 import (
+	"errors"
+	"net/url"
+	"regexp"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/imantaba/kubeagent/internal/alert"
@@ -170,9 +174,17 @@ func kindReport(f operators.Fetched, assess assessor, now time.Time, threshold t
 		Forbidden:  f.Forbidden,
 	}
 	if f.Err != nil {
-		// A cluster's API URL can carry userinfo or an auth-proxy token, and
-		// client-go wraps it in a *url.Error. Reduce it to scheme://host.
-		k.Error = alert.RedactError(f.Err)
+		// A cluster's API URL can carry userinfo or an auth-proxy token. When
+		// the failure is a *url.Error, alert.RedactError already reduces it to
+		// scheme://host. Not every fetch failure keeps that type by the time it
+		// reaches here, though, so any URL already flattened into the message
+		// text gets the same treatment rather than passing through verbatim.
+		var ue *url.Error
+		if errors.As(f.Err, &ue) {
+			k.Error = alert.RedactError(f.Err)
+		} else {
+			k.Error = redactEmbeddedURLs(f.Err.Error())
+		}
 	}
 	if k.Forbidden || k.Error != "" {
 		return k, true
@@ -211,6 +223,20 @@ func kindReport(f operators.Fetched, assess assessor, now time.Time, threshold t
 	}
 	k.Drifted = drifted
 	return k, true
+}
+
+// embeddedURL matches a URL substring anywhere in free text.
+var embeddedURL = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+.-]*://[^\s"]+`)
+
+// redactEmbeddedURLs applies alert.RedactURL to every URL-shaped substring in s,
+// so a list failure whose error text already has a URL baked in — rather than
+// wrapped in a *url.Error alert.RedactError can unwrap — never leaks userinfo, a
+// path, or a query string either.
+func redactEmbeddedURLs(s string) string {
+	return embeddedURL.ReplaceAllStringFunc(s, func(raw string) string {
+		raw = strings.TrimRight(raw, ".,;:)]}")
+		return alert.RedactURL(raw)
+	})
 }
 
 func contains(list []string, s string) bool {

@@ -147,6 +147,65 @@ func TestPrintCapacitySkipsEmpty(t *testing.T) {
 	}
 }
 
+// Spec (docs/superpowers/specs/2026-07-27-capacity-hints-design.md:114): "Zero
+// included nodes → print the exclusion list and no rows." buildHeadroom itself
+// prints nothing arithmetic in that case (LargestCPUFit/LargestMemFit/TightestNode/
+// NodeLoss are all nil), so the unconditional "schedulable" row was the sole
+// offender — an arithmetic statement about an empty set of nodes.
+func TestPrintHeadroomBlockZeroIncludedNodesPrintsNoRows(t *testing.T) {
+	h := &capacity.Headroom{
+		IncludedNodes: 0, TotalNodes: 3,
+		FreeCPU: "0.0", FreeMemory: "0Mi",
+		Excluded: []capacity.NodeExclusion{
+			{Node: "cp-1", Reason: "NoSchedule taint"},
+			{Node: "cp-2", Reason: "NoSchedule taint"},
+			{Node: "cp-3", Reason: "NoSchedule taint"},
+		},
+	}
+	var buf bytes.Buffer
+	if err := printHeadroomBlock(h, &buf); err != nil {
+		t.Fatalf("printHeadroomBlock: %v", err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "schedulable") {
+		t.Errorf("want no schedulable row with zero included nodes, got:\n%s", out)
+	}
+	for _, want := range []string{
+		"  Headroom",
+		"excluded", "cp-1  (NoSchedule taint)", "cp-2  (NoSchedule taint)", "cp-3  (NoSchedule taint)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("want %q in output, got:\n%s", want, out)
+		}
+	}
+}
+
+// LargestMemFit renders an unlabeled continuation line when a different node
+// maximizes free memory than free CPU (internal/capacity never populates it when
+// the same node wins both). Previously uncovered by both the unit tests
+// (sampleCapacity() here only sets LargestCPUFit) and the golden fixture.
+func TestPrintHeadroomBlockLargestMemFitContinuationLine(t *testing.T) {
+	h := &capacity.Headroom{
+		IncludedNodes: 2, TotalNodes: 2,
+		FreeCPU: "18.0", FreeMemory: "72Gi",
+		LargestCPUFit: &capacity.NodeFit{Node: "bigcpu", CPU: "16.0", Memory: "8Gi"},
+		LargestMemFit: &capacity.NodeFit{Node: "bigmem", CPU: "2.0", Memory: "64Gi"},
+	}
+	var buf bytes.Buffer
+	if err := printHeadroomBlock(h, &buf); err != nil {
+		t.Fatalf("printHeadroomBlock: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "largest pod fit") || !strings.Contains(out, "bigcpu  16.0 cores, 8Gi") {
+		t.Errorf("want the largest-CPU-fit row naming bigcpu's own CPU and memory, got:\n%s", out)
+	}
+	want := strings.Repeat(" ", capacityValueColumn) + "bigmem  2.0 cores, 64Gi\n"
+	if !strings.Contains(out, want) {
+		t.Errorf("want an unlabeled continuation line naming bigmem's own CPU and memory, "+
+			"aligned at the value column, got:\n%s", out)
+	}
+}
+
 func TestPrintInventoryJSONIncludesCapacity(t *testing.T) {
 	var buf bytes.Buffer
 	in := Input{

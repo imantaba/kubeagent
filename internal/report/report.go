@@ -1455,9 +1455,15 @@ func printHeadroomBlock(h *capacity.Headroom, w io.Writer) error {
 	if _, err := fmt.Fprintln(w, "  Headroom"); err != nil {
 		return err
 	}
-	if err := capacityRow(w, "schedulable", fmt.Sprintf("%s cores, %s free across %d of %d nodes",
-		h.FreeCPU, h.FreeMemory, h.IncludedNodes, h.TotalNodes)); err != nil {
-		return err
+	// Zero included nodes: buildHeadroom leaves every arithmetic field at its nil/zero
+	// default in that case, and the spec says print the exclusion list and no rows —
+	// "0 free across 0 of N nodes" is an arithmetic statement about an empty set, not
+	// a headroom figure.
+	if h.IncludedNodes > 0 {
+		if err := capacityRow(w, "schedulable", fmt.Sprintf("%s cores, %s free across %d of %d nodes",
+			h.FreeCPU, h.FreeMemory, h.IncludedNodes, h.TotalNodes)); err != nil {
+			return err
+		}
 	}
 	if h.LargestCPUFit != nil {
 		if err := capacityRow(w, "largest pod fit", fmt.Sprintf("%s  %s cores, %s",

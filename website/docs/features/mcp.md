@@ -32,10 +32,14 @@ otherwise a call naming one is rejected without ever reaching the cluster.
 
 ## The coverage block
 
-Every tool result carries a `coverage` object, so a model can tell "nothing
-is wrong" from "nothing was checked" — the same failure mode a JSON reader
-hits when it treats an absent key as zero. A `kubeagent_triage` call against
-a cluster with one crash-looping pod, started **without** `--logs`, returns:
+Every result from the three diagnosis tools — `kubeagent_triage`,
+`kubeagent_inspect` and `kubeagent_advisory` — carries a `coverage` object, so
+a model can tell "nothing is wrong" from "nothing was checked": the same
+failure mode a JSON reader hits when it treats an absent key as zero.
+(`list_contexts` has no coverage block; it reads the kubeconfig, not the
+cluster, so there is nothing for it to have looked at or missed.) A
+`kubeagent_triage` call against a cluster with one crash-looping pod, started
+**without** `--logs`, returns:
 
 ```json
 {
@@ -89,8 +93,11 @@ certificate sections (call `kubeagent_advisory` for those), or the three
 opt-in health probes (kubelet, control-plane, DNS), which are not reachable
 through `kubeagent_advisory` either — the CLI's `--kubelet-health`,
 `--control-plane-health`, and `--dns-health` flags are the only way to run
-them. `partial` names a resource kubeagent tried to list and couldn't, so an
-empty result is distinguishable from a denied one.
+them. Those seven are skipped on every `kubeagent_triage` call. The eighth
+entry above, `log-tails`, is the one that varies: it is skipped only because
+this server was started without `--logs`, and it moves to `checksRun` on a
+server started with it. `partial` names a resource kubeagent tried to list and
+couldn't, so an empty result is distinguishable from a denied one.
 
 `metricsServer` is the literal string `"not-checked"` until a call actually
 requests capacity data (`kubeagent_advisory` with section `"capacity"`); only

@@ -14,10 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `kubeagent_triage` (verdict plus findings), `kubeagent_inspect` (one workload,
   with its events), `kubeagent_advisory` (the opt-in operator, drift, capacity,
   security and certificate sections), and `list_contexts` (only when started
-  with `--allow-context-switch`). Every result carries a `coverage` block
-  naming what ran, what was skipped and why, and what was read only partially,
-  so a model can tell "nothing is wrong" from "nothing was checked". No tool
-  can reach `--fix`, and the server never calls an LLM.
+  with `--allow-context-switch`). Every result from the three diagnosis tools
+  carries a `coverage` block naming what ran, what was skipped and why, and
+  what was read only partially, so a model can tell "nothing is wrong" from
+  "nothing was checked". No tool can reach `--fix`, and the server never calls
+  an LLM.
 
 ### Changed
 

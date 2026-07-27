@@ -15,7 +15,11 @@
 package operators
 
 import (
+	"sort"
+
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+
+	"github.com/imantaba/kubeagent/internal/alert"
 )
 
 // State is one resource's health as its own operator reports it.
@@ -102,4 +106,101 @@ type Fetched struct {
 	Items      []unstructured.Unstructured // nil when Forbidden or Err is set
 	Forbidden  bool
 	Err        error
+}
+
+// MaxUnhealthyPerKind bounds how many unhealthy resources one kind enumerates.
+// An Argo CD estate can hold thousands of Applications: counts stay exact, the
+// printed list does not, and the remainder is reported rather than dropped.
+const MaxUnhealthyPerKind = 20
+
+// Assess reduces each fetched adapter result to states and counts.
+// Deterministic: operators and kinds keep the order collect handed them (the
+// adapter-table order), and each kind's unhealthy list is sorted by namespace
+// then name before it is capped.
+func Assess(fetched []Fetched) Report {
+	var rep Report
+	index := map[string]int{} // operator name → position in rep.Operators
+	for _, f := range fetched {
+		i, ok := index[f.Adapter.Operator]
+		if !ok {
+			rep.Operators = append(rep.Operators, OperatorReport{Operator: f.Adapter.Operator})
+			i = len(rep.Operators) - 1
+			index[f.Adapter.Operator] = i
+		}
+		op := &rep.Operators[i]
+		if f.APIVersion != "" && !contains(op.APIVersions, f.APIVersion) {
+			op.APIVersions = append(op.APIVersions, f.APIVersion)
+		}
+		if k, keep := kindReport(f); keep {
+			op.Kinds = append(op.Kinds, k)
+		}
+	}
+	return rep
+}
+
+// kindReport builds one kind's roll-up and reports whether it has anything to
+// say. A kind with no resources, no denial, and no error is omitted: "installed
+// and idle" is carried by the operator's own entry, not by an empty kind line.
+func kindReport(f Fetched) (KindReport, bool) {
+	k := KindReport{
+		Kind:       f.Adapter.Kind,
+		APIVersion: f.APIVersion,
+		Judged:     f.Adapter.Rule != nil,
+		Counts:     map[State]int{},
+		Forbidden:  f.Forbidden,
+	}
+	if f.Err != nil {
+		// A cluster's API URL can carry userinfo or an auth-proxy token, and
+		// client-go wraps it in a *url.Error. Reduce it to scheme://host.
+		k.Error = alert.RedactError(f.Err)
+	}
+	if k.Forbidden || k.Error != "" {
+		return k, true
+	}
+	if len(f.Items) == 0 {
+		return k, false
+	}
+	var unhealthy []Resource
+	for _, item := range f.Items {
+		state, reason := evaluate(f.Adapter, item.Object)
+		k.Counts[state]++
+		if state != StateUnhealthy {
+			continue
+		}
+		unhealthy = append(unhealthy, Resource{
+			Operator:  f.Adapter.Operator,
+			Kind:      f.Adapter.Kind,
+			Namespace: item.GetNamespace(),
+			Name:      item.GetName(),
+			State:     state,
+			Reason:    reason,
+		})
+	}
+	sort.Slice(unhealthy, func(i, j int) bool {
+		if unhealthy[i].Namespace != unhealthy[j].Namespace {
+			return unhealthy[i].Namespace < unhealthy[j].Namespace
+		}
+		return unhealthy[i].Name < unhealthy[j].Name
+	})
+	if len(unhealthy) > MaxUnhealthyPerKind {
+		k.Truncated = len(unhealthy) - MaxUnhealthyPerKind
+		unhealthy = unhealthy[:MaxUnhealthyPerKind]
+	}
+	k.Unhealthy = unhealthy
+	return k, true
+}
+
+// evaluate applies the adapter's suspend path first — a suspended reconciler is
+// a deliberate operator choice, and its Ready condition goes stale the moment it
+// is parked — then its rule. An adapter with no rule counts, never judges.
+func evaluate(a Adapter, obj map[string]any) (State, string) {
+	if len(a.SuspendPath) > 0 {
+		if v, found, err := unstructured.NestedBool(obj, a.SuspendPath...); err == nil && found && v {
+			return StateSuspended, "suspended"
+		}
+	}
+	if a.Rule == nil {
+		return StateUnknown, ""
+	}
+	return a.Rule.Evaluate(obj)
 }

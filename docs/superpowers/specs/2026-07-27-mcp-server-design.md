@@ -110,12 +110,20 @@ to each tool. The operator picks the blast radius, not the model.
 `github.com/modelcontextprotocol/go-sdk` v1.6.1 (released 2026-05-22), the
 official Go SDK.
 
-This takes the project from 4 direct dependencies to 5 and adds 7 modules to the
-graph (`golang-jwt/jwt/v5`, `google/jsonschema-go`, `segmentio/encoding`,
-`yosida95/uritemplate/v3`, `golang.org/x/oauth2`, `golang.org/x/tools`,
-`google/go-cmp`, plus indirect `segmentio/asm` and `golang.org/x/sys`). The
-import is confined to `internal/mcp`; nothing on the scan path imports it, so
-the scan binary's dependency surface for diagnosis is unchanged.
+This takes the project from 4 direct dependencies to 5. Importing only the
+`.../go-sdk/mcp` package — the sole package this design uses — pulls six
+indirect modules, of which `golang.org/x/oauth2` and `golang.org/x/sys` are
+already in kubeagent's graph. **Four modules are genuinely new:**
+`github.com/google/jsonschema-go`, `github.com/segmentio/encoding`,
+`github.com/segmentio/asm`, and `github.com/yosida95/uritemplate/v3`, plus
+version bumps of `golang.org/x/oauth2` (0.34.0 → 0.35.0) and `golang.org/x/sys`
+(0.40.0 → 0.41.0). `golang-jwt/jwt/v5` and `golang.org/x/tools` are **not**
+pulled in — they belong to the SDK's auth and conformance packages, which this
+design does not import. (Measured against v1.6.1 in a scratch module, not
+estimated.)
+
+The import is confined to `internal/mcp`; nothing on the scan path imports it,
+so the scan binary's dependency surface for diagnosis is unchanged.
 
 Hand-rolling JSON-RPC framing was rejected: the protocol is versioned and
 evolving, and a bespoke implementation would be a maintenance liability for no
@@ -311,11 +319,20 @@ Two channels, chosen by whether the model can act on the result.
 
 | Situation | Channel |
 | --- | --- |
-| Unknown tool, missing required field, bad enum value | JSON-RPC error — the client is malformed |
+| Unknown tool name | JSON-RPC error — the client asked for something that does not exist |
+| Missing required field, wrong type, bad enum value | Tool result, `isError: true`, SDK-generated schema-validation text; the handler never runs |
 | Cluster unreachable, auth expired, context gone | Tool result, `isError: true`, redacted message |
 | RBAC denied on some resource | Normal result plus `coverage.partial` |
 | Object not found (`inspect`) | Normal result, `found: false` |
 | metrics-server absent | Normal result, `metricsServer: "absent"` |
+
+The split between the first two rows is the SDK's, not ours, and was measured
+rather than assumed: with `mcp.AddTool`, arguments are validated against the
+inferred input schema *before* the handler is entered, and a validation failure
+is packed into `CallToolResult{IsError: true}` — not raised as a protocol error.
+Only an unknown tool name produces a JSON-RPC error. This is the better
+behavior for our purposes: a model can read and correct an `isError` result,
+whereas a protocol fault is opaque to it.
 
 **Redaction is mandatory on every error path.** client-go errors embed the API
 server URL, and a kubeconfig server URL can carry userinfo or an auth-proxy
@@ -327,9 +344,11 @@ a failed connectivity probe fails before the server speaks JSON-RPC at all, with
 a plain message on stderr. Better than every subsequent tool call returning the
 same error forever.
 
-**Handlers recover from panics.** A panic in one handler must not kill a
-long-lived process the client depends on: recover, log redacted, return
-`isError: true`.
+**Handlers recover from panics.** The SDK does **not** recover: a panicking
+handler unwinds through `jsonrpc2`'s per-request goroutine and takes the whole
+process down, leaving the client with a dead pipe. (Verified against v1.6.1 —
+the process exits with status 2.) Every handler is therefore wrapped so a panic
+becomes a redacted `isError: true` result and the session survives.
 
 ## File structure
 

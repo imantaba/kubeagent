@@ -52,7 +52,11 @@ func OperatorResources(ctx context.Context, disco discovery.DiscoveryInterface,
 
 	// resourceScope caches one ServerResourcesForGroupVersion call per
 	// group/version, so cert-manager's three adapters cost one round trip.
+	// resourceErr caches alongside it: a transient failure to list a served
+	// group's resources is not "not installed" and must not be re-queried once
+	// per adapter either.
 	resourceScope := map[string]map[string]bool{} // "group/version" → plural → namespaced
+	resourceErr := map[string]error{}             // "group/version" → resource-listing failure, if any
 	var out []operators.Fetched
 
 	for _, a := range adapters {
@@ -70,12 +74,22 @@ func OperatorResources(ctx context.Context, disco discovery.DiscoveryInterface,
 		gv := a.Group + "/" + version
 		if _, cached := resourceScope[gv]; !cached {
 			scope := map[string]bool{}
-			if list, err := disco.ServerResourcesForGroupVersion(gv); err == nil {
+			if list, err := disco.ServerResourcesForGroupVersion(gv); err != nil {
+				resourceErr[gv] = err
+			} else {
 				for _, r := range list.APIResources {
 					scope[r.Name] = r.Namespaced
 				}
 			}
 			resourceScope[gv] = scope
+		}
+		if err, failed := resourceErr[gv]; failed {
+			// The group is served but we could not find out what it serves: this
+			// is a failed API call, not an absent CRD. It must surface the same
+			// way a failed List already does — via Fetched.Err, redacted by
+			// operators.kindReport — not disappear the way "not installed" does.
+			out = append(out, operators.Fetched{Adapter: a, APIVersion: gv, Err: err})
+			continue
 		}
 		namespaced, serves := resourceScope[gv][a.Resource]
 		if !serves {

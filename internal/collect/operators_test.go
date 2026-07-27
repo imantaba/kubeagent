@@ -227,6 +227,88 @@ func TestOperatorResources_FallsBackToTheServedVersion(t *testing.T) {
 	}
 }
 
+func TestOperatorResources_ResourceListingFailureIsRecordedOnAdaptersInThatGroup(t *testing.T) {
+	// ServerGroups succeeds (cert-manager.io is served) but the per-group-version
+	// resource listing fails — an aggregation-layer hiccup on a CRD-backed group.
+	// This must not look like "not installed": the adapters sharing that
+	// group/version have to appear with the failure recorded, the same way a
+	// failed List already does, not vanish silently.
+	disco := discoveryFor(certManagerV1())
+	disco.Fake.PrependReactor("get", "resource", func(clienttesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("etcdserver: request timed out")
+	})
+	dyn := dynamicFor()
+
+	got := OperatorResources(context.Background(), disco, dyn,
+		[]operators.Adapter{certAdapter, clusterIssuerAdapter}, "")
+	if len(got) != 2 {
+		t.Fatalf("got %d fetched results, want 2 (both adapters share the failed group/version)", len(got))
+	}
+	for i, f := range got {
+		if f.Err == nil {
+			t.Errorf("adapter %d (%s): Err = nil, want the resource-listing failure recorded", i, f.Adapter.Kind)
+		}
+		if f.Forbidden {
+			t.Errorf("adapter %d (%s): Forbidden = true, want false", i, f.Adapter.Kind)
+		}
+		if len(f.Items) != 0 {
+			t.Errorf("adapter %d (%s): Items = %v, want none", i, f.Adapter.Kind, f.Items)
+		}
+	}
+	if n := len(dyn.Actions()); n != 0 {
+		t.Errorf("dynamic client made %d calls, want 0: the group's resource scope was never learned", n)
+	}
+
+	resourceCalls := 0
+	for _, a := range disco.Actions() {
+		if a.GetVerb() == "get" && a.GetResource().Resource == "resource" {
+			resourceCalls++
+		}
+	}
+	if resourceCalls != 1 {
+		t.Errorf("ServerResourcesForGroupVersion called %d times, want 1 (cached across adapters sharing the group/version)", resourceCalls)
+	}
+}
+
+func TestOperatorResources_AbsentGroupStaysSilentEvenWhenAnotherGroupsListingFails(t *testing.T) {
+	// The fix must not blur "not served at all" into "served but errored": an
+	// adapter for a group the server never advertises still costs zero API
+	// calls and produces no entry, even while a different, served group is
+	// failing its resource listing.
+	disco := discoveryFor(certManagerV1())
+	disco.Fake.PrependReactor("get", "resource", func(clienttesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("etcdserver: request timed out")
+	})
+	dyn := dynamicFor()
+
+	longhorn := operators.Adapter{
+		Operator: "Longhorn", Group: "longhorn.io", Version: "v1beta2",
+		Resource: "volumes", Kind: "Volume",
+	}
+
+	got := OperatorResources(context.Background(), disco, dyn,
+		[]operators.Adapter{certAdapter, longhorn}, "")
+	if len(got) != 1 {
+		t.Fatalf("got %d fetched results, want 1 (only certificates, from the served-but-erroring group)", len(got))
+	}
+	if got[0].Adapter.Kind != "Certificate" {
+		t.Errorf("got kind %q, want Certificate", got[0].Adapter.Kind)
+	}
+	if got[0].Err == nil {
+		t.Error("certificates: Err = nil, want the resource-listing failure recorded")
+	}
+
+	resourceCalls := 0
+	for _, a := range disco.Actions() {
+		if a.GetVerb() == "get" && a.GetResource().Resource == "resource" {
+			resourceCalls++
+		}
+	}
+	if resourceCalls != 1 {
+		t.Errorf("ServerResourcesForGroupVersion called %d times, want 1 (longhorn.io was never queried: it is not served)", resourceCalls)
+	}
+}
+
 func TestOperatorResources_DiscoveryFailureYieldsNothing(t *testing.T) {
 	// Discovery is available to every authenticated user, so a failure here
 	// means the API server is unreachable — which the base scan already reports.

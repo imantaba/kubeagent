@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Operator health (`scan --operators`, opt-in, advisory)** — reports what
+  cert-manager, CloudNativePG, Longhorn, Argo CD, Flux, and the Prometheus
+  operator say about themselves, read through the dynamic client so kubeagent
+  compiles against none of their Go APIs and needs no rebuild when you install
+  one. API discovery is the installation signal: an operator whose group the
+  API server does not serve is skipped with zero API calls, no error, and no
+  report entry, so a default scan and a scan on a cluster running none of them
+  both cost nothing.
+
+  Ten resource kinds are assessed by two declarative rules, and every rule
+  degrades to `unknown` rather than `unhealthy`: a renamed field or an unseen
+  CRD version yields a missing signal, never a false outage. A suspended Flux
+  reconciler reports `suspended`, not a stale `Ready=False`. Argo CD's sync
+  status is deliberately not read — drift is a separate concern, and flagging
+  it would make every pending deploy look like a failure.
+
+  The report carries metadata and state only: namespace, name, kind, state, and
+  the operator's own CamelCase condition reason. A CR's `spec`, its arbitrary
+  `status` content, and a condition's free-text `message` never reach it — an
+  Argo CD `Application` embeds a Git URL that can carry a token, a cert-manager
+  `Issuer` references ACME account keys, a CNPG `Cluster` names backup
+  credentials, and cert-manager writes ACME order URLs into condition messages.
+  Counts stay exact while at most 20 unhealthy resources are listed per kind,
+  the remainder reported rather than dropped.
+
+  Read-only: `list` only, never `get`, `watch`, or any write. Advisory: the
+  section never affects the cluster verdict. `deploy/rbac-operators.yaml` is
+  the scan-only grant; without it the report still names which operators are
+  installed and marks each kind forbidden.
+
 ## [0.59.0] - 2026-07-26
 
 ### Added

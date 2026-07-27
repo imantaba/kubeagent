@@ -117,6 +117,19 @@ by `scan --logs`. This is a scan-only add-on (not used by the watch daemon);
 most human kubeconfigs already allow `pods/log`. Without it, `--logs` reports no
 log cause and continues non-fatally.
 
+## Operator health (opt-in)
+
+Applying `deploy/rbac-operators.yaml` grants `list` on the custom resources
+`scan --operators` reads: cert-manager, CloudNativePG, Longhorn, Argo CD, Flux,
+and the Prometheus operator. This is a scan-only add-on (not used by the watch
+daemon, and not wired into the Helm chart); most human kubeconfigs already allow
+these. Without it, `--operators` still names which operators are installed — API
+discovery is open to every authenticated user — and marks each kind forbidden.
+
+kubeagent only ever `list`s these resources, and the report carries metadata and
+state alone: namespace, name, kind, state, and the operator's own condition
+reason. No CR `spec` content is read into the report.
+
 ## Alerting (opt-in)
 
 The daemon can POST one alert per broken object to a webhook — generic JSON, a

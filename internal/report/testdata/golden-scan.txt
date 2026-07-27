@@ -129,6 +129,18 @@ CERTIFICATES  (advisory — public certificate metadata only)
       — fronts ingress shop/storefront (shop.example.com)
   ⚠ infra/api-tls  expires in 12d  (CN api.example.com)
   · 3 certificates checked (warn window 30d)
+OPERATORS  (advisory — operator-reported state; no CR spec content)
+  cert-manager (cert-manager.io/v1)
+    Certificate     12 healthy, 1 unhealthy
+      ✗ shop/web-tls  Ready=False: IssuerNotFound
+    ClusterIssuer   1 healthy
+  Flux (kustomize.toolkit.fluxcd.io/v1, helm.toolkit.fluxcd.io/v2)
+    Kustomization   9 healthy, 1 suspended
+    HelmRelease     4 healthy
+  Prometheus operator (monitoring.coreos.com/v1)
+    Prometheus      1 healthy
+    ServiceMonitor  214 (not assessed)
+
 NOTES
   • 2 nodes reserve no memory: worker-1, worker-2
       — OS/kubelet memory pressure can destabilize the node

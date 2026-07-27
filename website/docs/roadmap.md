@@ -416,9 +416,9 @@ These are the north star; every item below is measured against them.
   multi-cluster hub (shipped). Theme E is complete; guarded, policy-gated
   autonomous remediation inside `watch` is a separate, future track.
 - **F · Ecosystem & operators** — first-class awareness of the operators people
-  actually run (CloudNativePG, cert-manager, Longhorn/Ceph, Argo CD / Flux GitOps
-  drift, Prometheus operator, service meshes), plus cost/right-sizing and
-  scheduling-headroom hints.
+  actually run: operator/CRD adapters for cert-manager, CloudNativePG, Longhorn,
+  Argo CD, Flux, and the Prometheus operator (shipped), with GitOps drift,
+  cost/right-sizing, and scheduling-headroom hints still to come.
 - **G · Meet people where they work** — an **MCP server** so other AI agents can
   call kubeagent's read-only diagnosis as a trusted tool; a `kubectl` krew plugin;
   a CI/CD gate mode (pre-deploy sanity, post-deploy verify, SARIF, exit codes); an

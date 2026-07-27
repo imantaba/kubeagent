@@ -22,7 +22,7 @@ while [ $# -gt 0 ]; do
   esac; shift
 done
 
-# Normalize a numeric --only to the zero-padded form used in scenario keys (01..15).
+# Normalize a numeric --only to the zero-padded form used in scenario keys (01..16).
 if [ -n "$ONLY" ] && printf '%s' "$ONLY" | grep -qE '^[0-9]+$'; then ONLY=$(printf '%02d' "$ONLY"); fi
 
 : "${OUT:=docs/testing/chaos-results.md}"
@@ -672,6 +672,92 @@ scenario_15_multicluster() {   # one daemon, three targets: two names for this c
   kubectl --context "$CTX" delete ns "$ns" --wait=true --timeout=120s >/dev/null 2>&1 || true
 }
 
+scenario_16_operators() {   # real cert-manager CRDs -> --operators; an unadapted CRD stays absent
+  log "scenario 16: operator/CRD adapters (--operators)"
+  local ns=chaos-operators
+  local cmurl="https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml"
+  kubectl --context "$CTX" apply -f "$cmurl" >/dev/null 2>&1 || true
+  kubectl --context "$CTX" -n cert-manager rollout status deploy/cert-manager --timeout=180s >/dev/null 2>&1 || true
+  kubectl --context "$CTX" -n cert-manager rollout status deploy/cert-manager-cainjector --timeout=180s >/dev/null 2>&1 || true
+  kubectl --context "$CTX" -n cert-manager rollout status deploy/cert-manager-webhook --timeout=180s >/dev/null 2>&1 || true
+  # The webhook Deployment reports Available before its Service always has a
+  # ready endpoint — a Certificate applied in that window is rejected with
+  # "connect: connection refused" by the API server's admission call. Wait for
+  # the endpoint itself, not just the Deployment condition.
+  local i
+  for i in $(seq 24); do
+    kubectl --context "$CTX" -n cert-manager get endpoints cert-manager-webhook \
+      -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null | grep -q . && break
+    sleep 5
+  done
+  kubectl --context "$CTX" create ns "$ns" --dry-run=client -o yaml | kubectl --context "$CTX" apply -f - >/dev/null
+
+  # A Certificate pointing at an Issuer that does not exist: cert-manager sets
+  # Ready=False (observed reason: DoesNotExist, cert-manager v1.16.2) within
+  # seconds, with no ACME round trip and no outbound network. The distinctive
+  # secretName and commonName are the spec-leak probe below — neither may
+  # appear anywhere in the report. Retried: even once the webhook endpoint
+  # exists, the admission server itself can take a few more seconds to start
+  # accepting connections.
+  for i in $(seq 6); do
+    kubectl --context "$CTX" -n "$ns" apply -f - >/dev/null 2>&1 <<'CERT' && break
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: doomed
+spec:
+  secretName: doomed-tls-chaosonlytoken
+  commonName: doomed.chaos.invalid
+  dnsNames: [doomed.chaos.invalid]
+  issuerRef:
+    name: no-such-issuer
+    kind: Issuer
+CERT
+    sleep 5
+  done
+
+  # A CRD kubeagent has no adapter for: the discovery gate must leave it out.
+  kubectl --context "$CTX" apply -f - >/dev/null <<'CRD'
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: widgets.chaos.example.com
+spec:
+  group: chaos.example.com
+  scope: Namespaced
+  names: { plural: widgets, singular: widget, kind: Widget }
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema: { type: object, x-kubernetes-preserve-unknown-fields: true }
+CRD
+  sleep 5
+  kubectl --context "$CTX" -n "$ns" apply -f - >/dev/null 2>&1 <<'WIDGET' || true
+apiVersion: chaos.example.com/v1
+kind: Widget
+metadata: { name: unadapted }
+WIDGET
+
+  sleep 20
+  local out body
+  out="$(scan --operators 2>&1 || true)"
+  body="$(scan_body "$out")"
+  {
+    printf '%s\n' "$out"
+    printf '\n--- gate checks ---\n'
+    printf 'unadapted Widget kind in report: %s\n' "$(printf '%s\n' "$body" | grep -c 'Widget' || true)"
+    printf 'CR spec content in report:       %s\n' "$(printf '%s\n' "$body" | grep -cE 'chaosonlytoken|doomed\.chaos\.invalid' || true)"
+    printf 'Certificate line:                %s\n' "$(printf '%s\n' "$body" | grep -m1 'Certificate' || true)"
+    printf 'cluster verdict:                 %s\n' "$(printf '%s\n' "$body" | grep -m1 '^Cluster:' || true)"
+  } | record "16. Operator/CRD adapters (--operators)" "detected: cert-manager Certificate Ready=False; unadapted CRD absent (0); no CR spec content (0)"
+
+  kubectl --context "$CTX" delete ns "$ns" --wait=true --timeout=120s >/dev/null 2>&1 || true
+  kubectl --context "$CTX" delete crd widgets.chaos.example.com --wait=false >/dev/null 2>&1 || true
+  kubectl --context "$CTX" delete -f "$cmurl" --wait=false >/dev/null 2>&1 || true
+}
+
 scenario_02_certs() {   # documented skip (can't force cert expiry on Kind)
   log "scenario 2: expired certificates (skipped)"
   printf 'Skipped on Kind: control-plane certificate expiry cannot be forced quickly or safely.\nkubeagent TLS / expired-certificate handling is covered by internal/connectivity unit tests\n(x509 UnknownAuthority / CertificateInvalid / Hostname errors, plus "x509:" / "certificate" / "tls: " substrings).\n' \
@@ -708,7 +794,7 @@ run_scenarios() {
   # etcd/apiserver flap for a while afterwards (and while the API is down even
   # `kubectl wait` can't settle it). Running it last keeps that recovery noise from
   # contaminating the other scenarios' scans.
-  local all=(02_certs 03_diskfull 04_networkpolicy 05_coredns 06_lb 07_oom 08_nsdelete 09_rollout 10_credleak 11_kubelet 12_watch 13_slo 14 15_multicluster 01_etcd)
+  local all=(02_certs 03_diskfull 04_networkpolicy 05_coredns 06_lb 07_oom 08_nsdelete 09_rollout 10_credleak 11_kubelet 12_watch 13_slo 14 15_multicluster 16_operators 01_etcd)
   for s in "${all[@]}"; do
     if [ -z "$ONLY" ] || [ "$ONLY" = "${s%%_*}" ]; then "scenario_$s"; fi
   done

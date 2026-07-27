@@ -1588,6 +1588,16 @@ users:
 	return path
 }
 
+func TestUsage_MentionsTheMCPSubcommand(t *testing.T) {
+	err := run([]string{"kubeagent"})
+	if err == nil {
+		t.Fatal("run() with no subcommand error = nil, want the usage error")
+	}
+	if !strings.Contains(err.Error(), "kubeagent mcp") {
+		t.Errorf("usage = %q, want it to list the mcp subcommand", err)
+	}
+}
+
 func TestEnvDuration(t *testing.T) {
 	const key = "KUBEAGENT_TEST_DRIFT_AGE"
 	tests := []struct {

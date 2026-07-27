@@ -30,6 +30,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/dnshealth"
 	"github.com/imantaba/kubeagent/internal/explain"
 	"github.com/imantaba/kubeagent/internal/investigate"
+	"github.com/imantaba/kubeagent/internal/mcp"
 	"github.com/imantaba/kubeagent/internal/nodehealth"
 	"github.com/imantaba/kubeagent/internal/platform"
 	"github.com/imantaba/kubeagent/internal/redact"
@@ -64,8 +65,11 @@ func run(args []string) error {
 	if len(args) > 0 && args[0] == "watch" {
 		return runWatch(args[1:])
 	}
+	if len(args) > 0 && args[0] == "mcp" {
+		return runMCP(args[1:])
+	}
 	if len(args) == 0 || args[0] != "scan" {
-		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--investigate] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--kubelet-health] [--control-plane-health] [--dns-health] [--certs [--cert-warn-days n]] [--operators] [--drift] [--drift-age dur] [--capacity] [--logs] [--node-heartbeat-threshold dur] [--expected-nodes a,b,…] [--fix [--dry-run|--yes] [--audit-log path]] [--rollback --audit-log path] | kubeagent watch [--kubeconfig path] [--context name (repeatable)] [--cluster-name name] [--include-local] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] [--alert-format json|slack|alertmanager] [--alert-repeat dur] [--slo-target pct] [--explain [--explain-cooldown dur] [--explain-budget n] [--model name]] | kubeagent version")
+		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--investigate] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--kubelet-health] [--control-plane-health] [--dns-health] [--certs [--cert-warn-days n]] [--operators] [--drift] [--drift-age dur] [--capacity] [--logs] [--node-heartbeat-threshold dur] [--expected-nodes a,b,…] [--fix [--dry-run|--yes] [--audit-log path]] [--rollback --audit-log path] | kubeagent watch [--kubeconfig path] [--context name (repeatable)] [--cluster-name name] [--include-local] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] [--alert-format json|slack|alertmanager] [--alert-repeat dur] [--slo-target pct] [--explain [--explain-cooldown dur] [--explain-budget n] [--model name]] | kubeagent mcp [--kubeconfig path] [--context name] [--allow-context-switch] [--logs] | kubeagent version")
 	}
 
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
@@ -515,6 +519,29 @@ func runWatch(args []string) error {
 		ExplainCooldown:         *explainCooldown,
 		ExplainBudget:           *explainBudget,
 	})
+}
+
+// runMCP serves kubeagent's read-only diagnosis over the Model Context
+// Protocol on stdin/stdout, for an AI agent to call as a tool. The protocol
+// owns stdout, so nothing here may print to it; the underlying mcp.Serve
+// connects to the cluster and validates it eagerly before serving.
+func runMCP(args []string) error {
+	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
+	kubeconfig := fs.String("kubeconfig", "", "path to kubeconfig (default: $KUBECONFIG or ~/.kube/config)")
+	contextName := fs.String("context", "", "kubeconfig context to use (default: current context)")
+	allowSwitch := fs.Bool("allow-context-switch", false,
+		"let tool calls name a different kubeconfig context, and expose list_contexts")
+	logs := fs.Bool("logs", false, "enrich findings with a short log tail from failing containers")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	return mcp.Serve(context.Background(), mcp.Config{
+		Kubeconfig:         *kubeconfig,
+		Context:            *contextName,
+		AllowContextSwitch: *allowSwitch,
+		Logs:               *logs,
+	}, version)
 }
 
 // firstNonEmpty returns a if non-empty, else b.

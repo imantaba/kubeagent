@@ -1547,3 +1547,30 @@ users:
 	}
 	return path
 }
+
+func TestEnvDuration(t *testing.T) {
+	const key = "KUBEAGENT_TEST_DRIFT_AGE"
+	tests := []struct {
+		name string
+		set  string
+		want time.Duration
+	}{
+		{"unset falls back", "", time.Hour},
+		{"parses minutes", "30m", 30 * time.Minute},
+		{"parses hours", "36h", 36 * time.Hour},
+		{"garbage falls back", "soon", time.Hour},
+		{"bare number falls back", "60", time.Hour},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.set == "" {
+				os.Unsetenv(key)
+			} else {
+				t.Setenv(key, tt.set)
+			}
+			if got := envDuration(key, time.Hour); got != tt.want {
+				t.Errorf("envDuration(%q) = %v, want %v", tt.set, got, tt.want)
+			}
+		})
+	}
+}

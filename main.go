@@ -26,6 +26,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/diskusage"
 	"github.com/imantaba/kubeagent/internal/dnshealth"
 	"github.com/imantaba/kubeagent/internal/explain"
+	"github.com/imantaba/kubeagent/internal/gitops"
 	"github.com/imantaba/kubeagent/internal/investigate"
 	"github.com/imantaba/kubeagent/internal/nodehealth"
 	"github.com/imantaba/kubeagent/internal/operators"
@@ -84,6 +85,8 @@ func run(args []string) error {
 	certs := fs.Bool("certs", false, "check TLS-secret certificate expiry (public certs only; needs the secrets add-on grant)")
 	certWarnDays := fs.Int("cert-warn-days", 30, "with --certs: warn when a certificate expires within this many days")
 	operatorsFlag := fs.Bool("operators", envBool("KUBEAGENT_OPERATORS", false), "report operator custom-resource health (cert-manager, CloudNativePG, Longhorn, Argo CD, Flux, Prometheus operator; advisory, needs deploy/rbac-operators.yaml on a restricted context)")
+	driftFlag := fs.Bool("drift", envBool("KUBEAGENT_DRIFT", false), "report GitOps convergence for Argo CD and Flux (advisory, needs deploy/rbac-gitops.yaml on a restricted context)")
+	driftAge := fs.Duration("drift-age", envDuration("KUBEAGENT_DRIFT_AGE", time.Hour), "how long an object may differ from Git before --drift calls it stale (e.g. 30m, 2h)")
 	logs := fs.Bool("logs", false, "read each crashing container's previous logs and classify the failure (needs the pods/log grant)")
 	nodeHeartbeatThreshold := fs.Duration("node-heartbeat-threshold", 40*time.Second, "flag a Ready node whose kubelet lease is stale beyond this (0 disables)")
 	expectedNodes := fs.String("expected-nodes", "", "names of nodes expected in the cluster; a declared name with no Node object is flagged Degraded (comma-separated)")
@@ -184,17 +187,33 @@ func run(args []string) error {
 	sysDS, _ := collect.SystemDaemonSets(context.Background(), client)
 	facts := platform.Detect(nodes, sysDS, scs, ics)
 
-	// Operator custom resources: opt-in, advisory, and built lazily — a default
-	// scan constructs no dynamic client and issues no discovery call.
+	// Operator custom resources and GitOps drift: opt-in, advisory, and built
+	// lazily — a scan with neither flag constructs no dynamic client and issues no
+	// discovery call.
+	//
+	// Both flags read the same three Argo CD/Flux kinds. operators.Adapters() is a
+	// superset of gitops.Adapters(), so when both are set the cluster is listed
+	// once and each assessor reads the same fetched objects.
 	var operatorRep *operators.Report
-	if *operatorsFlag {
+	var gitopsRep *gitops.Report
+	if *operatorsFlag || *driftFlag {
 		dyn, disco, derr := cluster.NewDynamicClients(*kubeconfig, *contextName)
 		if derr != nil {
-			fmt.Fprintf(os.Stderr, "kubeagent: warning: --operators unavailable: %v\n", derr)
+			fmt.Fprintf(os.Stderr, "kubeagent: warning: %s unavailable: %v\n", enabledFlagNames(*operatorsFlag, *driftFlag), derr)
 		} else {
-			rep := operators.Assess(collect.OperatorResources(
-				context.Background(), disco, dyn, operators.Adapters(), namespace))
-			operatorRep = &rep
+			adapters := gitops.Adapters()
+			if *operatorsFlag {
+				adapters = operators.Adapters()
+			}
+			fetched := collect.OperatorResources(context.Background(), disco, dyn, adapters, namespace)
+			if *operatorsFlag {
+				rep := operators.Assess(fetched)
+				operatorRep = &rep
+			}
+			if *driftFlag {
+				rep := gitops.Assess(fetched, time.Now(), *driftAge)
+				gitopsRep = &rep
+			}
 		}
 	}
 
@@ -263,6 +282,7 @@ func run(args []string) error {
 	in.ControlPlane = cpRep
 	in.DNS = dnsRep
 	in.Operators = operatorRep
+	in.GitOps = gitopsRep
 	in.SecurityVerbose = *securityVerbose
 	in.Suggest = *suggest
 	in.Explanation = explanation
@@ -553,6 +573,29 @@ func envInt(key string, def int) int {
 		}
 	}
 	return def
+}
+
+// envDuration returns the env var parsed as a Go duration ("30m", "2h"), else def.
+func envDuration(key string, def time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
+	}
+	return def
+}
+
+// enabledFlagNames names the flags a shared failure affects, so a user running
+// only one of them is not told the other is broken.
+func enabledFlagNames(operators, drift bool) string {
+	switch {
+	case operators && drift:
+		return "--operators/--drift"
+	case operators:
+		return "--operators"
+	default:
+		return "--drift"
+	}
 }
 
 // runRollback undoes the most recent applied remediation recorded in the audit log. The

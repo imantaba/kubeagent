@@ -48,7 +48,7 @@ func TestServer_ExposesExactlyTheReadOnlyTools(t *testing.T) {
 	for _, tool := range res.Tools {
 		got = append(got, tool.Name)
 	}
-	want := []string{"kubeagent_inspect", "kubeagent_triage"}
+	want := []string{"kubeagent_advisory", "kubeagent_inspect", "kubeagent_triage"}
 	if len(got) != len(want) {
 		t.Fatalf("tools = %v, want exactly %v", got, want)
 	}

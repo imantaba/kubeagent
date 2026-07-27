@@ -90,6 +90,3 @@ func Serve(ctx context.Context, cfg Config, version string) error {
 	s := newServer(cfg, version, client, time.Now)
 	return s.Run(ctx, &mcpsdk.StdioTransport{})
 }
-
-// Replaced in the task that implements this tool.
-func registerAdvisory(*mcpsdk.Server, Config, kubernetes.Interface, func() time.Time) {}

@@ -2,6 +2,7 @@ package scan
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -1240,5 +1241,42 @@ func TestEvaluate_CensusRealisticOwnershipCountsOneWorkload(t *testing.T) {
 	}
 	if res.Inventory.Census.Good != 1 {
 		t.Errorf("Census.Good = %d, want 1", res.Inventory.Census.Good)
+	}
+}
+
+func TestEvaluate_RecordsDeniedListsAsPartialReads(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	client.PrependReactor("list", "networkpolicies", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("networkpolicies is forbidden: User cannot list resource")
+	})
+
+	res, err := Evaluate(context.Background(), client, Options{})
+	if err != nil {
+		t.Fatalf("Evaluate() error = %v, want nil (a denied optional list must degrade, not fail)", err)
+	}
+
+	var found *ReadFailure
+	for i := range res.PartialReads {
+		if res.PartialReads[i].Resource == "networkpolicies" {
+			found = &res.PartialReads[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("PartialReads = %v, want an entry for networkpolicies", res.PartialReads)
+	}
+	if found.Reason == "" {
+		t.Error("PartialReads entry has an empty Reason; a caller cannot tell why the read failed")
+	}
+}
+
+func TestEvaluate_CleanClusterHasNoPartialReads(t *testing.T) {
+	client := fake.NewSimpleClientset()
+
+	res, err := Evaluate(context.Background(), client, Options{})
+	if err != nil {
+		t.Fatalf("Evaluate() error = %v, want nil", err)
+	}
+	if len(res.PartialReads) != 0 {
+		t.Errorf("PartialReads = %v, want none on a cluster that answered every list", res.PartialReads)
 	}
 }

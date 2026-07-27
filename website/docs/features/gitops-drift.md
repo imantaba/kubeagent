@@ -123,7 +123,7 @@ JSON output, or a log line — only metadata and state:
   — a CamelCase token by API convention — is read; its free-text `message`
   is not, because operator messages routinely embed URLs.
 - Never printed: a repository URL of any kind. An Argo CD `Application` can
-  point at `https://<token>@git.example/org/repo`, and a URL like that can
+  point at `https://<token>@github.example/org/repo`, and a URL like that can
   carry a credential.
 - Revisions are reduced before they can reach output: Flux publishes
   revisions as `<ref>@sha1:<hash>`, where `<ref>` is arbitrary user text (a

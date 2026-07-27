@@ -13,6 +13,7 @@ package capacity
 import (
 	"sort"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -233,4 +234,18 @@ func controllerOwner(refs []metav1.OwnerReference) *metav1.OwnerReference {
 		return &refs[0]
 	}
 	return nil
+}
+
+// Assess builds the advisory capacity view. nodes and pods are cluster-wide in
+// every case — headroom arithmetic is meaningless scoped to one namespace — while
+// namespace, when non-empty, scopes the right-sizing enumeration only.
+//
+// usage is the per-pod sample keyed "namespace/name"; a nil or empty map means
+// metrics-server did not answer, and the right-sizing rules still apply.
+func Assess(nodes []corev1.Node, pods []corev1.Pod, replicaSets []appsv1.ReplicaSet,
+	usage map[string]corev1.ResourceList, namespace string) Report {
+	included, excluded := classifyNodes(nodes, pods)
+	return Report{
+		Headroom: buildHeadroom(included, excluded, len(nodes), pods),
+	}
 }

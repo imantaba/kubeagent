@@ -14,14 +14,14 @@ kubeagent scan --capacity
 CAPACITY  (advisory — resource arithmetic on requests; ignores affinity,
            topology spread, PVC zoning, and PodDisruptionBudgets)
   Headroom
-    schedulable       5.9 cores, 8Gi free across 2 of 3 nodes
-    largest pod fit   worker1  3.5 cores, 6Gi
-    tightest node     worker2  78% of memory requested
-    lose worker1      may not fit — first-fit could not place StatefulSet/prod/db (2.1 cores)
-    excluded          control-plane-1  (NoSchedule taint)
+    schedulable        5.9 cores, 8Gi free across 2 of 3 nodes
+    largest pod fit    worker1  3.5 cores, 6Gi
+    tightest node      worker2  78% of memory requested
+    lose worker1       may not fit — first-fit could not place StatefulSet/prod/db (2.1 cores)
+    excluded           control-plane-1  (NoSchedule taint)
   Right-sizing  (metrics-server: 11 of 12 pods reporting)
-    no requests set   Deployment/staging/web  · 0.0 cores observed
-                        — BestEffort: first evicted under pressure
+    no requests set    Deployment/staging/web  · 0.0 cores observed
+                         — BestEffort: first evicted under pressure
     limit, no request  Deployment/prod/cache  lim 256Mi  · 240Mi observed
 
     one sample per pod, ~30s average — not a peak, not a history
@@ -74,7 +74,7 @@ dropped from the denominator.
 | Row | What it means |
 | --- | --- |
 | `schedulable` | Free CPU and memory summed across every **included** node, and how many of the cluster's nodes that is. |
-| `largest pod fit` | The single included node with the most free CPU, named — with **its own** free memory printed beside it, never another node's. A pod lands on one node, so mixing the CPU high-water mark from one node with the memory high-water mark from another would describe a shape nothing can schedule. |
+| `largest pod fit` | The single included node with the most free CPU, named — with **its own** free memory printed beside it, never another node's. A pod lands on one node, so mixing the CPU high-water mark from one node with the memory high-water mark from another would describe a shape nothing can schedule. When a different node has more free memory, that node gets a second, unlabeled line right below — its own CPU and memory, for the same reason. |
 | `tightest node` | The included node closest to full, by whichever of its CPU-requested or memory-requested ratio is higher. |
 | `lose <node>` | What happens if the largest included node disappeared — see below. |
 
@@ -110,7 +110,7 @@ needed to raise any of them:
 | --- | --- | --- |
 | `no requests set` | A container declares neither a CPU nor a memory request. | The container reserves nothing. When *every* container in the pod is like this, the pod is BestEffort — first evicted under node pressure, and the row says so; when only some are, the note is omitted. |
 | `limit, no request` | A container sets a limit for a resource but no request for it. | Kubernetes defaults an unset request to the limit, so the workload silently reserves the full limit cluster-wide — usually not what its author intended. |
-| `never schedulable` | A container's CPU or memory request exceeds the largest **included** node's allocatable for that resource. | The pod can never be placed, anywhere. This is provable now, even for a workload scaled to zero, before a single Pending pod exists. |
+| `never schedulable` | No single **included** node's allocatable CPU and memory can both satisfy a container's request — whether the request outright exceeds every node's CPU or memory, or (on a heterogeneous pool) its CPU fits one node's maximum and its memory fits a different node's, but no one node has both. | The pod can never be placed, anywhere — a pod lands on exactly one node, so it needs one node with both. This is provable now, even for a workload scaled to zero, before a single Pending pod exists. |
 
 Two rules were deliberately left out, on the same YAGNI-and-opinion-neutrality
 grounds:

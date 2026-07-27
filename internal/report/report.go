@@ -1541,7 +1541,7 @@ func printRightSizingBlock(rs *capacity.RightSizing, w io.Writer) error {
 			}
 			if o.BestEffort {
 				if _, err := fmt.Fprintln(w,
-					strings.Repeat(" ", 24)+"— BestEffort: first evicted under pressure"); err != nil {
+					strings.Repeat(" ", capacityValueColumn+2)+"— BestEffort: first evicted under pressure"); err != nil {
 					return err
 				}
 			}
@@ -1576,12 +1576,27 @@ func capacityRuleLabel(n capacity.RuleName) string {
 	}
 }
 
+// capacityLabelWidth is the label column's fixed width in capacityRow. The
+// longest labels the section emits — "limit, no request" and "never
+// schedulable" — are both 17 characters. 19 keeps both clear of the
+// two-space floor below, so every row's value lands in the same column;
+// pick a narrower width and one of those two labels trips the floor and
+// pushes its value one column right of everything else.
+const capacityLabelWidth = 19
+
+// capacityIndent is the section's fixed left margin, in front of the label
+// column.
+const capacityIndent = 4
+
+// capacityValueColumn is the column the value starts in, derived from the
+// indent and label width so it never drifts out of sync with capacityRow.
+const capacityValueColumn = capacityIndent + capacityLabelWidth
+
 // capacityRow prints one label/value line at the section's fixed indent. An empty
 // label produces a continuation line aligned under the previous value. Labels wider
 // than the column still get two separating spaces rather than running together.
 func capacityRow(w io.Writer, label, value string) error {
-	const width = 18
-	pad := width - len(label)
+	pad := capacityLabelWidth - len(label)
 	if pad < 2 {
 		pad = 2
 	}

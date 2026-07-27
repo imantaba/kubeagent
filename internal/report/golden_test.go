@@ -12,6 +12,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/certhealth"
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/diagnose"
+	"github.com/imantaba/kubeagent/internal/gitops"
 	"github.com/imantaba/kubeagent/internal/hpahealth"
 	"github.com/imantaba/kubeagent/internal/ingresshealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
@@ -143,6 +144,47 @@ func goldenInput(now time.Time) Input {
 				},
 			},
 		}},
+		GitOps: &gitops.Report{
+			Threshold: "1h",
+			Reconcilers: []gitops.ReconcilerReport{
+				{
+					Reconciler:  "Argo CD",
+					APIVersions: []string{"argoproj.io/v1alpha1"},
+					Kinds: []gitops.KindReport{{
+						Kind:       "Application",
+						APIVersion: "argoproj.io/v1alpha1",
+						Counts: map[gitops.State]int{
+							gitops.StateSynced: 14, gitops.StatePending: 1, gitops.StateBlocked: 1,
+						},
+						Drifted: []gitops.Workload{
+							{Reconciler: "Argo CD", Kind: "Application", Namespace: "prod", Name: "payments",
+								State: gitops.StateBlocked, Detail: "OutOfSync a1b2c3d, last synced 6d ago (auto-sync off)"},
+							{Reconciler: "Argo CD", Kind: "Application", Namespace: "staging", Name: "web",
+								State: gitops.StatePending, Detail: "OutOfSync 9f8e7d6, last synced 4m ago"},
+						},
+					}},
+				},
+				{
+					Reconciler:  "Flux",
+					APIVersions: []string{"kustomize.toolkit.fluxcd.io/v1", "helm.toolkit.fluxcd.io/v2"},
+					Kinds: []gitops.KindReport{
+						{
+							Kind:       "Kustomization",
+							APIVersion: "kustomize.toolkit.fluxcd.io/v1",
+							Counts:     map[gitops.State]int{gitops.StateSynced: 9, gitops.StateStale: 1, gitops.StateBlocked: 1},
+							Drifted: []gitops.Workload{
+								{Reconciler: "Flux", Kind: "Kustomization", Namespace: "apps", Name: "web",
+									State: gitops.StateBlocked, Detail: "suspended"},
+								{Reconciler: "Flux", Kind: "Kustomization", Namespace: "flux-system", Name: "infra",
+									State: gitops.StateStale, Detail: "attempted a1b2c3d, applied 9f8e7d6, not ready 3d: BuildFailed"},
+							},
+						},
+						{Kind: "HelmRelease", APIVersion: "helm.toolkit.fluxcd.io/v2",
+							Counts: map[gitops.State]int{gitops.StateSynced: 4}},
+					},
+				},
+			},
+		},
 	}
 }
 

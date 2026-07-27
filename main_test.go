@@ -320,6 +320,16 @@ func TestRun_OperatorsFlagAccepted(t *testing.T) {
 	}
 }
 
+func TestRun_DriftFlagAccepted(t *testing.T) {
+	// --drift and --drift-age must be defined flags: this fails on output-format
+	// validation (before any cluster or discovery call), proving the flags parsed
+	// rather than erroring with "flag provided but not defined".
+	err := run([]string{"scan", "--drift", "--drift-age", "5m", "--output", "bogus"})
+	if err == nil || !strings.Contains(err.Error(), "unknown output format") {
+		t.Fatalf("want unknown-output-format error (proving the flags parsed), got %v", err)
+	}
+}
+
 // captureStderr redirects os.Stderr for the duration of f and returns what was
 // written to it. runWatch prints its "alert flags ignored" warning directly to
 // os.Stderr rather than through an injectable writer, so tests that need to
@@ -426,8 +436,18 @@ func TestRun_UsageMentionsOperatorsFlag(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a usage error with no args")
 	}
-	if !strings.Contains(err.Error(), "[--certs [--cert-warn-days n]] [--operators] [--logs]") {
+	if !strings.Contains(err.Error(), "[--certs [--cert-warn-days n]] [--operators] [--drift] [--drift-age dur] [--logs]") {
 		t.Fatalf("expected the usage string to mention --operators between --certs and --logs, got: %v", err)
+	}
+}
+
+func TestRun_UsageMentionsDriftFlag(t *testing.T) {
+	err := run(nil)
+	if err == nil {
+		t.Fatal("expected a usage error with no args")
+	}
+	if !strings.Contains(err.Error(), "[--operators] [--drift] [--drift-age dur] [--logs]") {
+		t.Fatalf("expected the usage string to mention --drift/--drift-age between --operators and --logs, got: %v", err)
 	}
 }
 
@@ -1546,4 +1566,31 @@ users:
 		t.Fatalf("writing kubeconfig: %v", err)
 	}
 	return path
+}
+
+func TestEnvDuration(t *testing.T) {
+	const key = "KUBEAGENT_TEST_DRIFT_AGE"
+	tests := []struct {
+		name string
+		set  string
+		want time.Duration
+	}{
+		{"unset falls back", "", time.Hour},
+		{"parses minutes", "30m", 30 * time.Minute},
+		{"parses hours", "36h", 36 * time.Hour},
+		{"garbage falls back", "soon", time.Hour},
+		{"bare number falls back", "60", time.Hour},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.set == "" {
+				os.Unsetenv(key)
+			} else {
+				t.Setenv(key, tt.set)
+			}
+			if got := envDuration(key, time.Hour); got != tt.want {
+				t.Errorf("envDuration(%q) = %v, want %v", tt.set, got, tt.want)
+			}
+		})
+	}
 }

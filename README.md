@@ -216,6 +216,12 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 # print a deterministic next-step suggestion (and a read-only kubectl command) under each finding
 ./kubeagent scan --suggest
+
+# report GitOps convergence for Argo CD and Flux (advisory; see deploy/rbac-gitops.yaml)
+./kubeagent scan --drift
+
+# change how long an object may differ from Git before --drift calls it stale (default 1h)
+./kubeagent scan --drift --drift-age 30m
 ```
 
 > `--explain` sends **only** a structured summary to the Claude API: the

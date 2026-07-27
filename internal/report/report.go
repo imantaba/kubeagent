@@ -15,6 +15,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/credlint"
 	"github.com/imantaba/kubeagent/internal/diskusage"
 	"github.com/imantaba/kubeagent/internal/dnshealth"
+	"github.com/imantaba/kubeagent/internal/gitops"
 	"github.com/imantaba/kubeagent/internal/hpahealth"
 	"github.com/imantaba/kubeagent/internal/ingresshealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
@@ -54,6 +55,7 @@ type inventoryReport struct {
 	DNS                *dnshealth.Report           `json:"dns,omitempty"`
 	Certificates       *certhealth.Report          `json:"certificates,omitempty"`
 	Operators          *operators.Report           `json:"operators,omitempty"`
+	GitOps             *gitops.Report              `json:"gitops,omitempty"`
 	StuckTerminating   []termhealth.Issue          `json:"stuckTerminating,omitempty"`
 	PDBIssues          []pdbhealth.Issue           `json:"pdbIssues,omitempty"`
 	HPAIssues          []hpahealth.Issue           `json:"hpaIssues,omitempty"`
@@ -107,26 +109,29 @@ func remediationPlanOf(in Input) []remediationActionView {
 // Input carries everything the report renders. Bundled into a struct because the
 // positional parameter list had grown unwieldy.
 type Input struct {
-	Cluster                clusterhealth.ClusterHealth
-	Result                 inventory.Result
-	Resources              *resources.Summary
-	Platform               *platform.Facts
-	ServiceIssues          []svchealth.Issue
-	CredentialWarnings     []credlint.Finding
-	NodeReserve            *nodereserve.Report
-	PVCReclaim             *pvcreclaim.Report
-	PVCReclaimFull         bool // --pvc-reclaim: expand the PVC list (text only)
-	DiskUsage              *diskusage.Report
-	IngressIssues          []ingresshealth.RouteIssue
-	PVCIssues              []pvchealth.Issue
-	SecurityIssues         []secscan.Finding
-	SecurityVerbose        bool
-	Suggest                bool
-	KubeletHealth          *nodehealth.Report
-	ControlPlane           *controlplane.Probe
-	DNS                    *dnshealth.Report
-	Certificates           *certhealth.Report
-	Operators              *operators.Report
+	Cluster            clusterhealth.ClusterHealth
+	Result             inventory.Result
+	Resources          *resources.Summary
+	Platform           *platform.Facts
+	ServiceIssues      []svchealth.Issue
+	CredentialWarnings []credlint.Finding
+	NodeReserve        *nodereserve.Report
+	PVCReclaim         *pvcreclaim.Report
+	PVCReclaimFull     bool // --pvc-reclaim: expand the PVC list (text only)
+	DiskUsage          *diskusage.Report
+	IngressIssues      []ingresshealth.RouteIssue
+	PVCIssues          []pvchealth.Issue
+	SecurityIssues     []secscan.Finding
+	SecurityVerbose    bool
+	Suggest            bool
+	KubeletHealth      *nodehealth.Report
+	ControlPlane       *controlplane.Probe
+	DNS                *dnshealth.Report
+	Certificates       *certhealth.Report
+	Operators          *operators.Report
+	// GitOps is the advisory GitOps-drift view (opt-in --drift). Nil when the
+	// flag is off, so a default scan's JSON is unchanged.
+	GitOps                 *gitops.Report
 	StuckTerminating       []termhealth.Issue
 	PDBIssues              []pdbhealth.Issue
 	HPAIssues              []hpahealth.Issue
@@ -163,6 +168,7 @@ func PrintInventory(in Input, format string, w io.Writer) error {
 			DNS:                in.DNS,
 			Certificates:       in.Certificates,
 			Operators:          in.Operators,
+			GitOps:             in.GitOps,
 			StuckTerminating:   in.StuckTerminating,
 			PDBIssues:          in.PDBIssues,
 			HPAIssues:          in.HPAIssues,
@@ -269,6 +275,10 @@ func printInventoryText(in Input, w io.Writer) error {
 	}
 
 	if err := printOperators(in.Operators, w); err != nil {
+		return err
+	}
+
+	if err := printGitOps(in.GitOps, w); err != nil {
 		return err
 	}
 
@@ -1250,6 +1260,107 @@ func kindSummary(k operators.KindReport) string {
 	order := []operators.State{
 		operators.StateHealthy, operators.StateProgressing,
 		operators.StateUnhealthy, operators.StateSuspended, operators.StateUnknown,
+	}
+	var parts []string
+	for _, s := range order {
+		if n := k.Counts[s]; n > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", n, s))
+		}
+	}
+	if len(parts) == 0 {
+		return "0"
+	}
+	return strings.Join(parts, ", ")
+}
+
+// gitopsRender reports whether the GITOPS DRIFT section would print anything.
+func gitopsRender(rep *gitops.Report) bool {
+	return rep != nil && len(rep.Reconcilers) > 0
+}
+
+// printGitOps renders the advisory GITOPS DRIFT section (opt-in --drift): one
+// line per reconciler, one per kind, and the objects that are not converged.
+//
+// Advisory, exactly like OPERATORS: it never sets hasAttention, never changes the
+// cluster verdict, and takes no part in the all-clear suppression. Metadata and
+// state only — no CR spec content, no condition message, and no revision that has
+// not been through gitops.ShortRevision.
+func printGitOps(rep *gitops.Report, w io.Writer) error {
+	if !gitopsRender(rep) {
+		return nil
+	}
+	if _, err := fmt.Fprintf(w,
+		"GITOPS DRIFT  (advisory — reconciler-reported; threshold %s; no repo URLs)\n",
+		rep.Threshold); err != nil {
+		return err
+	}
+	for _, rc := range rep.Reconcilers {
+		line := "  " + rc.Reconciler
+		if len(rc.APIVersions) > 0 {
+			line += " (" + strings.Join(rc.APIVersions, ", ") + ")"
+		}
+		if _, err := fmt.Fprintln(w, line); err != nil {
+			return err
+		}
+		for _, k := range rc.Kinds {
+			switch {
+			case k.Forbidden:
+				if _, err := fmt.Fprintf(w, "    %-16slist forbidden — apply deploy/rbac-gitops.yaml\n", k.Kind); err != nil {
+					return err
+				}
+				continue
+			case k.Error != "":
+				if _, err := fmt.Fprintf(w, "    %-16slist failed: %s\n", k.Kind, k.Error); err != nil {
+					return err
+				}
+				continue
+			}
+			if _, err := fmt.Fprintf(w, "    %-16s%s\n", k.Kind, driftSummary(k)); err != nil {
+				return err
+			}
+			for _, d := range k.Drifted {
+				name := d.Name
+				if d.Namespace != "" {
+					name = d.Namespace + "/" + d.Name
+				}
+				line := "      " + driftMarker(d.State) + " " + name
+				if d.Detail != "" {
+					line += "  " + d.Detail
+				}
+				if _, err := fmt.Fprintln(w, line); err != nil {
+					return err
+				}
+			}
+			if k.Truncated > 0 {
+				if _, err := fmt.Fprintf(w, "      … +%d more\n", k.Truncated); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	_, err := fmt.Fprintln(w)
+	return err
+}
+
+// driftMarker separates "a human must act" from "it is still converging". A
+// suspended object is blocked and so carries ✗: the suspension may well be
+// deliberate, but reconciliation has stopped either way.
+func driftMarker(s gitops.State) string {
+	switch s {
+	case gitops.StateStale, gitops.StateBlocked:
+		return "✗"
+	default:
+		return "·"
+	}
+}
+
+// driftSummary renders one kind's counts in a fixed state order, omitting zeros.
+// The order is a literal slice, never a range over the counts map, which would
+// print differently on every run.
+func driftSummary(k gitops.KindReport) string {
+	order := []gitops.State{
+		gitops.StateSynced, gitops.StatePending,
+		gitops.StateStale, gitops.StateBlocked, gitops.StateUnknown,
 	}
 	var parts []string
 	for _, s := range order {

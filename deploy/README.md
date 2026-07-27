@@ -130,6 +130,22 @@ kubeagent only ever `list`s these resources, and the report carries metadata and
 state alone: namespace, name, kind, state, and the operator's own condition
 reason. No CR `spec` content is read into the report.
 
+## GitOps drift (opt-in)
+
+Applying `deploy/rbac-gitops.yaml` grants `list` on the three custom resources
+`scan --drift` reads: Argo CD `Application`s and Flux `Kustomization`s and
+`HelmRelease`s. This is a scan-only add-on (not used by the watch daemon, and
+not wired into the Helm chart); most human kubeconfigs already allow these.
+Without it, `--drift` still names which reconciler is installed — API discovery
+is open to every authenticated user — and marks each kind forbidden.
+
+Its three rules are a subset of `deploy/rbac-operators.yaml`, so applying that
+file alone covers both flags; this one exists so a drift-only user needs no
+grant on Longhorn volumes or CNPG clusters. Nothing is compared against a Git
+host: every signal comes from the reconciler's own status, and revisions are
+reduced to a 7-character SHA or withheld, so no repository URL, `spec` content,
+or condition message reaches the report.
+
 ## Alerting (opt-in)
 
 The daemon can POST one alert per broken object to a webhook — generic JSON, a

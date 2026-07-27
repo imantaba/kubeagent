@@ -55,6 +55,7 @@ type inventoryReport struct {
 	DNS                *dnshealth.Report           `json:"dns,omitempty"`
 	Certificates       *certhealth.Report          `json:"certificates,omitempty"`
 	Operators          *operators.Report           `json:"operators,omitempty"`
+	GitOps             *gitops.Report              `json:"gitops,omitempty"`
 	StuckTerminating   []termhealth.Issue          `json:"stuckTerminating,omitempty"`
 	PDBIssues          []pdbhealth.Issue           `json:"pdbIssues,omitempty"`
 	HPAIssues          []hpahealth.Issue           `json:"hpaIssues,omitempty"`
@@ -130,7 +131,7 @@ type Input struct {
 	Operators          *operators.Report
 	// GitOps is the advisory GitOps-drift view (opt-in --drift). Nil when the
 	// flag is off, so a default scan's JSON is unchanged.
-	GitOps                 *gitops.Report `json:"gitops,omitempty"`
+	GitOps                 *gitops.Report
 	StuckTerminating       []termhealth.Issue
 	PDBIssues              []pdbhealth.Issue
 	HPAIssues              []hpahealth.Issue
@@ -167,6 +168,7 @@ func PrintInventory(in Input, format string, w io.Writer) error {
 			DNS:                in.DNS,
 			Certificates:       in.Certificates,
 			Operators:          in.Operators,
+			GitOps:             in.GitOps,
 			StuckTerminating:   in.StuckTerminating,
 			PDBIssues:          in.PDBIssues,
 			HPAIssues:          in.HPAIssues,

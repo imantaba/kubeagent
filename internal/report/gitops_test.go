@@ -2,6 +2,7 @@ package report
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -126,5 +127,64 @@ func TestDriftSummaryOrderIsFixed(t *testing.T) {
 	}
 	if got := driftSummary(gitops.KindReport{Counts: map[gitops.State]int{}}); got != "0" {
 		t.Errorf("empty counts = %q, want %q", got, "0")
+	}
+}
+
+func TestPrintInventoryJSONIncludesGitOps(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{GitOps: driftFixture()}
+	if err := PrintInventory(in, "json", &buf); err != nil {
+		t.Fatalf("PrintInventory: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &decoded); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	gitopsAny, ok := decoded["gitops"]
+	if !ok {
+		t.Fatalf("decoded JSON has no %q key\n--- got ---\n%s", "gitops", buf.String())
+	}
+	gitopsMap, ok := gitopsAny.(map[string]any)
+	if !ok {
+		t.Fatalf("gitops value is %T, want an object", gitopsAny)
+	}
+	reconcilers, ok := gitopsMap["reconcilers"].([]any)
+	if !ok || len(reconcilers) == 0 {
+		t.Fatalf("gitops.reconcilers missing or empty: %v", gitopsMap["reconcilers"])
+	}
+	argocd, ok := reconcilers[0].(map[string]any)
+	if !ok || argocd["reconciler"] != "Argo CD" {
+		t.Fatalf("gitops.reconcilers[0].reconciler = %v, want %q", argocd["reconciler"], "Argo CD")
+	}
+	kinds, ok := argocd["kinds"].([]any)
+	if !ok || len(kinds) == 0 {
+		t.Fatalf("gitops.reconcilers[0].kinds missing or empty: %v", argocd["kinds"])
+	}
+	application, ok := kinds[0].(map[string]any)
+	if !ok {
+		t.Fatalf("gitops.reconcilers[0].kinds[0] is %T, want an object", kinds[0])
+	}
+	drifted, ok := application["drifted"].([]any)
+	if !ok || len(drifted) == 0 {
+		t.Fatalf("gitops.reconcilers[0].kinds[0].drifted missing or empty: %v", application["drifted"])
+	}
+	payments, ok := drifted[0].(map[string]any)
+	if !ok || payments["name"] != "payments" || payments["state"] != "blocked" {
+		t.Fatalf("gitops.reconcilers[0].kinds[0].drifted[0] = %v, want name=payments state=blocked", drifted[0])
+	}
+}
+
+func TestPrintInventoryJSONOmitsGitOpsWhenNil(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{}
+	if err := PrintInventory(in, "json", &buf); err != nil {
+		t.Fatalf("PrintInventory: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &decoded); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if _, ok := decoded["gitops"]; ok {
+		t.Errorf("decoded JSON has a %q key with GitOps nil, want it absent\n--- got ---\n%s", "gitops", buf.String())
 	}
 }

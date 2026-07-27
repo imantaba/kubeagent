@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/imantaba/kubeagent/internal/alert"
@@ -176,11 +177,9 @@ func run(args []string) error {
 	if metricsErr != nil {
 		fmt.Fprintf(os.Stderr, "kubeagent: warning: metrics unavailable: %v\n", metricsErr)
 	}
-	resourcePods := res.Inputs.Pods
-	if namespace != "" {
-		if all, perr := collect.AllPods(context.Background(), client); perr == nil {
-			resourcePods = all
-		}
+	resourcePods, resourcePodsWarn := resolveResourcePods(context.Background(), client, namespace, res.Inputs.Pods)
+	if resourcePodsWarn != "" {
+		fmt.Fprint(os.Stderr, resourcePodsWarn)
 	}
 	summary := resources.Summarize(nodes, resourcePods, usage)
 
@@ -612,6 +611,32 @@ func enabledFlagNames(operators, drift bool) string {
 	default:
 		return "--drift"
 	}
+}
+
+// resolveResourcePods returns the pod slice the resources summary and
+// capacity.Assess require: cluster-wide, because nodes are cluster-scoped and the
+// requests arithmetic has to be too (website/docs/features/capacity.md states this
+// contract for --capacity explicitly). scoped is the namespace-scoped pod list the
+// scan already collected; with no namespace it already is the cluster-wide answer.
+//
+// With a namespace set, this refetches cluster-wide via collect.AllPods. A refetch
+// failure — the ordinary cause being a service account whose list-pods grant is
+// namespace-scoped — falls back to scoped rather than failing the whole scan, but
+// that fallback silently understates cluster-wide usage unless the caller is told,
+// so a non-empty warning is returned alongside it for the caller to print.
+func resolveResourcePods(ctx context.Context, client kubernetes.Interface, namespace string, scoped []corev1.Pod) ([]corev1.Pod, string) {
+	if namespace == "" {
+		return scoped, ""
+	}
+	all, err := collect.AllPods(ctx, client)
+	if err != nil {
+		return scoped, fmt.Sprintf(
+			"kubeagent: warning: cluster-wide pod list unavailable: %v; "+
+				"capacity headroom and the resources summary will be computed from "+
+				"namespace %q only, overstating free capacity across the whole cluster\n",
+			err, namespace)
+	}
+	return all, ""
 }
 
 // runRollback undoes the most recent applied remediation recorded in the audit log. The

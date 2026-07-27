@@ -132,7 +132,11 @@ exists — ordered by namespace then name, with at most 20 owners listed per
 rule and the remainder shown as `… +N more`, matching the `--drift` cap.
 `-n <namespace>` scopes this enumeration; headroom stays cluster-wide
 regardless, since nodes are cluster-scoped and the requests arithmetic has
-to be too.
+to be too. To do that, kubeagent refetches the full pod list when `-n` is
+set; if that refetch fails — typically a service account whose list-pods
+grant is namespace-scoped — the scan still completes, degraded rather than
+failed, and prints `kubeagent: warning: cluster-wide pod list unavailable`
+on stderr naming the namespace the numbers fell back to.
 
 ## The usage sample never selects a workload
 

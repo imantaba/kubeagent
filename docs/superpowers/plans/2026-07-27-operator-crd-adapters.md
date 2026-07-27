@@ -903,6 +903,7 @@ Create `internal/operators/adapters_test.go`:
 package operators
 
 import (
+	"strings"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -919,9 +920,12 @@ type adapterFixture struct {
 	missing map[string]any
 }
 
-func readyCond(status, reason string) map[string]any {
+// ready() and availableCond() build a status carrying one condition of the
+// named type. ready is defined in operators_test.go — same package, so it is
+// reused here rather than duplicated.
+func availableCond(status, reason string) map[string]any {
 	return map[string]any{"conditions": []any{
-		map[string]any{"type": "Ready", "status": status, "reason": reason},
+		map[string]any{"type": "Available", "status": status, "reason": reason},
 	}}
 }
 
@@ -930,10 +934,10 @@ func adapterFixtures() []adapterFixture {
 		map[string]any{"type": "Synced", "status": "True"},
 	}}
 	return []adapterFixture{
-		{kind: "Certificate", healthy: readyCond("True", "Ready"), unhealthy: readyCond("False", "IssuerNotFound"), missing: otherCond},
-		{kind: "Issuer", healthy: readyCond("True", "IsReady"), unhealthy: readyCond("False", "ErrInitIssuer"), missing: otherCond},
-		{kind: "ClusterIssuer", healthy: readyCond("True", "IsReady"), unhealthy: readyCond("False", "ErrGetKeyPair"), missing: otherCond},
-		{kind: "Cluster", healthy: readyCond("True", "ClusterIsReady"), unhealthy: readyCond("False", "FailedInstance"), missing: otherCond},
+		{kind: "Certificate", healthy: ready("True", "Ready"), unhealthy: ready("False", "IssuerNotFound"), missing: otherCond},
+		{kind: "Issuer", healthy: ready("True", "IsReady"), unhealthy: ready("False", "ErrInitIssuer"), missing: otherCond},
+		{kind: "ClusterIssuer", healthy: ready("True", "IsReady"), unhealthy: ready("False", "ErrGetKeyPair"), missing: otherCond},
+		{kind: "Cluster", healthy: ready("True", "ClusterIsReady"), unhealthy: ready("False", "FailedInstance"), missing: otherCond},
 		{
 			kind:      "Volume",
 			healthy:   map[string]any{"robustness": "healthy", "state": "attached"},
@@ -946,18 +950,12 @@ func adapterFixtures() []adapterFixture {
 			unhealthy: map[string]any{"health": map[string]any{"status": "Degraded"}, "sync": map[string]any{"status": "OutOfSync"}},
 			missing:   map[string]any{"sync": map[string]any{"status": "Synced"}},
 		},
-		{kind: "Kustomization", healthy: readyCond("True", "ReconciliationSucceeded"), unhealthy: readyCond("False", "BuildFailed"), missing: otherCond},
-		{kind: "HelmRelease", healthy: readyCond("True", "InstallSucceeded"), unhealthy: readyCond("False", "UpgradeFailed"), missing: otherCond},
-		{kind: "Prometheus", healthy: availableCond("True", ""), unhealthy: availableCond("False", "SomePodsNotReady"), missing: readyCond("True", "")},
+		{kind: "Kustomization", healthy: ready("True", "ReconciliationSucceeded"), unhealthy: ready("False", "BuildFailed"), missing: otherCond},
+		{kind: "HelmRelease", healthy: ready("True", "InstallSucceeded"), unhealthy: ready("False", "UpgradeFailed"), missing: otherCond},
+		{kind: "Prometheus", healthy: availableCond("True", ""), unhealthy: availableCond("False", "SomePodsNotReady"), missing: ready("True", "")},
 		// ServiceMonitor has no .status at all and no rule: every fixture is unknown.
 		{kind: "ServiceMonitor", healthy: nil, unhealthy: nil, missing: nil},
 	}
-}
-
-func availableCond(status, reason string) map[string]any {
-	return map[string]any{"conditions": []any{
-		map[string]any{"type": "Available", "status": status, "reason": reason},
-	}}
 }
 
 // stateFor runs one CR through the whole adapter path and returns its state.
@@ -1078,20 +1076,10 @@ func TestAdapters_EveryRowIsWellFormed(t *testing.T) {
 			t.Errorf("duplicate adapter row for %s", key)
 		}
 		seen[key] = true
-		if a.Resource != lower(a.Resource) {
+		if a.Resource != strings.ToLower(a.Resource) {
 			t.Errorf("resource %q must be the lowercase plural discovery reports", a.Resource)
 		}
 	}
-}
-
-func lower(s string) string {
-	out := []rune(s)
-	for i, r := range out {
-		if r >= 'A' && r <= 'Z' {
-			out[i] = r + 32
-		}
-	}
-	return string(out)
 }
 ```
 

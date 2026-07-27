@@ -374,6 +374,30 @@ func captureStderr(t *testing.T, f func()) string {
 	return string(out)
 }
 
+// captureStdout redirects os.Stdout for the duration of f and returns what was
+// written to it. The MCP protocol owns stdout on the mcp subcommand's stdio
+// transport, so tests that need to prove a code path never writes there must
+// swap the package-level handle the same way captureStderr does for stderr.
+func captureStdout(t *testing.T, f func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	old := os.Stdout
+	os.Stdout = w
+	f()
+	os.Stdout = old
+	if err := w.Close(); err != nil {
+		t.Fatalf("closing pipe writer: %v", err)
+	}
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("reading captured stdout: %v", err)
+	}
+	return string(out)
+}
+
 func TestRunWatch_AlertFlagsAreRecognized(t *testing.T) {
 	// --alert-format/--alert-repeat must be defined flags: with a kubeconfig path
 	// that fails to load, the error must be the kubeconfig-load error, not "flag
@@ -1595,6 +1619,110 @@ func TestUsage_MentionsTheMCPSubcommand(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "kubeagent mcp") {
 		t.Errorf("usage = %q, want it to list the mcp subcommand", err)
+	}
+}
+
+// TestRunMCP_StdoutStaysEmptyOnFailurePaths pins down stdout purity: the MCP
+// protocol owns stdout on the stdio transport, so a single stray write from
+// any reachable failure path in runMCP corrupts the protocol stream for
+// every caller. This is exercised over the failure paths reachable without a
+// cluster: -h, an undefined flag, and a connection failure against a
+// nonexistent kubeconfig.
+//
+// runMCP builds its flag.FlagSet with flag.ContinueOnError and never calls
+// SetOutput, so on the two flag-parsing failures the flag package's own
+// usage/error text goes to os.Stderr only because that is flag.Output's
+// default target — invisible in this file, and one SetOutput(os.Stdout) call
+// away from silently breaking. The connection failure is a different kind of
+// path: runMCP does not print anything itself there, it only returns an
+// error for the caller to report (main() does that at the top level), so
+// that case is checked via the returned error rather than captured stderr.
+func TestRunMCP_StdoutStaysEmptyOnFailurePaths(t *testing.T) {
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "mcp-purity-nonexistent-kubeconfig")
+
+	tests := []struct {
+		name string
+		args []string
+		// wantStderr is true when the flag package itself is expected to have
+		// written directly to os.Stderr for this case.
+		wantStderr bool
+	}{
+		{name: "help", args: []string{"-h"}, wantStderr: true},
+		{name: "undefined flag", args: []string{"--bogus"}, wantStderr: true},
+		{name: "connection failure", args: []string{"--kubeconfig", bad}, wantStderr: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stderr string
+			var err error
+			stdout := captureStdout(t, func() {
+				stderr = captureStderr(t, func() {
+					err = runMCP(tt.args)
+				})
+			})
+
+			if stdout != "" {
+				t.Errorf("stdout = %q, want empty: the MCP protocol owns stdout, and any write here corrupts the stream", stdout)
+			}
+			if err == nil {
+				t.Fatal("expected runMCP to return an error")
+			}
+			if tt.wantStderr {
+				if stderr == "" {
+					t.Error("stderr = \"\" (empty), want a non-empty diagnostic — an empty result here means " +
+						"this test captured the wrong stream, or the diagnostic was silenced")
+				}
+			} else if err.Error() == "" {
+				t.Error("err.Error() = \"\" (empty), want a non-empty diagnostic message — an empty result " +
+					"here would mean the connection failure was silenced entirely")
+			}
+		})
+	}
+}
+
+func TestRunMCP_FlagsAreRecognized(t *testing.T) {
+	// --kubeconfig/--context/--allow-context-switch/--logs must all be defined
+	// flags: with a kubeconfig path that fails to load, the error must be the
+	// cluster-connection error, not "flag provided but not defined", proving
+	// all four flags parsed rather than being rejected. Same idiom as
+	// TestRunWatch_AlertFlagsAreRecognized.
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "mcp-flags-nonexistent-kubeconfig")
+	err := runMCP([]string{
+		"--kubeconfig", bad,
+		"--context", "some-context",
+		"--allow-context-switch",
+		"--logs",
+	})
+	if err == nil {
+		t.Fatal("expected a cluster-connection error")
+	}
+	if strings.Contains(err.Error(), "flag provided but not defined") {
+		t.Fatalf("expected all four flags to be recognized, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "connecting to the cluster") {
+		t.Fatalf("expected a cluster-connection error, got: %v", err)
+	}
+}
+
+func TestRun_DispatchesMCPWithFlagsIntact(t *testing.T) {
+	// Inside run(), args[0] is the subcommand token ("mcp") itself, so the
+	// dispatch must slice args[1:] before handing off to runMCP — slicing
+	// args[2:] instead would silently drop the first flag the caller passed
+	// (an empty flag set parses without error, so nothing would complain).
+	// This drives run() end-to-end with a single flag and asserts that flag's
+	// value survived the slice, by checking the resulting error names the
+	// exact nonexistent kubeconfig path that was passed.
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "mcp-dispatch-nonexistent-kubeconfig")
+	err := run([]string{"mcp", "--kubeconfig", bad})
+	if err == nil {
+		t.Fatal("expected a cluster-connection error")
+	}
+	if !strings.Contains(err.Error(), bad) {
+		t.Fatalf("expected the error to name the nonexistent kubeconfig path %q, got: %v", bad, err)
 	}
 }
 

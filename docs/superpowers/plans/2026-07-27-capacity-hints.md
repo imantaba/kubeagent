@@ -1178,7 +1178,7 @@ git commit -m "feat(capacity): node-loss arithmetic by first-fit-decreasing"
 **Interfaces:**
 
 - Consumes: `Rule`, `Owner`, `RightSizing`, `RuleName` constants, `maxOwnersPerRule`, `nodeCapacity`, `terminal`, `controllerOwner` from Task 1; `formatMilliCPU`/`formatBytes` from Task 2.
-- Produces: `buildRightSizing(pods []corev1.Pod, replicaSets []appsv1.ReplicaSet, included []nodeCapacity, namespace string) *RightSizing`; `ownerKey(p corev1.Pod, rsIndex map[string]string) Owner`.
+- Produces: `buildRightSizing(pods []corev1.Pod, replicaSets []appsv1.ReplicaSet, included []nodeCapacity, namespace string) *RightSizing`; `ownerOf(p corev1.Pod, rsIndex map[string]string) Owner`; `deploymentIndex(replicaSets []appsv1.ReplicaSet) map[string]string`. Task 5 calls the last two.
 
 **The three rules, exactly:**
 

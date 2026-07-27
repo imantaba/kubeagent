@@ -310,6 +310,16 @@ func TestRun_DNSHealthFlagAccepted(t *testing.T) {
 	}
 }
 
+func TestRun_OperatorsFlagAccepted(t *testing.T) {
+	// --operators must be a defined flag: this fails on output-format validation
+	// (before any cluster or discovery call), proving the flag parsed rather
+	// than erroring with "flag provided but not defined".
+	err := run([]string{"scan", "--operators", "--output", "bogus"})
+	if err == nil || !strings.Contains(err.Error(), "unknown output format") {
+		t.Fatalf("want unknown-output-format error (proving the flag parsed), got %v", err)
+	}
+}
+
 // captureStderr redirects os.Stderr for the duration of f and returns what was
 // written to it. runWatch prints its "alert flags ignored" warning directly to
 // os.Stderr rather than through an injectable writer, so tests that need to
@@ -408,6 +418,16 @@ func TestRun_UsageMentionsWatchAlertFlags(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "[--alert-format json|slack|alertmanager] [--alert-repeat dur]") {
 		t.Fatalf("expected the usage string to mention --alert-format and --alert-repeat, got: %v", err)
+	}
+}
+
+func TestRun_UsageMentionsOperatorsFlag(t *testing.T) {
+	err := run(nil)
+	if err == nil {
+		t.Fatal("expected a usage error with no args")
+	}
+	if !strings.Contains(err.Error(), "[--certs [--cert-warn-days n]] [--operators] [--logs]") {
+		t.Fatalf("expected the usage string to mention --operators between --certs and --logs, got: %v", err)
 	}
 }
 

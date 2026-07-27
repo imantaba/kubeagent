@@ -28,6 +28,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/explain"
 	"github.com/imantaba/kubeagent/internal/investigate"
 	"github.com/imantaba/kubeagent/internal/nodehealth"
+	"github.com/imantaba/kubeagent/internal/operators"
 	"github.com/imantaba/kubeagent/internal/platform"
 	"github.com/imantaba/kubeagent/internal/remediate"
 	"github.com/imantaba/kubeagent/internal/report"
@@ -61,7 +62,7 @@ func run(args []string) error {
 		return runWatch(args[1:])
 	}
 	if len(args) == 0 || args[0] != "scan" {
-		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--investigate] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--kubelet-health] [--control-plane-health] [--dns-health] [--certs [--cert-warn-days n]] [--logs] [--node-heartbeat-threshold dur] [--expected-nodes a,b,…] [--fix [--dry-run|--yes] [--audit-log path]] [--rollback --audit-log path] | kubeagent watch [--kubeconfig path] [--context name (repeatable)] [--cluster-name name] [--include-local] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] [--alert-format json|slack|alertmanager] [--alert-repeat dur] [--slo-target pct] [--explain [--explain-cooldown dur] [--explain-budget n] [--model name]] | kubeagent version")
+		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--investigate] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--kubelet-health] [--control-plane-health] [--dns-health] [--certs [--cert-warn-days n]] [--operators] [--logs] [--node-heartbeat-threshold dur] [--expected-nodes a,b,…] [--fix [--dry-run|--yes] [--audit-log path]] [--rollback --audit-log path] | kubeagent watch [--kubeconfig path] [--context name (repeatable)] [--cluster-name name] [--include-local] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] [--alert-format json|slack|alertmanager] [--alert-repeat dur] [--slo-target pct] [--explain [--explain-cooldown dur] [--explain-budget n] [--model name]] | kubeagent version")
 	}
 
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
@@ -82,6 +83,7 @@ func run(args []string) error {
 	dnsHealth := fs.Bool("dns-health", false, "probe CoreDNS /metrics and flag an elevated SERVFAIL+REFUSED response ratio (needs the pods/proxy grant)")
 	certs := fs.Bool("certs", false, "check TLS-secret certificate expiry (public certs only; needs the secrets add-on grant)")
 	certWarnDays := fs.Int("cert-warn-days", 30, "with --certs: warn when a certificate expires within this many days")
+	operatorsFlag := fs.Bool("operators", envBool("KUBEAGENT_OPERATORS", false), "report operator custom-resource health (cert-manager, CloudNativePG, Longhorn, Argo CD, Flux, Prometheus operator; advisory, needs deploy/rbac-operators.yaml on a restricted context)")
 	logs := fs.Bool("logs", false, "read each crashing container's previous logs and classify the failure (needs the pods/log grant)")
 	nodeHeartbeatThreshold := fs.Duration("node-heartbeat-threshold", 40*time.Second, "flag a Ready node whose kubelet lease is stale beyond this (0 disables)")
 	expectedNodes := fs.String("expected-nodes", "", "names of nodes expected in the cluster; a declared name with no Node object is flagged Degraded (comma-separated)")
@@ -182,6 +184,20 @@ func run(args []string) error {
 	sysDS, _ := collect.SystemDaemonSets(context.Background(), client)
 	facts := platform.Detect(nodes, sysDS, scs, ics)
 
+	// Operator custom resources: opt-in, advisory, and built lazily — a default
+	// scan constructs no dynamic client and issues no discovery call.
+	var operatorRep *operators.Report
+	if *operatorsFlag {
+		dyn, disco, derr := cluster.NewDynamicClients(*kubeconfig, *contextName)
+		if derr != nil {
+			fmt.Fprintf(os.Stderr, "kubeagent: warning: --operators unavailable: %v\n", derr)
+		} else {
+			rep := operators.Assess(collect.OperatorResources(
+				context.Background(), disco, dyn, operators.Adapters(), namespace))
+			operatorRep = &rep
+		}
+	}
+
 	var explanation string
 	var investigationReport investigate.Report
 	switch {
@@ -246,6 +262,7 @@ func run(args []string) error {
 	in.KubeletHealth = kubeletRep
 	in.ControlPlane = cpRep
 	in.DNS = dnsRep
+	in.Operators = operatorRep
 	in.SecurityVerbose = *securityVerbose
 	in.Suggest = *suggest
 	in.Explanation = explanation

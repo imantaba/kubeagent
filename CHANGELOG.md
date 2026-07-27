@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **GitOps drift (`scan --drift`, opt-in, advisory)** — a `GITOPS DRIFT` section
+  answering whether the cluster is still converging on Git, for Argo CD
+  `Application`s and Flux `Kustomization`s/`HelmRelease`s. Five states —
+  `synced`, `pending` (differs but still converging), `stale` (differs past
+  `--drift-age`, default `1h`), `blocked` (suspended, stalled, auto-sync off, or
+  the last sync failed), and `unknown`. Never a finding, never affects the
+  verdict or the exit code. Nothing is compared against a Git host: every signal
+  is read from the reconciler's own status, and no repo URL, `spec` content, or
+  condition message is ever printed — revisions are reduced to a 7-character SHA
+  or withheld. Shares one fetch with `--operators` when both are set.
+  `deploy/rbac-gitops.yaml` grants the `list`-only rights a restricted context
+  needs.
+
 ## [0.60.0] - 2026-07-27
 
 ### Added

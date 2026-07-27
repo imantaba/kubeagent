@@ -141,6 +141,17 @@ OPERATORS  (advisory — operator-reported state; no CR spec content)
     Prometheus      1 healthy
     ServiceMonitor  214 (not assessed)
 
+GITOPS DRIFT  (advisory — reconciler-reported; threshold 1h; no repo URLs)
+  Argo CD (argoproj.io/v1alpha1)
+    Application     14 synced, 1 pending, 1 blocked
+      ✗ prod/payments  OutOfSync a1b2c3d, last synced 6d ago (auto-sync off)
+      · staging/web  OutOfSync 9f8e7d6, last synced 4m ago
+  Flux (kustomize.toolkit.fluxcd.io/v1, helm.toolkit.fluxcd.io/v2)
+    Kustomization   9 synced, 1 stale, 1 blocked
+      ✗ apps/web  suspended
+      ✗ flux-system/infra  attempted a1b2c3d, applied 9f8e7d6, not ready 3d: BuildFailed
+    HelmRelease     4 synced
+
 NOTES
   • 2 nodes reserve no memory: worker-1, worker-2
       — OS/kubelet memory pressure can destabilize the node

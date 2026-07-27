@@ -14,12 +14,13 @@ import (
 	"syscall"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/imantaba/kubeagent/internal/advisory"
 	"github.com/imantaba/kubeagent/internal/alert"
 	"github.com/imantaba/kubeagent/internal/audit"
-	"github.com/imantaba/kubeagent/internal/capacity"
 	"github.com/imantaba/kubeagent/internal/cluster"
 	"github.com/imantaba/kubeagent/internal/collect"
 	"github.com/imantaba/kubeagent/internal/connectivity"
@@ -28,11 +29,10 @@ import (
 	"github.com/imantaba/kubeagent/internal/diskusage"
 	"github.com/imantaba/kubeagent/internal/dnshealth"
 	"github.com/imantaba/kubeagent/internal/explain"
-	"github.com/imantaba/kubeagent/internal/gitops"
 	"github.com/imantaba/kubeagent/internal/investigate"
 	"github.com/imantaba/kubeagent/internal/nodehealth"
-	"github.com/imantaba/kubeagent/internal/operators"
 	"github.com/imantaba/kubeagent/internal/platform"
+	"github.com/imantaba/kubeagent/internal/redact"
 	"github.com/imantaba/kubeagent/internal/remediate"
 	"github.com/imantaba/kubeagent/internal/report"
 	"github.com/imantaba/kubeagent/internal/resources"
@@ -177,9 +177,13 @@ func run(args []string) error {
 	if metricsErr != nil {
 		fmt.Fprintf(os.Stderr, "kubeagent: warning: metrics unavailable: %v\n", metricsErr)
 	}
-	resourcePods, resourcePodsWarn := resolveResourcePods(context.Background(), client, namespace, res.Inputs.Pods)
-	if resourcePodsWarn != "" {
-		fmt.Fprint(os.Stderr, resourcePodsWarn)
+	resourcePods, podsErr := advisory.ClusterPods(context.Background(), client, namespace, res.Inputs.Pods)
+	if podsErr != nil {
+		fmt.Fprintf(os.Stderr,
+			"kubeagent: warning: cluster-wide pod list unavailable: %s; "+
+				"capacity headroom and the resources summary will be computed from "+
+				"namespace %q only, overstating free capacity across the whole cluster\n",
+			redact.Error(podsErr), namespace)
 	}
 	summary := resources.Summarize(nodes, resourcePods, usage)
 
@@ -188,50 +192,35 @@ func run(args []string) error {
 	sysDS, _ := collect.SystemDaemonSets(context.Background(), client)
 	facts := platform.Detect(nodes, sysDS, scs, ics)
 
-	// Operator custom resources and GitOps drift: opt-in, advisory, and built
-	// lazily — a scan with neither flag constructs no dynamic client and issues no
-	// discovery call.
-	//
-	// Both flags read the same three Argo CD/Flux kinds. operators.Adapters() is a
-	// superset of gitops.Adapters(), so when both are set the cluster is listed
-	// once and each assessor reads the same fetched objects.
-	var operatorRep *operators.Report
-	var gitopsRep *gitops.Report
-	if *operatorsFlag || *driftFlag {
-		dyn, disco, derr := cluster.NewDynamicClients(*kubeconfig, *contextName)
-		if derr != nil {
-			fmt.Fprintf(os.Stderr, "kubeagent: warning: %s unavailable: %v\n", enabledFlagNames(*operatorsFlag, *driftFlag), derr)
-		} else {
-			adapters := gitops.Adapters()
-			if *operatorsFlag {
-				adapters = operators.Adapters()
-			}
-			fetched := collect.OperatorResources(context.Background(), disco, dyn, adapters, namespace)
-			if *operatorsFlag {
-				rep := operators.Assess(fetched)
-				operatorRep = &rep
-			}
-			if *driftFlag {
-				rep := gitops.Assess(fetched, time.Now(), *driftAge)
-				gitopsRep = &rep
-			}
-		}
+	advRes := advisory.Assess(context.Background(), client,
+		func() (dynamic.Interface, discovery.DiscoveryInterface, error) {
+			return cluster.NewDynamicClients(*kubeconfig, *contextName)
+		},
+		advisory.Inputs{
+			Deployments:  res.Inputs.Deployments,
+			StatefulSets: res.Inputs.StatefulSets,
+			DaemonSets:   res.Inputs.DaemonSets,
+			Jobs:         res.Inputs.Jobs,
+			CronJobs:     res.Inputs.CronJobs,
+			ReplicaSets:  res.Inputs.ReplicaSets,
+			Nodes:        nodes,
+			Pods:         resourcePods,
+		},
+		advisory.Options{
+			Operators: *operatorsFlag,
+			Drift:     *driftFlag,
+			DriftAge:  *driftAge,
+			Capacity:  *capacityFlag,
+			Namespace: namespace,
+		}, time.Now())
+
+	for _, d := range advRes.Degradations {
+		fmt.Fprintf(os.Stderr, "kubeagent: warning: %s unavailable: %s\n", d.Subject, d.Reason)
 	}
 
-	// Capacity hints: opt-in and advisory. Nodes, pods and ReplicaSets are already
-	// collected for this scan, so headroom costs no extra API call; only the
-	// per-pod metrics read is new, and its absence is not an error.
-	var capacityRep *capacity.Report
-	if *capacityFlag {
-		podUsage, _, perr := collect.PodMetrics(context.Background(), client)
-		if perr != nil {
-			fmt.Fprintf(os.Stderr, "kubeagent: warning: pod metrics unavailable: %v\n", perr)
-		}
-		templates := capacity.Templates(res.Inputs.Deployments, res.Inputs.StatefulSets,
-			res.Inputs.DaemonSets, res.Inputs.Jobs, res.Inputs.CronJobs)
-		rep := capacity.Assess(nodes, resourcePods, res.Inputs.ReplicaSets, templates, podUsage, namespace)
-		capacityRep = &rep
-	}
+	operatorRep := advRes.Operators
+	gitopsRep := advRes.GitOps
+	capacityRep := advRes.Capacity
 
 	var explanation string
 	var investigationReport investigate.Report
@@ -600,45 +589,6 @@ func envDuration(key string, def time.Duration) time.Duration {
 		}
 	}
 	return def
-}
-
-// enabledFlagNames names the flags a shared failure affects, so a user running
-// only one of them is not told the other is broken.
-func enabledFlagNames(operators, drift bool) string {
-	switch {
-	case operators && drift:
-		return "--operators/--drift"
-	case operators:
-		return "--operators"
-	default:
-		return "--drift"
-	}
-}
-
-// resolveResourcePods returns the pod slice the resources summary and
-// capacity.Assess require: cluster-wide, because nodes are cluster-scoped and the
-// requests arithmetic has to be too (website/docs/features/capacity.md states this
-// contract for --capacity explicitly). scoped is the namespace-scoped pod list the
-// scan already collected; with no namespace it already is the cluster-wide answer.
-//
-// With a namespace set, this refetches cluster-wide via collect.AllPods. A refetch
-// failure — the ordinary cause being a service account whose list-pods grant is
-// namespace-scoped — falls back to scoped rather than failing the whole scan, but
-// that fallback silently understates cluster-wide usage unless the caller is told,
-// so a non-empty warning is returned alongside it for the caller to print.
-func resolveResourcePods(ctx context.Context, client kubernetes.Interface, namespace string, scoped []corev1.Pod) ([]corev1.Pod, string) {
-	if namespace == "" {
-		return scoped, ""
-	}
-	all, err := collect.AllPods(ctx, client)
-	if err != nil {
-		return scoped, fmt.Sprintf(
-			"kubeagent: warning: cluster-wide pod list unavailable: %v; "+
-				"capacity headroom and the resources summary will be computed from "+
-				"namespace %q only, overstating free capacity across the whole cluster\n",
-			err, namespace)
-	}
-	return all, ""
 }
 
 // runRollback undoes the most recent applied remediation recorded in the audit log. The

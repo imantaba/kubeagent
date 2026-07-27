@@ -9,7 +9,7 @@
 # Test binary and coverage output
 *.test
 *.out
-coverage.*
+/coverage.*
 
 # Release artifacts (produced by the release workflow / local dry-runs)
 *.tar.gz

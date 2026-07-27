@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Capacity hints (`scan --capacity`, opt-in, advisory)** — a `CAPACITY`
+  section carrying two sub-blocks: **Headroom** (free CPU/memory across the
+  nodes that can actually take a pod right now, the single node with the
+  largest free fit, the tightest node by requested ratio, and whether the
+  cluster survives losing its biggest node) and **Right-sizing** (workloads
+  shaped wrong on paper — no requests set, a limit with no matching request,
+  or a request that can never be scheduled on any node). Two numbers this
+  never produces: money (kubeagent has no price table; every figure is cores
+  and GiB) and a peak (metrics-server keeps no history — one ~30s sample,
+  nothing retained). A usage sample never puts a workload on the list; it
+  only annotates a row a structural rule already raised, so a healthy
+  workload with a tiny sample never appears. Node-loss placement uses
+  first-fit-decreasing, which is one-sided sound: success is a constructive
+  proof the requests fit, failure only ever reads `may not fit`, never `does
+  not fit`. Advisory like `--operators` and `--drift`: never a `Finding`,
+  never changes the verdict or the exit code, not wired into `watch`. Needs
+  no new RBAC — nodes and pods are already read on every scan, and the one
+  new call (`/apis/metrics.k8s.io/v1beta1/pods`) needs nothing beyond the
+  existing node-metrics grant.
+
 ## [0.61.0] - 2026-07-27
 
 ### Added

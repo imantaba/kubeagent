@@ -59,6 +59,7 @@ nav:
       - Platform facts: features/platform-facts.md
       - Operator health: features/operators.md
       - GitOps drift: features/gitops-drift.md
+      - Capacity hints: features/capacity.md
       - Service health: features/service-health.md
       - NetworkPolicy hints: features/networkpolicy.md
       - Connectivity diagnostics: features/connectivity.md

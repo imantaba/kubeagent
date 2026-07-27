@@ -152,6 +152,21 @@ GITOPS DRIFT  (advisory — reconciler-reported; threshold 1h; no repo URLs)
       ✗ flux-system/infra  attempted a1b2c3d, applied 9f8e7d6, not ready 3d: BuildFailed
     HelmRelease     4 synced
 
+CAPACITY  (advisory — resource arithmetic on requests; ignores affinity,
+           topology spread, PVC zoning, and PodDisruptionBudgets)
+  Headroom
+    schedulable       5.9 cores, 8Gi free across 2 of 3 nodes
+    largest pod fit   worker1  3.5 cores, 6Gi
+    tightest node     worker2  78% of memory requested
+    lose worker1      may not fit — first-fit could not place StatefulSet/prod/db (2.1 cores)
+    excluded          control-plane-1  (NoSchedule taint)
+  Right-sizing  (metrics-server: 11 of 12 pods reporting)
+    no requests set   Deployment/staging/web  · 0.0 cores observed
+                        — BestEffort: first evicted under pressure
+    limit, no request  Deployment/prod/cache  lim 256Mi  · 240Mi observed
+
+    one sample per pod, ~30s average — not a peak, not a history
+
 NOTES
   • 2 nodes reserve no memory: worker-1, worker-2
       — OS/kubelet memory pressure can destabilize the node

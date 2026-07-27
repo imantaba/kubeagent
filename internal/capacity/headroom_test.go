@@ -118,3 +118,23 @@ func TestHeadroomZeroAllocatableNode(t *testing.T) {
 		t.Errorf("want 0%% for a zero-allocatable node, got %+v", rep.Headroom.TightestNode)
 	}
 }
+
+// An over-committed node (summed pod requests exceed allocatable) must clamp free
+// capacity at zero, not go negative — a future refactor dropping the max64(0, ...)
+// clamp would understate (or, summed with other nodes, silently distort) the
+// schedulable figure.
+func TestHeadroomOvercommittedNodeClampsFreeAtZero(t *testing.T) {
+	nodes := []corev1.Node{node("worker1", "4", "16Gi")}
+	// 6 cores / 20Gi requested against a 4-core / 16Gi node: over-committed on both.
+	pods := []corev1.Pod{pod("prod", "big", "worker1", "6", "20Gi")}
+
+	rep := Assess(nodes, pods, nil, nil, "")
+
+	h := rep.Headroom
+	if h.FreeCPU != "0.0" {
+		t.Errorf("want FreeCPU clamped to 0.0, got %q", h.FreeCPU)
+	}
+	if h.FreeMemory != "0Mi" {
+		t.Errorf("want FreeMemory clamped to 0Mi, got %q", h.FreeMemory)
+	}
+}

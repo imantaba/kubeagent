@@ -75,6 +75,24 @@ func TestRuleLimitNoRequestNamesTheLimit(t *testing.T) {
 	}
 }
 
+// limitWithoutRequest fires on either resource; only the memory branch had a test
+// before this (lines 65 and 283 below are both memory-limit containers). Cover the
+// CPU branch too.
+func TestRuleLimitNoRequestCPUNamesTheLimit(t *testing.T) {
+	p := pod("prod", "cpu-only-1", "worker1", "", "")
+	p.Spec.Containers = []corev1.Container{container("app", "", "", "2", "")}
+
+	rep := Assess([]corev1.Node{node("worker1", "4", "16Gi")}, []corev1.Pod{p}, nil, nil, "")
+
+	r := ruleByName(t, rep.RightSizing, RuleLimitNoRequest)
+	if len(r.Owners) != 1 {
+		t.Fatalf("want 1 owner, got %+v", r.Owners)
+	}
+	if !strings.Contains(r.Owners[0].Detail, "lim 2.0 cores") {
+		t.Errorf("want the CPU limit named, got %q", r.Owners[0].Detail)
+	}
+}
+
 func TestRuleNeverSchedulableComparesAgainstLargestIncludedNode(t *testing.T) {
 	nodes := []corev1.Node{
 		node("worker1", "16", "64Gi"),

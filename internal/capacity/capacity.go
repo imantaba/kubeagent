@@ -114,7 +114,22 @@ type Owner struct {
 	Detail     string `json:"detail,omitempty"`
 	Observed   string `json:"observed,omitempty"`
 	BestEffort bool   `json:"bestEffort,omitempty"`
+
+	// flaggedResource records which resource RuleLimitNoRequest actually named in
+	// Detail (it can fire on either CPU or memory), so attachSamples can pair the row
+	// with the matching usage reading. Unexported: this is internal bookkeeping about
+	// how the row was produced, not part of the report's public JSON shape. Its zero
+	// value is resourceCPU, which is also the right default for every other rule.
+	flaggedResource resourceKind
 }
+
+// resourceKind names which resource a right-sizing row's Detail is about.
+type resourceKind int
+
+const (
+	resourceCPU resourceKind = iota
+	resourceMemory
+)
 
 // nodeCapacity is one included node's arithmetic, in milli-cores and bytes.
 type nodeCapacity struct {

@@ -52,15 +52,18 @@ func attachSamples(rs *RightSizing, pods []corev1.Pod, replicaSets []appsv1.Repl
 			if !ok {
 				continue
 			}
-			o.Observed = observedFor(rs.Rules[ri].Name, t.cpu, t.mem)
+			o.Observed = observedFor(o.flaggedResource, t.cpu, t.mem)
 		}
 	}
 }
 
-// observedFor picks the reading that speaks to the rule: the memory rule shows
-// memory, everything else shows CPU.
-func observedFor(rule RuleName, cpuMilli, memBytes int64) string {
-	if rule == RuleLimitNoRequest {
+// observedFor picks the reading that speaks to the rule: the resource the rule
+// actually flagged (Owner.flaggedResource — RuleLimitNoRequest can fire on either
+// CPU or memory), everything else defaults to CPU via flaggedResource's zero value.
+// This never re-derives the resource by parsing Detail's rendered text: a display
+// string is not a data channel, and the next wording change would silently break it.
+func observedFor(res resourceKind, cpuMilli, memBytes int64) string {
+	if res == resourceMemory {
 		return formatBytes(memBytes)
 	}
 	return formatMilliCPU(cpuMilli) + " cores"

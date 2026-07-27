@@ -42,9 +42,10 @@ func buildRightSizing(pods []corev1.Pod, replicaSets []appsv1.ReplicaSet,
 			}
 			matches[RuleNoRequests][key] = e
 		}
-		if detail := limitWithoutRequest(p); detail != "" {
+		if detail, res := limitWithoutRequest(p); detail != "" {
 			e := o
 			e.Detail = detail
+			e.flaggedResource = res
 			if _, ok := matches[RuleLimitNoRequest][key]; !ok {
 				matches[RuleLimitNoRequest][key] = e
 			}
@@ -114,19 +115,21 @@ func noRequestContainers(p corev1.Pod) (any_, all bool) {
 	return any_, all && any_
 }
 
-// limitWithoutRequest returns a detail string when a container sets a limit for a
-// resource but no request for it. Kubernetes then defaults the request to the
-// limit, so the workload reserves the full limit cluster-wide.
-func limitWithoutRequest(p corev1.Pod) string {
+// limitWithoutRequest returns a detail string and the resource it names, when a
+// container sets a limit for a resource but no request for it. Kubernetes then
+// defaults the request to the limit, so the workload reserves the full limit
+// cluster-wide. The rule fires on either resource, so the caller must not assume
+// which one without checking the returned resourceKind.
+func limitWithoutRequest(p corev1.Pod) (detail string, res resourceKind) {
 	for _, c := range p.Spec.Containers {
 		if !c.Resources.Limits.Cpu().IsZero() && c.Resources.Requests.Cpu().IsZero() {
-			return "lim " + formatMilliCPU(c.Resources.Limits.Cpu().MilliValue()) + " cores"
+			return "lim " + formatMilliCPU(c.Resources.Limits.Cpu().MilliValue()) + " cores", resourceCPU
 		}
 		if !c.Resources.Limits.Memory().IsZero() && c.Resources.Requests.Memory().IsZero() {
-			return "lim " + formatBytes(c.Resources.Limits.Memory().Value())
+			return "lim " + formatBytes(c.Resources.Limits.Memory().Value()), resourceMemory
 		}
 	}
-	return ""
+	return "", resourceCPU
 }
 
 // exceedsLargestNode returns a detail string when a container can never be placed

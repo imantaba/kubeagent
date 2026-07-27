@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.60.0] - 2026-07-27
+
 ### Added
 
 - **Operator health (`scan --operators`, opt-in, advisory)** — reports what
@@ -934,7 +936,8 @@ infrastructure (a documentation site and a pre-release chaos-test harness).
 - CI (vet/test/build on push & PR) and a release workflow publishing a
   linux/amd64 tarball + `SHA256SUMS` to a GitHub Release.
 
-[Unreleased]: https://github.com/imantaba/kubeagent/compare/v0.59.0...HEAD
+[Unreleased]: https://github.com/imantaba/kubeagent/compare/v0.60.0...HEAD
+[0.60.0]: https://github.com/imantaba/kubeagent/compare/v0.59.0...v0.60.0
 [0.59.0]: https://github.com/imantaba/kubeagent/compare/v0.58.1...v0.59.0
 [0.58.1]: https://github.com/imantaba/kubeagent/compare/v0.58.0...v0.58.1
 [0.58.0]: https://github.com/imantaba/kubeagent/compare/v0.57.0...v0.58.0

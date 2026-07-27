@@ -5,15 +5,21 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/kubernetes/scheme"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/rest"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 // restRouted overrides CoreV1Interface.RESTClient with a working client so
@@ -176,5 +182,122 @@ func TestAdvisory_MetricsServerStaysNotCheckedWhenCapacityIsNotRequested(t *test
 	if out.Coverage.MetricsServer != "not-checked" {
 		t.Errorf("coverage.metricsServer = %q, want %q — nothing queried metrics, so claiming "+
 			"\"absent\" would assert an untested fact", out.Coverage.MetricsServer, "not-checked")
+	}
+}
+
+// TestAdvisory_DynamicClientFailureNeverLeaksKubeconfigPath drives the real
+// handler with a Config whose Kubeconfig points nowhere, so
+// cluster.NewDynamicClients fails the way it would against a typo'd or
+// unreadable kubeconfig. internal/cluster's restConfig wraps that failure
+// with the literal kubeconfig path and context name; a kubeconfig path names
+// a customer, a cluster and an environment, so it must never reach a
+// *successful* tool result via Coverage's Partial/ChecksSkipped reasons.
+func TestAdvisory_DynamicClientFailureNeverLeaksKubeconfigPath(t *testing.T) {
+	const sentinelPath = "/nonexistent/kubeagent-test/secret-cluster.kubeconfig"
+	const sentinelContext = "sentinel-context-should-not-leak-via-error-text"
+
+	cs := connect(t, Config{Kubeconfig: sentinelPath, Context: sentinelContext}, fake.NewSimpleClientset())
+
+	out := callAdvisory(t, cs, map[string]any{"sections": []any{"operators", "drift"}})
+
+	blob, err := json.Marshal(out)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	body := string(blob)
+
+	if strings.Contains(body, sentinelPath) {
+		t.Errorf("marshalled AdvisoryOutput leaks the kubeconfig path sentinel:\n%s", body)
+	}
+
+	// coverage.context deliberately and separately echoes cfg.Context (see
+	// contextLabel and TestTriage_HealthyClusterIsExplicitlyHealthy) — that
+	// single, intended occurrence is not this bug. What must not happen is
+	// the *discarded dynamic-client error* embedding the same context name a
+	// second time the way internal/cluster's wrapped error used to; a count
+	// above 1 means it leaked back in through a Partial/ChecksSkipped reason.
+	if got := strings.Count(body, sentinelContext); got != 1 {
+		t.Errorf("sentinel context name appears %d times in the marshalled output, want exactly 1 "+
+			"(only coverage.context):\n%s", got, body)
+	}
+
+	var skippedOperators, skippedDrift bool
+	for _, sk := range out.Coverage.ChecksSkipped {
+		switch sk.Check {
+		case "operators":
+			skippedOperators = true
+		case "drift":
+			skippedDrift = true
+		}
+	}
+	if !skippedOperators || !skippedDrift {
+		t.Errorf("coverage.checksSkipped = %+v, want both %q and %q recorded as skipped so the fix "+
+			"hides the credential without hiding the degradation", out.Coverage.ChecksSkipped, "operators", "drift")
+	}
+}
+
+// TestAdvisory_ForbiddenCertificatesIsPartialNotClean covers the RBAC-blocked
+// certificates section: scan.Evaluate still allocates a Report and sets
+// Certificates.Forbidden, so the section "ran" and produced output, but read
+// nothing. Coverage must record that as a partial read, not silently report
+// certificates as a clean, fully-run check.
+func TestAdvisory_ForbiddenCertificatesIsPartialNotClean(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}}
+	cli := fake.NewSimpleClientset(node)
+	cli.PrependReactor("list", "secrets", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "secrets"}, "", nil)
+	})
+
+	cs := connect(t, Config{Context: "kind-example"}, cli)
+
+	out := callAdvisory(t, cs, map[string]any{"sections": []any{"certificates"}})
+
+	var ranCertificates bool
+	for _, c := range out.Coverage.ChecksRun {
+		if c == "certificates" {
+			ranCertificates = true
+		}
+	}
+	if !ranCertificates {
+		t.Errorf("coverage.checksRun = %v, want it to contain %q", out.Coverage.ChecksRun, "certificates")
+	}
+
+	var partialCertificates bool
+	for _, p := range out.Coverage.Partial {
+		if p.Resource == "certificates" {
+			partialCertificates = true
+		}
+	}
+	if !partialCertificates {
+		t.Errorf("coverage.partial = %+v, want an entry naming %q — an RBAC-forbidden certificates "+
+			"read must not be reported as a clean, fully-run check", out.Coverage.Partial, "certificates")
+	}
+}
+
+// TestAdvisory_SecuritySectionMarshalsAsEmptyArrayNotNull covers a clean
+// cluster: res.SecurityIssues is nil (not []) when the scan finds nothing.
+// Every other section is a pointer-to-struct and never hits this; a nil
+// slice marshals as JSON null, and a model reading null cannot tell "ran and
+// found nothing" from "did not run". This asserts on the marshalled bytes,
+// not the Go value, per the project's json-tag-on-the-wrong-struct history.
+func TestAdvisory_SecuritySectionMarshalsAsEmptyArrayNotNull(t *testing.T) {
+	cs := connect(t, Config{Context: "kind-example"}, fake.NewSimpleClientset())
+
+	res, err := cs.CallTool(context.Background(), &mcpsdk.CallToolParams{
+		Name: "kubeagent_advisory", Arguments: map[string]any{"sections": []any{"security"}},
+	})
+	if err != nil {
+		t.Fatalf("CallTool() error = %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("CallTool() returned an error result: %+v", res.Content)
+	}
+	blob, err := json.Marshal(res.StructuredContent)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if !strings.Contains(string(blob), `"security":[]`) {
+		t.Errorf("marshalled sections = %s, want the literal `\"security\":[]`, not null, on a clean cluster", blob)
 	}
 }

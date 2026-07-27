@@ -16,6 +16,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/cluster"
 	"github.com/imantaba/kubeagent/internal/redact"
 	"github.com/imantaba/kubeagent/internal/scan"
+	"github.com/imantaba/kubeagent/internal/secscan"
 )
 
 // advisorySections is both the published enum and the accepted set.
@@ -114,14 +115,36 @@ func registerAdvisory(s *mcpsdk.Server, cfg Config, client kubernetes.Interface,
 
 			if want["security"] {
 				cov.markRun("security")
-				out.Sections["security"] = res.SecurityIssues
+				// res.SecurityIssues is nil, not [], when the scan finds
+				// nothing; every other section is a pointer-to-struct and
+				// never hits this. A slice must marshal as [] so a caller
+				// can tell "ran and found nothing" from "did not run".
+				issues := res.SecurityIssues
+				if issues == nil {
+					issues = []secscan.Finding{}
+				}
+				out.Sections["security"] = issues
 			}
 			if want["certificates"] {
 				cov.markRun("certificates")
+				// Defensive: scan.Evaluate always allocates Certificates when
+				// Certs is requested, so this branch is currently unreachable —
+				// kept so a future scan.go change that leaves it nil degrades to
+				// "skipped" instead of marshalling "certificates": null.
 				if res.Certificates == nil {
 					cov.markSkipped("certificates", "no certificate data was returned for this scope")
 				} else {
 					out.Sections["certificates"] = res.Certificates
+					if res.Certificates.Forbidden {
+						// A report was still produced (Checked stays 0), so per
+						// this function's rule this is a partial read, not a
+						// skipped check.
+						cov.Partial = append(cov.Partial, PartialRead{
+							Resource: "certificates",
+							Why: "listing TLS secrets is forbidden by RBAC; no certificates were checked, " +
+								"so an empty result does not mean no expiring certificates",
+						})
+					}
 				}
 			}
 
@@ -138,7 +161,24 @@ func registerAdvisory(s *mcpsdk.Server, cfg Config, client kubernetes.Interface,
 
 				adv := advisory.Assess(ctx, client,
 					func() (dynamic.Interface, discovery.DiscoveryInterface, error) {
-						return cluster.NewDynamicClients(cfg.Kubeconfig, cfg.Context)
+						dyn, disco, err := cluster.NewDynamicClients(cfg.Kubeconfig, cfg.Context)
+						if err != nil {
+							// The discarded error carries the kubeconfig path
+							// and context name (internal/cluster's restConfig
+							// wraps clientcmd's loading failure with both).
+							// Both are credentials — a path names a customer,
+							// a cluster and an environment — and this closure
+							// is the boundary where they enter the tool
+							// result: advisory.Assess turns this failure into
+							// a Degradation.Reason, which registerAdvisory
+							// copies into Coverage.Partial or
+							// Coverage.ChecksSkipped and returns on the
+							// success path. Substitute a canned, path-free
+							// message instead of propagating err.
+							return nil, nil, errors.New("building the CRD-reading clients failed; check the " +
+								"server's kubeconfig and context")
+						}
+						return dyn, disco, nil
 					},
 					advisory.Inputs{
 						Deployments:  res.Inputs.Deployments,

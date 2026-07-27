@@ -2,6 +2,7 @@ package capacity
 
 import (
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -101,4 +102,69 @@ func replicaSet(namespace, name, deployment string) appsv1.ReplicaSet {
 			{Kind: "Deployment", Name: deployment, Controller: &yes},
 		},
 	}}
+}
+
+// deployment builds a Deployment carrying the given containers in its pod template.
+func deployment(namespace, name string, containers ...corev1.Container) appsv1.Deployment {
+	return appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name},
+		Spec: appsv1.DeploymentSpec{
+			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: containers}},
+		},
+	}
+}
+
+// statefulSet builds a StatefulSet carrying the given containers in its pod template.
+func statefulSet(namespace, name string, containers ...corev1.Container) appsv1.StatefulSet {
+	return appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name},
+		Spec: appsv1.StatefulSetSpec{
+			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: containers}},
+		},
+	}
+}
+
+// daemonSet builds a DaemonSet carrying the given containers in its pod template.
+func daemonSet(namespace, name string, containers ...corev1.Container) appsv1.DaemonSet {
+	return appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name},
+		Spec: appsv1.DaemonSetSpec{
+			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: containers}},
+		},
+	}
+}
+
+// job builds a Job carrying the given containers in its pod template.
+func job(namespace, name string, containers ...corev1.Container) batchv1.Job {
+	return batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name},
+		Spec: batchv1.JobSpec{
+			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: containers}},
+		},
+	}
+}
+
+// jobOwnedBy sets a controller ownerReference of the given kind and name on a Job —
+// used to build a Job owned by a CronJob.
+func jobOwnedBy(j batchv1.Job, kind, name string) batchv1.Job {
+	yes := true
+	j.OwnerReferences = []metav1.OwnerReference{
+		{Kind: kind, Name: name, Controller: &yes},
+	}
+	return j
+}
+
+// cronJob builds a CronJob carrying the given containers in its job template's pod
+// template (spec.jobTemplate.spec.template.spec).
+func cronJob(namespace, name string, containers ...corev1.Container) batchv1.CronJob {
+	return batchv1.CronJob{
+		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name},
+		Spec: batchv1.CronJobSpec{
+			JobTemplate: batchv1.JobTemplateSpec{
+				Spec: batchv1.JobSpec{
+					Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: containers}},
+				},
+			},
+		},
+	}
 }

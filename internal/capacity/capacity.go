@@ -257,10 +257,14 @@ func controllerOwner(refs []metav1.OwnerReference) *metav1.OwnerReference {
 //
 // usage is the per-pod sample keyed "namespace/name"; a nil or empty map means
 // metrics-server did not answer, and the right-sizing rules still apply.
+//
+// templates carries one pod template per workload (see Templates) and is the
+// source for RuleLimitNoRequest: the admitted Pod itself has already had its
+// unset request defaulted to the limit, so that rule cannot read pods.
 func Assess(nodes []corev1.Node, pods []corev1.Pod, replicaSets []appsv1.ReplicaSet,
-	usage map[string]corev1.ResourceList, namespace string) Report {
+	templates []OwnerTemplate, usage map[string]corev1.ResourceList, namespace string) Report {
 	included, excluded := classifyNodes(nodes, pods)
-	rightSizing := buildRightSizing(pods, replicaSets, included, namespace)
+	rightSizing := buildRightSizing(pods, replicaSets, templates, included, namespace)
 	attachSamples(rightSizing, pods, replicaSets, usage, namespace)
 	return Report{
 		Headroom:    buildHeadroom(included, excluded, len(nodes), pods),

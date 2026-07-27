@@ -28,7 +28,7 @@ func TestRuleNoRequestsFlagsBestEffortPod(t *testing.T) {
 	pods := []corev1.Pod{ownedBy(pod("staging", "web-1", "worker1", "", ""), "ReplicaSet", "web-abc")}
 	rs := []appsv1.ReplicaSet{replicaSet("staging", "web-abc", "web")}
 
-	rep := Assess([]corev1.Node{node("worker1", "4", "16Gi")}, pods, rs, nil, "")
+	rep := Assess([]corev1.Node{node("worker1", "4", "16Gi")}, pods, rs, nil, nil, "")
 
 	r := ruleByName(t, rep.RightSizing, RuleNoRequests)
 	if len(r.Owners) != 1 {
@@ -52,7 +52,7 @@ func TestRuleNoRequestsMixedPodIsNotBestEffort(t *testing.T) {
 		container("sidecar", "", "", "", ""),
 	}
 
-	rep := Assess([]corev1.Node{node("worker1", "4", "16Gi")}, []corev1.Pod{p}, nil, nil, "")
+	rep := Assess([]corev1.Node{node("worker1", "4", "16Gi")}, []corev1.Pod{p}, nil, nil, nil, "")
 
 	r := ruleByName(t, rep.RightSizing, RuleNoRequests)
 	if len(r.Owners) != 1 || r.Owners[0].BestEffort {
@@ -60,11 +60,14 @@ func TestRuleNoRequestsMixedPodIsNotBestEffort(t *testing.T) {
 	}
 }
 
+// RuleLimitNoRequest reads workload templates, not Pods (see rightsize.go and
+// template.go): the API server defaults a Pod's unset request from its limit on
+// admission, so only the template an author wrote still shows the shape.
 func TestRuleLimitNoRequestNamesTheLimit(t *testing.T) {
-	p := pod("prod", "cache-1", "worker1", "", "")
-	p.Spec.Containers = []corev1.Container{container("app", "", "", "", "256Mi")}
+	deployments := []appsv1.Deployment{deployment("prod", "cache", container("app", "", "", "", "256Mi"))}
+	templates := Templates(deployments, nil, nil, nil, nil)
 
-	rep := Assess([]corev1.Node{node("worker1", "4", "16Gi")}, []corev1.Pod{p}, nil, nil, "")
+	rep := Assess([]corev1.Node{node("worker1", "4", "16Gi")}, nil, nil, templates, nil, "")
 
 	r := ruleByName(t, rep.RightSizing, RuleLimitNoRequest)
 	if len(r.Owners) != 1 {
@@ -75,14 +78,13 @@ func TestRuleLimitNoRequestNamesTheLimit(t *testing.T) {
 	}
 }
 
-// limitWithoutRequest fires on either resource; only the memory branch had a test
-// before this (lines 65 and 283 below are both memory-limit containers). Cover the
-// CPU branch too.
+// limitWithoutRequest fires on either resource; the memory branch is covered above.
+// Cover the CPU branch too.
 func TestRuleLimitNoRequestCPUNamesTheLimit(t *testing.T) {
-	p := pod("prod", "cpu-only-1", "worker1", "", "")
-	p.Spec.Containers = []corev1.Container{container("app", "", "", "2", "")}
+	deployments := []appsv1.Deployment{deployment("prod", "cpu-only", container("app", "", "", "2", ""))}
+	templates := Templates(deployments, nil, nil, nil, nil)
 
-	rep := Assess([]corev1.Node{node("worker1", "4", "16Gi")}, []corev1.Pod{p}, nil, nil, "")
+	rep := Assess([]corev1.Node{node("worker1", "4", "16Gi")}, nil, nil, templates, nil, "")
 
 	r := ruleByName(t, rep.RightSizing, RuleLimitNoRequest)
 	if len(r.Owners) != 1 {
@@ -100,7 +102,7 @@ func TestRuleNeverSchedulableComparesAgainstLargestIncludedNode(t *testing.T) {
 	}
 	pods := []corev1.Pod{ownedBy(pod("batch", "trainer-1", "", "40", "8Gi"), "Job", "trainer")}
 
-	rep := Assess(nodes, pods, nil, nil, "")
+	rep := Assess(nodes, pods, nil, nil, nil, "")
 
 	r := ruleByName(t, rep.RightSizing, RuleNeverSchedulable)
 	if len(r.Owners) != 1 || r.Owners[0].Name != "trainer" {
@@ -124,7 +126,7 @@ func TestRuleNeverSchedulableHeterogeneousNodes(t *testing.T) {
 	}
 	pods := []corev1.Pod{ownedBy(pod("batch", "odd-shape", "big-cpu", "10", "30Gi"), "Job", "odd-shape")}
 
-	rep := Assess(nodes, pods, nil, nil, "")
+	rep := Assess(nodes, pods, nil, nil, nil, "")
 
 	r := ruleByName(t, rep.RightSizing, RuleNeverSchedulable)
 	if len(r.Owners) != 1 || r.Owners[0].Name != "odd-shape" {
@@ -140,7 +142,7 @@ func TestRuleNeverSchedulableHeterogeneousNodes(t *testing.T) {
 func TestRuleNeverSchedulableExcludesExactFit(t *testing.T) {
 	pods := []corev1.Pod{pod("batch", "fits", "", "16", "1Gi")}
 
-	rep := Assess([]corev1.Node{node("worker1", "16", "64Gi")}, pods, nil, nil, "")
+	rep := Assess([]corev1.Node{node("worker1", "16", "64Gi")}, pods, nil, nil, nil, "")
 
 	if rep.RightSizing != nil {
 		for _, r := range rep.RightSizing.Rules {
@@ -157,7 +159,7 @@ func TestRuleNeverSchedulableSilentWithNoIncludedNodes(t *testing.T) {
 	nodes := []corev1.Node{cordoned(node("parked", "16", "64Gi"))}
 	pods := []corev1.Pod{pod("batch", "big", "", "40", "8Gi")}
 
-	rep := Assess(nodes, pods, nil, nil, "")
+	rep := Assess(nodes, pods, nil, nil, nil, "")
 
 	if rep.RightSizing != nil {
 		for _, r := range rep.RightSizing.Rules {
@@ -177,7 +179,7 @@ func TestRightSizingRollsUpReplicasToOneOwner(t *testing.T) {
 	}
 	rs := []appsv1.ReplicaSet{replicaSet("staging", "web-abc", "web")}
 
-	rep := Assess([]corev1.Node{node("worker1", "4", "16Gi")}, pods, rs, nil, "")
+	rep := Assess([]corev1.Node{node("worker1", "4", "16Gi")}, pods, rs, nil, nil, "")
 
 	r := ruleByName(t, rep.RightSizing, RuleNoRequests)
 	if len(r.Owners) != 1 {
@@ -189,7 +191,7 @@ func TestRightSizingRollsUpReplicasToOneOwner(t *testing.T) {
 func TestRightSizingOwnerlessPod(t *testing.T) {
 	pods := []corev1.Pod{pod("default", "loose", "worker1", "", "")}
 
-	rep := Assess([]corev1.Node{node("worker1", "4", "16Gi")}, pods, nil, nil, "")
+	rep := Assess([]corev1.Node{node("worker1", "4", "16Gi")}, pods, nil, nil, nil, "")
 
 	r := ruleByName(t, rep.RightSizing, RuleNoRequests)
 	if r.Owners[0].Kind != "Pod" || r.Owners[0].Name != "loose" {
@@ -203,7 +205,7 @@ func TestRightSizingCapsAtTwentyOwners(t *testing.T) {
 		pods = append(pods, pod("staging", fmt.Sprintf("p%02d", i), "worker1", "", ""))
 	}
 
-	rep := Assess([]corev1.Node{node("worker1", "4", "16Gi")}, pods, nil, nil, "")
+	rep := Assess([]corev1.Node{node("worker1", "4", "16Gi")}, pods, nil, nil, nil, "")
 
 	r := ruleByName(t, rep.RightSizing, RuleNoRequests)
 	if len(r.Owners) != 20 {
@@ -221,7 +223,7 @@ func TestRightSizingOrdersByNamespaceThenName(t *testing.T) {
 		pod("alpha", "a", "worker1", "", ""),
 	}
 
-	rep := Assess([]corev1.Node{node("worker1", "4", "16Gi")}, pods, nil, nil, "")
+	rep := Assess([]corev1.Node{node("worker1", "4", "16Gi")}, pods, nil, nil, nil, "")
 
 	r := ruleByName(t, rep.RightSizing, RuleNoRequests)
 	got := []string{}
@@ -240,7 +242,7 @@ func TestRightSizingNamespaceScopesEnumerationOnly(t *testing.T) {
 		pod("staging", "b", "worker1", "", ""),
 	}
 
-	rep := Assess([]corev1.Node{node("worker1", "4", "16Gi")}, pods, nil, nil, "prod")
+	rep := Assess([]corev1.Node{node("worker1", "4", "16Gi")}, pods, nil, nil, nil, "prod")
 
 	r := ruleByName(t, rep.RightSizing, RuleNoRequests)
 	if len(r.Owners) != 1 || r.Owners[0].Namespace != "prod" {
@@ -255,7 +257,7 @@ func TestRightSizingNamespaceScopesEnumerationOnly(t *testing.T) {
 func TestRightSizingNilWhenNothingFlagged(t *testing.T) {
 	pods := []corev1.Pod{pod("prod", "good", "worker1", "100m", "128Mi")}
 
-	rep := Assess([]corev1.Node{node("worker1", "4", "16Gi")}, pods, nil, nil, "")
+	rep := Assess([]corev1.Node{node("worker1", "4", "16Gi")}, pods, nil, nil, nil, "")
 
 	if rep.RightSizing != nil && len(rep.RightSizing.Rules) > 0 {
 		t.Errorf("want no rules for a well-formed workload, got %+v", rep.RightSizing.Rules)
@@ -279,7 +281,7 @@ func TestRightSizingOrderIsTotalAcrossKinds(t *testing.T) {
 	// one process do exercise the bug: build the report several times and require
 	// the same order every time, not just once by luck.
 	for i := 0; i < 10; i++ {
-		rep := Assess(nodes, pods, nil, nil, "")
+		rep := Assess(nodes, pods, nil, nil, nil, "")
 		r := ruleByName(t, rep.RightSizing, RuleNoRequests)
 		if len(r.Owners) != 2 {
 			t.Fatalf("run %d: want 2 owners, got %+v", i, r.Owners)
@@ -297,12 +299,12 @@ func TestRightSizingOrderIsTotalAcrossKinds(t *testing.T) {
 // The vocabulary ban is a design constraint, not a style preference: none of these
 // words can be justified from a single non-historical sample.
 func TestNoForbiddenVocabularyInDetails(t *testing.T) {
-	p := pod("prod", "cache-1", "worker1", "", "")
-	p.Spec.Containers = []corev1.Container{container("app", "", "", "", "256Mi")}
-	pods := []corev1.Pod{p, pod("staging", "web", "worker1", "", ""),
+	pods := []corev1.Pod{pod("staging", "web", "worker1", "", ""),
 		pod("batch", "big", "", "40", "8Gi")}
+	deployments := []appsv1.Deployment{deployment("prod", "cache", container("app", "", "", "", "256Mi"))}
+	templates := Templates(deployments, nil, nil, nil, nil)
 
-	rep := Assess([]corev1.Node{node("worker1", "4", "16Gi")}, pods, nil, nil, "")
+	rep := Assess([]corev1.Node{node("worker1", "4", "16Gi")}, pods, nil, templates, nil, "")
 
 	for _, r := range rep.RightSizing.Rules {
 		for _, o := range r.Owners {

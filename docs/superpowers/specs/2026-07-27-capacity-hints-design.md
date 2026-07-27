@@ -127,6 +127,20 @@ Each rule is provable from the pod spec alone, with no usage data.
 | `limit, no request` | A container sets a limit for a resource but no request for it. | Kubernetes defaults the request to the limit. The workload reserves the full limit cluster-wide, which its author usually did not intend. |
 | `never schedulable` | A container's CPU or memory request exceeds the largest **included** node's allocatable for that resource. | The pod can never be placed. Provable now — including for a workload scaled to zero, before any Pending pod exists. |
 
+> **Correction, 2026-07-27:** the `limit, no request` rationale above is what produced
+> a merge-blocking bug. It describes the request-from-limit defaulting as the reason
+> the rule matters, but the rule was implemented against the Pod's *stored* spec —
+> and that same defaulting is exactly what erases the evidence from that spec: the
+> API server rewrites `limits: {memory: 256Mi}` with no request into
+> `requests: {memory: 256Mi}` too, before the Pod is ever persisted. A rule that
+> reads Pods can never observe the shape it is looking for; live-cluster chaos
+> testing (scenario 18) confirmed it never fires. The fix reads the rule from the
+> workload's own **OwnerTemplate** (`internal/capacity/template.go`) — the
+> Deployment/StatefulSet/DaemonSet/Job/CronJob pod template an author wrote, which
+> admission never rewrites — instead of from admitted Pods. `no requests set` and
+> `never schedulable` are unaffected: they depend on the Pod's actual (post-
+> defaulting) requests, which is what the scheduler sees.
+
 Deliberately **not** rules, on YAGNI and opinion-neutrality grounds:
 
 - `request == limit` — usually a deliberate Guaranteed-QoS choice.

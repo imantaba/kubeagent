@@ -12,6 +12,13 @@ import (
 // roughly a 30-second average and keeps no history, so a reading cannot justify
 // putting a workload on the list — only annotating one that a provable rule put
 // there.
+//
+// A RuleLimitNoRequest row sourced from a CronJob's OwnerTemplate is a known
+// exception that never receives a sample: its key is "CronJob/ns/name", but its
+// pods are owned by a Job and roll up (via ownerOf, below) to "Job/ns/jobname" —
+// the Job that runs the CronJob's schedule, not the CronJob itself. The two keys
+// never match. The row is still correct and still renders; it is simply left
+// without an Observed reading rather than built into a Job-to-CronJob roll-up.
 func attachSamples(rs *RightSizing, pods []corev1.Pod, replicaSets []appsv1.ReplicaSet,
 	usage map[string]corev1.ResourceList, namespace string) {
 	if rs == nil {

@@ -9,12 +9,14 @@ import (
 )
 
 // buildRightSizing applies the three structural rules and rolls the matches up by
-// owner. Every rule is provable from the pod spec alone; no usage data is read
-// here, and none of these rules can be satisfied or suppressed by a usage sample.
+// owner. Every rule is provable from a pod spec alone — RuleNoRequests and
+// RuleNeverSchedulable from the admitted Pod's, RuleLimitNoRequest from a
+// workload's own OwnerTemplate — no usage data is read here, and none of these
+// rules can be satisfied or suppressed by a usage sample.
 //
 // namespace, when non-empty, scopes the enumeration only — the caller still passes
 // the cluster-wide pod list, because included carries cluster-wide arithmetic.
-func buildRightSizing(pods []corev1.Pod, replicaSets []appsv1.ReplicaSet,
+func buildRightSizing(pods []corev1.Pod, replicaSets []appsv1.ReplicaSet, templates []OwnerTemplate,
 	included []nodeCapacity, namespace string) *RightSizing {
 
 	rsIndex := deploymentIndex(replicaSets)
@@ -42,20 +44,30 @@ func buildRightSizing(pods []corev1.Pod, replicaSets []appsv1.ReplicaSet,
 			}
 			matches[RuleNoRequests][key] = e
 		}
-		if detail, res := limitWithoutRequest(p); detail != "" {
-			e := o
-			e.Detail = detail
-			e.flaggedResource = res
-			if _, ok := matches[RuleLimitNoRequest][key]; !ok {
-				matches[RuleLimitNoRequest][key] = e
-			}
-		}
 		if len(included) > 0 {
 			if detail := exceedsLargestNode(p, included); detail != "" {
 				e := o
 				e.Detail = detail
 				if _, ok := matches[RuleNeverSchedulable][key]; !ok {
 					matches[RuleNeverSchedulable][key] = e
+				}
+			}
+		}
+	}
+
+	// RuleLimitNoRequest reads owner templates, not pods: an admitted Pod has
+	// already had its unset request defaulted to the limit, so the shape this rule
+	// looks for survives only in the workload's own template.
+	for _, t := range templates {
+		if namespace != "" && t.Namespace != namespace {
+			continue
+		}
+		if detail, res := limitWithoutRequest(t.Spec); detail != "" {
+			key := t.Kind + "/" + t.Namespace + "/" + t.Name
+			if _, ok := matches[RuleLimitNoRequest][key]; !ok {
+				matches[RuleLimitNoRequest][key] = Owner{
+					Kind: t.Kind, Namespace: t.Namespace, Name: t.Name,
+					Detail: detail, flaggedResource: res,
 				}
 			}
 		}
@@ -116,12 +128,14 @@ func noRequestContainers(p corev1.Pod) (any_, all bool) {
 }
 
 // limitWithoutRequest returns a detail string and the resource it names, when a
-// container sets a limit for a resource but no request for it. Kubernetes then
-// defaults the request to the limit, so the workload reserves the full limit
-// cluster-wide. The rule fires on either resource, so the caller must not assume
-// which one without checking the returned resourceKind.
-func limitWithoutRequest(p corev1.Pod) (detail string, res resourceKind) {
-	for _, c := range p.Spec.Containers {
+// container sets a limit for a resource but no request for it. This reads an
+// OwnerTemplate's spec, not an admitted Pod's: the API server defaults a Pod's
+// unset request from its limit before storing it, so by the time a Pod exists the
+// shape this checks for is already gone — the same test against a Pod is always
+// false. The rule fires on either resource, so the caller must not assume which
+// one without checking the returned resourceKind.
+func limitWithoutRequest(spec corev1.PodSpec) (detail string, res resourceKind) {
+	for _, c := range spec.Containers {
 		if !c.Resources.Limits.Cpu().IsZero() && c.Resources.Requests.Cpu().IsZero() {
 			return "lim " + formatMilliCPU(c.Resources.Limits.Cpu().MilliValue()) + " cores", resourceCPU
 		}

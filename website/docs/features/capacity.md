@@ -103,13 +103,13 @@ instead of running the algorithm against nothing.
 
 ## Right-sizing
 
-Three rules, each provable from a pod's spec alone — no usage sample is
-needed to raise any of them:
+Three structural rules — no usage sample is needed to raise any of them. Two
+read the admitted Pod's own spec; the third reads a workload's own template:
 
 | Rule | Fires when | Why it's real |
 | --- | --- | --- |
 | `no requests set` | A container declares neither a CPU nor a memory request. | The container reserves nothing. When *every* container in the pod is like this, the pod is BestEffort — first evicted under node pressure, and the row says so; when only some are, the note is omitted. |
-| `limit, no request` | A container sets a limit for a resource but no request for it. | Kubernetes defaults an unset request to the limit, so the workload silently reserves the full limit cluster-wide — usually not what its author intended. |
+| `limit, no request` | A container in a **workload's own pod template** (Deployment, StatefulSet, DaemonSet, Job, or CronJob) sets a limit for a resource but no request for it. | Kubernetes defaults an unset request to the limit *when it admits the Pod*, so the workload silently reserves the full limit cluster-wide — usually not what its author intended. This rule reads the template rather than the Pod because that defaulting has already erased the evidence from every Pod the API server stores: `limits: {memory: 256Mi}` with no request is persisted as `requests: {memory: 256Mi}` too. Only the template an author wrote — which admission never rewrites — still shows the authored shape. |
 | `never schedulable` | No single **included** node's allocatable CPU and memory can both satisfy a container's request — whether the request outright exceeds every node's CPU or memory, or (on a heterogeneous pool) its CPU fits one node's maximum and its memory fits a different node's, but no one node has both. | The pod can never be placed, anywhere — a pod lands on exactly one node, so it needs one node with both. This is provable now, even for a workload scaled to zero, before a single Pending pod exists. |
 
 Two rules were deliberately left out, on the same YAGNI-and-opinion-neutrality
@@ -168,3 +168,7 @@ coverage count.
   needs nothing beyond the grant the existing node-metrics path already
   uses. There is no `deploy/rbac-capacity.yaml`, because there is nothing
   for it to grant.
+- **A bare Pod with no controller cannot be checked for `limit, no request`.**
+  That rule reads the workload's own template; a Pod with no Deployment,
+  StatefulSet, DaemonSet, Job, or CronJob above it has no template, and its
+  own stored spec is the defaulted one the rule can never match.

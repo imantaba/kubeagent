@@ -227,7 +227,9 @@ func run(args []string) error {
 		if perr != nil {
 			fmt.Fprintf(os.Stderr, "kubeagent: warning: pod metrics unavailable: %v\n", perr)
 		}
-		rep := capacity.Assess(nodes, resourcePods, res.Inputs.ReplicaSets, podUsage, namespace)
+		templates := capacity.Templates(res.Inputs.Deployments, res.Inputs.StatefulSets,
+			res.Inputs.DaemonSets, res.Inputs.Jobs, res.Inputs.CronJobs)
+		rep := capacity.Assess(nodes, resourcePods, res.Inputs.ReplicaSets, templates, podUsage, namespace)
 		capacityRep = &rep
 	}
 

@@ -14,7 +14,7 @@ func TestHeadroomSchedulableSumsIncludedNodesOnly(t *testing.T) {
 	}
 	pods := []corev1.Pod{pod("prod", "a", "worker1", "1", "4Gi")}
 
-	rep := Assess(nodes, pods, nil, nil, "")
+	rep := Assess(nodes, pods, nil, nil, nil, "")
 
 	h := rep.Headroom
 	if h == nil {
@@ -40,7 +40,7 @@ func TestHeadroomSchedulableSumsIncludedNodesOnly(t *testing.T) {
 func TestHeadroomLargestFitNeverMixesNodes(t *testing.T) {
 	nodes := []corev1.Node{node("bigcpu", "16", "8Gi"), node("bigmem", "2", "64Gi")}
 
-	rep := Assess(nodes, nil, nil, nil, "")
+	rep := Assess(nodes, nil, nil, nil, nil, "")
 
 	h := rep.Headroom
 	if h.LargestCPUFit == nil || h.LargestCPUFit.Node != "bigcpu" {
@@ -61,7 +61,7 @@ func TestHeadroomLargestFitNeverMixesNodes(t *testing.T) {
 func TestHeadroomLargestFitSingleLineWhenSameNode(t *testing.T) {
 	nodes := []corev1.Node{node("big", "16", "64Gi"), node("small", "2", "8Gi")}
 
-	rep := Assess(nodes, nil, nil, nil, "")
+	rep := Assess(nodes, nil, nil, nil, nil, "")
 
 	if rep.Headroom.LargestMemFit != nil {
 		t.Errorf("want no separate memory line when one node wins both, got %+v",
@@ -76,7 +76,7 @@ func TestHeadroomTightestNodePicksHigherRatio(t *testing.T) {
 		pod("prod", "memhog", "worker2", "1", "14Gi"), // 25% CPU, 87% memory
 	}
 
-	rep := Assess(nodes, pods, nil, nil, "")
+	rep := Assess(nodes, pods, nil, nil, nil, "")
 
 	tn := rep.Headroom.TightestNode
 	if tn == nil || tn.Node != "worker2" {
@@ -90,7 +90,7 @@ func TestHeadroomTightestNodePicksHigherRatio(t *testing.T) {
 func TestHeadroomNilWhenNoNodesIncluded(t *testing.T) {
 	nodes := []corev1.Node{cordoned(node("parked", "4", "16Gi"))}
 
-	rep := Assess(nodes, nil, nil, nil, "")
+	rep := Assess(nodes, nil, nil, nil, nil, "")
 
 	h := rep.Headroom
 	if h == nil {
@@ -112,7 +112,7 @@ func TestHeadroomNilWhenNoNodesIncluded(t *testing.T) {
 func TestHeadroomZeroAllocatableNode(t *testing.T) {
 	nodes := []corev1.Node{node("empty", "0", "0")}
 
-	rep := Assess(nodes, nil, nil, nil, "")
+	rep := Assess(nodes, nil, nil, nil, nil, "")
 
 	if rep.Headroom.TightestNode == nil || rep.Headroom.TightestNode.Pct != 0 {
 		t.Errorf("want 0%% for a zero-allocatable node, got %+v", rep.Headroom.TightestNode)
@@ -128,7 +128,7 @@ func TestHeadroomOvercommittedNodeClampsFreeAtZero(t *testing.T) {
 	// 6 cores / 20Gi requested against a 4-core / 16Gi node: over-committed on both.
 	pods := []corev1.Pod{pod("prod", "big", "worker1", "6", "20Gi")}
 
-	rep := Assess(nodes, pods, nil, nil, "")
+	rep := Assess(nodes, pods, nil, nil, nil, "")
 
 	h := rep.Headroom
 	if h.FreeCPU != "0.0" {

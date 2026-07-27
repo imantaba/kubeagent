@@ -13,7 +13,7 @@ func TestNodeLossFitsWhenRemainingNodesHaveRoom(t *testing.T) {
 		pod("prod", "b", "worker1", "1", "2Gi"),
 	}
 
-	rep := Assess(nodes, pods, nil, nil, "")
+	rep := Assess(nodes, pods, nil, nil, nil, "")
 
 	nl := rep.Headroom.NodeLoss
 	if nl == nil {
@@ -31,7 +31,7 @@ func TestNodeLossReportsBlockerWhenFirstFitCannotPlace(t *testing.T) {
 	nodes := []corev1.Node{node("worker1", "8", "32Gi"), node("worker2", "2", "8Gi")}
 	pods := []corev1.Pod{ownedBy(pod("prod", "db-0", "worker1", "6", "2Gi"), "StatefulSet", "db")}
 
-	rep := Assess(nodes, pods, nil, nil, "")
+	rep := Assess(nodes, pods, nil, nil, nil, "")
 
 	nl := rep.Headroom.NodeLoss
 	if nl.Fits {
@@ -54,7 +54,7 @@ func TestNodeLossExcludesDaemonSetPods(t *testing.T) {
 	nodes := []corev1.Node{node("worker1", "4", "16Gi"), node("worker2", "1", "2Gi")}
 	pods := []corev1.Pod{ownedBy(pod("kube-system", "cni-abc", "worker1", "3", "8Gi"), "DaemonSet", "cni")}
 
-	rep := Assess(nodes, pods, nil, nil, "")
+	rep := Assess(nodes, pods, nil, nil, nil, "")
 
 	nl := rep.Headroom.NodeLoss
 	if !nl.Fits {
@@ -66,7 +66,7 @@ func TestNodeLossExcludesDaemonSetPods(t *testing.T) {
 }
 
 func TestNodeLossSingleNode(t *testing.T) {
-	rep := Assess([]corev1.Node{node("only", "4", "16Gi")}, nil, nil, nil, "")
+	rep := Assess([]corev1.Node{node("only", "4", "16Gi")}, nil, nil, nil, nil, "")
 
 	nl := rep.Headroom.NodeLoss
 	if nl == nil || !nl.SingleNode {
@@ -81,7 +81,7 @@ func TestNodeLossSingleNode(t *testing.T) {
 func TestNodeLossVictimTieBreaksByName(t *testing.T) {
 	nodes := []corev1.Node{node("zeta", "4", "16Gi"), node("alpha", "4", "16Gi")}
 
-	rep := Assess(nodes, nil, nil, nil, "")
+	rep := Assess(nodes, nil, nil, nil, nil, "")
 
 	if rep.Headroom.NodeLoss.Node != "alpha" {
 		t.Errorf("want the alphabetically first node on a tie, got %q", rep.Headroom.NodeLoss.Node)
@@ -102,7 +102,7 @@ func TestNodeLossPlacesLargestFirst(t *testing.T) {
 		pod("prod", "big", "victim", "4", "8Gi"),
 	}
 
-	rep := Assess(nodes, pods, nil, nil, "")
+	rep := Assess(nodes, pods, nil, nil, nil, "")
 
 	nl := rep.Headroom.NodeLoss
 	if !nl.Fits || nl.Placed != 2 {

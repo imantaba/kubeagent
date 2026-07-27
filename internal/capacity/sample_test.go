@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 )
@@ -19,7 +20,7 @@ func TestSampleAttachesToFlaggedOwner(t *testing.T) {
 	pods := []corev1.Pod{pod("staging", "web-1", "worker1", "", "")}
 	usage := map[string]corev1.ResourceList{"staging/web-1": usageOf("30m", "64Mi")}
 
-	rep := Assess([]corev1.Node{node("worker1", "4", "16Gi")}, pods, nil, usage, "")
+	rep := Assess([]corev1.Node{node("worker1", "4", "16Gi")}, pods, nil, nil, usage, "")
 
 	o := rep.RightSizing.Rules[0].Owners[0]
 	if !strings.Contains(o.Observed, "0.0") {
@@ -47,7 +48,7 @@ func TestSampleSumsAcrossOwnerReplicas(t *testing.T) {
 		"staging/web-2": usageOf("400m", "64Mi"),
 	}
 
-	rep := Assess([]corev1.Node{node("worker1", "4", "16Gi")}, pods, nil, usage, "")
+	rep := Assess([]corev1.Node{node("worker1", "4", "16Gi")}, pods, nil, nil, usage, "")
 
 	o := rep.RightSizing.Rules[0].Owners[0]
 	if !strings.Contains(o.Observed, "0.5") {
@@ -60,7 +61,7 @@ func TestSampleNeverSelectsAWorkload(t *testing.T) {
 	pods := []corev1.Pod{pod("prod", "thrifty", "worker1", "4", "8Gi")}
 	usage := map[string]corev1.ResourceList{"prod/thrifty": usageOf("1m", "8Mi")}
 
-	rep := Assess([]corev1.Node{node("worker1", "8", "32Gi")}, pods, nil, usage, "")
+	rep := Assess([]corev1.Node{node("worker1", "8", "32Gi")}, pods, nil, nil, usage, "")
 
 	if rep.RightSizing != nil {
 		t.Errorf("want no right-sizing block: a sample must never create a row, got %+v",
@@ -74,11 +75,13 @@ func TestSampleNeverSelectsAWorkload(t *testing.T) {
 // fired — a CPU-flagged row annotated with an unrelated memory figure invites the
 // exact wrong conclusion.
 func TestObservedForLimitNoRequestPairsWithFlaggedResourceCPU(t *testing.T) {
-	p := pod("prod", "cpu-only", "worker1", "", "")
-	p.Spec.Containers = []corev1.Container{container("app", "", "", "2", "")}
-	usage := map[string]corev1.ResourceList{"prod/cpu-only": usageOf("1500m", "999Gi")}
+	deployments := []appsv1.Deployment{deployment("prod", "cpu-only", container("app", "", "", "2", ""))}
+	templates := Templates(deployments, nil, nil, nil, nil)
+	rs := []appsv1.ReplicaSet{replicaSet("prod", "cpu-only-abc", "cpu-only")}
+	pods := []corev1.Pod{ownedBy(pod("prod", "cpu-only-1", "worker1", "", ""), "ReplicaSet", "cpu-only-abc")}
+	usage := map[string]corev1.ResourceList{"prod/cpu-only-1": usageOf("1500m", "999Gi")}
 
-	rep := Assess([]corev1.Node{node("worker1", "4", "16Gi")}, []corev1.Pod{p}, nil, usage, "")
+	rep := Assess([]corev1.Node{node("worker1", "4", "16Gi")}, pods, rs, templates, usage, "")
 
 	r := ruleByName(t, rep.RightSizing, RuleLimitNoRequest)
 	if len(r.Owners) != 1 {
@@ -99,11 +102,13 @@ func TestObservedForLimitNoRequestPairsWithFlaggedResourceCPU(t *testing.T) {
 // The memory branch, preserved: a memory-limit-without-request row still pairs with
 // a memory reading.
 func TestObservedForLimitNoRequestPairsWithFlaggedResourceMemory(t *testing.T) {
-	p := pod("prod", "cache-1", "worker1", "", "")
-	p.Spec.Containers = []corev1.Container{container("app", "", "", "", "256Mi")}
+	deployments := []appsv1.Deployment{deployment("prod", "cache", container("app", "", "", "", "256Mi"))}
+	templates := Templates(deployments, nil, nil, nil, nil)
+	rs := []appsv1.ReplicaSet{replicaSet("prod", "cache-abc", "cache")}
+	pods := []corev1.Pod{ownedBy(pod("prod", "cache-1", "worker1", "", ""), "ReplicaSet", "cache-abc")}
 	usage := map[string]corev1.ResourceList{"prod/cache-1": usageOf("50m", "240Mi")}
 
-	rep := Assess([]corev1.Node{node("worker1", "4", "16Gi")}, []corev1.Pod{p}, nil, usage, "")
+	rep := Assess([]corev1.Node{node("worker1", "4", "16Gi")}, pods, rs, templates, usage, "")
 
 	r := ruleByName(t, rep.RightSizing, RuleLimitNoRequest)
 	if len(r.Owners) != 1 {
@@ -121,7 +126,7 @@ func TestObservedForLimitNoRequestPairsWithFlaggedResourceMemory(t *testing.T) {
 func TestSampleAbsentMetricsStillRendersRules(t *testing.T) {
 	pods := []corev1.Pod{pod("staging", "web-1", "worker1", "", "")}
 
-	rep := Assess([]corev1.Node{node("worker1", "4", "16Gi")}, pods, nil, nil, "")
+	rep := Assess([]corev1.Node{node("worker1", "4", "16Gi")}, pods, nil, nil, nil, "")
 
 	if rep.RightSizing == nil || len(rep.RightSizing.Rules) != 1 {
 		t.Fatalf("want the structural rule with no metrics, got %+v", rep.RightSizing)
@@ -148,7 +153,7 @@ func TestSampleNeverAddsARowForACleanOwner(t *testing.T) {
 		"prod/clean-1":   usageOf("50m", "64Mi"), // a sample exists for the clean owner too
 	}
 
-	rep := Assess([]corev1.Node{node("worker1", "8", "32Gi")}, pods, nil, usage, "")
+	rep := Assess([]corev1.Node{node("worker1", "8", "32Gi")}, pods, nil, nil, usage, "")
 
 	if rep.RightSizing == nil {
 		t.Fatal("want a right-sizing block: the flagged owner must still produce a rule")
@@ -178,7 +183,7 @@ func TestSampleCoverageCountsScopedPods(t *testing.T) {
 	}
 	usage := map[string]corev1.ResourceList{"prod/a": usageOf("10m", "8Mi")}
 
-	rep := Assess([]corev1.Node{node("worker1", "4", "16Gi")}, pods, nil, usage, "prod")
+	rep := Assess([]corev1.Node{node("worker1", "4", "16Gi")}, pods, nil, nil, usage, "prod")
 
 	if rep.RightSizing.PodsTotal != 2 || rep.RightSizing.PodsReporting != 1 {
 		t.Errorf("want 1 of 2 in-scope pods reporting, got %d of %d",

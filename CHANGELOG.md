@@ -15,7 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   largest free fit, the tightest node by requested ratio, and whether the
   cluster survives losing its biggest node) and **Right-sizing** (workloads
   shaped wrong on paper — no requests set, a limit with no matching request,
-  or a request that can never be scheduled on any node). Two numbers this
+  or a request that can never be scheduled on any node). The limit-with-no-
+  request rule reads a workload's own pod template (Deployment, StatefulSet,
+  DaemonSet, Job, or CronJob), not the admitted Pod: the API server defaults
+  a Pod's unset request from its limit before storing it, so only the
+  template an author wrote still shows the authored shape. Two numbers this
   never produces: money (kubeagent has no price table; every figure is cores
   and GiB) and a peak (metrics-server keeps no history — one ~30s sample,
   nothing retained). A usage sample never puts a workload on the list; it

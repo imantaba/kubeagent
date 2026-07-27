@@ -237,8 +237,9 @@ GITOPS DRIFT  (advisory — reconciler-reported; threshold 1h; no repo URLs)
 
 ### JSON
 
-`report.Input` gains `GitOps *gitops.Report` with json tag `gitops,omitempty`, so a
-scan without `--drift` produces byte-identical JSON to today.
+`report.Input` gains `GitOps *gitops.Report`, and the `inventoryReport` struct that
+`--output json` actually marshals gains the matching field with json tag
+`gitops,omitempty`, so a scan without `--drift` produces byte-identical JSON to today.
 
 ## CLI
 

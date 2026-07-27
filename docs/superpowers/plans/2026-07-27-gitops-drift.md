@@ -1659,8 +1659,9 @@ git commit -m "test(gitops): aggregation, ordering, truncation, and the leak bou
 **Interfaces:**
 
 - Consumes: `gitops.Report` and friends from Tasks 1–4.
-- Produces: `report.Input.GitOps *gitops.Report` (json tag `gitops,omitempty`),
-  and the unexported `gitopsRender`, `printGitOps`, `driftSummary`.
+- Produces: `report.Input.GitOps *gitops.Report`, the matching
+  `inventoryReport.GitOps` field carrying the json tag `gitops,omitempty`, and the
+  unexported `gitopsRender`, `printGitOps`, `driftSummary`.
 
 The section is modelled directly on `printOperators` (`internal/report/report.go:1188`)
 — same indentation, same `%-16s` kind column, same forbidden/error handling, same
@@ -1823,7 +1824,22 @@ Add the field to `Input`, immediately after the existing `Operators` field:
 ```go
 	// GitOps is the advisory GitOps-drift view (opt-in --drift). Nil when the
 	// flag is off, so a default scan's JSON is unchanged.
-	GitOps *gitops.Report `json:"gitops,omitempty"`
+	GitOps *gitops.Report
+```
+
+`Input` is never marshalled — it is the render call's parameter bag, and none of its
+fields carry json tags. The JSON shape is the separate `inventoryReport` struct
+(`internal/report/report.go:40`), so add the field there too, after `Operators`:
+
+```go
+	GitOps             *gitops.Report              `json:"gitops,omitempty"`
+```
+
+and populate it in the `enc.Encode(inventoryReport{...})` literal, again after
+`Operators`:
+
+```go
+			GitOps:             in.GitOps,
 ```
 
 Add the call immediately after the `printOperators` call (currently

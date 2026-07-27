@@ -246,6 +246,7 @@ func Assess(nodes []corev1.Node, pods []corev1.Pod, replicaSets []appsv1.Replica
 	usage map[string]corev1.ResourceList, namespace string) Report {
 	included, excluded := classifyNodes(nodes, pods)
 	return Report{
-		Headroom: buildHeadroom(included, excluded, len(nodes), pods),
+		Headroom:    buildHeadroom(included, excluded, len(nodes), pods),
+		RightSizing: buildRightSizing(pods, replicaSets, included, namespace),
 	}
 }

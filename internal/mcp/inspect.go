@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"time"
 
@@ -68,10 +69,12 @@ func registerInspect(s *mcpsdk.Server, cfg Config, client kubernetes.Interface, 
 				},
 				"namespace": {
 					Type:        "string",
+					MinLength:   jsonschema.Ptr(1),
 					Description: "the object's namespace",
 				},
 				"name": {
 					Type:        "string",
+					MinLength:   jsonschema.Ptr(1),
 					Description: "the object's name",
 				},
 				"context": {
@@ -126,8 +129,21 @@ func registerInspect(s *mcpsdk.Server, cfg Config, client kubernetes.Interface, 
 				out.Ready = w.Ready
 				out.Image = w.Image
 				out.Pods = append(out.Pods, w.Pods...)
-				for _, f := range w.Findings {
-					out.Findings = append(out.Findings, fromDiagnose(f))
+				// Mirrors findingsFromResult in view.go: a workload can be
+				// Flagged() (Ready < Desired, or a bare Failed pod) with no
+				// per-pod diagnose.Finding attached — for example a Deployment
+				// stuck at 0/3 ready with no crash-looping pod. Projecting
+				// only w.Findings would report "findings: []" for an object
+				// triage already flags; fromWorkload is the same helper
+				// triage uses, so the two surfaces agree.
+				if len(w.Findings) == 0 {
+					if w.Flagged() {
+						out.Findings = append(out.Findings, fromWorkload(w))
+					}
+				} else {
+					for _, f := range w.Findings {
+						out.Findings = append(out.Findings, fromDiagnose(f))
+					}
 				}
 				break
 			}
@@ -139,13 +155,14 @@ func registerInspect(s *mcpsdk.Server, cfg Config, client kubernetes.Interface, 
 			if evErr != nil {
 				cov.Partial = append(cov.Partial, PartialRead{Resource: "events", Why: redact.Error(evErr)})
 			}
+			sortEvents(events)
 			for _, e := range events {
 				out.Events = append(out.Events, Event{
 					Type:    e.Type,
 					Reason:  e.Reason,
 					Message: e.Message,
 					Count:   e.Count,
-					Age:     inventory.HumanAge(eventTime(e), now()),
+					Age:     eventAge(e, now()),
 				})
 			}
 
@@ -165,4 +182,40 @@ func eventTime(e corev1.Event) time.Time {
 		return e.EventTime.Time
 	}
 	return e.FirstTimestamp.Time
+}
+
+// sortEvents orders events most-recent-first, so a drill-down leads with what
+// just happened rather than whatever order the clientset happened to list
+// them in. Ties on timestamp — including two events that share none, which
+// eventTime both resolve to the zero time.Time — are broken on Reason, then
+// Message, then Count, so the order is total and two scans of an unchanged
+// cluster produce byte-identical payloads.
+func sortEvents(events []corev1.Event) {
+	sort.SliceStable(events, func(i, j int) bool {
+		a, b := events[i], events[j]
+		ta, tb := eventTime(a), eventTime(b)
+		if !ta.Equal(tb) {
+			return ta.After(tb)
+		}
+		if a.Reason != b.Reason {
+			return a.Reason < b.Reason
+		}
+		if a.Message != b.Message {
+			return a.Message < b.Message
+		}
+		return a.Count < b.Count
+	})
+}
+
+// eventAge renders an event's age, or the literal "unknown" when the event
+// carries none of the three timestamps eventTime looks at. Real events
+// reliably set at least one, so this is defensive: without it, the zero
+// time.Time would render through inventory.HumanAge as a multi-century age,
+// and a nonsense age is worse than an honest "we do not know" — this
+// project's rule is that absence must never read as zero.
+func eventAge(e corev1.Event, now time.Time) string {
+	if e.LastTimestamp.IsZero() && e.EventTime.IsZero() && e.FirstTimestamp.IsZero() {
+		return "unknown"
+	}
+	return inventory.HumanAge(eventTime(e), now)
 }

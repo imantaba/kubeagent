@@ -355,8 +355,8 @@ package capacity
 import (
 	"sort"
 
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // RuleName identifies a structural right-sizing rule. The constant is the JSON and
@@ -574,12 +574,12 @@ func controllerOwner(refs []metav1.OwnerReference) *metav1.OwnerReference {
 	}
 	return nil
 }
-
-// ensure appsv1 stays imported for the Assess signature added in Task 2.
-var _ = appsv1.ReplicaSet{}
 ```
 
-Add `metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"` to the import block.
+`appsv1` is deliberately **not** imported here — no non-test file in this task needs
+it. Task 2 adds it with the `Assess` signature. (`helpers_test.go` imports it for the
+`replicaSet` builder, which Task 4's tests use; an unused test helper function is legal
+Go and does not need a placeholder.)
 
 - [ ] **Step 7: Run the tests to verify they pass**
 
@@ -808,7 +808,9 @@ func buildHeadroom(included []nodeCapacity, excluded []NodeExclusion, total int,
 	h.TightestNode = &TightNode{
 		Node: included[tightest].name, Resource: tightestRes, Pct: tightestPct,
 	}
-	h.NodeLoss = nodeLoss(included, pods)
+	// h.NodeLoss is filled by Task 3, which adds nodeloss.go and the one call line
+	// here. The pods parameter exists for it and is unused in this task — an unused
+	// function parameter is legal Go and no placeholder is needed.
 	return h
 }
 
@@ -840,18 +842,11 @@ func formatBytes(b int64) string {
 }
 ```
 
-The `nodeLoss` call is satisfied by Task 3; add a temporary stub at the bottom of `headroom.go` so this task compiles and its tests run:
-
-```go
-// nodeLoss is implemented in nodeloss.go by Task 3. This stub keeps the package
-// compiling in between; Task 3 DELETES it. A reviewer seeing it survive past
-// Task 3 should treat that as a defect.
-func nodeLoss(included []nodeCapacity, pods []corev1.Pod) *NodeLoss { return nil }
-```
+No stub for node-loss: `buildHeadroom` simply leaves `h.NodeLoss` nil in this task, and Task 3 adds both `nodeloss.go` and the single call line. Nothing temporary is introduced.
 
 - [ ] **Step 4: Add `Assess` to `internal/capacity/capacity.go`**
 
-Delete the `var _ = appsv1.ReplicaSet{}` placeholder line from Task 1 and add:
+Add `appsv1 "k8s.io/api/apps/v1"` to the import block, then:
 
 ```go
 // Assess builds the advisory capacity view. nodes and pods are cluster-wide in
@@ -893,7 +888,7 @@ git commit -m "feat(capacity): headroom rows over included nodes only"
 
 - Create: `internal/capacity/nodeloss.go`
 - Create: `internal/capacity/nodeloss_test.go`
-- Modify: `internal/capacity/headroom.go` (delete the Task 2 stub)
+- Modify: `internal/capacity/headroom.go` (one call line in `buildHeadroom`)
 
 **Interfaces:**
 
@@ -1027,20 +1022,9 @@ export PATH=$PATH:/usr/local/go/bin
 go test ./internal/capacity/ -run TestNodeLoss
 ```
 
-Expected: FAIL — the Task 2 stub returns nil, so `TestNodeLossFitsWhenRemainingNodesHaveRoom` fails at `want a node-loss result`.
+Expected: FAIL — `buildHeadroom` never sets `NodeLoss`, so `TestNodeLossFitsWhenRemainingNodesHaveRoom` fails at `want a node-loss result`.
 
-- [ ] **Step 3: Delete the stub from `internal/capacity/headroom.go`**
-
-Remove these three lines (the comment and the function) added in Task 2:
-
-```go
-// nodeLoss is implemented in nodeloss.go by Task 3. This stub keeps the package
-// compiling in between; Task 3 DELETES it. A reviewer seeing it survive past
-// Task 3 should treat that as a defect.
-func nodeLoss(included []nodeCapacity, pods []corev1.Pod) *NodeLoss { return nil }
-```
-
-- [ ] **Step 4: Write `internal/capacity/nodeloss.go`**
+- [ ] **Step 3: Write `internal/capacity/nodeloss.go`**
 
 ```go
 package capacity
@@ -1155,6 +1139,16 @@ func ownerLabel(p corev1.Pod) string {
 }
 ```
 
+- [ ] **Step 4: Call it from `buildHeadroom` in `internal/capacity/headroom.go`**
+
+Replace the three-line "filled by Task 3" comment left at the end of `buildHeadroom` with the call:
+
+```go
+	h.NodeLoss = nodeLoss(included, pods)
+	return h
+}
+```
+
 - [ ] **Step 5: Run the tests to verify they pass**
 
 ```bash
@@ -1164,15 +1158,7 @@ go test ./internal/capacity/ -v 2>&1 | tail -30
 
 Expected: every `TestNodeLoss*` PASS, all earlier tests still PASS.
 
-- [ ] **Step 6: Verify the stub is gone**
-
-```bash
-grep -n 'Task 3 DELETES it' internal/capacity/*.go
-```
-
-Expected: no output.
-
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add internal/capacity/
@@ -2913,6 +2899,6 @@ git commit -m "test(chaos): scenario 18 — capacity hints with no metrics-serve
 
 **Type consistency.** `Assess(nodes []corev1.Node, pods []corev1.Pod, replicaSets []appsv1.ReplicaSet, usage map[string]corev1.ResourceList, namespace string) Report` is identical in Tasks 2, 4, 5, and 7. `nodeCapacity` fields (`name`, `cpuAlloc`, `memAlloc`, `cpuReq`, `memReq`) are used consistently in Tasks 1–4. `RuleName` constants are used, never their display strings, everywhere except `capacityRuleLabel` in Task 6. `formatMilliCPU`/`formatBytes` (Task 2) are used in Tasks 3, 4, and 5. `NodeLoss.Fits`/`SingleNode`/`Blocker`/`BlockerCPU` match between Tasks 3 and 6.
 
-**Known ordering dependency.** Task 2 introduces a `nodeLoss` stub in `headroom.go` so the package compiles before Task 3 exists; **Task 3 Step 3 deletes it** and Step 6 verifies the deletion. A reviewer seeing the stub in Task 2's diff should expect it; seeing it survive past Task 3 is a defect.
+**Known ordering dependency.** Task 2 leaves `Headroom.NodeLoss` nil and `buildHeadroom`'s `pods` parameter unused; Task 3 adds `nodeloss.go` and the one call line that fills it. No stub, no placeholder, and nothing temporary to delete — a reviewer of Task 2 should expect the unused parameter and the nil field, both explained by a comment in the code.
 
 **One deliberate divergence from the spec**, already stated in Global Constraints: `Assess` takes `replicaSets` because spec §3's Deployment roll-up cannot be computed from pods alone.

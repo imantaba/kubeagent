@@ -71,6 +71,12 @@ func registerTriage(s *mcpsdk.Server, cfg Config, client kubernetes.Interface, n
 			cov.markSkipped("disk-usage", "not run by triage; it needs node stats the server does not request")
 			cov.markSkipped("security", "not run by triage; call kubeagent_advisory with section \"security\"")
 			cov.markSkipped("certificates", "not run by triage; call kubeagent_advisory with section \"certificates\"")
+			cov.markSkipped("kubelet-health", "not run by triage; it is opt-in and not reachable through "+
+				"kubeagent_advisory either — use the kubeagent CLI's --kubelet-health flag")
+			cov.markSkipped("control-plane-health", "not run by triage; it is opt-in and not reachable through "+
+				"kubeagent_advisory either — use the kubeagent CLI's --control-plane-health flag")
+			cov.markSkipped("dns-health", "not run by triage; it is opt-in and not reachable through "+
+				"kubeagent_advisory either — use the kubeagent CLI's --dns-health flag")
 			cov.markPartial(res.PartialReads)
 			if cfg.Logs {
 				cov.markRun("log-tails")

@@ -30,9 +30,20 @@ func guard[In, Out any](name string, h toolHandler[In, Out]) toolHandler[In, Out
 			if r := recover(); r != nil {
 				var zero Out
 				res, out = nil, zero
-				// The panic value can carry anything, including a URL from a
-				// client library, so it is redacted like any other error.
-				err = fmt.Errorf("%s failed unexpectedly: %s", name, redact.Error(fmt.Errorf("%v", r)))
+				// The panic value can carry anything, including a *url.Error
+				// from a client library. When it is itself an error, it is
+				// passed to redact.Error directly, so the unwrap chain
+				// survives and redact.Error's errors.As lookup can still find
+				// and redact the URL inside it; flattening it with %v first
+				// (as fmt.Errorf("%v", r) would) discards that chain and lets
+				// the URL's full path and query through unredacted. A
+				// non-error panic value has no chain to preserve, so it is
+				// only formatted.
+				reason := fmt.Sprintf("%v", r)
+				if e, ok := r.(error); ok {
+					reason = redact.Error(e)
+				}
+				err = fmt.Errorf("%s failed unexpectedly: %s", name, reason)
 			}
 		}()
 		return h(ctx, req, in)

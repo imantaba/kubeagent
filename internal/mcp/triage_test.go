@@ -137,3 +137,77 @@ func TestTriage_SkippedChecksAreDeclaredNotSilent(t *testing.T) {
 		}
 	}
 }
+
+// TestTriage_CoverageJSONNamesAllSevenSkippedChecks asserts against the
+// marshalled JSON payload, not against Go field values: the JSON is the
+// contract a model reads, and an absent key reads as zero. kubelet-health,
+// control-plane-health and dns-health are real opt-in CLI checks
+// (--kubelet-health, --control-plane-health, --dns-health) that scan.Options
+// gates behind fields triage always leaves false; if they appear in neither
+// checksRun nor checksSkipped, a caller cannot tell "clean" from "never
+// looked" for any of them.
+func TestTriage_CoverageJSONNamesAllSevenSkippedChecks(t *testing.T) {
+	// Logs: true moves log-tails into checksRun, so checksSkipped holds
+	// exactly the seven checks this test enumerates and the count assertion
+	// below is not coupled to an eighth, unrelated entry.
+	cs := connect(t, Config{Context: "kind-example", Logs: true}, fake.NewSimpleClientset())
+
+	res, err := cs.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "kubeagent_triage", Arguments: map[string]any{}})
+	if err != nil {
+		t.Fatalf("CallTool() error = %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("CallTool() returned an error result: %+v", res.Content)
+	}
+
+	blob, err := json.Marshal(res.StructuredContent)
+	if err != nil {
+		t.Fatalf("Marshal(structured) error = %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(blob, &payload); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+
+	coverage, ok := payload["coverage"].(map[string]any)
+	if !ok {
+		t.Fatalf("payload[\"coverage\"] = %T, want an object", payload["coverage"])
+	}
+	skipped, ok := coverage["checksSkipped"].([]any)
+	if !ok {
+		t.Fatalf("coverage[\"checksSkipped\"] = %T, want an array", coverage["checksSkipped"])
+	}
+
+	reasons := map[string]string{}
+	for _, entry := range skipped {
+		e, ok := entry.(map[string]any)
+		if !ok {
+			t.Fatalf("checksSkipped entry = %T, want an object", entry)
+		}
+		check, _ := e["check"].(string)
+		why, _ := e["why"].(string)
+		reasons[check] = why
+	}
+
+	want := []string{
+		"credential-lint", "disk-usage", "security", "certificates",
+		"kubelet-health", "control-plane-health", "dns-health",
+	}
+	for _, name := range want {
+		why, declared := reasons[name]
+		if !declared {
+			t.Errorf("checksSkipped JSON does not mention %q; it is a real opt-in CLI check "+
+				"(scan.Options gates it behind a field triage leaves false), so its absence must be "+
+				"stated rather than read as zero", name)
+			continue
+		}
+		if why == "" {
+			t.Errorf("checksSkipped[%q].why is empty in the JSON payload", name)
+		}
+	}
+	if len(reasons) != len(want) {
+		t.Errorf("checksSkipped has %d distinct entries %v, want exactly the %d named in %v",
+			len(reasons), reasons, len(want), want)
+	}
+}

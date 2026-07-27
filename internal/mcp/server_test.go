@@ -2,6 +2,8 @@ package mcp
 
 import (
 	"context"
+	"errors"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -85,5 +87,66 @@ func TestServer_UnknownToolIsAProtocolError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unknown tool") {
 		t.Errorf("error = %q, want it to name the unknown tool", err)
+	}
+}
+
+// TestGuard_PanicWithURLErrorRedactsPathAndQuery drives guard directly with a
+// handler that panics with a *url.Error, the same shape net/http returns when
+// a client library's request fails. redact.Error's own contract keeps
+// scheme://host and drops everything else — guard's recover path must not
+// bypass that by flattening the panic value with %v before redacting, which
+// discards the error chain errors.As needs to find the *url.Error at all.
+func TestGuard_PanicWithURLErrorRedactsPathAndQuery(t *testing.T) {
+	h := guard("kubeagent_test",
+		func(context.Context, *mcpsdk.CallToolRequest, struct{}) (*mcpsdk.CallToolResult, struct{}, error) {
+			panic(&url.Error{
+				Op:  "Post",
+				URL: "https://alerts.example.com/hooks/FAKE-TOKEN?token=FAKE-SECRET",
+				Err: errors.New("connection refused"),
+			})
+		})
+
+	res, out, err := h(context.Background(), nil, struct{}{})
+	if err == nil {
+		t.Fatal("err = nil, want the panic surfaced as an error")
+	}
+	if res != nil {
+		t.Errorf("res = %+v, want nil on a recovered panic", res)
+	}
+	if out != (struct{}{}) {
+		t.Errorf("out = %+v, want the zero value on a recovered panic", out)
+	}
+
+	got := err.Error()
+	if !strings.Contains(got, "https://alerts.example.com") {
+		t.Errorf("error = %q, want it to keep scheme://host %q", got, "https://alerts.example.com")
+	}
+	for _, leak := range []string{"hooks", "FAKE-TOKEN", "FAKE-SECRET", "token="} {
+		if strings.Contains(got, leak) {
+			t.Errorf("error = %q, leaks %q from the panicking *url.Error's path/query; "+
+				"guard must redact a panic value the same way it redacts any other error", got, leak)
+		}
+	}
+}
+
+// TestGuard_PanicWithPlainValueProducesWrappedMessage covers the fallback
+// path: a panic value that is not an error (the common case — a string or a
+// runtime error from a nil map write, an index out of range, and so on) has
+// no unwrap chain to preserve, so it is only formatted. This must keep
+// working after the URL-error fix, and must never itself panic — a panic
+// escaping guard's own recover kills the process.
+func TestGuard_PanicWithPlainValueProducesWrappedMessage(t *testing.T) {
+	h := guard("kubeagent_test",
+		func(context.Context, *mcpsdk.CallToolRequest, struct{}) (*mcpsdk.CallToolResult, struct{}, error) {
+			panic("boom")
+		})
+
+	_, _, err := h(context.Background(), nil, struct{}{})
+	if err == nil {
+		t.Fatal("err = nil, want the panic surfaced as an error")
+	}
+	want := "kubeagent_test failed unexpectedly: boom"
+	if err.Error() != want {
+		t.Errorf("error = %q, want %q", err.Error(), want)
 	}
 }

@@ -733,7 +733,6 @@ spec:
       schema:
         openAPIV3Schema: { type: object, x-kubernetes-preserve-unknown-fields: true }
 CRD
-  kubectl --context "$CTX" -n "$ns" apply -f - >/dev/null 2>&1 || true
   sleep 5
   kubectl --context "$CTX" -n "$ns" apply -f - >/dev/null 2>&1 <<'WIDGET' || true
 apiVersion: chaos.example.com/v1

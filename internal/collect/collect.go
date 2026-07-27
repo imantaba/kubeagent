@@ -186,6 +186,23 @@ func NodeMetrics(ctx context.Context, client kubernetes.Interface) (map[string]c
 	return usage, len(usage) > 0, nil
 }
 
+// PodMetrics reads live per-pod usage from metrics-server via a raw GET on the
+// metrics API, keyed "namespace/name". available is false (and err nil) when
+// metrics-server is absent or forbidden, so a scan still succeeds without it —
+// the same contract as NodeMetrics.
+func PodMetrics(ctx context.Context, client kubernetes.Interface) (map[string]corev1.ResourceList, bool, error) {
+	data, err := client.CoreV1().RESTClient().Get().
+		AbsPath("/apis/metrics.k8s.io/v1beta1/pods").DoRaw(ctx)
+	if err != nil {
+		return nil, false, nil // metrics-server absent/forbidden — non-fatal
+	}
+	usage, err := parsePodMetrics(data)
+	if err != nil {
+		return nil, false, err
+	}
+	return usage, len(usage) > 0, nil
+}
+
 // StorageClasses lists all StorageClasses (cluster-scoped, read-only).
 func StorageClasses(ctx context.Context, client kubernetes.Interface) ([]storagev1.StorageClass, error) {
 	scs, err := client.StorageV1().StorageClasses().List(ctx, metav1.ListOptions{})
@@ -522,6 +539,44 @@ func parseNodeMetrics(data []byte) (map[string]corev1.ResourceList, error) {
 			rl[corev1.ResourceName(k)] = q
 		}
 		out[it.Metadata.Name] = rl
+	}
+	return out, nil
+}
+
+// parsePodMetrics decodes a metrics.k8s.io PodMetricsList body into per-pod
+// resource quantities keyed "namespace/name". Unlike NodeMetricsList, usage is
+// reported per container, so each pod's containers are summed.
+func parsePodMetrics(data []byte) (map[string]corev1.ResourceList, error) {
+	var list struct {
+		Items []struct {
+			Metadata struct {
+				Namespace string `json:"namespace"`
+				Name      string `json:"name"`
+			} `json:"metadata"`
+			Containers []struct {
+				Usage map[string]string `json:"usage"`
+			} `json:"containers"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(data, &list); err != nil {
+		return nil, fmt.Errorf("parsing pod metrics: %w", err)
+	}
+	out := make(map[string]corev1.ResourceList, len(list.Items))
+	for _, it := range list.Items {
+		rl := corev1.ResourceList{}
+		for _, c := range it.Containers {
+			for k, v := range c.Usage {
+				q, err := resource.ParseQuantity(v)
+				if err != nil {
+					return nil, fmt.Errorf("parsing usage %q for pod %s/%s: %w",
+						v, it.Metadata.Namespace, it.Metadata.Name, err)
+				}
+				cur := rl[corev1.ResourceName(k)]
+				cur.Add(q)
+				rl[corev1.ResourceName(k)] = cur
+			}
+		}
+		out[it.Metadata.Namespace+"/"+it.Metadata.Name] = rl
 	}
 	return out, nil
 }

@@ -245,8 +245,10 @@ func controllerOwner(refs []metav1.OwnerReference) *metav1.OwnerReference {
 func Assess(nodes []corev1.Node, pods []corev1.Pod, replicaSets []appsv1.ReplicaSet,
 	usage map[string]corev1.ResourceList, namespace string) Report {
 	included, excluded := classifyNodes(nodes, pods)
+	rightSizing := buildRightSizing(pods, replicaSets, included, namespace)
+	attachSamples(rightSizing, pods, replicaSets, usage, namespace)
 	return Report{
 		Headroom:    buildHeadroom(included, excluded, len(nodes), pods),
-		RightSizing: buildRightSizing(pods, replicaSets, included, namespace),
+		RightSizing: rightSizing,
 	}
 }

@@ -180,10 +180,12 @@ func excludeReason(n corev1.Node) string {
 		return "cordoned"
 	}
 	for _, t := range n.Spec.Taints {
-		switch t.Effect {
-		case corev1.TaintEffectNoSchedule:
+		if t.Effect == corev1.TaintEffectNoSchedule {
 			return "NoSchedule taint"
-		case corev1.TaintEffectNoExecute:
+		}
+	}
+	for _, t := range n.Spec.Taints {
+		if t.Effect == corev1.TaintEffectNoExecute {
 			return "NoExecute taint"
 		}
 	}

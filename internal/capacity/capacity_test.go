@@ -74,6 +74,22 @@ func TestClassifyNodesReportsFirstReasonOnly(t *testing.T) {
 	}
 }
 
+// A Ready, uncordoned node carrying both taints reports NoSchedule even when
+// NoExecute appears first in the slice — precedence is defined by effect, not
+// by taint order, per the documented exclusion-reason order.
+func TestClassifyNodesTaintPrecedence(t *testing.T) {
+	n := tainted(tainted(node("both", "4", "16Gi"), corev1.TaintEffectNoExecute), corev1.TaintEffectNoSchedule)
+
+	_, excluded := classifyNodes([]corev1.Node{n}, nil)
+
+	if len(excluded) != 1 {
+		t.Fatalf("want exactly 1 exclusion, got %+v", excluded)
+	}
+	if excluded[0].Reason != "NoSchedule taint" {
+		t.Errorf("want reason NoSchedule taint, got %q", excluded[0].Reason)
+	}
+}
+
 // Terminal pods reserve nothing — the same rule internal/resources already applies.
 func TestClassifyNodesSkipsTerminalPods(t *testing.T) {
 	done := pod("prod", "done", "worker1", "2", "4Gi")

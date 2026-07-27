@@ -91,6 +91,5 @@ func Serve(ctx context.Context, cfg Config, version string) error {
 	return s.Run(ctx, &mcpsdk.StdioTransport{})
 }
 
-// Replaced in the tasks that implement these tools.
-func registerInspect(*mcpsdk.Server, Config, kubernetes.Interface, func() time.Time)  {}
+// Replaced in the task that implements this tool.
 func registerAdvisory(*mcpsdk.Server, Config, kubernetes.Interface, func() time.Time) {}

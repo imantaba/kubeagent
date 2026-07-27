@@ -567,3 +567,40 @@ func TestParsePodMetricsRejectsBadQuantity(t *testing.T) {
 		t.Error("want an error for an unparseable quantity")
 	}
 }
+
+func TestObjectEvents_ReturnsOnlyTheNamedObjectsEvents(t *testing.T) {
+	client := fake.NewSimpleClientset(
+		&corev1.Event{
+			ObjectMeta:     metav1.ObjectMeta{Namespace: "payments", Name: "e1"},
+			InvolvedObject: corev1.ObjectReference{Namespace: "payments", Name: "api-abc"},
+			Reason:         "BackOff", Message: "back-off restarting failed container", Type: "Warning", Count: 5,
+		},
+		&corev1.Event{
+			ObjectMeta:     metav1.ObjectMeta{Namespace: "payments", Name: "e2"},
+			InvolvedObject: corev1.ObjectReference{Namespace: "payments", Name: "other-pod"},
+			Reason:         "Pulled", Message: "image pulled", Type: "Normal", Count: 1,
+		},
+	)
+
+	got, err := ObjectEvents(context.Background(), client, "payments", "api-abc")
+	if err != nil {
+		t.Fatalf("ObjectEvents() error = %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("ObjectEvents() returned %d events, want 1 — the fake clientset ignores field "+
+			"selectors, so the filter must also be applied client-side", len(got))
+	}
+	if got[0].Reason != "BackOff" {
+		t.Errorf("Reason = %q, want %q", got[0].Reason, "BackOff")
+	}
+}
+
+func TestObjectEvents_NoEventsIsNotAnError(t *testing.T) {
+	got, err := ObjectEvents(context.Background(), fake.NewSimpleClientset(), "payments", "api-abc")
+	if err != nil {
+		t.Fatalf("ObjectEvents() error = %v, want nil", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("ObjectEvents() = %v, want none", got)
+	}
+}

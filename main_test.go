@@ -330,6 +330,26 @@ func TestRun_DriftFlagAccepted(t *testing.T) {
 	}
 }
 
+func TestRun_CapacityFlagAccepted(t *testing.T) {
+	// --capacity must be a defined flag: this fails on output-format validation
+	// (before any cluster call), proving the flag parsed rather than erroring with
+	// "flag provided but not defined".
+	err := run([]string{"scan", "--capacity", "--output", "bogus"})
+	if err == nil || !strings.Contains(err.Error(), "unknown output format") {
+		t.Fatalf("want unknown-output-format error (proving the flag parsed), got %v", err)
+	}
+}
+
+func TestRun_UsageMentionsCapacityFlag(t *testing.T) {
+	err := run(nil)
+	if err == nil {
+		t.Fatal("expected a usage error with no args")
+	}
+	if !strings.Contains(err.Error(), "[--drift-age dur] [--capacity] [--logs]") {
+		t.Fatalf("expected the usage string to mention --capacity between --drift-age and --logs, got: %v", err)
+	}
+}
+
 // captureStderr redirects os.Stderr for the duration of f and returns what was
 // written to it. runWatch prints its "alert flags ignored" warning directly to
 // os.Stderr rather than through an injectable writer, so tests that need to
@@ -436,8 +456,8 @@ func TestRun_UsageMentionsOperatorsFlag(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a usage error with no args")
 	}
-	if !strings.Contains(err.Error(), "[--certs [--cert-warn-days n]] [--operators] [--drift] [--drift-age dur] [--logs]") {
-		t.Fatalf("expected the usage string to mention --operators between --certs and --logs, got: %v", err)
+	if !strings.Contains(err.Error(), "[--certs [--cert-warn-days n]] [--operators] [--drift] [--drift-age dur]") {
+		t.Fatalf("expected the usage string to mention --operators between --certs and --drift-age, got: %v", err)
 	}
 }
 
@@ -446,8 +466,8 @@ func TestRun_UsageMentionsDriftFlag(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a usage error with no args")
 	}
-	if !strings.Contains(err.Error(), "[--operators] [--drift] [--drift-age dur] [--logs]") {
-		t.Fatalf("expected the usage string to mention --drift/--drift-age between --operators and --logs, got: %v", err)
+	if !strings.Contains(err.Error(), "[--operators] [--drift] [--drift-age dur] [--capacity]") {
+		t.Fatalf("expected the usage string to mention --drift/--drift-age between --operators and --capacity, got: %v", err)
 	}
 }
 

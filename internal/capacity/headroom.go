@@ -53,9 +53,7 @@ func buildHeadroom(included []nodeCapacity, excluded []NodeExclusion, total int,
 	h.TightestNode = &TightNode{
 		Node: included[tightest].name, Resource: tightestRes, Pct: tightestPct,
 	}
-	// h.NodeLoss is filled by Task 3, which adds nodeloss.go and the one call line
-	// here. The pods parameter exists for it and is unused in this task — an unused
-	// function parameter is legal Go and no placeholder is needed.
+	h.NodeLoss = nodeLoss(included, pods)
 	return h
 }
 

@@ -38,6 +38,11 @@ func registerContexts(s *mcpsdk.Server, cfg Config) {
 		func(_ context.Context, _ *mcpsdk.CallToolRequest, _ ContextsInput) (*mcpsdk.CallToolResult, ContextsOutput, error) {
 			infos, err := cluster.Contexts(cfg.Kubeconfig)
 			if err != nil {
+				// err.Error() is safe here only because cluster.Contexts is
+				// contractually path-free: it discards the underlying error and
+				// returns a fixed message. See its doc comment before changing
+				// either side — a kubeconfig path reaching this string would
+				// cross the MCP boundary.
 				return nil, ContextsOutput{}, errors.New("listing kubeconfig contexts: " + err.Error())
 			}
 			out := ContextsOutput{Contexts: []ContextView{}}

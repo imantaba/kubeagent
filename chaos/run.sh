@@ -22,7 +22,7 @@ while [ $# -gt 0 ]; do
   esac; shift
 done
 
-# Normalize a numeric --only to the zero-padded form used in scenario keys (01..18).
+# Normalize a numeric --only to the zero-padded form used in scenario keys (01..19).
 if [ -n "$ONLY" ] && printf '%s' "$ONLY" | grep -qE '^[0-9]+$'; then ONLY=$(printf '%02d' "$ONLY"); fi
 
 : "${OUT:=docs/testing/chaos-results.md}"
@@ -1019,8 +1019,19 @@ for line in open(sys.argv[1]):
         break
 ' "$out" 2>/dev/null || true)"
 
+  # A bare "0" here would be ambiguous: with no id-2 response at all, $tools is
+  # empty and a count over it is also 0 — the line would read exactly like a
+  # verified pass while nothing was actually checked. The read-only guarantee is
+  # the one claim in this scenario that must never be green by accident, so the
+  # no-response case records as N/A instead of a number.
   local write_verbs
-  write_verbs="$(printf '%s\n' "$tools" | grep -ciE 'fix|apply|delete|patch|create' || true)"
+  if [ -z "$tools" ]; then
+    write_verbs="N/A (no tools/list response — nothing was checked)"
+  else
+    # One name per line, so this counts matching tool NAMES rather than matching
+    # lines — over the single space-joined line it could only ever read 0 or 1.
+    write_verbs="$(printf '%s\n' "$tools" | tr ' ' '\n' | grep -ciE 'fix|apply|delete|patch|create' || true)"
+  fi
 
   local triage
   triage="$(python3 -c '
@@ -1052,12 +1063,12 @@ for line in open(sys.argv[1]):
     cat "$err"
     printf '\n--- gate checks ---\n'
     printf 'tools/list (id 2) tool names:       %s\n' "$tools"
-    printf 'write-verb tool names count:        %s\n' "$write_verbs"
+    printf 'tool names containing a write verb:  %s\n' "$write_verbs"
     printf 'tools/call (id 3) verdict:          %s\n' "${got_verdict:-}"
     printf 'tools/call (id 3) findings count:   %s\n' "${got_findings:-0}"
     printf 'tools/call (id 3) coverage.context: %s\n' "${got_context:-}"
   } | record "19. MCP server over stdio (kubeagent mcp)" \
-    "expect: tools/list (id 2) tool names reads exactly 'kubeagent_advisory kubeagent_inspect kubeagent_triage'; write-verb tool names count reads 0 (no fix/apply/delete/patch/create verb in any tool name — the server exposes no path to a cluster write); tools/call (id 3) verdict reads degraded (the crash-looping pod is a real finding); tools/call (id 3) findings count is at least 1; tools/call (id 3) coverage.context reads $CTX (the --context the server was started with round-trips into the response)"
+    "expect: tools/list (id 2) tool names reads exactly 'kubeagent_advisory kubeagent_inspect kubeagent_triage'; tool names containing a write verb reads 0 — no fix/apply/delete/patch/create verb in any tool name, so the server advertises no path to a cluster write. That line reading N/A is a FAILURE, not a pass: it means no tools/list response arrived and the read-only claim went unchecked; tools/call (id 3) verdict reads degraded (the crash-looping pod is a real finding); tools/call (id 3) findings count is at least 1; tools/call (id 3) coverage.context reads $CTX (the --context the server was started with round-trips into the response)"
 
   rm -f "$out" "$err"
   kubectl --context "$CTX" delete namespace "$ns" --wait=false >/dev/null 2>&1 || true

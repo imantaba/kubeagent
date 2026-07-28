@@ -201,9 +201,13 @@ func TestBlindReasonIsClassifiedNeverEchoed(t *testing.T) {
 			want:   reasonNotServed,
 		},
 		{
-			name:   "a missing resource type, the other wording",
+			// kubectl's "doesn't have a resource type" wording is not one of
+			// these: it comes from client-side RESTMapper resolution in a
+			// package kubeagent does not depend on. It falls through to
+			// reasonUnavailable, which is the safe direction.
+			name:   "kubectl's missing-resource wording, which this binary never produces",
 			reason: `the server doesn't have a resource type "verticalpodautoscalers"`,
-			want:   reasonNotServed,
+			want:   reasonUnavailable,
 		},
 		{
 			name:   "a transport failure",

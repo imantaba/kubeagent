@@ -126,8 +126,12 @@ func safeReason(reason string) string {
 	switch {
 	case strings.Contains(reason, "forbidden"), strings.Contains(reason, "Unauthorized"):
 		return reasonForbidden
-	case strings.Contains(reason, "could not find the requested resource"),
-		strings.Contains(reason, "doesn't have a resource type"):
+	// The 404 wording is apimachinery's own literal, which is what a typed List
+	// against a resource type the cluster does not serve returns. kubectl's
+	// "doesn't have a resource type" wording comes from client-side RESTMapper
+	// resolution in k8s.io/kubectl, which kubeagent does not depend on, so
+	// matching it here would be matching a string this binary cannot produce.
+	case strings.Contains(reason, "could not find the requested resource"):
 		return reasonNotServed
 	default:
 		return reasonUnavailable

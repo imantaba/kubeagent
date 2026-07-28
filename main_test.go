@@ -1957,6 +1957,28 @@ func TestGateScopeOptionsMapToTheRightFields(t *testing.T) {
 	}
 }
 
+func TestGateScanOptionsIncludeTheEnvTunableThresholds(t *testing.T) {
+	// scan.Evaluate clamps an out-of-range or zero threshold back to its own
+	// default, so asserting against that clamped value would pass whether or
+	// not the env var ever reached scan.Options — the same trap the defaults
+	// set for runGate. Using values that differ from both the zero value and
+	// the documented default is the only way to catch that.
+	t.Setenv("KUBEAGENT_QUOTA_THRESHOLD", "0.75")
+	t.Setenv("KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS", "30")
+
+	opts := gateScanOptions("prod")
+
+	if opts.Namespace != "prod" {
+		t.Errorf("Namespace = %q, want %q", opts.Namespace, "prod")
+	}
+	if opts.QuotaThreshold != 0.75 {
+		t.Errorf("QuotaThreshold = %v, want 0.75 (from KUBEAGENT_QUOTA_THRESHOLD)", opts.QuotaThreshold)
+	}
+	if opts.WebhookTimeoutThreshold != 30 {
+		t.Errorf("WebhookTimeoutThreshold = %v, want 30 (from KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS)", opts.WebhookTimeoutThreshold)
+	}
+}
+
 func TestRunGateRejectsANonPositivePollInterval(t *testing.T) {
 	for _, arg := range []string{"--poll-interval=0", "--poll-interval=-1s"} {
 		err := runGate([]string{arg, "--kubeconfig", "/nonexistent-for-this-test"})

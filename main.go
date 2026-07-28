@@ -622,6 +622,21 @@ func scopeTo(opts gate.Options, t rolloutwait.Target) gate.Options {
 	return opts
 }
 
+// gateScanOptions builds the scan.Options runGate hands to scan.Evaluate. It
+// is the only place runGate builds them, and it exists as its own function —
+// rather than a literal inline at the call site — for the same reason
+// scopeTo does: so a test can drive the exact values runGate uses without a
+// live cluster. That matters here because scan.Evaluate clamps an
+// out-of-range or zero threshold back to its own default, which would
+// silently mask a bug where an env var never reached the struct at all.
+func gateScanOptions(namespace string) scan.Options {
+	return scan.Options{
+		Namespace:               namespace,
+		QuotaThreshold:          envFloat("KUBEAGENT_QUOTA_THRESHOLD", 0.90),
+		WebhookTimeoutThreshold: int32(envInt("KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS", 15)),
+	}
+}
+
 // stringList collects a repeatable flag's values.
 type stringList []string
 
@@ -704,10 +719,14 @@ func runGate(args []string) error {
 		}
 	}
 
-	// A bare scan: the opt-in advisory sections are deliberately not exposed on
-	// gate in this slice. Each one is extra API reads and its own gate tests,
-	// and adding them later is additive and breaks no contract.
-	scanRes, err := scan.Evaluate(ctx, client, scan.Options{Namespace: namespace})
+	// A bare scan, configured the same way scan and watch configure it —
+	// including its env-tunable thresholds (KUBEAGENT_QUOTA_THRESHOLD,
+	// KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS) — so gate judges the same default
+	// check set a bare kubeagent scan would flag. The opt-in advisory
+	// sections are deliberately not exposed on gate in this slice: each one
+	// is extra API reads and its own gate tests, and adding them later is
+	// additive and breaks no contract.
+	scanRes, err := scan.Evaluate(ctx, client, gateScanOptions(namespace))
 	if err != nil {
 		// Exit 2 for the same reason the wait uses it: the scan failed outright,
 		// so there is no verdict, and a gate that saw nothing must never report

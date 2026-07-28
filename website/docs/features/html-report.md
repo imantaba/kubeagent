@@ -46,6 +46,14 @@ Whoever shares it names the cluster in the ticket. This is the same rule
 [`kubeagent gate`](ci-gate.md) follows for its verdict, so both shareable
 artifacts behave identically.
 
+That guarantee reaches into the blind-spots block. A read that fails at the
+network level — the API server restarting mid-scan, a timeout — produces an
+error carrying the server's own address, so the document names the resource
+it could not read but shows the reason only when the reason is an API-server
+authorization message, which is composed from the user, verb and resource
+and never from an address. Every other reason is withheld, and `--output
+text` and `--output json` still carry it in full.
+
 **No JavaScript.** The severity filter is pure CSS. There is no external
 stylesheet, font, or image either, so the file opens offline and renders
 under a strict Content-Security-Policy — which is what artifact previews,

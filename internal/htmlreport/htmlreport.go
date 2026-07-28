@@ -18,6 +18,8 @@ import (
 	_ "embed"
 	"html/template"
 	"io"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
@@ -71,7 +73,7 @@ type view struct {
 	Generated   string
 	Counts      counts
 	Findings    []findingRow
-	Blind       []scan.ReadFailure
+	Blind       []blindSpot
 	Cluster     clusterhealth.ClusterHealth
 	Workloads   []inventory.Workload
 	Explanation string
@@ -98,6 +100,36 @@ type findingRow struct {
 	Owner     string
 }
 
+// blindSpot is one unreadable resource as the document shows it: the resource
+// named in full, the reason only when safeReason clears it.
+type blindSpot struct{ Resource, Reason string }
+
+// withheldReason replaces a read failure's reason when it cannot be shown to be free of
+// the cluster's address.
+const withheldReason = "the read failed — see --output text or --output json for the reason"
+
+// endpointish matches the three ways an address reaches free-form error text: a URL, a
+// dotted-quad address, and a host:port pair.
+var endpointish = regexp.MustCompile(`://|\b\d{1,3}(?:\.\d{1,3}){3}\b|\b[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?:\d{2,5}\b`)
+
+// safeReason decides whether a read failure's reason can leave the cluster.
+//
+// This document is meant to be forwarded, and its header promises no cluster identity.
+// scan.Result.PartialReads carries whatever error the API returned, passed through
+// redact.Error — which strips a URL's path and userinfo but keeps scheme://host, and
+// which leaves the wrapped transport error free to repeat the address in its own words.
+// Filtering that after the fact would be a deny-list, and every form a deny-list misses
+// is an address in a shared file. So this allows instead: an API-server authorization
+// message is composed from the user, verb and resource and never from the endpoint, so
+// it survives verbatim; anything else is reduced to a fixed phrase, and the detail stays
+// in the text and JSON reports, which are not written to be forwarded.
+func safeReason(reason string) string {
+	if strings.Contains(reason, "forbidden") && !endpointish.MatchString(reason) {
+		return reason
+	}
+	return withheldReason
+}
+
 // Render writes the complete HTML document to w. It performs no cluster calls:
 // everything it needs was collected by the scan that produced in.
 func Render(w io.Writer, in Input) error {
@@ -116,11 +148,15 @@ func newView(in Input) view {
 	if in.Namespace != "" {
 		scope = "namespace " + in.Namespace
 	}
+	blind := make([]blindSpot, 0, len(in.Blind))
+	for _, b := range in.Blind {
+		blind = append(blind, blindSpot{Resource: b.Resource, Reason: safeReason(b.Reason)})
+	}
 	v := view{
 		Version:     in.Version,
 		Scope:       scope,
 		Generated:   now.UTC().Format("2006-01-02 15:04:05 UTC"),
-		Blind:       in.Blind,
+		Blind:       blind,
 		Cluster:     in.Report.Cluster,
 		Workloads:   in.Report.Result.Workloads,
 		Explanation: in.Report.Explanation,

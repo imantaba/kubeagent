@@ -3,6 +3,7 @@ package htmlreport
 import (
 	"bytes"
 	"errors"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/findings"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/redact"
 	"github.com/imantaba/kubeagent/internal/report"
 	"github.com/imantaba/kubeagent/internal/scan"
 )
@@ -148,11 +150,103 @@ func TestRenderLeaksNoIdentity(t *testing.T) {
 			Level: findings.Critical, Kind: "Deployment", Namespace: "shop", Name: "web",
 			Issue: "CrashLoopBackOff", Reason: "container web exited with status 2",
 		}},
+		Blind: []scan.ReadFailure{{
+			Resource: "pods",
+			Reason: redact.Error(&url.Error{
+				Op:  "Get",
+				URL: "https://198.51.100.7:6443/api/v1/pods",
+				Err: errors.New("dial tcp 198.51.100.7:6443: connect: connection refused"),
+			}),
+		}},
 	})
-	for _, banned := range []string{"://", "/home", ".kube", "kubeconfig", "--context"} {
+	for _, banned := range []string{"://", "/home", ".kube", "kubeconfig", "--context", "198.51.100.7", "6443"} {
 		if strings.Contains(got, banned) {
 			t.Errorf("the document contains %q; it must carry no cluster identity and no external reference", banned)
 		}
+	}
+}
+
+// TestBlindReasonIsWithheldUnlessProvablyEndpointFree: the blind-spots block is the one
+// place where free-form, cluster-produced error text reaches a document meant to be
+// forwarded. redact.Error keeps scheme://host, and the wrapped transport error repeats
+// the endpoint in its own words, so rendering the reason verbatim would put the API
+// server's address in a file whose header promises no cluster identity. The reason is
+// therefore allowed through only when it is an API-server authorization message and
+// carries nothing endpoint-shaped; everything else is reduced to a fixed phrase.
+func TestBlindReasonIsWithheldUnlessProvablyEndpointFree(t *testing.T) {
+	transport := redact.Error(&url.Error{
+		Op:  "Get",
+		URL: "https://198.51.100.7:6443/api/v1/namespaces/shop/pods",
+		Err: errors.New("dial tcp 198.51.100.7:6443: connect: connection refused"),
+	})
+
+	cases := []struct {
+		name   string
+		reason string
+		want   string
+	}{
+		{
+			name:   "an authorization message survives verbatim",
+			reason: `pods is forbidden: User "system:serviceaccount:shop:default" cannot list resource "pods" in API group "" in the namespace "shop"`,
+			want:   `pods is forbidden: User "system:serviceaccount:shop:default" cannot list resource "pods" in API group "" in the namespace "shop"`,
+		},
+		{
+			name:   "a transport failure is withheld",
+			reason: transport,
+			want:   withheldReason,
+		},
+		{
+			name:   "a timeout is withheld",
+			reason: "the server was unable to return a response in the time allotted, but may still be processing the request",
+			want:   withheldReason,
+		},
+		{
+			name:   "an authorization message that still carries an endpoint is withheld",
+			reason: `Get https://198.51.100.7:6443: pods is forbidden`,
+			want:   withheldReason,
+		},
+		{
+			name:   "a bare address is withheld",
+			reason: "lookup 198.51.100.7: no such host",
+			want:   withheldReason,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := safeReason(tc.reason); got != tc.want {
+				t.Errorf("safeReason(%q) = %q, want %q", tc.reason, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRenderWithholdsEndpointsFromTheBlindSpotsBlock: the same guarantee, asserted on the
+// rendered bytes rather than on the helper, so a template edit that reaches around
+// safeReason is caught too.
+func TestRenderWithholdsEndpointsFromTheBlindSpotsBlock(t *testing.T) {
+	got := render(t, Input{
+		Report: report.Input{Now: fixedNow},
+		Blind: []scan.ReadFailure{{
+			Resource: "pods in namespace shop",
+			Reason: redact.Error(&url.Error{
+				Op:  "Get",
+				URL: "https://198.51.100.7:6443/api/v1/namespaces/shop/pods",
+				Err: errors.New("dial tcp 198.51.100.7:6443: connect: connection refused"),
+			}),
+		}},
+	})
+
+	for _, leak := range []string{"198.51.100.7", "6443", "https://", "dial tcp"} {
+		if strings.Contains(got, leak) {
+			t.Errorf("rendered document contains %q, which identifies the cluster", leak)
+		}
+	}
+	if !strings.Contains(got, "pods in namespace shop") {
+		t.Error("the resource that could not be read should still be named")
+	}
+	if !strings.Contains(got, withheldReason) {
+		t.Errorf("want the withheld-reason phrase %q in the document", withheldReason)
 	}
 }
 
@@ -184,6 +278,10 @@ func TestRenderReturnsWriteErrors(t *testing.T) {
 // TestRenderBlindSpotsBlock: a document that omits what kubeagent could not read
 // is green-when-blind, and a rendered file is easier to over-trust than an exit
 // code. The block must appear whenever there are partial reads — and only then.
+// The second fixture's reason ("the server could not find the requested
+// resource") deliberately carries no "forbidden" and so is withheld by
+// safeReason: the resource name must still show, but the reason falls back to
+// the fixed phrase rather than the original text.
 func TestRenderBlindSpotsBlock(t *testing.T) {
 	with := render(t, Input{
 		Report:  report.Input{Now: fixedNow},
@@ -196,7 +294,7 @@ func TestRenderBlindSpotsBlock(t *testing.T) {
 	if !strings.Contains(with, "Blind spots") {
 		t.Error("partial reads did not render a blind-spots block")
 	}
-	for _, want := range []string{"pods in namespace restricted", "horizontalpodautoscalers", "could not find the requested resource"} {
+	for _, want := range []string{"pods in namespace restricted", "horizontalpodautoscalers", withheldReason} {
 		if !strings.Contains(with, want) {
 			t.Errorf("blind-spots block is missing %q", want)
 		}

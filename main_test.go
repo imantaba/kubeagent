@@ -31,6 +31,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/pdbhealth"
 	"github.com/imantaba/kubeagent/internal/quotahealth"
 	"github.com/imantaba/kubeagent/internal/remediate"
+	"github.com/imantaba/kubeagent/internal/report"
 	"github.com/imantaba/kubeagent/internal/rolloutwait"
 	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/termhealth"
@@ -2013,5 +2014,98 @@ func TestRunGateNeverExitsOneWithoutAVerdict(t *testing.T) {
 	// channel, not the verdict document.
 	if !strings.Contains(err.Error(), "kubeconfig") {
 		t.Errorf("error %q should say what could not be loaded", err.Error())
+	}
+}
+
+func TestScanAcceptsTheHTMLOutputFormat(t *testing.T) {
+	// An unknown format is rejected before any cluster connection, so the error
+	// text is reachable without a cluster. "html" must not be rejected there.
+	err := run([]string{"scan", "--output", "html", "--kubeconfig", filepath.Join(t.TempDir(), "nope")})
+	if err != nil && strings.Contains(err.Error(), "unknown output format") {
+		t.Fatalf("--output html was rejected as an unknown format: %v", err)
+	}
+}
+
+func TestScanRejectsAnUnknownOutputFormatAndNamesHTML(t *testing.T) {
+	err := run([]string{"scan", "--output", "bogus"})
+	if err == nil {
+		t.Fatal("want an error for an unknown --output format, got nil")
+	}
+	if !strings.Contains(err.Error(), "want text, json or html") {
+		t.Errorf("the rejection must name every accepted format, got: %v", err)
+	}
+}
+
+func TestUsageMentionsTheHTMLOutputFormat(t *testing.T) {
+	err := run([]string{"bogus-subcommand"})
+	if err == nil {
+		t.Fatal("want a usage error, got nil")
+	}
+	if !strings.Contains(err.Error(), "--output text|json|html") {
+		t.Errorf("usage must advertise the html format on scan, got: %v", err)
+	}
+}
+
+// TestRenderScanRoutesHTMLWithEveryFieldPlumbed is the regression guard the
+// helper exists for: it drives the exact call runScan makes, so a field that
+// silently never reaches htmlreport.Input fails here rather than shipping.
+func TestRenderScanRoutesHTMLWithEveryFieldPlumbed(t *testing.T) {
+	res := scan.Result{
+		PartialReads: []scan.ReadFailure{{Resource: "horizontalpodautoscalers", Reason: "forbidden"}},
+		Inventory: inventory.Result{Workloads: []inventory.Workload{{
+			Namespace: "shop", Kind: "Deployment", Name: "web", Desired: 1, Ready: 0,
+			Status: "Degraded", Image: "busybox:1.36",
+			Findings: []diagnose.Finding{{
+				Pod: "shop/web", Issue: "CrashLoopBackOff", Reason: "container repeatedly crashes",
+			}},
+		}}},
+	}
+	in := resultInput(res)
+	in.Now = time.Date(2026, 7, 28, 9, 30, 0, 0, time.UTC)
+
+	var buf bytes.Buffer
+	if err := renderScan(&buf, "html", in, res, "shop"); err != nil {
+		t.Fatalf("renderScan html: %v", err)
+	}
+	got := buf.String()
+	if !strings.HasPrefix(got, "<!doctype html>") {
+		t.Errorf("renderScan did not produce an HTML document, got: %.40q", got)
+	}
+	// Namespace reached htmlreport.Input.
+	if !strings.Contains(got, "namespace shop") {
+		t.Error("the -n value did not reach the document header")
+	}
+	// findings.Flatten reached htmlreport.Input.
+	if !strings.Contains(got, "CrashLoopBackOff") {
+		t.Error("the flattened findings did not reach the document")
+	}
+	// scan.Result.PartialReads reached htmlreport.Input.
+	if !strings.Contains(got, "horizontalpodautoscalers") {
+		t.Error("the partial reads did not reach the blind-spots block")
+	}
+	// report.Input reached htmlreport.Input.
+	if !strings.Contains(got, "busybox:1.36") {
+		t.Error("the report.Input workloads did not reach the inventory section")
+	}
+}
+
+// TestRenderScanLeavesTextAndJSONOnTheOldPath: the new branch must not change
+// what the two shipped formats emit.
+func TestRenderScanLeavesTextAndJSONOnTheOldPath(t *testing.T) {
+	res := scan.Result{}
+	in := resultInput(res)
+	in.Now = time.Date(2026, 7, 28, 9, 30, 0, 0, time.UTC)
+
+	for _, format := range []string{"text", "json"} {
+		var viaHelper, viaReport bytes.Buffer
+		if err := renderScan(&viaHelper, format, in, res, ""); err != nil {
+			t.Fatalf("renderScan %s: %v", format, err)
+		}
+		if err := report.PrintInventory(in, format, &viaReport); err != nil {
+			t.Fatalf("PrintInventory %s: %v", format, err)
+		}
+		if viaHelper.String() != viaReport.String() {
+			t.Errorf("renderScan changed the %s output", format)
+		}
 	}
 }

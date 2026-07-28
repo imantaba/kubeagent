@@ -957,12 +957,118 @@ SHAPES
   kubectl --context "$CTX" delete ns "$ns" --wait=true --timeout=120s >/dev/null 2>&1 || true
 }
 
+scenario_19_mcp() {   # kubeagent mcp: the real binary over real stdio, not the fake clientset
+  log "scenario 19: MCP server over stdio (kubeagent mcp)"
+  local ns=chaos-mcp
+  kubectl --context "$CTX" create namespace "$ns" --dry-run=client -o yaml |
+    kubectl --context "$CTX" apply -f - >/dev/null
+  kubectl --context "$CTX" -n "$ns" run mcp-crasher \
+    --image=busybox --restart=Always -- /bin/sh -c 'exit 1' >/dev/null 2>&1 || true
+
+  # Give it long enough to reach CrashLoopBackOff, so the triage call below has a
+  # real finding to report instead of an empty, unfalsifiable "healthy".
+  local waited=0
+  while [ "$waited" -lt 90 ]; do
+    if kubectl --context "$CTX" -n "$ns" get pod mcp-crasher \
+      -o jsonpath='{.status.containerStatuses[0].state.waiting.reason}' 2>/dev/null |
+      grep -q CrashLoopBackOff; then
+      break
+    fi
+    sleep 5
+    waited=$((waited + 5))
+  done
+
+  local out err
+  out="$(mktemp)"
+  err="$(mktemp)"
+  {
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"chaos","version":"0"}}}'
+    printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+    printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+    printf '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"kubeagent_triage","arguments":{"namespace":"%s"}}}\n' "$ns"
+    # Hold stdin open: closing it while a request is still in flight makes the
+    # server exit with "server is closing: EOF" before it answers (measured
+    # against this harness — the naive `kubectl ... | ./kubeagent mcp` pipeline
+    # without this tail sleep never got a reply).
+    sleep 10
+  } | ./kubeagent mcp --context "$CTX" >"$out" 2>"$err" || true
+
+  # The SDK serves requests concurrently and a probe run here observed the id-3
+  # response land before id-2, so every field below is picked out by response id,
+  # never by line position. set -euo pipefail is in effect for the whole script,
+  # so both python3 extractions and the greps under them are guarded with
+  # `|| true`: a missing or malformed response must record as an empty/0
+  # gate-check line for a human to see, not abort the harness before scenario 1
+  # (the etcd scenario, which must run last) ever gets a chance to run.
+  local tools
+  tools="$(python3 -c '
+import json, sys
+for line in open(sys.argv[1]):
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        msg = json.loads(line)
+    except ValueError:
+        continue
+    if msg.get("id") == 2:
+        try:
+            print(" ".join(sorted(t["name"] for t in msg["result"]["tools"])))
+        except (KeyError, TypeError):
+            pass
+        break
+' "$out" 2>/dev/null || true)"
+
+  local write_verbs
+  write_verbs="$(printf '%s\n' "$tools" | grep -ciE 'fix|apply|delete|patch|create' || true)"
+
+  local triage
+  triage="$(python3 -c '
+import json, sys
+for line in open(sys.argv[1]):
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        msg = json.loads(line)
+    except ValueError:
+        continue
+    if msg.get("id") == 3:
+        try:
+            r = msg["result"]["structuredContent"]
+            print(r["verdict"], len(r["findings"]), r["coverage"]["context"], sep="|")
+        except (KeyError, TypeError):
+            pass
+        break
+' "$out" 2>/dev/null || true)"
+  local got_verdict got_findings got_context
+  IFS='|' read -r got_verdict got_findings got_context <<<"$triage"
+
+  {
+    echo '--- raw stdout (one JSON-RPC response per line) ---'
+    cat "$out"
+    echo
+    echo '--- stderr ---'
+    cat "$err"
+    printf '\n--- gate checks ---\n'
+    printf 'tools/list (id 2) tool names:       %s\n' "$tools"
+    printf 'write-verb tool names count:        %s\n' "$write_verbs"
+    printf 'tools/call (id 3) verdict:          %s\n' "${got_verdict:-}"
+    printf 'tools/call (id 3) findings count:   %s\n' "${got_findings:-0}"
+    printf 'tools/call (id 3) coverage.context: %s\n' "${got_context:-}"
+  } | record "19. MCP server over stdio (kubeagent mcp)" \
+    "expect: tools/list (id 2) tool names reads exactly 'kubeagent_advisory kubeagent_inspect kubeagent_triage'; write-verb tool names count reads 0 (no fix/apply/delete/patch/create verb in any tool name — the server exposes no path to a cluster write); tools/call (id 3) verdict reads degraded (the crash-looping pod is a real finding); tools/call (id 3) findings count is at least 1; tools/call (id 3) coverage.context reads $CTX (the --context the server was started with round-trips into the response)"
+
+  rm -f "$out" "$err"
+  kubectl --context "$CTX" delete namespace "$ns" --wait=false >/dev/null 2>&1 || true
+}
+
 run_scenarios() {
   # 01_etcd runs LAST: stopping the control-plane is the most disruptive fault and
   # etcd/apiserver flap for a while afterwards (and while the API is down even
   # `kubectl wait` can't settle it). Running it last keeps that recovery noise from
   # contaminating the other scenarios' scans.
-  local all=(02_certs 03_diskfull 04_networkpolicy 05_coredns 06_lb 07_oom 08_nsdelete 09_rollout 10_credleak 11_kubelet 12_watch 13_slo 14 15_multicluster 16_operators 17_gitops 18_capacity 01_etcd)
+  local all=(02_certs 03_diskfull 04_networkpolicy 05_coredns 06_lb 07_oom 08_nsdelete 09_rollout 10_credleak 11_kubelet 12_watch 13_slo 14 15_multicluster 16_operators 17_gitops 18_capacity 19_mcp 01_etcd)
   for s in "${all[@]}"; do
     if [ -z "$ONLY" ] || [ "$ONLY" = "${s%%_*}" ]; then "scenario_$s"; fi
   done

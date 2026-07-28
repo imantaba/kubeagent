@@ -39,7 +39,12 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   **strictly read-only toward the cluster** (get/list/watch only; no writes)
   and make **no LLM calls**. `internal/mcp` must never import
   `internal/remediate` or `internal/explain` — there is no code path from the
-  MCP server into a write or into a model call.
+  MCP server into a write or into a model call. One deliberate carve-out:
+  `kubeagent mcp`'s eager startup connection check exits with an error naming
+  the kubeconfig path and context on stderr — the operator's channel, read
+  before the process ever starts serving — while the protocol stream and
+  every tool result stay path-free (see
+  [website/docs/features/mcp.md](website/docs/features/mcp.md)).
 
 ## Commit conventions
 

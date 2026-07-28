@@ -150,16 +150,39 @@ func registerAdvisory(s *mcpsdk.Server, cfg Config, base kubernetes.Interface, s
 			}
 
 			if want["operators"] || want["drift"] || want["capacity"] {
-				pods, podsErr := advisory.ClusterPods(ctx, client, in.Namespace, res.Inputs.Pods)
-				if podsErr != nil {
-					cov.Partial = append(cov.Partial, PartialRead{
-						Resource: "pods (cluster-wide)",
-						Why: redact.Error(podsErr) +
-							"; headroom is computed from namespace " + in.Namespace +
-							" only and overstates free capacity",
-					})
+				// advisory.Assess only reads Inputs.Pods inside its
+				// opts.Capacity branch (capacity.Assess needs cluster-wide
+				// pods to compute node headroom correctly); operators and
+				// drift never touch it. Fetching the cluster-wide list here
+				// unconditionally would be an unrequested LIST the tool's own
+				// description promises not to make, and a failure on it would
+				// mislabel a "capacity" partial-read when capacity was never
+				// requested and has no key in the sections map. So pods stays
+				// the scan's namespace-scoped list — already paid for,
+				// already unused by operators/drift — unless capacity asks
+				// for the cluster-wide one.
+				pods := res.Inputs.Pods
+				if want["capacity"] {
+					var podsErr error
+					pods, podsErr = advisory.ClusterPods(ctx, client, in.Namespace, res.Inputs.Pods)
+					if podsErr != nil {
+						cov.Partial = append(cov.Partial, PartialRead{
+							Resource: "pods (cluster-wide)",
+							Why: redact.Error(podsErr) +
+								"; headroom is computed from namespace " + in.Namespace +
+								" only and overstates free capacity",
+						})
+					}
 				}
 
+				// advisory.Assess lists the CRD-backed resources once for
+				// operators and drift together: operators.Adapters() is a
+				// superset of gitops.Adapters() (it duplicates GitOps's three
+				// kinds alongside cert-manager, CloudNativePG and Longhorn),
+				// so a single collect.OperatorResources call with whichever
+				// table is broadest serves both flags when both are
+				// requested, instead of listing the GitOps CRDs a second
+				// time.
 				adv := advisory.Assess(ctx, client,
 					func() (dynamic.Interface, discovery.DiscoveryInterface, error) {
 						dyn, disco, err := cluster.NewDynamicClients(cfg.Kubeconfig, contextName)

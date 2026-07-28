@@ -275,6 +275,98 @@ func TestAdvisory_ForbiddenCertificatesIsPartialNotClean(t *testing.T) {
 	}
 }
 
+// TestAdvisory_OperatorsOnlyWithNamespaceNeverListsPodsClusterWide covers the
+// bug where registerAdvisory issued an unrequested cluster-wide pod LIST
+// whenever any of operators/drift/capacity was requested, even though only
+// capacity's headroom calculation (internal/advisory/advisory.go's Assess,
+// inside its opts.Capacity branch) ever reads the result. An operators-only,
+// namespace-scoped call must not pay for that list, and when the list would
+// fail it must not blame a section — "capacity" — that was never requested
+// and has no key in the sections map. namespace must be set here: with no
+// namespace, advisory.ClusterPods short-circuits at
+// internal/advisory/advisory.go:157 before this bug can surface (that is why
+// TestAdvisory_DynamicClientFailureNeverLeaksKubeconfigPath, which omits it,
+// does not catch this). Asserts on the marshalled JSON, not the Go value, per
+// this project's json-tag-on-the-wrong-struct history.
+func TestAdvisory_OperatorsOnlyWithNamespaceNeverListsPodsClusterWide(t *testing.T) {
+	cli := fake.NewSimpleClientset()
+	cli.PrependReactor("list", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		if action.GetNamespace() == "" {
+			return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "pods"}, "", nil)
+		}
+		return false, nil, nil
+	})
+
+	cs := connect(t, Config{Context: "kind-example"}, cli)
+
+	res, err := cs.CallTool(context.Background(), &mcpsdk.CallToolParams{
+		Name:      "kubeagent_advisory",
+		Arguments: map[string]any{"sections": []any{"operators"}, "namespace": "payments"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool() error = %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("CallTool() returned an error result: %+v", res.Content)
+	}
+	blob, err := json.Marshal(res.StructuredContent)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if strings.Contains(string(blob), "pods (cluster-wide)") {
+		t.Errorf("marshalled output = %s, contains a %q partial-read entry for an operators-only call; "+
+			"capacity was never requested, the sections map has no capacity key, and this entry "+
+			"misreports a section that is not present", blob, "pods (cluster-wide)")
+	}
+}
+
+// TestAdvisory_CapacityWithNamespaceReportsClusterWidePodListFailure is the
+// companion case: a capacity call, namespaced, where the cluster-wide pod
+// list fails, must still produce a coverage.partial entry naming "pods
+// (cluster-wide)" and explaining that headroom is computed from the
+// requested namespace alone and overstates free capacity — the wording this
+// partial-read entry exists to deliver, which no test asserted before.
+// Asserts on the marshalled JSON, not the Go value.
+func TestAdvisory_CapacityWithNamespaceReportsClusterWidePodListFailure(t *testing.T) {
+	client := fakeClientWithNoMetricsServer(t)
+	cwr, ok := client.(clientWithMetricsRoute)
+	if !ok {
+		t.Fatalf("fakeClientWithNoMetricsServer() returned %T, want clientWithMetricsRoute", client)
+	}
+	cwr.PrependReactor("list", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		if action.GetNamespace() == "" {
+			return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "pods"}, "", nil)
+		}
+		return false, nil, nil
+	})
+
+	cs := connect(t, Config{Context: "kind-example"}, client)
+
+	res, err := cs.CallTool(context.Background(), &mcpsdk.CallToolParams{
+		Name:      "kubeagent_advisory",
+		Arguments: map[string]any{"sections": []any{"capacity"}, "namespace": "payments"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool() error = %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("CallTool() returned an error result: %+v", res.Content)
+	}
+	blob, err := json.Marshal(res.StructuredContent)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	body := string(blob)
+
+	if !strings.Contains(body, `"resource":"pods (cluster-wide)"`) {
+		t.Errorf("marshalled output = %s, want a coverage.partial entry with resource %q", body, "pods (cluster-wide)")
+	}
+	if !strings.Contains(body, "headroom is computed from namespace payments only and overstates free capacity") {
+		t.Errorf("marshalled output = %s, want the partial-read reason to state that headroom is computed "+
+			"from namespace \"payments\" only and overstates free capacity", body)
+	}
+}
+
 // TestAdvisory_SecuritySectionMarshalsAsEmptyArrayNotNull covers a clean
 // cluster: res.SecurityIssues is nil (not []) when the scan finds nothing.
 // Every other section is a pointer-to-struct and never hits this; a nil

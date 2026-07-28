@@ -340,7 +340,13 @@ whereas a protocol fault is opaque to it.
 **Redaction is mandatory on every error path.** client-go errors embed the API
 server URL, and a kubeconfig server URL can carry userinfo or an auth-proxy
 query string — it is a credential. Every string leaving a handler passes through
-`RedactError`, and so does every stderr log line.
+`RedactError`, and so does every stderr log line — with one deliberate
+exception: `kubeagent mcp`'s startup connection failure. It exits the process
+before the server ever begins serving and prints the kubeconfig path and
+context to stderr unredacted, because at that point stderr is the operator's
+diagnostic channel, not something the calling model reads. Everything on the
+protocol stream — every tool result, and every log line once the server is
+actually serving — stays path-free.
 
 **Startup validation is eager.** A missing context, an unreadable kubeconfig, or
 a failed connectivity probe fails before the server speaks JSON-RPC at all, with
@@ -467,9 +473,13 @@ configure and nothing to leak.
 - **`--fix` is unreachable from MCP**, structurally, not by configuration.
 - **Zero outbound calls** other than to the Kubernetes API.
 - **Endpoint URLs and kubeconfigs are credentials.** No log line, error string,
-  tool result, or documentation example carries more than `scheme://host`. An
-  API key never appears as a flag, container argument, `values.yaml` literal, or
-  plain `value:` in a pod environment.
+  tool result, or documentation example carries more than `scheme://host` —
+  except `kubeagent mcp`'s startup connection error on stderr, which names the
+  kubeconfig path and context deliberately: the process has not yet started
+  serving, stderr there is the operator's diagnostic channel, and everything
+  on the protocol stream remains path-free. An API key never appears as a
+  flag, container argument, `values.yaml` literal, or plain `value:` in a pod
+  environment.
 - **Never blur "read-only" into "makes no external calls"** in prose — for the
   MCP server both happen to be true, but they are different claims.
 - Standard-library `flag` package only — no Cobra.

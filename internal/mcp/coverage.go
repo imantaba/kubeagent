@@ -23,6 +23,12 @@ type PartialRead struct {
 // not produce the same payload: ChecksRun says what was examined,
 // ChecksSkipped says what was not and why, and Partial says which lists came
 // back incomplete.
+//
+// Always construct a Coverage via newCoverage, never Coverage{...} directly.
+// A directly-constructed zero value marshals ChecksRun, ChecksSkipped and
+// Partial as JSON null instead of [], and a model reading the result treats
+// null the same as absent — "nothing to report" — when what actually happened
+// is "never looked". newCoverage exists solely to keep that from happening.
 type Coverage struct {
 	Context        string         `json:"context"`
 	NamespaceScope string         `json:"namespaceScope"`

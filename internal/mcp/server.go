@@ -106,6 +106,15 @@ func newServer(cfg Config, version string, client kubernetes.Interface, switchTo
 func Serve(ctx context.Context, cfg Config, version string) error {
 	client, err := cluster.NewClient(cfg.Kubeconfig, cfg.Context)
 	if err != nil {
+		// redact.Error only special-cases *url.Error (see internal/redact); a
+		// kubeconfig-load failure from internal/cluster's restConfig is a
+		// plain fmt.Errorf wrapping the kubeconfig path and context, so it is
+		// not a *url.Error and passes through unredacted, path intact. That
+		// is intended on this one operator-facing path: the process exits
+		// here before it ever starts serving, and this error goes to stderr,
+		// not into any tool result or protocol message. See the disclosure in
+		// website/docs/features/mcp.md ("The startup error on stderr is not
+		// redacted") — do not mistake this for an oversight.
 		return fmt.Errorf("connecting to the cluster: %s", redact.Error(err))
 	}
 	if _, err := client.Discovery().ServerVersion(); err != nil {

@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -31,6 +32,8 @@ import (
 	"github.com/imantaba/kubeagent/internal/diskusage"
 	"github.com/imantaba/kubeagent/internal/dnshealth"
 	"github.com/imantaba/kubeagent/internal/explain"
+	"github.com/imantaba/kubeagent/internal/findings"
+	"github.com/imantaba/kubeagent/internal/gate"
 	"github.com/imantaba/kubeagent/internal/investigate"
 	"github.com/imantaba/kubeagent/internal/mcp"
 	"github.com/imantaba/kubeagent/internal/nodehealth"
@@ -39,6 +42,8 @@ import (
 	"github.com/imantaba/kubeagent/internal/remediate"
 	"github.com/imantaba/kubeagent/internal/report"
 	"github.com/imantaba/kubeagent/internal/resources"
+	"github.com/imantaba/kubeagent/internal/rolloutwait"
+	"github.com/imantaba/kubeagent/internal/sarif"
 	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/watch"
 )
@@ -127,8 +132,11 @@ func run(args []string) error {
 	if len(args) > 0 && args[0] == "mcp" {
 		return runMCP(args[1:])
 	}
+	if len(args) > 0 && args[0] == "gate" {
+		return runGate(args[1:])
+	}
 	if len(args) == 0 || args[0] != "scan" {
-		return fmt.Errorf("usage: %[1]s scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--investigate] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--kubelet-health] [--control-plane-health] [--dns-health] [--certs [--cert-warn-days n]] [--operators] [--drift] [--drift-age dur] [--capacity] [--logs] [--node-heartbeat-threshold dur] [--expected-nodes a,b,…] [--fix [--dry-run|--yes] [--audit-log path]] [--rollback --audit-log path] | %[1]s watch [--kubeconfig path] [--context name (repeatable)] [--cluster-name name] [--include-local] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] [--alert-format json|slack|alertmanager] [--alert-repeat dur] [--slo-target pct] [--explain [--explain-cooldown dur] [--explain-budget n] [--model name]] | %[1]s mcp [--kubeconfig path] [--context name] [--allow-context-switch] [--logs] | %[1]s version", invokedAs)
+		return fmt.Errorf("usage: %[1]s scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--investigate] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--kubelet-health] [--control-plane-health] [--dns-health] [--certs [--cert-warn-days n]] [--operators] [--drift] [--drift-age dur] [--capacity] [--logs] [--node-heartbeat-threshold dur] [--expected-nodes a,b,…] [--fix [--dry-run|--yes] [--audit-log path]] [--rollback --audit-log path] | %[1]s watch [--kubeconfig path] [--context name (repeatable)] [--cluster-name name] [--include-local] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] [--alert-format json|slack|alertmanager] [--alert-repeat dur] [--slo-target pct] [--explain [--explain-cooldown dur] [--explain-budget n] [--model name]] | %[1]s mcp [--kubeconfig path] [--context name] [--allow-context-switch] [--logs] | %[1]s gate [--kubeconfig path] [--context name] [-n namespace] [--wait-for kind/name] [--timeout dur] [--fail-on critical|warning|info] [--allow-partial-read resource (repeatable)] [--output text|json|sarif] | %[1]s version", invokedAs)
 	}
 
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
@@ -601,6 +609,119 @@ func runMCP(args []string) error {
 		AllowContextSwitch: *allowSwitch,
 		Logs:               *logs,
 	}, version)
+}
+
+// stringList collects a repeatable flag's values.
+type stringList []string
+
+func (s *stringList) String() string     { return strings.Join(*s, ",") }
+func (s *stringList) Set(v string) error { *s = append(*s, v); return nil }
+
+// runGate is the CI/CD gate: scan once, judge, and exit with a code a pipeline
+// can branch on. Read-only, and it makes no LLM call — the whole point is a
+// deterministic verdict a build can depend on.
+//
+// Every flag error returns exit 4 rather than writing an empty SARIF document:
+// a valid, empty SARIF would upload as a clean scan, so a typo in a flag name
+// must never read as "no problems found".
+func runGate(args []string) error {
+	fs := flag.NewFlagSet("gate", flag.ContinueOnError)
+	kubeconfig := fs.String("kubeconfig", "", "path to kubeconfig (default: $KUBECONFIG or ~/.kube/config)")
+	contextName := fs.String("context", "", "kubeconfig context to use (default: current-context)")
+	output := fs.String("output", "text", "output format: text | json | sarif")
+	failOn := fs.String("fail-on", "critical", "fail the gate at this severity or above: critical | warning | info")
+	waitFor := fs.String("wait-for", "", "post-deploy verify: wait for this workload's rollout to settle, then judge only it (kind/name, e.g. deployment/api)")
+	timeout := fs.Duration("timeout", 5*time.Minute, "with --wait-for: give up waiting after this long (exit 3)")
+	interval := fs.Duration("poll-interval", 2*time.Second, "with --wait-for: how often to re-read the workload")
+	var allowPartial stringList
+	fs.Var(&allowPartial, "allow-partial-read", "accept that this resource cannot be read, instead of exiting 2 (repeatable, e.g. leases)")
+	var namespace string
+	fs.StringVar(&namespace, "namespace", "", "namespace to judge (default: all namespaces)")
+	fs.StringVar(&namespace, "n", "", "namespace to judge (shorthand)")
+	if err := fs.Parse(args); err != nil {
+		return &exitError{code: gate.CodeUsage, msg: err.Error()}
+	}
+
+	if *output != "text" && *output != "json" && *output != "sarif" {
+		return &exitError{code: gate.CodeUsage,
+			msg: fmt.Sprintf("unknown output format %q (want text, json or sarif)", *output)}
+	}
+	level, err := findings.Parse(*failOn)
+	if err != nil {
+		return &exitError{code: gate.CodeUsage, msg: err.Error()}
+	}
+	if *interval <= 0 {
+		return &exitError{code: gate.CodeUsage,
+			msg: fmt.Sprintf("--poll-interval must be positive, got %s", *interval)}
+	}
+	var target rolloutwait.Target
+	if *waitFor != "" {
+		target, err = rolloutwait.ParseTarget(*waitFor, namespace)
+		if err != nil {
+			return &exitError{code: gate.CodeUsage, msg: err.Error()}
+		}
+	}
+
+	client, err := cluster.NewClient(*kubeconfig, *contextName)
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+
+	opts := gate.Options{FailOn: level, AllowPartialRead: allowPartial}
+	if *waitFor != "" {
+		opts.ScopeKind, opts.ScopeName, opts.ScopeNamespace = target.Kind, target.Name, target.Namespace
+		res, err := rolloutwait.Wait(ctx, client, target, *timeout, *interval, rolloutwait.Real{})
+		if err != nil {
+			if diag, ok := connectivity.Diagnose(err); ok {
+				return fmt.Errorf("%s\ndetails: %w", diag, err)
+			}
+			return err
+		}
+		opts.TimedOut, opts.TimeoutDetail = !res.Settled, res.Detail
+		if *output == "text" {
+			fmt.Fprintf(os.Stdout, "%s/%s in %s: %s\n\n", target.Kind, target.Name, target.Namespace, res.Detail)
+		}
+	}
+
+	// A bare scan: the opt-in advisory sections are deliberately not exposed on
+	// gate in this slice. Each one is extra API reads and its own gate tests,
+	// and adding them later is additive and breaks no contract.
+	scanRes, err := scan.Evaluate(ctx, client, scan.Options{Namespace: namespace})
+	if err != nil {
+		if diag, ok := connectivity.Diagnose(err); ok {
+			return fmt.Errorf("%s\ndetails: %w", diag, err)
+		}
+		return err
+	}
+
+	verdict := gate.Decide(scanRes, opts)
+
+	switch *output {
+	case "json":
+		b, err := json.MarshalIndent(verdict, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stdout, "%s\n", b)
+	case "sarif":
+		b, err := sarif.Render(verdict, version)
+		if err != nil {
+			return err
+		}
+		os.Stdout.Write(b)
+	default:
+		if err := gate.RenderText(os.Stdout, verdict); err != nil {
+			return err
+		}
+	}
+
+	if verdict.Code != gate.CodePass {
+		// The verdict is already on stdout; an empty msg keeps main() from
+		// printing a second, redundant error line.
+		return &exitError{code: verdict.Code}
+	}
+	return nil
 }
 
 // firstNonEmpty returns a if non-empty, else b.

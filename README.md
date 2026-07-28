@@ -407,20 +407,48 @@ never write to the cluster.
 
 ## Install
 
-Prebuilt **linux/amd64** binaries are attached to each
+### As a `kubectl` plugin (krew)
+
+With [krew](https://krew.sigs.k8s.io) installed, install kubeagent from the
+manifest attached to the latest release:
+
+```bash
+kubectl krew install --manifest-url=https://github.com/imantaba/kubeagent/releases/latest/download/kubeagent.yaml
+kubectl kubeagent scan
+```
+
+kubeagent is not in the upstream krew-index yet, so `--manifest-url` is
+required — plain `kubectl krew install kubeagent` will not find it.
+
+Flags go **after** the plugin name; `kubectl` does not forward its own global
+flags to plugins:
+
+```bash
+kubectl kubeagent scan --context prod-eu     # works
+kubectl --context prod-eu kubeagent scan     # does not
+```
+
+### Prebuilt binary
+
+Binaries for **linux/amd64**, **linux/arm64**, **darwin/amd64** and
+**darwin/arm64** are attached to each
 [GitHub Release](https://github.com/imantaba/kubeagent/releases). Download, verify
 the checksum, and run:
 
 ```bash
 VERSION=v1.2.3   # the release you want
+OS=linux; ARCH=amd64
 base="https://github.com/imantaba/kubeagent/releases/download/${VERSION}"
-curl -sSLO "${base}/kubeagent_${VERSION}_linux_amd64.tar.gz"
+curl -sSLO "${base}/kubeagent_${VERSION}_${OS}_${ARCH}.tar.gz"
 curl -sSLO "${base}/SHA256SUMS"
-sha256sum -c SHA256SUMS
-tar xzf "kubeagent_${VERSION}_linux_amd64.tar.gz"
+sha256sum --ignore-missing -c SHA256SUMS
+tar xzf "kubeagent_${VERSION}_${OS}_${ARCH}.tar.gz"
 ./kubeagent version   # prints the build's version
 ./kubeagent scan
 ```
+
+Windows is not published: nothing in this project's test or chaos suite has
+ever run on it.
 
 ### Cutting a release
 
@@ -445,10 +473,11 @@ git tag v1.2.3
 git push origin v1.2.3
 ```
 
-The release workflow runs the tests, builds
-`kubeagent_<version>_linux_amd64.tar.gz` + `SHA256SUMS`, and attaches them to the
-GitHub Release. Every push and PR is checked by the CI workflow (vet + test +
-build).
+The release workflow runs the tests, builds the four platform archives
+(`kubeagent_<version>_{linux,darwin}_{amd64,arm64}.tar.gz`) plus `SHA256SUMS`,
+renders the krew plugin manifest from `krew/kubeagent.yaml.tmpl` with those
+checksums, and attaches everything to the GitHub Release. Every push and PR is
+checked by the CI workflow (vet + test + build).
 
 > A manual dispatch creates the tag at the current commit of the branch it runs
 > on — make sure that branch is at the commit you mean to release before

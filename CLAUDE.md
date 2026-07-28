@@ -11,6 +11,9 @@ prefers Go explained from scratch — see "Learning companion" below).
 - Build: `go build ./...`  (binary: `go build -o kubeagent .`)
 - Test:  `go test ./...`
 - Run:   `./kubeagent scan [--kubeconfig path] [--output text|json]`
+- Or as a `kubectl` plugin (krew): `kubectl kubeagent scan …` — same binary,
+  same flags. `invocationName` in `main.go` reads `argv[0]` so usage and error
+  text name whichever spelling the user typed.
 
 ## Architecture
 
@@ -90,7 +93,9 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   production contract) lives in
   [website/docs/roadmap.md](website/docs/roadmap.md). Update it when a milestone
   ships or the plan shifts.
-- **Theme G slice 1 has shipped:** the MCP server (`kubeagent mcp`), documented
-  in [website/docs/features/mcp.md](website/docs/features/mcp.md). The rest of
-  Theme G — the `kubectl` krew plugin, a CI/CD gate mode, an interactive TUI,
+- **Theme G slices 1 and 2 have shipped:** the MCP server (`kubeagent mcp`),
+  documented in [website/docs/features/mcp.md](website/docs/features/mcp.md),
+  and the `kubectl` krew plugin (`krew/kubeagent.yaml.tmpl` +
+  `scripts/render-krew-manifest.sh`, rendered at release time and never
+  committed). The rest of Theme G — a CI/CD gate mode, an interactive TUI,
   and a shareable HTML report — remains ahead.

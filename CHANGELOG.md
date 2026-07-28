@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`kubectl` plugin via krew** — kubeagent installs as a `kubectl` plugin with
+  `kubectl krew install --manifest-url=https://github.com/imantaba/kubeagent/releases/latest/download/kubeagent.yaml`,
+  after which `kubectl kubeagent scan` works anywhere `kubectl` does. The
+  binary is unchanged: same detectors, same output, same read-only default.
+  Usage and error text now name the command you actually typed, so a plugin
+  user is no longer told to run `kubeagent`, which is not on their `PATH`.
+  Not yet in the upstream krew-index, so `--manifest-url` is required.
+
+### Changed
+
+- **Releases now ship four platforms** — `linux/amd64`, `linux/arm64`,
+  `darwin/amd64` and `darwin/arm64`, each a tarball with the binary, `README.md`
+  and `LICENSE`, all listed in `SHA256SUMS`. The unversioned
+  `kubeagent_linux_amd64.tar.gz` asset is unchanged, so the existing
+  `releases/latest/download/…` quick-install keeps working. The krew manifest
+  is rendered at release time from `krew/kubeagent.yaml.tmpl` with those
+  checksums and attached as `kubeagent.yaml`. Windows is deliberately not
+  published.
+
 ## [0.63.0] - 2026-07-28
 
 ### Added

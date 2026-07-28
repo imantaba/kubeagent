@@ -19,14 +19,26 @@ extras add a plain-English `--explain` summary (one Claude API call), guard-rail
 `--fix` remediation, `--output json`, and an in-cluster [`watch`](features/watch-mode.md)
 daemon that exposes Prometheus metrics.
 
-## Build and run
+## Install and run
+
+As a `kubectl` plugin, via [krew](https://krew.sigs.k8s.io):
+
+```bash
+kubectl krew install --manifest-url=https://github.com/imantaba/kubeagent/releases/latest/download/kubeagent.yaml
+
+# scan: prioritized problem report — cluster health (P1) then workload failures (P2)
+kubectl kubeagent scan
+```
+
+Or build from source and run the binary directly — every command below works
+either way, as `kubectl kubeagent …` or as `./kubeagent …`:
 
 ```bash
 go build -o kubeagent .
-
-# scan: prioritized problem report — cluster health (P1) then workload failures (P2)
 ./kubeagent scan
 ```
+
+See [Install](install.md) for prebuilt binaries and the in-cluster daemon.
 
 ## Flags
 

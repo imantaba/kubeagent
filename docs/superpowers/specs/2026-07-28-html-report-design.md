@@ -53,12 +53,13 @@ A new leaf package, `internal/htmlreport`.
 package htmlreport
 
 // Input is everything the document renders. It is a struct rather than a
-// parameter list because three of the four fields come from different layers.
+// parameter list because the fields come from different layers.
 type Input struct {
-	Report   report.Input        // the presentation view scan already builds
-	Findings []findings.Finding  // severity-ranked, from findings.Flatten
-	Blind    []scan.ReadFailure  // scan.Result.PartialReads
-	Version  string              // main.version, for the header
+	Report    report.Input       // the presentation view scan already builds
+	Findings  []findings.Finding // severity-ranked, from findings.Flatten
+	Blind     []scan.ReadFailure // scan.Result.PartialReads
+	Namespace string             // -n value; "" means all namespaces
+	Version   string             // main.version, for the header
 }
 
 func Render(w io.Writer, in Input) error
@@ -93,10 +94,11 @@ err != nil { return err }`; it becomes:
 render := func() error {
 	if *output == "html" {
 		return htmlreport.Render(os.Stdout, htmlreport.Input{
-			Report:   in,
-			Findings: findings.Flatten(res),
-			Blind:    res.PartialReads,
-			Version:  version,
+			Report:    in,
+			Findings:  findings.Flatten(res),
+			Blind:     res.PartialReads,
+			Namespace: namespace,
+			Version:   version,
 		})
 	}
 	return report.PrintInventory(in, *output, os.Stdout)
@@ -126,6 +128,12 @@ corporate proxies block inline script; none block inline CSS.
 
 kubeagent version · namespace scope (or "all namespaces") · generation timestamp
 · finding counts by severity.
+
+The scope comes from `Input.Namespace` — its own field because `report.Input`
+carries no namespace, and `ClusterHealth.ScopeNote` is not a substitute: it
+names no namespace and is empty for `-n kube-system`
+(`clusterhealth.go:139`). A namespace name is scope, not cluster identity: it
+says which slice was examined, not which cluster or how to reach it.
 
 **No cluster identity.** No context name, no API server URL, no kubeconfig path.
 This is the same rule the v0.65.0 gate verdict follows, so both shareable
@@ -171,9 +179,32 @@ prevent, and a document is easier to over-trust than an exit code.
 
 ### Detail sections
 
-Inventory, cluster health, and whichever advisory sections the flags populated,
-each inside a native `<details>`/`<summary>`, collapsed by default so the
-findings stay above the fold.
+Three, each inside a native `<details>`/`<summary>`, collapsed by default so the
+findings stay above the fold:
+
+1. **Cluster health** — verdict, nodes ready/total, node issues, system issues,
+   scope note, from `in.Report.Cluster`.
+2. **Workload inventory** — `in.Report.Result.Workloads`: namespace, kind, name,
+   ready/desired, status, image, root cause.
+3. **Explanation** — `in.Report.Explanation`, rendered only when non-empty (so
+   only under `--explain`/`--investigate`). One string, high value in a shared
+   document, near-zero cost.
+
+**The opt-in advisory sections are deliberately out of scope for this slice.**
+`report.Input` carries seventeen more (`Resources`, `Platform`, `NodeReserve`,
+`PVCReclaim`, `DiskUsage`, `SecurityIssues`, `KubeletHealth`, `ControlPlane`,
+`DNS`, `Certificates`, `Operators`, `GitOps`, `Capacity`,
+`CredentialWarnings`, `Investigation`, `InvestigationConsulted`,
+`RemediationPlan`), each with its own nested structure. Rendering all of them
+is most of `report.go`'s 1611 lines re-expressed in HTML plus a golden fixture
+to match, which would hold a small, high-value deliverable behind a large one.
+
+Nothing is silently dropped by this: every *finding* those detectors produce
+still reaches the document, because `findings.Flatten` already folds
+`ServiceIssues`, `IngressIssues`, `PVCIssues`, `StuckTerminating`, `PDBIssues`,
+`HPAIssues`, `WebhookIssues`, and `QuotaIssues` into the findings table. What
+is deferred is the *advisory detail* behind the opt-in flags. Adding a section
+later is additive and breaks no contract.
 
 ### Empty cluster
 
@@ -220,14 +251,17 @@ taken minutes apart, should diff to exactly what changed.
   contains none of: a kubeconfig path (`/home`, `/tmp`, `.kube/config`), a
   context name, or an API server URL.
 
-  The assertion is **kubeagent-emitted identity only**, not "no URL anywhere".
-  A real `ErrImagePull` reason legitimately carries
-  `https://index.docker.io/v2/...`, and a blanket `https://` grep would fail on
-  a true positive. The check is precise: none of the identity values exist in
-  `htmlreport.Input` to begin with — the test's job is to catch a future change
-  that adds one. So it asserts against concrete sentinel values (a fixture
-  kubeconfig path and server URL that the renderer is never handed) plus the
-  path fragments above, which no legitimate cluster string contains.
+  The test works by controlling its input: the fixture is deliberately free of
+  paths and URLs, so **any** `://`, `/home`, or `.kube` in the output came from
+  the renderer, not from the data. That makes the assertion non-vacuous — it
+  fails the moment someone adds a server URL or kubeconfig path to the header.
+
+  A blanket "no URL anywhere" rule would be wrong on real data: an
+  `ErrImagePull` reason legitimately carries `https://index.docker.io/v2/...`.
+  That is cluster-supplied content in a finding, not kubeagent disclosing how it
+  connected. Hence the release gate's version of this check (below) greps for
+  its own kubeconfig path, context name, and server URL specifically, rather
+  than for `://`.
 - `internal/report/testdata/golden-scan.txt` stays byte-identical. The text and
   JSON paths are not touched.
 
@@ -244,7 +278,8 @@ terminal.
 
 No dark mode. No print stylesheet. No charts. No embedded logo. No multi-cluster
 aggregation. No `gate --output html`. No migration of `mcp`/`watch`/`report` onto
-`internal/findings`. No partial reads in the text report.
+`internal/findings`. No partial reads in the text report. No opt-in advisory
+sections in the document (see Detail sections).
 
 ## Invariants this slice must not break
 

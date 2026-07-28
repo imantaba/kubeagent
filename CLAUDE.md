@@ -54,6 +54,12 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   only), makes **no LLM calls**, and must never import `internal/remediate` or
   `internal/explain` (see
   [website/docs/features/ci-gate.md](website/docs/features/ci-gate.md)).
+  `internal/htmlreport` (the `scan --output html` renderer) is a different case
+  and is deliberately allowed to reuse `report.Input`, which transitively pulls
+  in `internal/remediate`. The rule above is about capability, not the
+  dependency graph: `Render` takes an `io.Writer` and a value, holds no client
+  and no context, and never reads `RemediationPlan`. It must still never import
+  `internal/remediate`, `internal/explain` or `internal/investigate` directly.
 
 ## Commit conventions
 

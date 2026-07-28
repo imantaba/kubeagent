@@ -68,5 +68,6 @@ nav:
       - Watch mode (daemon): features/watch-mode.md
       - MCP server: features/mcp.md
       - CI/CD gate: features/ci-gate.md
+      - HTML report: features/html-report.md
   - Install: install.md
   - Roadmap: roadmap.md

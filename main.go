@@ -34,6 +34,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/explain"
 	"github.com/imantaba/kubeagent/internal/findings"
 	"github.com/imantaba/kubeagent/internal/gate"
+	"github.com/imantaba/kubeagent/internal/htmlreport"
 	"github.com/imantaba/kubeagent/internal/investigate"
 	"github.com/imantaba/kubeagent/internal/mcp"
 	"github.com/imantaba/kubeagent/internal/nodehealth"
@@ -136,13 +137,13 @@ func run(args []string) error {
 		return runGate(args[1:])
 	}
 	if len(args) == 0 || args[0] != "scan" {
-		return fmt.Errorf("usage: %[1]s scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--investigate] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--kubelet-health] [--control-plane-health] [--dns-health] [--certs [--cert-warn-days n]] [--operators] [--drift] [--drift-age dur] [--capacity] [--logs] [--node-heartbeat-threshold dur] [--expected-nodes a,b,…] [--fix [--dry-run|--yes] [--audit-log path]] [--rollback --audit-log path] | %[1]s watch [--kubeconfig path] [--context name (repeatable)] [--cluster-name name] [--include-local] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] [--alert-format json|slack|alertmanager] [--alert-repeat dur] [--slo-target pct] [--explain [--explain-cooldown dur] [--explain-budget n] [--model name]] | %[1]s mcp [--kubeconfig path] [--context name] [--allow-context-switch] [--logs] | %[1]s gate [--kubeconfig path] [--context name] [-n namespace] [--wait-for kind/name] [--timeout dur] [--fail-on critical|warning|info] [--allow-partial-read resource (repeatable)] [--output text|json|sarif] | %[1]s version", invokedAs)
+		return fmt.Errorf("usage: %[1]s scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json|html] [--explain] [--investigate] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--kubelet-health] [--control-plane-health] [--dns-health] [--certs [--cert-warn-days n]] [--operators] [--drift] [--drift-age dur] [--capacity] [--logs] [--node-heartbeat-threshold dur] [--expected-nodes a,b,…] [--fix [--dry-run|--yes] [--audit-log path]] [--rollback --audit-log path] | %[1]s watch [--kubeconfig path] [--context name (repeatable)] [--cluster-name name] [--include-local] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] [--alert-format json|slack|alertmanager] [--alert-repeat dur] [--slo-target pct] [--explain [--explain-cooldown dur] [--explain-budget n] [--model name]] | %[1]s mcp [--kubeconfig path] [--context name] [--allow-context-switch] [--logs] | %[1]s gate [--kubeconfig path] [--context name] [-n namespace] [--wait-for kind/name] [--timeout dur] [--fail-on critical|warning|info] [--allow-partial-read resource (repeatable)] [--output text|json|sarif] | %[1]s version", invokedAs)
 	}
 
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
 	kubeconfig := fs.String("kubeconfig", "", "path to kubeconfig (default: $KUBECONFIG or ~/.kube/config)")
 	contextName := fs.String("context", "", "kubeconfig context to use (default: current-context)")
-	output := fs.String("output", "text", "output format: text | json")
+	output := fs.String("output", "text", "output format: text | json | html")
 	explainFlag := fs.Bool("explain", false, "summarize findings via one LLM call (needs ANTHROPIC_API_KEY, or KUBEAGENT_EXPLAIN_ENDPOINT for a local OpenAI-compatible model)")
 	investigateFlag := fs.Bool("investigate", false, "agentic read-only investigation of findings via a bounded tool-use loop (needs ANTHROPIC_API_KEY; supersedes --explain)")
 	model := fs.String("model", "", "model for --explain / --investigate (default: $KUBEAGENT_MODEL or claude-opus-4-8; the local model name when KUBEAGENT_EXPLAIN_ENDPOINT is set)")
@@ -180,8 +181,8 @@ func run(args []string) error {
 	}
 
 	// Validate format up front so we fail fast, before touching the network.
-	if *output != "text" && *output != "json" {
-		return fmt.Errorf("unknown output format %q (want text or json)", *output)
+	if *output != "text" && *output != "json" && *output != "html" {
+		return fmt.Errorf("unknown output format %q (want text, json or html)", *output)
 	}
 	// --explain needs Anthropic, or a local OpenAI-compatible endpoint; check before scanning.
 	explainEndpoint := os.Getenv("KUBEAGENT_EXPLAIN_ENDPOINT")
@@ -366,7 +367,7 @@ func run(args []string) error {
 	in.Investigation = investigationReport.Narrative
 	in.InvestigationConsulted = investigationReport.Consulted
 	in.RemediationPlan = fixPlan
-	if err := report.PrintInventory(in, *output, os.Stdout); err != nil {
+	if err := renderScan(os.Stdout, *output, in, res, namespace); err != nil {
 		return err
 	}
 	if *fix || *rollback {
@@ -388,6 +389,25 @@ func run(args []string) error {
 		}
 	}
 	return nil
+}
+
+// renderScan writes the scan output in the requested format. It is its own
+// function — rather than an inline branch at the call site — for the same reason
+// gateScanOptions is: so a test can drive the exact values runScan uses without a
+// live cluster. Inline, the only way to reach the HTML path would be to connect
+// to a cluster, and a field that silently never reached htmlreport.Input would
+// ship unnoticed.
+func renderScan(w io.Writer, format string, in report.Input, res scan.Result, namespace string) error {
+	if format == "html" {
+		return htmlreport.Render(w, htmlreport.Input{
+			Report:    in,
+			Findings:  findings.Flatten(res),
+			Blind:     res.PartialReads,
+			Namespace: namespace,
+			Version:   version,
+		})
+	}
+	return report.PrintInventory(in, format, w)
 }
 
 // resultInput maps every scan.Result-derived field onto a report.Input. Keeping

@@ -24,10 +24,11 @@ additive and breaks no contract.
 
 A fourth subcommand alongside `scan`, `watch`, and `mcp`:
 
-```
+```text
 kubeagent gate [--kubeconfig path] [--context name] [-n namespace]
                [--wait-for kind/name] [--timeout dur]
                [--fail-on critical|warning|info]
+               [--allow-partial-read resource]   (repeatable)
                [--output text|json|sarif]
 ```
 
@@ -78,12 +79,36 @@ one consumer.
 - `Level` — an ordered type, `Info < Warning < Critical`.
 - The finding-kind → level table, in one reviewable place.
 - `Parse(string) (Level, error)` for `--fail-on`.
-- `Flatten(scan.Result) []Finding`, where
-  `Finding{Kind, Namespace, Name, Issue, Reason, Level}`.
+- `Flatten(scan.Result) []Finding`.
 
-It is named for what it owns. A bare severity table with no flattener would push
-the ad-hoc mapping into `gate` anyway, which is the duplication this is meant to
-end.
+```go
+type Finding struct {
+    Level     Level  `json:"level"`
+    Kind      string `json:"kind"`       // Pod, Service, Ingress, …
+    Namespace string `json:"namespace"`
+    Name      string `json:"name"`
+    Issue     string `json:"issue"`      // CrashLoopBackOff, Degraded, …
+    Reason    string `json:"reason"`     // human-readable detail
+    Owner     string `json:"owner,omitempty"` // "Deployment/api" — the workload this hangs off
+}
+```
+
+`Owner` is what makes `--wait-for` scoping possible. A `diagnose.Finding` only
+carries `Pod` as `"namespace/name"` and no controller reference, but
+`scan.Result.Inventory.Workloads` already groups findings under the
+`inventory.Workload` that owns them, so `Flatten` records the owner as it walks
+that structure. Without this field the gate would have to re-derive ownership
+from label selectors.
+
+`internal/findings` is named for what it owns. A bare severity table with no
+flattener would push the ad-hoc mapping into `gate` anyway, which is the
+duplication this is meant to end.
+
+The initial level table mirrors what `scan.Result` already distinguishes:
+`Critical` for a `diagnose.Finding` (a detector matched a concrete failure
+mode), `Warning` for a flagged workload or a `*health.Issue`. `Info` exists in
+the type from the start so `--fail-on info` has a meaning, and so adding an
+informational class later is not a breaking change to `Level`.
 
 **`internal/gate` is its only consumer in this slice.** `mcp/view.go`,
 `watch/issues.go`, and `report.go` keep their current behavior and are not
@@ -113,17 +138,33 @@ safe behavior must not be opt-in.
 A pipeline that genuinely wants to tolerate inconclusive writes
 `kubeagent gate || [ $? -eq 2 ]`, which is explicit at the call site.
 
-Inconclusive is evaluated **within the gate's scope**. `scan.Result.PartialReads`
-already carries what is needed. Concretely, a `ReadFailure` is in scope when
-either of these holds:
+`scan.Result.PartialReads` already carries what is needed. A `ReadFailure` is
+`{Resource, Reason}` — a bare resource name such as `events` or `leases`, with
+**no object identity and no namespace**, because the scan already ran with the
+gate's own namespace scope. There is therefore nothing to narrow it against:
 
-- it is **cluster-scoped or names no namespace** — it could hide anything, so it
-  always counts; or
-- it names the namespace the gate is judging (the `-n` namespace, or the
-  `--wait-for` workload's namespace).
+**Every partial read makes the run inconclusive.** No exceptions derived from
+`--wait-for`, because a failed `events` or `networkpolicies` list in the gate's
+namespace could be hiding a problem with the very workload being verified.
+`--wait-for` narrows which *findings* count; it does not narrow which *blind
+spots* count.
 
-Everything else is reported but does not change the exit code. When the gate is
-judging all namespaces, every partial read is in scope by definition.
+Erring the other way — deciding a partial read is probably unrelated — is the
+green-when-blind failure this design exists to prevent, so the coarse rule is
+the correct one.
+
+The escape hatch is explicit and per-resource:
+
+```
+--allow-partial-read RESOURCE   (repeatable)
+```
+
+A service account deliberately denied `leases` writes
+`--allow-partial-read leases` and the gate stops treating that one blind spot as
+inconclusive. Every other resource still counts. Waived reads are still printed
+and still appear in `inconclusive`, flagged as waived — the operator sees what
+they gave up. `kubeagent gate || [ $? -eq 2 ]` remains available as the blunt
+all-or-nothing form.
 
 ## Text and JSON output
 
@@ -156,7 +197,8 @@ full scan report:
       "namespace": "prod",
       "name": "api-5f9c7d8b4-nk2wv",
       "issue": "CrashLoopBackOff",
-      "reason": "Container repeatedly crashes after starting (container \"api\", restartCount=4)"
+      "reason": "Container repeatedly crashes after starting (container \"api\", restartCount=4)",
+      "owner": "Deployment/api"
     }
   ],
   "reported": [],
@@ -247,13 +289,22 @@ cluster (connect) → collect → scan.Result → findings.Flatten → gate.Deci
 
 ```go
 type Verdict struct {
-    Verdict      string              `json:"verdict"`      // pass|fail|inconclusive|timeout
-    Code         int                 `json:"exitCode"`
-    FailOn       findings.Level      `json:"failOn"`
-    Scope        string              `json:"scope"`
-    Failing      []findings.Finding  `json:"failing"`
-    Reported     []findings.Finding  `json:"reported"`
-    Inconclusive []scan.ReadFailure  `json:"inconclusive"`
+    Verdict      string             `json:"verdict"`   // pass|fail|inconclusive|timeout
+    Code         int                `json:"exitCode"`
+    FailOn       findings.Level     `json:"failOn"`
+    Scope        string             `json:"scope"`
+    Failing      []findings.Finding `json:"failing"`
+    Reported     []findings.Finding `json:"reported"`
+    Inconclusive []Blindspot        `json:"inconclusive"`
+}
+
+// Blindspot is one scan.ReadFailure plus whether --allow-partial-read waived
+// it. Waived entries stay in the document: the operator should see what they
+// chose not to be told about.
+type Blindspot struct {
+    Resource string `json:"resource"`
+    Reason   string `json:"reason"`
+    Waived   bool   `json:"waived"`
 }
 ```
 

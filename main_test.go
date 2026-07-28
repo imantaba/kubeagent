@@ -1971,3 +1971,21 @@ func TestRunGateRejectsANonPositivePollInterval(t *testing.T) {
 		}
 	}
 }
+
+func TestRunGateNeverExitsOneWithoutAVerdict(t *testing.T) {
+	// An unusable kubeconfig is bad input, not a finding: nothing was attempted
+	// against any cluster, so this must be usage (4) and never fail (1).
+	err := runGate([]string{"--kubeconfig", "/nonexistent-for-this-test"})
+	if err == nil {
+		t.Fatal("want an error for an unreadable kubeconfig, got nil")
+	}
+	if got := exitCodeFor(err); got != gate.CodeUsage {
+		t.Errorf("exit code = %d, want %d (usage); %d would claim kubeagent looked and found problems",
+			got, gate.CodeUsage, gate.CodeFail)
+	}
+	// The error still names what failed — this is stderr, the operator's
+	// channel, not the verdict document.
+	if !strings.Contains(err.Error(), "kubeconfig") {
+		t.Errorf("error %q should say what could not be loaded", err.Error())
+	}
+}

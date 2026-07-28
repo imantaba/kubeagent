@@ -662,9 +662,14 @@ func runGate(args []string) error {
 		}
 	}
 
+	// Exit 4, not 1: cluster.NewClient builds a rest.Config and a clientset
+	// without touching the network, so its failures are an unusable kubeconfig
+	// or context — bad input, in the same class as a bad flag. Nothing was
+	// attempted against any cluster, and exit 1 would claim kubeagent looked
+	// and found problems.
 	client, err := cluster.NewClient(*kubeconfig, *contextName)
 	if err != nil {
-		return err
+		return &exitError{code: gate.CodeUsage, msg: err.Error()}
 	}
 	ctx := context.Background()
 
@@ -673,10 +678,14 @@ func runGate(args []string) error {
 		opts.ScopeKind, opts.ScopeName, opts.ScopeNamespace = target.Kind, target.Name, target.Namespace
 		res, err := rolloutwait.Wait(ctx, client, target, *timeout, *interval, rolloutwait.Real{})
 		if err != nil {
+			// Exit 2: the poll reached the cluster and could not read the
+			// workload — an RBAC denial or an unreachable API. That is the same
+			// claim a partial read makes, so it gets the same code.
 			if diag, ok := connectivity.Diagnose(err); ok {
-				return fmt.Errorf("%s\ndetails: %w", diag, err)
+				return &exitError{code: gate.CodeInconclusive,
+					msg: fmt.Sprintf("%s\ndetails: %v", diag, err)}
 			}
-			return err
+			return &exitError{code: gate.CodeInconclusive, msg: err.Error()}
 		}
 		opts.TimedOut, opts.TimeoutDetail = !res.Settled, res.Detail
 		if *output == "text" {
@@ -689,10 +698,14 @@ func runGate(args []string) error {
 	// and adding them later is additive and breaks no contract.
 	scanRes, err := scan.Evaluate(ctx, client, scan.Options{Namespace: namespace})
 	if err != nil {
+		// Exit 2 for the same reason the wait uses it: the scan failed outright,
+		// so there is no verdict, and a gate that saw nothing must never report
+		// the confident failure exit 1 stands for.
 		if diag, ok := connectivity.Diagnose(err); ok {
-			return fmt.Errorf("%s\ndetails: %w", diag, err)
+			return &exitError{code: gate.CodeInconclusive,
+				msg: fmt.Sprintf("%s\ndetails: %v", diag, err)}
 		}
-		return err
+		return &exitError{code: gate.CodeInconclusive, msg: err.Error()}
 	}
 
 	verdict := gate.Decide(scanRes, opts)

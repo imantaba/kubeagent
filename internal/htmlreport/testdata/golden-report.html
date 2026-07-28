@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kubeagent scan report</title>
+<style>
+  :root {
+    --fg: #1a1a1a; --muted: #5c5c5c; --bg: #ffffff; --panel: #f6f6f6;
+    --line: #d8d8d8; --critical: #b3261e; --warning: #8a6100; --info: #35618f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2rem 1.25rem; color: var(--fg); background: var(--bg);
+    font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 68rem; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 .25rem; }
+  h2 { font-size: 1.05rem; margin: 0 0 .5rem; }
+  h3 { font-size: .95rem; margin: .75rem 0 .25rem; }
+  .meta, .tally { margin: .25rem 0; color: var(--muted); font-size: .9rem; }
+  .pill {
+    display: inline-block; padding: .1rem .5rem; margin-right: .4rem;
+    border: 1px solid var(--line); border-radius: 999px; font-size: .8rem;
+  }
+  .pill.critical { color: var(--critical); }
+  .pill.warning { color: var(--warning); }
+  .pill.info { color: var(--info); }
+  section { margin-top: 1.75rem; }
+  table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+  th, td { text-align: left; padding: .4rem .5rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-weight: 600; color: var(--muted); text-transform: uppercase; font-size: .72rem; letter-spacing: .04em; }
+  td.sev { font-weight: 600; white-space: nowrap; }
+  tr.critical td.sev { color: var(--critical); }
+  tr.warning td.sev { color: var(--warning); }
+  tr.info td.sev { color: var(--info); }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85em; }
+  .empty { color: var(--muted); }
+  .blind { background: var(--panel); border-left: 3px solid var(--warning); padding: .75rem 1rem; }
+  .blind p { color: var(--muted); margin: .25rem 0 .5rem; }
+  ul { margin: .5rem 0; padding-left: 1.2rem; }
+  details { border: 1px solid var(--line); border-radius: 4px; padding: .5rem .75rem; margin-bottom: .6rem; }
+  summary { cursor: pointer; font-weight: 600; }
+  details > *:not(summary) { margin-top: .75rem; }
+   
+  .findings > input[type=radio] { position: absolute; opacity: 0; }
+  .filter { margin-bottom: .6rem; }
+  .filter label {
+    display: inline-block; padding: .15rem .6rem; margin-right: .3rem; cursor: pointer;
+    border: 1px solid var(--line); border-radius: 999px; font-size: .8rem; color: var(--muted);
+  }
+  #f-all:checked ~ .filter label[for=f-all],
+  #f-warn:checked ~ .filter label[for=f-warn],
+  #f-crit:checked ~ .filter label[for=f-crit] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+  #f-warn:checked ~ table tr.info,
+  #f-crit:checked ~ table tr.info,
+  #f-crit:checked ~ table tr.warning { display: none; }
+  .findings > input[type=radio]:focus-visible ~ .filter label { outline: 2px solid var(--info); }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <h1>kubeagent scan report</h1>
+  <p class="meta">kubeagent v0.66.0 &middot; namespace shop &middot; generated 2026-07-28 09:30:00 UTC</p>
+  <p class="tally">
+    <span class="pill critical">2 critical</span>
+    <span class="pill warning">1 warning</span>
+    <span class="pill info">1 info</span>
+  </p>
+</header>
+<section class="blind">
+  <h2>Blind spots</h2>
+  <p>kubeagent could not read the following, so the findings below are incomplete.</p>
+  <ul>
+    <li><span class="mono">horizontalpodautoscalers</span> &mdash; forbidden: User cannot list resource &#34;horizontalpodautoscalers&#34;</li>
+  </ul>
+</section>
+
+<section class="findings">
+  <h2>Findings</h2>
+  <input type="radio" name="sev" id="f-all" checked>
+  <input type="radio" name="sev" id="f-warn">
+  <input type="radio" name="sev" id="f-crit">
+  <div class="filter">
+    <label for="f-all">All 4</label>
+    <label for="f-warn">Warning and above 3</label>
+    <label for="f-crit">Critical 2</label>
+  </div>
+  <table>
+    <thead><tr><th>Severity</th><th>Kind</th><th>Namespace</th><th>Name</th><th>Issue</th><th>Reason</th><th>Owner</th></tr></thead>
+    <tbody>
+      <tr class="critical"><td class="sev">critical</td><td>Deployment</td><td>shop</td><td class="mono">web</td><td>CrashLoopBackOff</td><td>container &#34;web&#34; repeatedly crashes after starting</td><td>Deployment/web</td></tr>
+      <tr class="critical"><td class="sev">critical</td><td>Deployment</td><td>shop</td><td class="mono">api</td><td>ImagePullBackOff</td><td>Back-off pulling image &#34;nginx:9.9.9-nope&#34;: not found</td><td>Deployment/api</td></tr>
+      <tr class="warning"><td class="sev">warning</td><td>Service</td><td>shop</td><td class="mono">payments</td><td>NoEndpoints</td><td>no ready endpoints</td><td></td></tr>
+      <tr class="info"><td class="sev">info</td><td>ResourceQuota</td><td>shop</td><td class="mono">compute</td><td>nearing</td><td>requests.cpu 3/4 used</td><td></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="detail">
+  <h2>Detail</h2>
+
+  <details>
+    <summary>Cluster health &mdash; Degraded, 2/4 nodes ready</summary>
+    <p class="empty">node health only — re-run without -n (or with -n kube-system) for the system workload check</p>
+    <h3>Nodes</h3>
+    <ul>
+      <li>worker-2 NotReady: KubeletNotReady — container runtime is down</li>
+      <li>worker-1 kubelet not heartbeating (lease 95s stale)</li>
+    </ul>
+    <h3>System workloads</h3>
+    <ul>
+      <li>kube-system/coredns Degraded 1/2</li>
+    </ul>
+  </details>
+
+  <details>
+    <summary>Workload inventory &mdash; 3</summary>
+    <table>
+      <thead><tr><th>Namespace</th><th>Kind</th><th>Name</th><th>Ready</th><th>Status</th><th>Image</th><th>Root cause</th></tr></thead>
+      <tbody>
+        <tr><td>shop</td><td>Deployment</td><td class="mono">web</td><td>0/3</td><td>Degraded</td><td class="mono">busybox:1.36</td><td>node worker-1 (kubelet not heartbeating)</td></tr>
+        <tr><td>shop</td><td>Deployment</td><td class="mono">api</td><td>0/2</td><td>Degraded</td><td class="mono">nginx:9.9.9-nope</td><td></td></tr>
+        <tr><td>shop</td><td>StatefulSet</td><td class="mono">data</td><td>1/1</td><td>Running</td><td class="mono">postgres:16</td><td></td></tr>
+      </tbody>
+    </table>
+  </details>
+  <details>
+    <summary>Explanation</summary>
+    <p>The shop namespace is degraded because worker-1 stopped heartbeating, which stalled web, and api references an image tag that does not exist.</p>
+  </details>
+</section>
+
+</main>
+</body>
+</html>

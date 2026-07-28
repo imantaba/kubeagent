@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.66.0] - 2026-07-28
+
 ### Added
 
 - **Shareable HTML report** — `kubeagent scan --output html` renders one self-contained HTML document: header with version, namespace scope, timestamp and severity tally; a blind-spots block whenever a read failed; the full findings table with a pure-CSS severity filter; and collapsed detail sections for cluster health, the workload inventory, and the `--explain` narrative. The document carries no JavaScript and no external stylesheet, font, or image, so it opens offline and renders under a strict Content-Security-Policy — and it carries no cluster identity (no context name, no API server URL, no kubeconfig path), the same rule `kubeagent gate`'s verdict follows. Blind-spot reasons are classified rather than quoted — a Kubernetes denial interpolates the authorizer's own error, which names the user and under webhook authorization carries a third-party backend's text, so the document says "permission denied", "the cluster does not serve this resource type" or "the read failed" in kubeagent's words and leaves the exact message to `--output text` and `--output json`. Finding reasons are still quoted verbatim, because that quote is the diagnosis. `--output text` and `--output json` are byte-for-byte unchanged, and `scan`'s exit code is unchanged in both directions. New leaf package `internal/htmlreport`.
@@ -1053,7 +1055,8 @@ infrastructure (a documentation site and a pre-release chaos-test harness).
 - CI (vet/test/build on push & PR) and a release workflow publishing a
   linux/amd64 tarball + `SHA256SUMS` to a GitHub Release.
 
-[Unreleased]: https://github.com/imantaba/kubeagent/compare/v0.65.0...HEAD
+[Unreleased]: https://github.com/imantaba/kubeagent/compare/v0.66.0...HEAD
+[0.66.0]: https://github.com/imantaba/kubeagent/compare/v0.65.0...v0.66.0
 [0.65.0]: https://github.com/imantaba/kubeagent/compare/v0.64.0...v0.65.0
 [0.64.0]: https://github.com/imantaba/kubeagent/compare/v0.63.0...v0.64.0
 [0.63.0]: https://github.com/imantaba/kubeagent/compare/v0.62.0...v0.63.0

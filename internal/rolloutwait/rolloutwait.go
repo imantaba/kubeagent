@@ -83,6 +83,13 @@ func ParseTarget(s, namespace string) (Target, error) {
 // verdict the gate reports as exit 3, not a failure to run. A non-nil error
 // means the API call itself failed, which is a different thing entirely.
 func Wait(ctx context.Context, client kubernetes.Interface, t Target, timeout, interval time.Duration, clk Clock) (Result, error) {
+	// A non-positive interval is the one input that breaks the loop's shape: it
+	// never paces, so against Real it becomes an unpaced Get storm at the API
+	// server and against an injected clock it never advances time at all — a
+	// hang, not a timeout. Refuse it here rather than trust every caller.
+	if interval <= 0 {
+		return Result{}, fmt.Errorf("poll interval must be positive, got %s", interval)
+	}
 	deadline := clk.Now().Add(timeout)
 	for {
 		if err := ctx.Err(); err != nil {

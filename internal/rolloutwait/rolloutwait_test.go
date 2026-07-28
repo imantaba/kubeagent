@@ -158,6 +158,23 @@ func TestWaitReturnsTheAPIError(t *testing.T) {
 	}
 }
 
+func TestWaitRejectsANonPositiveInterval(t *testing.T) {
+	client := fake.NewSimpleClientset(settledDeployment())
+
+	for _, interval := range []time.Duration{0, -time.Second} {
+		_, err := Wait(context.Background(), client,
+			Target{Kind: KindDeployment, Namespace: "prod", Name: "api"},
+			5*time.Minute, interval, newClock())
+		if err == nil {
+			t.Errorf("interval %s: want an error, got nil", interval)
+		}
+	}
+	// It must refuse before touching the cluster, not after a first read.
+	if got := len(client.Actions()); got != 0 {
+		t.Errorf("Wait issued %d call(s) on a rejected interval; want 0", got)
+	}
+}
+
 func TestWaitIssuesOnlyGets(t *testing.T) {
 	client := fake.NewSimpleClientset(settledDeployment())
 

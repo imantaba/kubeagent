@@ -343,12 +343,30 @@ and `version` keep exiting 0/1 exactly as they do today.
 | Nothing at or above `--fail-on` | 0 | verdict; SARIF if requested |
 | Findings at or above `--fail-on` | 1 | verdict; SARIF still written, so CI can upload it and then fail |
 | Partial read in scope, unreachable API, RBAC denial | 2 | verdict; SARIF with `executionSuccessful: false` |
+| The scan or the `--wait-for` poll fails outright | 2 | error on stderr; **no verdict, no SARIF** |
 | `--wait-for` did not settle | 3 | verdict; SARIF with `executionSuccessful: false` |
-| Bad flags or arguments | 4 | usage on stderr; **no SARIF** |
+| Bad flags or arguments, unusable kubeconfig or context | 4 | usage on stderr; **no SARIF** |
 
 The last row matters: writing a valid, empty SARIF document on a usage error
 would upload as a clean scan. A typo in a flag name must not read as "no
 problems found".
+
+The two rows above it draw the line no failure path may cross. Exit 1 is a
+statement — kubeagent saw the cluster and found problems at or above
+`--fail-on` — and a run that produced no verdict has not earned it. So every
+way the gate can fail sorts into exactly one of three buckets:
+
+- **4 — could not start.** Bad flags, or a kubeconfig or context that will not
+  load. Nothing was attempted against any cluster.
+- **2 — started, could not see enough.** A client was built and the run reached
+  the cluster, but the scan or the rollout poll failed, or came back partial.
+  This is the same claim a partial read makes, so it gets the same code.
+- **1 — saw the cluster, found problems.** Only ever from a real verdict.
+
+Config loading is exit 4 rather than 2 because it happens before any API call:
+`cluster.NewClient` builds a `rest.Config` and a clientset without touching the
+network, so its failures are unusable input, not an unreachable cluster. An
+unreachable cluster surfaces later, as read failures, and lands on 2 correctly.
 
 Writing SARIF on exits 1, 2, and 3 is what makes the documented pipeline work:
 

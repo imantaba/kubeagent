@@ -36,6 +36,28 @@
   tr.info td.sev { color: var(--info); }
   .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85em; }
   .empty { color: var(--muted); }
+  .blind { background: var(--panel); border-left: 3px solid var(--warning); padding: .75rem 1rem; }
+  .blind p { color: var(--muted); margin: .25rem 0 .5rem; }
+  ul { margin: .5rem 0; padding-left: 1.2rem; }
+  details { border: 1px solid var(--line); border-radius: 4px; padding: .5rem .75rem; margin-bottom: .6rem; }
+  summary { cursor: pointer; font-weight: 600; }
+  details > *:not(summary) { margin-top: .75rem; }
+  /* Severity filter: radio inputs plus :checked sibling selectors. The document
+     carries no JavaScript, so this keeps working where script is blocked. The
+     inputs must precede the table — `~` matches following siblings only. */
+  .findings > input[type=radio] { position: absolute; opacity: 0; }
+  .filter { margin-bottom: .6rem; }
+  .filter label {
+    display: inline-block; padding: .15rem .6rem; margin-right: .3rem; cursor: pointer;
+    border: 1px solid var(--line); border-radius: 999px; font-size: .8rem; color: var(--muted);
+  }
+  #f-all:checked ~ .filter label[for=f-all],
+  #f-warn:checked ~ .filter label[for=f-warn],
+  #f-crit:checked ~ .filter label[for=f-crit] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+  #f-warn:checked ~ table tr.info,
+  #f-crit:checked ~ table tr.info,
+  #f-crit:checked ~ table tr.warning { display: none; }
+  .findings > input[type=radio]:focus-visible ~ .filter label { outline: 2px solid var(--info); }
 </style>
 </head>
 <body>
@@ -51,9 +73,29 @@
   </p>
 </header>
 
+{{- if .Blind}}
+<section class="blind">
+  <h2>Blind spots</h2>
+  <p>kubeagent could not read the following, so the findings below are incomplete.</p>
+  <ul>
+{{- range .Blind}}
+    <li><span class="mono">{{.Resource}}</span> &mdash; {{.Reason}}</li>
+{{- end}}
+  </ul>
+</section>
+{{- end}}
+
 <section class="findings">
   <h2>Findings</h2>
 {{- if .Findings}}
+  <input type="radio" name="sev" id="f-all" checked>
+  <input type="radio" name="sev" id="f-warn">
+  <input type="radio" name="sev" id="f-crit">
+  <div class="filter">
+    <label for="f-all">All {{.Counts.Total}}</label>
+    <label for="f-warn">Warning and above {{.Counts.AtLeastWarning}}</label>
+    <label for="f-crit">Critical {{.Counts.Critical}}</label>
+  </div>
   <table>
     <thead><tr><th>Severity</th><th>Kind</th><th>Namespace</th><th>Name</th><th>Issue</th><th>Reason</th><th>Owner</th></tr></thead>
     <tbody>
@@ -64,6 +106,56 @@
   </table>
 {{- else}}
   <p class="empty">No findings. Every workload kubeagent could see is healthy.</p>
+{{- end}}
+</section>
+
+<section class="detail">
+  <h2>Detail</h2>
+
+  <details>
+    <summary>Cluster health &mdash; {{.Cluster.Verdict}}, {{.Cluster.NodesReady}}/{{.Cluster.NodesTotal}} nodes ready</summary>
+{{- if .Cluster.ScopeNote}}
+    <p class="empty">{{.Cluster.ScopeNote}}</p>
+{{- end}}
+{{- if .Cluster.NodeIssues}}
+    <h3>Nodes</h3>
+    <ul>
+{{- range .Cluster.NodeIssues}}
+      <li>{{.}}</li>
+{{- end}}
+    </ul>
+{{- end}}
+{{- if .Cluster.SystemIssues}}
+    <h3>System workloads</h3>
+    <ul>
+{{- range .Cluster.SystemIssues}}
+      <li>{{.}}</li>
+{{- end}}
+    </ul>
+{{- end}}
+  </details>
+
+  <details>
+    <summary>Workload inventory &mdash; {{len .Workloads}}</summary>
+{{- if .Workloads}}
+    <table>
+      <thead><tr><th>Namespace</th><th>Kind</th><th>Name</th><th>Ready</th><th>Status</th><th>Image</th><th>Root cause</th></tr></thead>
+      <tbody>
+{{- range .Workloads}}
+        <tr><td>{{.Namespace}}</td><td>{{.Kind}}</td><td class="mono">{{.Name}}</td><td>{{.Ready}}/{{.Desired}}</td><td>{{.Status}}</td><td class="mono">{{.Image}}</td><td>{{.RootCause}}</td></tr>
+{{- end}}
+      </tbody>
+    </table>
+{{- else}}
+    <p class="empty">No workloads in scope.</p>
+{{- end}}
+  </details>
+
+{{- if .Explanation}}
+  <details>
+    <summary>Explanation</summary>
+    <p>{{.Explanation}}</p>
+  </details>
 {{- end}}
 </section>
 

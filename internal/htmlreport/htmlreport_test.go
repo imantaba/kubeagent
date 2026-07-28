@@ -7,8 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/findings"
+	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/report"
+	"github.com/imantaba/kubeagent/internal/scan"
 )
 
 // fixedNow is the clock every test that cares about the timestamp injects.
@@ -175,5 +178,111 @@ func TestRenderReturnsWriteErrors(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "broken pipe") {
 		t.Errorf("Render lost the underlying write error: %v", err)
+	}
+}
+
+// TestRenderBlindSpotsBlock: a document that omits what kubeagent could not read
+// is green-when-blind, and a rendered file is easier to over-trust than an exit
+// code. The block must appear whenever there are partial reads — and only then.
+func TestRenderBlindSpotsBlock(t *testing.T) {
+	with := render(t, Input{
+		Report:  report.Input{Now: fixedNow},
+		Version: "v0.66.0",
+		Blind: []scan.ReadFailure{
+			{Resource: "pods in namespace restricted", Reason: `forbidden: User cannot list resource "pods"`},
+			{Resource: "horizontalpodautoscalers", Reason: "the server could not find the requested resource"},
+		},
+	})
+	if !strings.Contains(with, "Blind spots") {
+		t.Error("partial reads did not render a blind-spots block")
+	}
+	for _, want := range []string{"pods in namespace restricted", "horizontalpodautoscalers", "could not find the requested resource"} {
+		if !strings.Contains(with, want) {
+			t.Errorf("blind-spots block is missing %q", want)
+		}
+	}
+	without := render(t, Input{Report: report.Input{Now: fixedNow}, Version: "v0.66.0"})
+	if strings.Contains(without, "Blind spots") {
+		t.Error("a scan with no partial reads must not render an empty blind-spots block")
+	}
+}
+
+// TestRenderSeverityFilterIsPureCSS pins the mechanism, not just the appearance:
+// the filter must be :checked sibling selectors, because the document has no
+// JavaScript and must keep working where script is blocked.
+func TestRenderSeverityFilterIsPureCSS(t *testing.T) {
+	got := render(t, Input{
+		Report:  report.Input{Now: fixedNow},
+		Version: "v0.66.0",
+		Findings: []findings.Finding{
+			{Level: findings.Critical, Kind: "Deployment", Name: "a", Issue: "CrashLoopBackOff"},
+			{Level: findings.Warning, Kind: "Service", Name: "b", Issue: "NoEndpoints"},
+		},
+	})
+	for _, want := range []string{
+		`id="f-all"`, `id="f-warn"`, `id="f-crit"`,
+		"#f-crit:checked ~ table tr.warning",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("severity filter is missing %q", want)
+		}
+	}
+	if strings.Contains(strings.ToLower(got), "<script") {
+		t.Error("the severity filter must be pure CSS — the document must stay script-free")
+	}
+	if !strings.Contains(got, "Critical 1") || !strings.Contains(got, "Warning and above 2") {
+		t.Error("the filter controls must be labelled with their counts")
+	}
+}
+
+// TestRenderDetailSections: the detail lives behind collapsed <details> so the
+// findings stay above the fold, but it must actually be in the document.
+func TestRenderDetailSections(t *testing.T) {
+	got := render(t, Input{
+		Report: report.Input{
+			Now: fixedNow,
+			Cluster: clusterhealth.ClusterHealth{
+				Verdict: "Degraded", NodesTotal: 3, NodesReady: 2,
+				NodeIssues:   []string{"worker-2 NotReady: KubeletNotReady"},
+				SystemIssues: []string{"kube-system/coredns Degraded 1/2"},
+			},
+			Result: inventory.Result{Workloads: []inventory.Workload{{
+				Namespace: "shop", Kind: "Deployment", Name: "web", Desired: 3, Ready: 1,
+				Status: "Degraded", Image: "busybox:1.36", RootCause: "node worker-2 (NotReady)",
+			}}},
+		},
+		Version: "v0.66.0",
+	})
+	if strings.Count(got, "<details") < 2 {
+		t.Errorf("want at least two <details> sections, got %d", strings.Count(got, "<details"))
+	}
+	if strings.Contains(got, "<details open") {
+		t.Error("detail sections must be collapsed by default so the findings stay above the fold")
+	}
+	for _, want := range []string{
+		"Cluster health", "Degraded", "2/3",
+		"worker-2 NotReady: KubeletNotReady", "kube-system/coredns Degraded 1/2",
+		"Workload inventory", "busybox:1.36", "node worker-2 (NotReady)", "1/3",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("detail sections are missing %q", want)
+		}
+	}
+}
+
+// TestRenderExplanationOnlyWhenPresent: --explain produces one plain-English
+// paragraph worth carrying into a shared document. Without the flag there is no
+// narrative, and an empty section would read as a failure.
+func TestRenderExplanationOnlyWhenPresent(t *testing.T) {
+	with := render(t, Input{
+		Report:  report.Input{Now: fixedNow, Explanation: "The shop namespace is down because worker-2 stopped heartbeating."},
+		Version: "v0.66.0",
+	})
+	if !strings.Contains(with, "worker-2 stopped heartbeating") {
+		t.Error("the --explain narrative did not reach the document")
+	}
+	without := render(t, Input{Report: report.Input{Now: fixedNow}, Version: "v0.66.0"})
+	if strings.Contains(without, "Explanation") {
+		t.Error("a scan without --explain must not render an empty Explanation section")
 	}
 }

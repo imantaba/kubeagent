@@ -104,9 +104,22 @@ func TestRenderTextMarksWaivedBlindSpots(t *testing.T) {
 func TestRenderTextTimeoutShowsTheLastObservedState(t *testing.T) {
 	got := render(t, Verdict{
 		Verdict: "timeout", Code: CodeTimeout, FailOn: findings.Critical, Scope: "Deployment/api in prod",
+		Detail:  "1/3 replicas updated, 2 unavailable",
 		Failing: []findings.Finding{}, Reported: []findings.Finding{}, Inconclusive: []Blindspot{},
 	})
-	if !strings.Contains(got, "GATE: timeout") {
-		t.Errorf("want a timeout verdict line; got:\n%s", got)
+	want := "GATE: timeout — the rollout did not settle (scope: Deployment/api in prod)\n" +
+		"  last observed: 1/3 replicas updated, 2 unavailable\n"
+	if got != want {
+		t.Errorf("RenderText =\n%q\nwant\n%q", got, want)
+	}
+}
+
+func TestRenderTextTimeoutWithoutDetailOmitsTheLine(t *testing.T) {
+	got := render(t, Verdict{
+		Verdict: "timeout", Code: CodeTimeout, FailOn: findings.Critical, Scope: "cluster",
+		Failing: []findings.Finding{}, Reported: []findings.Finding{}, Inconclusive: []Blindspot{},
+	})
+	if strings.Contains(got, "last observed") {
+		t.Errorf("an empty Detail must not print a bare label; got:\n%s", got)
 	}
 }

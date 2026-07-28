@@ -26,6 +26,11 @@ func RenderText(w io.Writer, v Verdict) error {
 	if _, err := fmt.Fprintln(w, headline); err != nil {
 		return err
 	}
+	if v.Verdict == "timeout" && v.Detail != "" {
+		if _, err := fmt.Fprintf(w, "  last observed: %s\n", v.Detail); err != nil {
+			return err
+		}
+	}
 
 	for _, f := range v.Failing {
 		if _, err := fmt.Fprintf(w, "\n  %s  %s %s/%s  %s\n", f.Level, f.Kind, f.Namespace, f.Name, f.Issue); err != nil {

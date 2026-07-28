@@ -172,12 +172,39 @@ func TestDecideTimeoutBeatsEverything(t *testing.T) {
 		PartialReads: []scan.ReadFailure{{Resource: "events", Reason: "forbidden"}},
 	}
 
-	v := Decide(res, Options{FailOn: findings.Critical, TimedOut: true})
+	v := Decide(res, Options{
+		FailOn: findings.Critical, TimedOut: true,
+		TimeoutDetail: "1/3 replicas updated, 2 unavailable",
+	})
 	if v.Code != CodeTimeout {
 		t.Fatalf("Code = %d, want %d", v.Code, CodeTimeout)
 	}
 	if v.Verdict != "timeout" {
 		t.Errorf("Verdict = %q, want timeout", v.Verdict)
+	}
+	if v.Detail != "1/3 replicas updated, 2 unavailable" {
+		t.Errorf("Detail = %q, want the last observed rollout state", v.Detail)
+	}
+}
+
+func TestDecideTimeoutBeatsInconclusiveAlone(t *testing.T) {
+	res := scan.Result{PartialReads: []scan.ReadFailure{{Resource: "events", Reason: "forbidden"}}}
+
+	v := Decide(res, Options{FailOn: findings.Critical, TimedOut: true})
+	if v.Code != CodeTimeout {
+		t.Fatalf("Code = %d, want %d", v.Code, CodeTimeout)
+	}
+}
+
+func TestDecideWaiverForAResourceThatNeverFailedIsInert(t *testing.T) {
+	v := Decide(scan.Result{}, Options{
+		FailOn: findings.Critical, AllowPartialRead: []string{"networkpolicies"},
+	})
+	if v.Code != CodePass {
+		t.Fatalf("Code = %d, want %d", v.Code, CodePass)
+	}
+	if len(v.Inconclusive) != 0 {
+		t.Errorf("Inconclusive = %v, want empty: a waiver must not invent a blind spot", v.Inconclusive)
 	}
 }
 

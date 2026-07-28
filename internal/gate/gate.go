@@ -38,7 +38,9 @@ type Options struct {
 	AllowPartialRead []string
 
 	// TimedOut reports that --wait-for never settled. TimeoutDetail is the last
-	// observed rollout state, for the operator to read.
+	// observed rollout state, which Decide copies into Verdict.Detail so the
+	// operator can read it: "the rollout did not settle" is not actionable on
+	// its own, but "1/3 replicas updated, 2 unavailable" is.
 	TimedOut      bool
 	TimeoutDetail string
 }
@@ -61,6 +63,7 @@ type Verdict struct {
 	Code         int                `json:"exitCode"`
 	FailOn       findings.Level     `json:"failOn"`
 	Scope        string             `json:"scope"`
+	Detail       string             `json:"detail,omitempty"`
 	Failing      []findings.Finding `json:"failing"`
 	Reported     []findings.Finding `json:"reported"`
 	Inconclusive []Blindspot        `json:"inconclusive"`
@@ -94,6 +97,7 @@ func Decide(res scan.Result, opts Options) Verdict {
 	v := Verdict{
 		FailOn:       opts.FailOn,
 		Scope:        "cluster",
+		Detail:       opts.TimeoutDetail,
 		Failing:      []findings.Finding{},
 		Reported:     []findings.Finding{},
 		Inconclusive: []Blindspot{},

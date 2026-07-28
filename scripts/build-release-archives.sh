@@ -4,6 +4,9 @@
 #
 # Usage:  scripts/build-release-archives.sh VERSION OUTDIR
 #
+# A relative OUTDIR is resolved against the repo root (the script cd's there
+# before creating it), not the caller's current directory.
+#
 # Produces, in OUTDIR:
 #   kubeagent_${VERSION}_linux_amd64.tar.gz
 #   kubeagent_${VERSION}_linux_arm64.tar.gz
@@ -32,6 +35,22 @@ cd "$ROOT"
 
 mkdir -p "$OUTDIR"
 OUTDIR="$(cd "$OUTDIR" && pwd)"   # absolute: `tar -C` and the subshell below must agree
+
+# Remove this script's own previous outputs so a reused, dirty OUTDIR starts
+# from a known state. Without this, running twice into the same OUTDIR with
+# different VERSIONs (and no cleanup in between) leaves the earlier run's
+# archives sitting next to the new ones, and the `kubeagent_*.tar.gz` glob
+# below picks them up too — stale checksums land in SHA256SUMS silently, exit
+# code 0. Only the patterns this script creates are removed, and only in
+# OUTDIR itself (no recursion).
+removed=0
+for f in "$OUTDIR"/kubeagent_*.tar.gz "$OUTDIR/SHA256SUMS"; do
+  if [ -e "$f" ]; then
+    rm -f -- "$f"
+    removed=1
+  fi
+done
+[ "$removed" -eq 1 ] && echo "removed stale artifacts from a previous run in $OUTDIR"
 
 stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT

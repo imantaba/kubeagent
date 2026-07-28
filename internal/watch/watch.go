@@ -18,6 +18,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/alertstate"
 	"github.com/imantaba/kubeagent/internal/explain"
 	"github.com/imantaba/kubeagent/internal/oncall"
+	"github.com/imantaba/kubeagent/internal/redact"
 	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/watchstate"
 )
@@ -191,7 +192,7 @@ func newExplainer(ctx context.Context, cfg Config, al *alerter) *oncall.Explaine
 	if cfg.ExplainEndpoint != "" {
 		// The endpoint may carry a token in its URL, so only scheme://host is
 		// ever logged — the same rule the alert webhook follows.
-		backend = alert.RedactURL(cfg.ExplainEndpoint)
+		backend = redact.URL(cfg.ExplainEndpoint)
 		// A local model may need no key at all, so an absent one is not an
 		// error — but a mistyped Secret key looks identical from here, and the
 		// chart marks that key optional. Say which case it is, never the value.
@@ -268,7 +269,7 @@ func newAlerter(ctx context.Context, cfg Config) (*alerter, error) {
 		return nil, err
 	}
 	sink.Start(ctx)
-	log.Printf("kubeagent: alerting enabled (format=%s, repeat=%s, endpoint=%s)", format, cfg.AlertRepeat, alert.RedactURL(cfg.AlertURL))
+	log.Printf("kubeagent: alerting enabled (format=%s, repeat=%s, endpoint=%s)", format, cfg.AlertRepeat, redact.URL(cfg.AlertURL))
 	return &alerter{sink: sink}, nil
 }
 

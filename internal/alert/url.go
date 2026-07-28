@@ -12,41 +12,6 @@ import (
 	"net/url"
 )
 
-// RedactURL reduces a webhook URL to scheme://host, dropping the path, query, and
-// userinfo. Every log line that names the destination goes through it.
-func RedactURL(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme == "" || u.Host == "" {
-		return "(redacted)"
-	}
-	return u.Scheme + "://" + u.Host
-}
-
-// RedactError reduces the *url.Error net/http returns on a failed request down
-// to scheme://host plus the underlying cause, so a caller that only has an error
-// (not the raw URL string) still gets the RedactURL treatment. It exists for
-// callers outside this package — e.g. the watch daemon reporting why a watched
-// cluster is unreachable — whose "webhook" is a Kubernetes API server whose URL
-// can just as validly carry userinfo or an auth-proxy query string.
-//
-// A non-*url.Error passes through unchanged: most failures reaching this point
-// (RBAC, TLS, timeouts) carry no URL at all, and scrubbing them down to "error"
-// would make the message useless to the operator it exists for.
-//
-// The cause is redacted recursively rather than stringified: a redirect chain
-// leaves one *url.Error wrapping another, and calling Err.Error() directly would
-// republish the inner URL the outer one just had scrubbed.
-func RedactError(err error) string {
-	if err == nil {
-		return ""
-	}
-	var ue *url.Error
-	if errors.As(err, &ue) {
-		return ue.Op + " " + RedactURL(ue.URL) + ": " + RedactError(ue.Err)
-	}
-	return err.Error()
-}
-
 // resolveURL validates the destination and, for the alertmanager format, fills in
 // the v2 alerts path when the URL carries none. Its errors never echo the input:
 // url.Parse's own error text embeds the URL, so it is deliberately not wrapped.

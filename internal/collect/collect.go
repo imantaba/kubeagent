@@ -141,6 +141,26 @@ func PVCEvents(ctx context.Context, client kubernetes.Interface, namespace strin
 	return events.Items, nil
 }
 
+// ObjectEvents lists the events attached to one object. The field selector is
+// what a real API server uses to do the filtering server-side; the loop repeats
+// it client-side because client-go's fake clientset ignores field selectors, so
+// without it every test would see every event in the namespace.
+func ObjectEvents(ctx context.Context, client kubernetes.Interface, namespace, name string) ([]corev1.Event, error) {
+	list, err := client.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{
+		FieldSelector: "involvedObject.name=" + name,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]corev1.Event, 0, len(list.Items))
+	for _, e := range list.Items {
+		if e.InvolvedObject.Name == name {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
 // FactsFrom wraps each pod in a diagnose.PodFacts, attaching any of the given
 // events that reference that pod (by InvolvedObject). Pods with no matching
 // events get an empty slice, so status-only detectors are unaffected.

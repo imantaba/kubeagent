@@ -137,7 +137,7 @@ func TestAssessOmitsEmptyKindsButKeepsDenialsAndErrors(t *testing.T) {
 		t.Error("failed list must be kept")
 	}
 	if strings.Contains(flux.Kinds[1].Error, "tok3n") {
-		t.Errorf("Error = %q leaks credentials; it must go through alert.RedactError", flux.Kinds[1].Error)
+		t.Errorf("Error = %q leaks credentials; it must go through redact.Error", flux.Kinds[1].Error)
 	}
 }
 

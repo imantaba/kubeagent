@@ -36,8 +36,8 @@ func TestHumanAge(t *testing.T) {
 		{"future clamps to 0s", now.Add(time.Hour), "0s"},
 	}
 	for _, c := range cases {
-		if got := humanAge(c.t, now); got != c.want {
-			t.Errorf("%s: humanAge = %q, want %q", c.name, got, c.want)
+		if got := HumanAge(c.t, now); got != c.want {
+			t.Errorf("%s: HumanAge = %q, want %q", c.name, got, c.want)
 		}
 	}
 }

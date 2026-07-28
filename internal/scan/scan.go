@@ -34,6 +34,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/pvchealth"
 	"github.com/imantaba/kubeagent/internal/pvcreclaim"
 	"github.com/imantaba/kubeagent/internal/quotahealth"
+	"github.com/imantaba/kubeagent/internal/redact"
 	"github.com/imantaba/kubeagent/internal/rollout"
 	"github.com/imantaba/kubeagent/internal/rollouthealth"
 	"github.com/imantaba/kubeagent/internal/rootcause"
@@ -64,6 +65,14 @@ type Options struct {
 	WebhookTimeoutThreshold int32
 }
 
+// ReadFailure records a collector call that failed. A scan degrades rather
+// than aborting when an optional list is denied, so without this record an
+// RBAC-denied list and a genuinely empty one produce the same output.
+type ReadFailure struct {
+	Resource string
+	Reason   string
+}
+
 // Result is the structured health picture. Inputs and Nodes are exposed so the
 // CLI can compose its extra views (resource summary, platform facts, credential
 // lint, --fix) without re-collecting.
@@ -88,6 +97,10 @@ type Result struct {
 	HPAIssues        []hpahealth.Issue
 	WebhookIssues    []webhookhealth.Issue
 	QuotaIssues      []quotahealth.Issue
+
+	// PartialReads names the collector calls that failed. Empty means every
+	// list this scan attempted answered successfully.
+	PartialReads []ReadFailure
 }
 
 // systemNamespaces are excluded from the security scan when scanning all
@@ -135,6 +148,13 @@ func nonSystemServices(svcs []corev1.Service) []corev1.Service {
 // Evaluate performs the read-only evaluation. The returned error is the raw
 // collection error (callers may wrap it with connectivity.Diagnose).
 func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (Result, error) {
+	var partialReads []ReadFailure
+	note := func(resource string, err error) {
+		if err != nil {
+			partialReads = append(partialReads, ReadFailure{Resource: resource, Reason: redact.Error(err)})
+		}
+	}
+
 	inputs, err := collect.CollectInventory(ctx, client, opts.Namespace)
 	if err != nil {
 		return Result{}, err
@@ -151,8 +171,10 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 		diagnose.ProbeFailureDetector{},
 		diagnose.ConfigErrorDetector{},
 	}
-	attachEvents, _ := collect.VolumeAttachEvents(ctx, client, opts.Namespace)
-	unhealthyEvents, _ := collect.UnhealthyEvents(ctx, client, opts.Namespace)
+	attachEvents, attachErr := collect.VolumeAttachEvents(ctx, client, opts.Namespace)
+	note("events", attachErr)
+	unhealthyEvents, unhealthyErr := collect.UnhealthyEvents(ctx, client, opts.Namespace)
+	note("events", unhealthyErr)
 	events := append(attachEvents, unhealthyEvents...)
 	findings := diagnose.Run(detectors, collect.FactsFrom(inputs.Pods, events))
 	if opts.Logs {
@@ -186,16 +208,20 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	if err != nil {
 		return Result{}, err
 	}
-	leases, _ := collect.NodeLeases(ctx, client)
+	leases, leasesErr := collect.NodeLeases(ctx, client)
+	note("leases", leasesErr)
 	health := clusterhealth.Assess(nodes, clusterhealth.Heartbeat{Leases: leases, Now: time.Now(), Threshold: opts.NodeHeartbeatThreshold}, opts.ExpectedNodes, workloads)
 	health.ScopeNote = clusterhealth.NamespaceScopeNote(opts.Namespace)
 
-	svcs, _ := collect.Services(ctx, client, opts.Namespace)
-	slices, _ := collect.EndpointSlices(ctx, client, opts.Namespace)
+	svcs, svcsErr := collect.Services(ctx, client, opts.Namespace)
+	note("services", svcsErr)
+	slices, slicesErr := collect.EndpointSlices(ctx, client, opts.Namespace)
+	note("endpointslices", slicesErr)
 	backends := svchealth.BackendsFrom(inputs.Deployments, inputs.StatefulSets, inputs.DaemonSets, inputs.Jobs, inputs.CronJobs)
 	serviceIssues := svchealth.Assess(svcs, slices, backends)
 	svchealth.AnnotateEndpointCause(serviceIssues, svcs, inputs.Pods, health.DownNodes)
-	ings, _ := collect.Ingresses(ctx, client, opts.Namespace)
+	ings, ingsErr := collect.Ingresses(ctx, client, opts.Namespace)
+	note("ingresses", ingsErr)
 	ingressIssues := ingresshealth.Assess(ings, svcs, slices, backends, inputs.Pods, health.DownNodes)
 
 	var certReport *certhealth.Report
@@ -222,34 +248,44 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 		securityIssues = secscan.Assess(pods, services, inputs.ReplicaSets)
 	}
 
-	pvcs, _ := collect.PersistentVolumeClaims(ctx, client, opts.Namespace)
-	namespaces, _ := collect.Namespaces(ctx, client) // forbidden/absent → nil, namespace checks skipped
+	pvcs, pvcsErr := collect.PersistentVolumeClaims(ctx, client, opts.Namespace)
+	note("persistentvolumeclaims", pvcsErr)
+	namespaces, namespacesErr := collect.Namespaces(ctx, client) // forbidden/absent → nil, namespace checks skipped
+	note("namespaces", namespacesErr)
 	stuckTerminating := termhealth.Assess(namespaces, inputs.Pods, pvcs, 2*time.Minute, time.Now())
-	pdbs, _ := collect.PodDisruptionBudgets(ctx, client, opts.Namespace) // forbidden/absent → nil, check skipped
+	pdbs, pdbsErr := collect.PodDisruptionBudgets(ctx, client, opts.Namespace) // forbidden/absent → nil, check skipped
+	note("poddisruptionbudgets", pdbsErr)
 	pdbIssues := pdbhealth.Assess(pdbs)
-	hpas, _ := collect.HorizontalPodAutoscalers(ctx, client, opts.Namespace) // forbidden/absent → nil, check skipped
+	hpas, hpasErr := collect.HorizontalPodAutoscalers(ctx, client, opts.Namespace) // forbidden/absent → nil, check skipped
+	note("horizontalpodautoscalers", hpasErr)
 	hpaIssues := hpahealth.Assess(hpas)
 	var webhookIssues []webhookhealth.Issue
 	if opts.Namespace == "" { // webhook backends can live in any namespace; only sound cluster-wide
-		vwc, _ := collect.ValidatingWebhookConfigurations(ctx, client)
-		mwc, _ := collect.MutatingWebhookConfigurations(ctx, client)
+		vwc, vwcErr := collect.ValidatingWebhookConfigurations(ctx, client)
+		note("validatingwebhookconfigurations", vwcErr)
+		mwc, mwcErr := collect.MutatingWebhookConfigurations(ctx, client)
+		note("mutatingwebhookconfigurations", mwcErr)
 		webhookThreshold := opts.WebhookTimeoutThreshold
 		if webhookThreshold <= 0 {
 			webhookThreshold = 15
 		}
 		webhookIssues = webhookhealth.Assess(vwc, mwc, svcs, slices, webhookThreshold)
 	}
-	pvs, _ := collect.PersistentVolumes(ctx, client)
+	pvs, pvsErr := collect.PersistentVolumes(ctx, client)
+	note("persistentvolumes", pvsErr)
 	pvcReclaim := pvcreclaim.Assess(pvcs, pvs)
-	pvcEvents, _ := collect.PVCEvents(ctx, client, opts.Namespace)
-	storageClasses, _ := collect.StorageClasses(ctx, client)
+	pvcEvents, pvcEventsErr := collect.PVCEvents(ctx, client, opts.Namespace)
+	note("events", pvcEventsErr)
+	storageClasses, storageClassesErr := collect.StorageClasses(ctx, client)
+	note("storageclasses", storageClassesErr)
 	pvcIssues := pvchealth.Assess(pvcs, pvcEvents, storageClasses, pvs)
 
 	quotaThreshold := opts.QuotaThreshold
 	if quotaThreshold <= 0 || quotaThreshold > 1 {
 		quotaThreshold = 0.90
 	}
-	quotas, _ := collect.ResourceQuotas(ctx, client, opts.Namespace)
+	quotas, quotasErr := collect.ResourceQuotas(ctx, client, opts.Namespace)
+	note("resourcequotas", quotasErr)
 	quotaIssues := quotahealth.Assess(quotas, quotaThreshold)
 
 	result := inventory.Prioritize(workloads, inventory.Opts{
@@ -257,7 +293,8 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 		IncludeCron:     opts.IncludeCron,
 	})
 
-	nps, _ := collect.NetworkPolicies(ctx, client, opts.Namespace)
+	nps, npsErr := collect.NetworkPolicies(ctx, client, opts.Namespace)
+	note("networkpolicies", npsErr)
 	podLabels := make(map[string]map[string]string, len(inputs.Pods))
 	for _, p := range inputs.Pods {
 		podLabels[p.Namespace+"/"+p.Name] = p.Labels
@@ -271,7 +308,8 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 			}
 		}
 	}
-	failedCreateEvents, _ := collect.FailedCreateEvents(ctx, client, opts.Namespace)
+	failedCreateEvents, failedCreateErr := collect.FailedCreateEvents(ctx, client, opts.Namespace)
+	note("events", failedCreateErr)
 	createhealth.Annotate(result.Workloads, inputs.ReplicaSets, failedCreateEvents)
 	rollouthealth.Annotate(result.Workloads, inputs.Deployments)
 	netpolicy.Annotate(result.Workloads, podLabels, nps)
@@ -331,5 +369,5 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 		dnsReport = dnshealth.Assess(agg, len(cdns), forbidden, unreachable, ratio, 100)
 	}
 
-	return Result{Inputs: inputs, Nodes: nodes, NodeReserve: nodereserve.Assess(nodes), PVCReclaim: pvcReclaim, DiskUsage: diskReport, Health: health, Inventory: result, ServiceIssues: serviceIssues, IngressIssues: ingressIssues, PVCIssues: pvcIssues, SecurityIssues: securityIssues, KubeletHealth: kubeletHealth, ControlPlane: controlPlane, DNS: dnsReport, Certificates: certReport, StuckTerminating: stuckTerminating, PDBIssues: pdbIssues, HPAIssues: hpaIssues, WebhookIssues: webhookIssues, QuotaIssues: quotaIssues}, nil
+	return Result{Inputs: inputs, Nodes: nodes, NodeReserve: nodereserve.Assess(nodes), PVCReclaim: pvcReclaim, DiskUsage: diskReport, Health: health, Inventory: result, ServiceIssues: serviceIssues, IngressIssues: ingressIssues, PVCIssues: pvcIssues, SecurityIssues: securityIssues, KubeletHealth: kubeletHealth, ControlPlane: controlPlane, DNS: dnsReport, Certificates: certReport, StuckTerminating: stuckTerminating, PDBIssues: pdbIssues, HPAIssues: hpaIssues, WebhookIssues: webhookIssues, QuotaIssues: quotaIssues, PartialReads: partialReads}, nil
 }

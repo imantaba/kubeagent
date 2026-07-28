@@ -82,10 +82,13 @@ func HumanSince(rfc3339 string, now time.Time) string {
 	if err != nil {
 		return ""
 	}
-	return humanAge(t, now) + " ago"
+	return HumanAge(t, now) + " ago"
 }
 
-func humanAge(t, now time.Time) string {
+// HumanAge renders the gap between t and now as a compact duration such as
+// "3d", "5h" or "12m". A negative gap (a clock skew, or an object stamped in
+// the future) reads as zero rather than a negative string.
+func HumanAge(t, now time.Time) string {
 	d := now.Sub(t)
 	if d < 0 {
 		d = 0
@@ -335,7 +338,7 @@ func Assemble(in Inputs, findings []diagnose.Finding) []Workload {
 			Name: p.Name, Phase: string(p.Status.Phase), Ready: podReady(p),
 			Restarts: restarts, LastRestart: termTime(last),
 			Node: p.Spec.NodeName, IP: p.Status.PodIP,
-			Age: humanAge(p.CreationTimestamp.Time, time.Now()), Image: podImage(p),
+			Age: HumanAge(p.CreationTimestamp.Time, time.Now()), Image: podImage(p),
 		})
 		podKey[p.Namespace+"/"+p.Name] = k
 	}

@@ -19,7 +19,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"github.com/imantaba/kubeagent/internal/alert"
+	"github.com/imantaba/kubeagent/internal/redact"
 )
 
 // State is one resource's health as its own operator reports it.
@@ -152,7 +152,7 @@ func kindReport(f Fetched) (KindReport, bool) {
 	if f.Err != nil {
 		// A cluster's API URL can carry userinfo or an auth-proxy token, and
 		// client-go wraps it in a *url.Error. Reduce it to scheme://host.
-		k.Error = alert.RedactError(f.Err)
+		k.Error = redact.Error(f.Err)
 	}
 	if k.Forbidden || k.Error != "" {
 		return k, true

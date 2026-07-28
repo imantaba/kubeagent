@@ -1,15 +1,19 @@
 package cluster
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+
+	"github.com/imantaba/kubeagent/internal/redact"
 )
 
 // NewClient builds a Kubernetes clientset from a kubeconfig file.
@@ -78,6 +82,41 @@ func NewInClusterOrKubeconfig(kubeconfigPath, contextName string) (*kubernetes.C
 		return nil, fmt.Errorf("loading in-cluster config: %w", err)
 	}
 	return NewClient(kubeconfigPath, contextName)
+}
+
+// ContextInfo describes one kubeconfig context, with the API server URL
+// already reduced to scheme://host.
+type ContextInfo struct {
+	Name    string
+	Cluster string
+	Server  string
+	Current bool
+}
+
+// Contexts lists the contexts a kubeconfig defines. It deliberately never
+// includes the kubeconfig path, not in the result and not in its errors: a
+// path like ~/.kube/customer-acme-prod names a customer, a cluster and an
+// environment, and this list is served to a remote caller.
+func Contexts(kubeconfigPath string) ([]ContextInfo, error) {
+	path, err := resolveKubeconfig(kubeconfigPath)
+	if err != nil {
+		return nil, errors.New("locating the kubeconfig")
+	}
+	raw, err := clientcmd.LoadFromFile(path)
+	if err != nil {
+		return nil, errors.New("loading the kubeconfig")
+	}
+
+	out := make([]ContextInfo, 0, len(raw.Contexts))
+	for name, c := range raw.Contexts {
+		info := ContextInfo{Name: name, Cluster: c.Cluster, Current: name == raw.CurrentContext}
+		if cl, ok := raw.Clusters[c.Cluster]; ok {
+			info.Server = redact.URL(cl.Server)
+		}
+		out = append(out, info)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
 }
 
 func resolveKubeconfig(explicit string) (string, error) {

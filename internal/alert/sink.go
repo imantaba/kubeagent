@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/imantaba/kubeagent/internal/alertstate"
+	"github.com/imantaba/kubeagent/internal/redact"
 )
 
 const (
@@ -187,13 +188,13 @@ func (s *Sink) deliver(ctx context.Context, n alertstate.Notification) {
 			s.record(n, true)
 			return
 		case err == nil && status < 500:
-			log.Printf("kubeagent: alert for %s rejected by %s: HTTP %d (not retrying)", n.Object, RedactURL(s.url), status)
+			log.Printf("kubeagent: alert for %s rejected by %s: HTTP %d (not retrying)", n.Object, redact.URL(s.url), status)
 			s.record(n, false)
 			return
 		case err != nil:
-			log.Printf("kubeagent: alert delivery to %s failed (attempt %d/%d): %v", RedactURL(s.url), attempt, attempts, err)
+			log.Printf("kubeagent: alert delivery to %s failed (attempt %d/%d): %v", redact.URL(s.url), attempt, attempts, err)
 		default:
-			log.Printf("kubeagent: alert delivery to %s failed (attempt %d/%d): HTTP %d", RedactURL(s.url), attempt, attempts, status)
+			log.Printf("kubeagent: alert delivery to %s failed (attempt %d/%d): HTTP %d", redact.URL(s.url), attempt, attempts, status)
 		}
 		if attempt == attempts {
 			break

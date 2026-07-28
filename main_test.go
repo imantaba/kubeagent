@@ -1848,3 +1848,35 @@ func TestWarnf_NamesTheKubectlPluginInvocation(t *testing.T) {
 		t.Errorf("warnf wrote %q, want %q", got, want)
 	}
 }
+
+func TestExitErrorCarriesItsCode(t *testing.T) {
+	err := &exitError{code: 2, msg: "could not tell"}
+	if err.Error() != "could not tell" {
+		t.Errorf("Error() = %q, want \"could not tell\"", err.Error())
+	}
+	var ee *exitError
+	if !errors.As(error(err), &ee) {
+		t.Fatal("errors.As failed to unwrap an exitError")
+	}
+	if ee.code != 2 {
+		t.Errorf("code = %d, want 2", ee.code)
+	}
+}
+
+func TestExitCodeForNilIsZero(t *testing.T) {
+	if got := exitCodeFor(nil); got != 0 {
+		t.Errorf("exitCodeFor(nil) = %d, want 0", got)
+	}
+}
+
+func TestExitCodeForPlainErrorIsOne(t *testing.T) {
+	if got := exitCodeFor(errors.New("boom")); got != 1 {
+		t.Errorf("exitCodeFor(plain error) = %d, want 1 — existing subcommands must not change behavior", got)
+	}
+}
+
+func TestExitCodeForExitErrorIsItsCode(t *testing.T) {
+	if got := exitCodeFor(&exitError{code: 3, msg: ""}); got != 3 {
+		t.Errorf("exitCodeFor = %d, want 3", got)
+	}
+}

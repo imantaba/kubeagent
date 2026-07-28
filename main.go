@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -76,10 +77,42 @@ func warnf(w io.Writer, format string, args ...any) {
 	fmt.Fprintf(w, "%s: warning: %s\n", invokedAs, fmt.Sprintf(format, args...))
 }
 
+// exitError lets a subcommand choose its process exit status. `gate` publishes
+// a five-code contract a pipeline branches on (see
+// website/docs/features/ci-gate.md); every other subcommand still exits 0 or 1
+// exactly as before, because a plain error is unaffected by this type.
+//
+// An empty msg means the command already reported on stdout and main() should
+// exit quietly rather than print a second, redundant line.
+type exitError struct {
+	code int
+	msg  string
+}
+
+func (e *exitError) Error() string { return e.msg }
+
+// exitCodeFor maps a run() result to a process exit status.
+func exitCodeFor(err error) int {
+	if err == nil {
+		return 0
+	}
+	var ee *exitError
+	if errors.As(err, &ee) {
+		return ee.code
+	}
+	return 1
+}
+
 func main() {
-	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", invokedAs, err)
-		os.Exit(1)
+	err := run(os.Args[1:])
+	if err != nil {
+		var ee *exitError
+		if !errors.As(err, &ee) || ee.msg != "" {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", invokedAs, err)
+		}
+	}
+	if code := exitCodeFor(err); code != 0 {
+		os.Exit(code)
 	}
 }
 

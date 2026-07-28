@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -50,9 +51,34 @@ func versionLine() string {
 	return "kubeagent " + version
 }
 
+// invocationName returns how the user invoked this process, for use in usage
+// and error text. krew installs the binary as ~/.krew/bin/kubectl-kubeagent
+// and kubectl execs it under that name, so argv[0]'s basename tells us which
+// command the user actually typed. Anything else — a plain ./kubeagent, a
+// kubectl-kubeagent directory in the path, a kubectl-kubeagent-extra sibling
+// plugin — is the ordinary binary.
+func invocationName(argv0 string) string {
+	if filepath.Base(argv0) == "kubectl-kubeagent" {
+		return "kubectl kubeagent"
+	}
+	return "kubeagent"
+}
+
+// invokedAs is the command name used in usage and error text, resolved once at
+// startup. Tests override it to exercise the kubectl-plugin spelling.
+var invokedAs = invocationName(os.Args[0])
+
+// warnf writes one non-fatal warning line, prefixed with the name the user
+// actually typed. Warnings go through here rather than a bare Fprintf so a
+// kubectl-plugin user is never told about a "kubeagent" that is not on their
+// PATH. The trailing newline is supplied.
+func warnf(w io.Writer, format string, args ...any) {
+	fmt.Fprintf(w, "%s: warning: %s\n", invokedAs, fmt.Sprintf(format, args...))
+}
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "kubeagent:", err)
+		fmt.Fprintf(os.Stderr, "%s: %v\n", invokedAs, err)
 		os.Exit(1)
 	}
 }
@@ -69,7 +95,7 @@ func run(args []string) error {
 		return runMCP(args[1:])
 	}
 	if len(args) == 0 || args[0] != "scan" {
-		return fmt.Errorf("usage: kubeagent scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--investigate] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--kubelet-health] [--control-plane-health] [--dns-health] [--certs [--cert-warn-days n]] [--operators] [--drift] [--drift-age dur] [--capacity] [--logs] [--node-heartbeat-threshold dur] [--expected-nodes a,b,…] [--fix [--dry-run|--yes] [--audit-log path]] [--rollback --audit-log path] | kubeagent watch [--kubeconfig path] [--context name (repeatable)] [--cluster-name name] [--include-local] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] [--alert-format json|slack|alertmanager] [--alert-repeat dur] [--slo-target pct] [--explain [--explain-cooldown dur] [--explain-budget n] [--model name]] | kubeagent mcp [--kubeconfig path] [--context name] [--allow-context-switch] [--logs] | kubeagent version")
+		return fmt.Errorf("usage: %[1]s scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json] [--explain] [--investigate] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--kubelet-health] [--control-plane-health] [--dns-health] [--certs [--cert-warn-days n]] [--operators] [--drift] [--drift-age dur] [--capacity] [--logs] [--node-heartbeat-threshold dur] [--expected-nodes a,b,…] [--fix [--dry-run|--yes] [--audit-log path]] [--rollback --audit-log path] | %[1]s watch [--kubeconfig path] [--context name (repeatable)] [--cluster-name name] [--include-local] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] [--alert-format json|slack|alertmanager] [--alert-repeat dur] [--slo-target pct] [--explain [--explain-cooldown dur] [--explain-budget n] [--model name]] | %[1]s mcp [--kubeconfig path] [--context name] [--allow-context-switch] [--logs] | %[1]s version", invokedAs)
 	}
 
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
@@ -179,14 +205,14 @@ func run(args []string) error {
 
 	usage, _, metricsErr := collect.NodeMetrics(context.Background(), client)
 	if metricsErr != nil {
-		fmt.Fprintf(os.Stderr, "kubeagent: warning: metrics unavailable: %v\n", metricsErr)
+		warnf(os.Stderr, "metrics unavailable: %v", metricsErr)
 	}
 	resourcePods, podsErr := advisory.ClusterPods(context.Background(), client, namespace, res.Inputs.Pods)
 	if podsErr != nil {
-		fmt.Fprintf(os.Stderr,
-			"kubeagent: warning: cluster-wide pod list unavailable: %s; "+
+		warnf(os.Stderr,
+			"cluster-wide pod list unavailable: %s; "+
 				"capacity headroom and the resources summary will be computed from "+
-				"namespace %q only, overstating free capacity across the whole cluster\n",
+				"namespace %q only, overstating free capacity across the whole cluster",
 			redact.Error(podsErr), namespace)
 	}
 	summary := resources.Summarize(nodes, resourcePods, usage)
@@ -219,7 +245,7 @@ func run(args []string) error {
 		}, time.Now())
 
 	for _, d := range advRes.Degradations {
-		fmt.Fprintf(os.Stderr, "kubeagent: warning: %s unavailable: %s\n", d.Subject, d.Reason)
+		warnf(os.Stderr, "%s unavailable: %s", d.Subject, d.Reason)
 	}
 
 	operatorRep := advRes.Operators

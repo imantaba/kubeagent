@@ -1,17 +1,54 @@
 # Install
 
-## Prebuilt binary (linux/amd64)
+## As a `kubectl` plugin (krew)
 
-Prebuilt **linux/amd64** binaries are attached to each GitHub Release.
+With [krew](https://krew.sigs.k8s.io) installed, install kubeagent from the
+manifest attached to the latest release:
+
+```bash
+kubectl krew install --manifest-url=https://github.com/imantaba/kubeagent/releases/latest/download/kubeagent.yaml
+kubectl kubeagent scan
+```
+
+kubeagent is not in the upstream krew-index yet, so `--manifest-url` is
+required — plain `kubectl krew install kubeagent` will not find it.
+
+!!! warning "Flags go after the plugin name"
+    `kubectl` does not forward its own global flags to plugins:
+
+    ```bash
+    kubectl kubeagent scan --context prod-eu     # works
+    kubectl --context prod-eu kubeagent scan     # does not
+    ```
+
+    kubeagent's `--context` and `--kubeconfig` are spelled exactly like
+    kubectl's, and `KUBECONFIG` is read from the environment the same way, so
+    the habit transfers intact.
+
+## Prebuilt binary
+
+Binaries are attached to each GitHub Release for:
+
+| OS | Arch | Archive |
+|----|------|---------|
+| linux | amd64 | `kubeagent_<version>_linux_amd64.tar.gz` |
+| linux | arm64 | `kubeagent_<version>_linux_arm64.tar.gz` |
+| macOS | amd64 | `kubeagent_<version>_darwin_amd64.tar.gz` |
+| macOS | arm64 | `kubeagent_<version>_darwin_arm64.tar.gz` |
+
+Windows is not published: nothing in this project's test or chaos suite has
+ever run on it.
+
 Download, verify the checksum, and run:
 
 ```bash
 VERSION=v1.2.3   # the release you want
+OS=linux; ARCH=amd64
 base="https://github.com/imantaba/kubeagent/releases/download/${VERSION}"
-curl -sSLO "${base}/kubeagent_${VERSION}_linux_amd64.tar.gz"
+curl -sSLO "${base}/kubeagent_${VERSION}_${OS}_${ARCH}.tar.gz"
 curl -sSLO "${base}/SHA256SUMS"
-sha256sum -c SHA256SUMS
-tar xzf "kubeagent_${VERSION}_linux_amd64.tar.gz"
+sha256sum --ignore-missing -c SHA256SUMS
+tar xzf "kubeagent_${VERSION}_${OS}_${ARCH}.tar.gz"
 ./kubeagent version   # prints the build's version
 ./kubeagent scan
 ```

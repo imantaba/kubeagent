@@ -54,6 +54,18 @@ It names the resource kubeagent could not read and classifies the failure in kub
 words — permission denied, resource type not served, or read failed. `--output text` and
 `--output json` still carry the exact message.
 
+**Finding reasons are the exception, and they are the cluster's own words.**
+A finding quotes what the cluster said, because that quote is the diagnosis.
+An `ErrImagePull` reason names the registry and the URL the kubelet could not
+reach, and a DNS failure nested inside it names the resolver it asked,
+address and all — `dial tcp: lookup registry.example on <cluster-dns-ip>:53:
+no such host`. That text describes the workload's own network, not how you
+reach the cluster, and stripping it would leave a report that says a pull
+failed without saying why. Blind-spot reasons can be classified because
+nothing diagnostic is lost; finding reasons cannot. So read the findings
+before forwarding a report from a sensitive cluster: they carry whatever the
+cluster put in them.
+
 **No JavaScript.** The severity filter is pure CSS. There is no external
 stylesheet, font, or image either, so the file opens offline and renders
 under a strict Content-Security-Policy — which is what artifact previews,

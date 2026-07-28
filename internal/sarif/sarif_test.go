@@ -181,6 +181,47 @@ func TestRenderUsesSyntheticClusterURIWithNoRegion(t *testing.T) {
 	}
 }
 
+// A cluster-scoped finding really does reach here with an empty namespace:
+// findings.Flatten records webhook issues with Namespace: "".
+func TestRenderClusterScopedFindingOmitsTheNamespaceSegment(t *testing.T) {
+	v := gate.Verdict{
+		Verdict: "fail", Code: gate.CodeFail, FailOn: findings.Critical, Scope: "cluster",
+		Failing: []findings.Finding{{
+			Level: findings.Warning, Kind: "ValidatingWebhookConfiguration", Namespace: "", Name: "policy",
+			Issue: "NoMatchingService", Reason: "webhook points at a service that does not exist",
+		}},
+		Reported: []findings.Finding{}, Inconclusive: []gate.Blindspot{},
+	}
+	b, err := Render(v, "v0.65.0")
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	d := parse(t, b)
+	uri := d.Runs[0].Results[0].Locations[0].PhysicalLocation.ArtifactLocation.URI
+	if uri != "k8s://ValidatingWebhookConfiguration/policy" {
+		t.Errorf("artifact URI = %q, want k8s://ValidatingWebhookConfiguration/policy", uri)
+	}
+}
+
+func TestRenderMapsInfoToNote(t *testing.T) {
+	v := gate.Verdict{
+		Verdict: "fail", Code: gate.CodeFail, FailOn: findings.Info, Scope: "cluster",
+		Failing: []findings.Finding{{
+			Level: findings.Info, Kind: "Pod", Namespace: "payments", Name: "worker",
+			Issue: "Informational", Reason: "nothing is wrong, this is a note",
+		}},
+		Reported: []findings.Finding{}, Inconclusive: []gate.Blindspot{},
+	}
+	b, err := Render(v, "v0.65.0")
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	d := parse(t, b)
+	if got := d.Runs[0].Results[0].Level; got != "note" {
+		t.Errorf("level = %q, want note", got)
+	}
+}
+
 func TestRenderOnlyDeclaresRulesThatFired(t *testing.T) {
 	b, err := Render(sampleVerdict(), "v0.65.0")
 	if err != nil {

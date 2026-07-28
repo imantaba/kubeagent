@@ -7,14 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.64.0] - 2026-07-28
+
 ### Added
 
 - **`kubectl` plugin via krew** — kubeagent installs as a `kubectl` plugin with
   `kubectl krew install --manifest-url=https://github.com/imantaba/kubeagent/releases/latest/download/kubeagent.yaml`,
   after which `kubectl kubeagent scan` works anywhere `kubectl` does. The
   binary is unchanged: same detectors, same output, same read-only default.
-  Usage and error text now name the command you actually typed, so a plugin
-  user is no longer told to run `kubeagent`, which is not on their `PATH`.
+  Usage, warning, and error text now name the command you actually typed, so a
+  plugin user is no longer told to run `kubeagent`, which is not on their `PATH`.
   Not yet in the upstream krew-index, so `--manifest-url` is required.
 
 ### Changed
@@ -1029,7 +1031,8 @@ infrastructure (a documentation site and a pre-release chaos-test harness).
 - CI (vet/test/build on push & PR) and a release workflow publishing a
   linux/amd64 tarball + `SHA256SUMS` to a GitHub Release.
 
-[Unreleased]: https://github.com/imantaba/kubeagent/compare/v0.63.0...HEAD
+[Unreleased]: https://github.com/imantaba/kubeagent/compare/v0.64.0...HEAD
+[0.64.0]: https://github.com/imantaba/kubeagent/compare/v0.63.0...v0.64.0
 [0.63.0]: https://github.com/imantaba/kubeagent/compare/v0.62.0...v0.63.0
 [0.62.0]: https://github.com/imantaba/kubeagent/compare/v0.61.0...v0.62.0
 [0.61.0]: https://github.com/imantaba/kubeagent/compare/v0.60.0...v0.61.0

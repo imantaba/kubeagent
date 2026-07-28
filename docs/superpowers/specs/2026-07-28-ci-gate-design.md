@@ -210,6 +210,12 @@ full scan report:
 with `exitCode`. Both fields are present because a shell reads the exit code and
 a `jq` filter reads the string; neither should have to derive the other.
 
+A `timeout` verdict additionally carries `detail` — the last rollout state
+`--wait-for` observed before giving up. "The rollout did not settle" is not
+actionable on its own; "1/3 replicas updated, 2 unavailable" tells the operator
+whether to raise `--timeout` or go look at the pods. The field is omitted when
+no wait ran.
+
 ## SARIF
 
 SARIF results carry a `physicalLocation` keyed to an artifact URI and line.
@@ -293,6 +299,7 @@ type Verdict struct {
     Code         int                `json:"exitCode"`
     FailOn       findings.Level     `json:"failOn"`
     Scope        string             `json:"scope"`
+    Detail       string             `json:"detail,omitempty"` // last observed rollout state, on timeout
     Failing      []findings.Finding `json:"failing"`
     Reported     []findings.Finding `json:"reported"`
     Inconclusive []Blindspot        `json:"inconclusive"`

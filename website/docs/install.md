@@ -55,7 +55,7 @@ no outbound calls, and it runs fully offline unless you opt into
 [`--explain`](features/watch-mode.md#on-incident-explanations-explain), which makes an
 outbound HTTPS call to the model provider — an egress decision, not a cluster
 operation. To pin a specific version, set the image tag in `deploy/deployment.yaml` (e.g.
-`imantaba/kubeagent:v0.62.0`); to build your own image, see
+`imantaba/kubeagent:v0.63.0`); to build your own image, see
 [`deploy/README.md`](https://github.com/imantaba/kubeagent/blob/main/deploy/README.md).
 
 ### With Helm
@@ -74,7 +74,7 @@ Common overrides via `--set` (see the chart's `values.yaml` for the full list):
 
 ```bash
 # pin an image tag (defaults to the chart appVersion)
---set image.tag=v0.62.0
+--set image.tag=v0.63.0
 # scope the daemon to one namespace, tune scan cadence
 --set watch.namespace=payments --set watch.heartbeat=30s
 ```

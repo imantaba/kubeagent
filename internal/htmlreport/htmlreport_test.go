@@ -233,6 +233,30 @@ func TestRenderSeverityFilterIsPureCSS(t *testing.T) {
 	if !strings.Contains(got, "Critical 1") || !strings.Contains(got, "Warning and above 2") {
 		t.Error("the filter controls must be labelled with their counts")
 	}
+
+	// The rules above are written as `#f-crit:checked ~ table ...`. `~` is the
+	// general-sibling combinator, which only matches elements that come AFTER
+	// the reference element in document order. So the three radio inputs must
+	// be emitted before the <table> they filter, or the selectors never match
+	// anything and every row stays visible in every mode — silently, since the
+	// selector text and label text (asserted above) would still be present.
+	table := strings.Index(got, "<table")
+	if table < 0 {
+		t.Fatal("findings table is missing from the document")
+	}
+	for _, id := range []string{`id="f-all"`, `id="f-warn"`, `id="f-crit"`} {
+		pos := strings.Index(got, id)
+		if pos < 0 {
+			t.Fatalf("radio input %q is missing from the document", id)
+		}
+		if pos > table {
+			t.Errorf("radio input %q is emitted after <table> (input at byte %d, table at byte %d): "+
+				"the `~` general-sibling combinator matches only following siblings, so a radio "+
+				"placed after the table it filters can never match it via ~, and the CSS-only "+
+				"severity filter breaks — every row stays visible regardless of which radio is checked",
+				id, pos, table)
+		}
+	}
 }
 
 // TestRenderDetailSections: the detail lives behind collapsed <details> so the

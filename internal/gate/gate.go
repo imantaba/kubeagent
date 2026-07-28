@@ -59,11 +59,18 @@ type Blindspot struct {
 // the code, a jq filter reads the string, and neither should have to derive the
 // other.
 type Verdict struct {
-	Verdict      string             `json:"verdict"`
-	Code         int                `json:"exitCode"`
-	FailOn       findings.Level     `json:"failOn"`
-	Scope        string             `json:"scope"`
-	Detail       string             `json:"detail,omitempty"`
+	Verdict string         `json:"verdict"`
+	Code    int            `json:"exitCode"`
+	FailOn  findings.Level `json:"failOn"`
+	Scope   string         `json:"scope"`
+
+	// Detail is the last rollout state --wait-for observed, present whenever a
+	// wait ran and absent otherwise — a pass carries "3/3 replicas ready" as
+	// readily as a timeout carries "1/3 replicas updated, 2 unavailable". Only
+	// the timeout case renders it as text, because only there does the operator
+	// need it to decide between raising --timeout and going to look at the pods.
+	Detail string `json:"detail,omitempty"`
+
 	Failing      []findings.Finding `json:"failing"`
 	Reported     []findings.Finding `json:"reported"`
 	Inconclusive []Blindspot        `json:"inconclusive"`

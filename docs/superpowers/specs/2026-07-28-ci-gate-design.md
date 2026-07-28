@@ -210,11 +210,13 @@ full scan report:
 with `exitCode`. Both fields are present because a shell reads the exit code and
 a `jq` filter reads the string; neither should have to derive the other.
 
-A `timeout` verdict additionally carries `detail` — the last rollout state
-`--wait-for` observed before giving up. "The rollout did not settle" is not
-actionable on its own; "1/3 replicas updated, 2 unavailable" tells the operator
-whether to raise `--timeout` or go look at the pods. The field is omitted when
-no wait ran.
+`detail` carries the last rollout state `--wait-for` observed, and is present
+whenever a wait ran — a pass carries "3/3 replicas ready" as readily as a
+timeout carries "1/3 replicas updated, 2 unavailable". It is omitted when no
+wait ran. Only the timeout case renders it as text, because only there does the
+operator need it: "the rollout did not settle" is not actionable on its own,
+but the observed state tells them whether to raise `--timeout` or go look at
+the pods.
 
 ## SARIF
 

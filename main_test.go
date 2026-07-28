@@ -1951,9 +1951,7 @@ func TestGateScopeOptionsMapToTheRightFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseTarget: %v", err)
 	}
-	opts := gate.Options{}
-	opts.ScopeKind, opts.ScopeName, opts.ScopeNamespace = tgt.Kind, tgt.Name, tgt.Namespace
-	v := gate.Decide(scan.Result{}, opts)
+	v := gate.Decide(scan.Result{}, scopeTo(gate.Options{}, tgt))
 	if v.Scope != "Deployment/api in prod" {
 		t.Errorf("Scope = %q, want \"Deployment/api in prod\" — a swapped name/namespace would show here", v.Scope)
 	}
@@ -1966,8 +1964,14 @@ func TestRunGateRejectsANonPositivePollInterval(t *testing.T) {
 			t.Fatalf("%s: want a usage error, got nil", arg)
 		}
 		if got := exitCodeFor(err); got != gate.CodeUsage {
-			t.Errorf("%s: exit code = %d, want %d (usage) — validation must run before cluster.NewClient",
-				arg, got, gate.CodeUsage)
+			t.Errorf("%s: exit code = %d, want %d (usage)", arg, got, gate.CodeUsage)
+		}
+		// The code alone cannot prove the ordering: an unreadable kubeconfig
+		// also exits 4. Only the message distinguishes "rejected the flag" from
+		// "tried to connect and failed".
+		if !strings.Contains(err.Error(), "poll-interval") {
+			t.Errorf("%s: error %q should name the flag — validation must run before cluster.NewClient",
+				arg, err.Error())
 		}
 	}
 }

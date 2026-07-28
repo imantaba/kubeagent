@@ -611,6 +611,17 @@ func runMCP(args []string) error {
 	}, version)
 }
 
+// scopeTo narrows opts to the workload --wait-for named.
+//
+// It is a function rather than three inline assignments so a test can drive the
+// exact line runGate uses: swapping name and namespace would scope the gate to
+// a workload that does not exist, which reads as a clean pass — the failure
+// this whole command exists to prevent.
+func scopeTo(opts gate.Options, t rolloutwait.Target) gate.Options {
+	opts.ScopeKind, opts.ScopeName, opts.ScopeNamespace = t.Kind, t.Name, t.Namespace
+	return opts
+}
+
 // stringList collects a repeatable flag's values.
 type stringList []string
 
@@ -675,7 +686,7 @@ func runGate(args []string) error {
 
 	opts := gate.Options{FailOn: level, AllowPartialRead: allowPartial}
 	if *waitFor != "" {
-		opts.ScopeKind, opts.ScopeName, opts.ScopeNamespace = target.Kind, target.Name, target.Namespace
+		opts = scopeTo(opts, target)
 		res, err := rolloutwait.Wait(ctx, client, target, *timeout, *interval, rolloutwait.Real{})
 		if err != nil {
 			// Exit 2: the poll reached the cluster and could not read the
@@ -710,22 +721,30 @@ func runGate(args []string) error {
 
 	verdict := gate.Decide(scanRes, opts)
 
+	// Rendering failures take exit 2 for the same reason the scan's do: the
+	// verdict exists but never reached the pipeline, so there is nothing for it
+	// to read. A half-written SARIF document on a closed pipe must not exit 1
+	// and claim kubeagent found problems.
 	switch *output {
 	case "json":
 		b, err := json.MarshalIndent(verdict, "", "  ")
 		if err != nil {
-			return err
+			return &exitError{code: gate.CodeInconclusive, msg: err.Error()}
 		}
-		fmt.Fprintf(os.Stdout, "%s\n", b)
+		if _, err := fmt.Fprintf(os.Stdout, "%s\n", b); err != nil {
+			return &exitError{code: gate.CodeInconclusive, msg: err.Error()}
+		}
 	case "sarif":
 		b, err := sarif.Render(verdict, version)
 		if err != nil {
-			return err
+			return &exitError{code: gate.CodeInconclusive, msg: err.Error()}
 		}
-		os.Stdout.Write(b)
+		if _, err := os.Stdout.Write(b); err != nil {
+			return &exitError{code: gate.CodeInconclusive, msg: err.Error()}
+		}
 	default:
 		if err := gate.RenderText(os.Stdout, verdict); err != nil {
-			return err
+			return &exitError{code: gate.CodeInconclusive, msg: err.Error()}
 		}
 	}
 

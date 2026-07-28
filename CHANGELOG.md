@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Shareable HTML report** — `kubeagent scan --output html` renders one self-contained HTML document: header with version, namespace scope, timestamp and severity tally; a blind-spots block whenever a read failed; the full findings table with a pure-CSS severity filter; and collapsed detail sections for cluster health, the workload inventory, and the `--explain` narrative. The document carries no JavaScript and no external stylesheet, font, or image, so it opens offline and renders under a strict Content-Security-Policy — and it carries no cluster identity (no context name, no API server URL, no kubeconfig path), the same rule `kubeagent gate`'s verdict follows. `--output text` and `--output json` are byte-for-byte unchanged, and `scan`'s exit code is unchanged in both directions. New leaf package `internal/htmlreport`.
+
 ## [0.65.0] - 2026-07-28
 
 ### Added

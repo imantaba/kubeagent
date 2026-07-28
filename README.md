@@ -23,6 +23,7 @@
 - 📊 **`watch` daemon** — run it in-cluster for continuous read-only diagnosis; tracks issue state across reconciles (new/resolved/flapping, MTTR) and serves it as Prometheus metrics plus a read-only `/issues` endpoint.
 - 🔌 **MCP server** — `kubeagent mcp` serves the same deterministic diagnosis over the Model Context Protocol on stdio, so another AI agent can call it as a tool.
 - 🚦 **CI/CD gate** — `kubeagent gate` turns the same diagnosis into a stable exit-code contract (pass/fail/inconclusive/timeout/usage) and a SARIF renderer, so a pipeline can branch on it instead of grepping text.
+- 📄 **Shareable HTML report** — `kubeagent scan --output html` writes one self-contained, script-free HTML file carrying the findings, the blind spots, and the detail — with no cluster identity in it, so it is safe to forward.
 
 ```bash
 go install github.com/imantaba/kubeagent@latest
@@ -419,6 +420,18 @@ scanning. With no `--wait-for` it is a pre-deploy sanity check; with
 `--wait-for kind/name -n namespace` it waits for that rollout to settle and
 judges only findings attributable to it. Read-only, and no LLM call on any
 gate path. See [CI/CD gate](website/docs/features/ci-gate.md).
+
+### HTML report
+
+```bash
+kubeagent scan --output html > incident-4821.html
+```
+
+One self-contained file: no JavaScript, no external stylesheet or font, and no
+context name, server URL, or kubeconfig path — so it opens offline, renders
+under a strict CSP, and is safe to attach to a ticket. Carries the findings,
+whatever kubeagent could not read, and collapsed detail sections. See
+[HTML report](website/docs/features/html-report.md).
 
 ## Install
 

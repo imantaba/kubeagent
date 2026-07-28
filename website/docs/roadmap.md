@@ -369,6 +369,16 @@
   the binary is unchanged apart from usage text that names whichever command you
   typed. Not in the upstream krew-index yet, so install is by `--manifest-url`.
   **Theme G — slice 2.** See [Install](install.md).
+- **CI/CD gate mode (`kubeagent gate`)** — a pipeline-friendly subcommand with a
+  stable five-code exit contract (`0` pass, `1` fail, `2` inconclusive, `3`
+  timeout, `4` usage) and a SARIF 2.1.0 renderer for GitHub code scanning.
+  `gate` with no `--wait-for` is a pre-deploy sanity check; `gate --wait-for
+  deployment/api -n prod` waits for that rollout to settle and judges only the
+  findings attributable to it. "kubeagent could not see the cluster" is its own
+  exit code, never a silent pass — the escape hatch is explicit
+  (`--allow-partial-read <resource>`, or `kubeagent gate || [ $? -eq 2 ]`).
+  Read-only, and no LLM call on any gate path. **Theme G — slice 3.** See
+  [CI/CD gate](features/ci-gate.md).
 
 !!! info "Version history"
     [GitHub Releases](https://github.com/imantaba/kubeagent/releases) and the
@@ -436,9 +446,10 @@ These are the north star; every item below is measured against them.
   is complete.
 - **G · Meet people where they work** — an **MCP server** so other AI agents can
   call kubeagent's read-only diagnosis as a trusted tool (shipped, `kubeagent
-  mcp`); a **`kubectl` krew plugin** (shipped, `kubectl kubeagent`); a CI/CD
-  gate mode (pre-deploy sanity, post-deploy verify, SARIF, exit codes); an
-  interactive TUI and a shareable HTML report.
+  mcp`); a **`kubectl` krew plugin** (shipped, `kubectl kubeagent`); a **CI/CD
+  gate mode** (shipped, `kubeagent gate` — pre-deploy sanity, post-deploy
+  verify, SARIF, exit codes); an interactive TUI and a shareable HTML report
+  remain ahead.
 - **H · Supply-chain & trust** — signed releases, SBOM and build provenance,
   least-privilege RBAC profiles per feature, and fuzzed detectors.
 
@@ -454,7 +465,7 @@ one guarded step at a time. Roughly:
 | **v0.32–v0.35** | Principled intelligence & safer fixes (C, D) | `--explain` → ranked remediation suggestions + runbooks; opt-in read-only `--investigate`; local-model explain; `--fix` plan/dry-run + diff + audit log + RBAC preflight + rollback; larger reversible allowlist |
 | **v0.36–v0.40** | Continuous operations (E, D) | Stateful `watch` (trends, flapping, MTTR, new-since-last); Slack/PagerDuty/webhook alerts; SLO burn-rate; on-incident `--explain`; multi-cluster hub; guarded autonomous remediation |
 | **v0.41–v0.45** | Ecosystem & operators (F) | Operator/CRD adapters (CNPG, cert-manager, Longhorn, Argo/Flux, mesh); GitOps drift; cost/right-sizing; deep networking & storage checks |
-| **v0.5x** | Interfaces & adoption (G) | **MCP server** (shipped, `kubeagent mcp`); **`kubectl` krew plugin** (shipped); CI/CD gate mode + SARIF; interactive TUI + HTML report; optional in-cluster dashboard |
+| **v0.5x** | Interfaces & adoption (G) | **MCP server** (shipped, `kubeagent mcp`); **`kubectl` krew plugin** (shipped); **CI/CD gate mode + SARIF** (shipped, `kubeagent gate`); interactive TUI + HTML report; optional in-cluster dashboard |
 | **v1.0** | Production-grade contract (H) | Stable versioned JSON schema; cosign-signed releases + SBOM + provenance; per-feature least-privilege RBAC; cross-version/distro chaos matrix; a **detector/plugin SDK** and policy-as-code custom checks; the two v1 simplifications (stdlib-`flag` CLI, sequential scan) retired deliberately — Cobra + bounded scan concurrency — behind the same test bar |
 | **post-1.0** | The best, sustained | Anomaly/baseline learning ("what's normal for *this* cluster"); fleet-scale (hundreds of clusters); a curated community detector library and known-issues knowledge base |
 

@@ -25,11 +25,13 @@ import (
 
 	"github.com/imantaba/kubeagent/internal/audit"
 	"github.com/imantaba/kubeagent/internal/diagnose"
+	"github.com/imantaba/kubeagent/internal/gate"
 	"github.com/imantaba/kubeagent/internal/hpahealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/pdbhealth"
 	"github.com/imantaba/kubeagent/internal/quotahealth"
 	"github.com/imantaba/kubeagent/internal/remediate"
+	"github.com/imantaba/kubeagent/internal/rolloutwait"
 	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/termhealth"
 	"github.com/imantaba/kubeagent/internal/watch"
@@ -1846,5 +1848,170 @@ func TestWarnf_NamesTheKubectlPluginInvocation(t *testing.T) {
 	want := "kubectl kubeagent: warning: metrics unavailable: boom\n"
 	if got := buf.String(); got != want {
 		t.Errorf("warnf wrote %q, want %q", got, want)
+	}
+}
+
+func TestExitErrorCarriesItsCode(t *testing.T) {
+	err := &exitError{code: 2, msg: "could not tell"}
+	if err.Error() != "could not tell" {
+		t.Errorf("Error() = %q, want \"could not tell\"", err.Error())
+	}
+	var ee *exitError
+	if !errors.As(error(err), &ee) {
+		t.Fatal("errors.As failed to unwrap an exitError")
+	}
+	if ee.code != 2 {
+		t.Errorf("code = %d, want 2", ee.code)
+	}
+}
+
+func TestExitCodeForNilIsZero(t *testing.T) {
+	if got := exitCodeFor(nil); got != 0 {
+		t.Errorf("exitCodeFor(nil) = %d, want 0", got)
+	}
+}
+
+func TestExitCodeForPlainErrorIsOne(t *testing.T) {
+	if got := exitCodeFor(errors.New("boom")); got != 1 {
+		t.Errorf("exitCodeFor(plain error) = %d, want 1 — existing subcommands must not change behavior", got)
+	}
+}
+
+func TestExitCodeForExitErrorIsItsCode(t *testing.T) {
+	if got := exitCodeFor(&exitError{code: 3, msg: ""}); got != 3 {
+		t.Errorf("exitCodeFor = %d, want 3", got)
+	}
+}
+
+func TestGateRejectsUnknownFailOn(t *testing.T) {
+	err := run([]string{"gate", "--fail-on", "fatal"})
+	if err == nil {
+		t.Fatal("want an error for an unknown --fail-on level, got nil")
+	}
+	if got := exitCodeFor(err); got != 4 {
+		t.Errorf("exit code = %d, want 4 (usage)", got)
+	}
+	if !strings.Contains(err.Error(), "fatal") {
+		t.Errorf("error %q does not name the rejected value", err.Error())
+	}
+}
+
+func TestGateRejectsUnknownOutputFormat(t *testing.T) {
+	err := run([]string{"gate", "--output", "yaml"})
+	if err == nil {
+		t.Fatal("want an error for an unknown --output format, got nil")
+	}
+	if got := exitCodeFor(err); got != 4 {
+		t.Errorf("exit code = %d, want 4 (usage)", got)
+	}
+}
+
+func TestGateRejectsUnknownFlag(t *testing.T) {
+	err := run([]string{"gate", "--nonexistent"})
+	if err == nil {
+		t.Fatal("want an error for an unknown flag, got nil")
+	}
+	if got := exitCodeFor(err); got != 4 {
+		t.Errorf("exit code = %d, want 4 (usage)", got)
+	}
+}
+
+func TestGateRejectsUnsupportedWaitForKind(t *testing.T) {
+	err := run([]string{"gate", "--wait-for", "pod/api", "-n", "prod"})
+	if err == nil {
+		t.Fatal("want an error for an unsupported --wait-for kind, got nil")
+	}
+	if got := exitCodeFor(err); got != 4 {
+		t.Errorf("exit code = %d, want 4 (usage)", got)
+	}
+}
+
+func TestGateRejectsWaitForWithoutNamespace(t *testing.T) {
+	err := run([]string{"gate", "--wait-for", "deployment/api"})
+	if err == nil {
+		t.Fatal("want an error when --wait-for has no namespace, got nil")
+	}
+	if got := exitCodeFor(err); got != 4 {
+		t.Errorf("exit code = %d, want 4 (usage)", got)
+	}
+}
+
+func TestUsageMentionsGate(t *testing.T) {
+	err := run([]string{"nonsense"})
+	if err == nil {
+		t.Fatal("want a usage error, got nil")
+	}
+	if !strings.Contains(err.Error(), "gate") {
+		t.Errorf("usage text does not mention the gate subcommand: %s", err.Error())
+	}
+}
+
+func TestGateScopeOptionsMapToTheRightFields(t *testing.T) {
+	tgt, err := rolloutwait.ParseTarget("deployment/api", "prod")
+	if err != nil {
+		t.Fatalf("ParseTarget: %v", err)
+	}
+	v := gate.Decide(scan.Result{}, scopeTo(gate.Options{}, tgt))
+	if v.Scope != "Deployment/api in prod" {
+		t.Errorf("Scope = %q, want \"Deployment/api in prod\" — a swapped name/namespace would show here", v.Scope)
+	}
+}
+
+func TestGateScanOptionsIncludeTheEnvTunableThresholds(t *testing.T) {
+	// scan.Evaluate clamps an out-of-range or zero threshold back to its own
+	// default, so asserting against that clamped value would pass whether or
+	// not the env var ever reached scan.Options — the same trap the defaults
+	// set for runGate. Using values that differ from both the zero value and
+	// the documented default is the only way to catch that.
+	t.Setenv("KUBEAGENT_QUOTA_THRESHOLD", "0.75")
+	t.Setenv("KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS", "30")
+
+	opts := gateScanOptions("prod")
+
+	if opts.Namespace != "prod" {
+		t.Errorf("Namespace = %q, want %q", opts.Namespace, "prod")
+	}
+	if opts.QuotaThreshold != 0.75 {
+		t.Errorf("QuotaThreshold = %v, want 0.75 (from KUBEAGENT_QUOTA_THRESHOLD)", opts.QuotaThreshold)
+	}
+	if opts.WebhookTimeoutThreshold != 30 {
+		t.Errorf("WebhookTimeoutThreshold = %v, want 30 (from KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS)", opts.WebhookTimeoutThreshold)
+	}
+}
+
+func TestRunGateRejectsANonPositivePollInterval(t *testing.T) {
+	for _, arg := range []string{"--poll-interval=0", "--poll-interval=-1s"} {
+		err := runGate([]string{arg, "--kubeconfig", "/nonexistent-for-this-test"})
+		if err == nil {
+			t.Fatalf("%s: want a usage error, got nil", arg)
+		}
+		if got := exitCodeFor(err); got != gate.CodeUsage {
+			t.Errorf("%s: exit code = %d, want %d (usage)", arg, got, gate.CodeUsage)
+		}
+		// The code alone cannot prove the ordering: an unreadable kubeconfig
+		// also exits 4. Only the message distinguishes "rejected the flag" from
+		// "tried to connect and failed".
+		if !strings.Contains(err.Error(), "poll-interval") {
+			t.Errorf("%s: error %q should name the flag — validation must run before cluster.NewClient",
+				arg, err.Error())
+		}
+	}
+}
+
+func TestRunGateNeverExitsOneWithoutAVerdict(t *testing.T) {
+	// An unusable kubeconfig is bad input, not a finding: nothing was attempted
+	// against any cluster, so this must be usage (4) and never fail (1).
+	err := runGate([]string{"--kubeconfig", "/nonexistent-for-this-test"})
+	if err == nil {
+		t.Fatal("want an error for an unreadable kubeconfig, got nil")
+	}
+	if got := exitCodeFor(err); got != gate.CodeUsage {
+		t.Errorf("exit code = %d, want %d (usage); %d would claim kubeagent looked and found problems",
+			got, gate.CodeUsage, gate.CodeFail)
+	}
+	// The error still names what failed — this is stderr, the operator's
+	// channel, not the verdict document.
+	if !strings.Contains(err.Error(), "kubeconfig") {
+		t.Errorf("error %q should say what could not be loaded", err.Error())
 	}
 }

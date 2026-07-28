@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "kubeagent",
+          "version": "v0.65.0",
+          "informationUri": "https://github.com/imantaba/kubeagent",
+          "rules": [
+            {
+              "id": "CrashLoopBackOff",
+              "name": "CrashLoopBackOff",
+              "shortDescription": {
+                "text": "CrashLoopBackOff"
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              }
+            },
+            {
+              "id": "no endpoints",
+              "name": "no endpoints",
+              "shortDescription": {
+                "text": "no endpoints"
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "CrashLoopBackOff",
+          "level": "error",
+          "message": {
+            "text": "Container repeatedly crashes after starting (restartCount=5)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "k8s://payments/Pod/worker-7d9c6f6b8-x2z4q"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "no endpoints",
+          "level": "warning",
+          "message": {
+            "text": "selector matches 0 pods"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "k8s://payments/Service/worker"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "invocations": [
+        {
+          "executionSuccessful": true,
+          "toolConfigurationNotifications": []
+        }
+      ]
+    }
+  ]
+}

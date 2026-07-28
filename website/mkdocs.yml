@@ -67,5 +67,6 @@ nav:
       - Remediation (--fix): features/remediation.md
       - Watch mode (daemon): features/watch-mode.md
       - MCP server: features/mcp.md
+      - CI/CD gate: features/ci-gate.md
   - Install: install.md
   - Roadmap: roadmap.md

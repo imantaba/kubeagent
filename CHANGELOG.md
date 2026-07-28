@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **CI/CD gate mode** — a new `kubeagent gate` subcommand with a stable exit-code
+  contract (`0` pass, `1` fail, `2` inconclusive, `3` timeout, `4` usage) and a
+  SARIF 2.1.0 renderer for GitHub code scanning. `gate` with no `--wait-for` is
+  a pre-deploy sanity check; `gate --wait-for deployment/api -n prod` waits for
+  that rollout to settle and then judges only findings attributable to it.
+  "kubeagent could not see the cluster" gets its own exit code rather than
+  passing quietly, and the escape hatch is explicit: `--allow-partial-read
+  <resource>`, or `kubeagent gate || [ $? -eq 2 ]`. Read-only, and no LLM call
+  on any gate path. See [CI/CD gate](website/docs/features/ci-gate.md).
+- **`internal/findings`** — one ordered severity model (`info < warning <
+  critical`) and one `scan.Result` flattener, consumed by the gate. The `mcp`,
+  `watch`, and `report` surfaces keep their existing severity handling for now:
+  migrating them would change the MCP tool payloads shipped in v0.63.0.
+
 ## [0.64.0] - 2026-07-28
 
 ### Added

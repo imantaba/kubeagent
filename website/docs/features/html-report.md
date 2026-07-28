@@ -24,13 +24,17 @@ kubeagent: unknown output format "bogus" (want text, json or html)
 - **Blind spots** — whatever kubeagent could not read, whenever there is any.
 - **Findings** — every finding, highest severity first, with a severity filter.
 - **Detail** — cluster health, the workload inventory, and the `--explain`
-  narrative when you ran with `--explain` or `--investigate`, each in a
-  collapsed section so the findings stay at the top.
+  narrative when you ran with `--explain`, each in a collapsed section so the
+  findings stay at the top.
 
 The opt-in advisory sections (`--capacity`, `--drift`, `--operators`,
 `--certs`, and the rest) are not in the document yet. Their *findings* are —
 `--output html` renders the same finding set the text report ranks — but their
 detailed views only appear in `--output text` and `--output json`.
+
+`--investigate` is in the same position. Its findings reach the document, but
+its narrative — and the list of sources it consulted — do not; those still need
+`--output text` or `--output json`.
 
 ## What the document deliberately does not contain
 

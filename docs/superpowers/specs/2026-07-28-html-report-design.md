@@ -187,7 +187,8 @@ findings stay above the fold:
 2. **Workload inventory** — `in.Report.Result.Workloads`: namespace, kind, name,
    ready/desired, status, image, root cause.
 3. **Explanation** — `in.Report.Explanation`, rendered only when non-empty (so
-   only under `--explain`/`--investigate`). One string, high value in a shared
+   only under `--explain`; `--investigate` fills the separate `Investigation`
+   field, which stays out of scope below). One string, high value in a shared
    document, near-zero cost.
 
 **The opt-in advisory sections are deliberately out of scope for this slice.**

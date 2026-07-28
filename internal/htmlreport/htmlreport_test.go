@@ -3,6 +3,7 @@ package htmlreport
 import (
 	"bytes"
 	"errors"
+	htmlescape "html"
 	"net/url"
 	"strings"
 	"testing"
@@ -166,58 +167,107 @@ func TestRenderLeaksNoIdentity(t *testing.T) {
 	}
 }
 
-// TestBlindReasonIsWithheldUnlessProvablyEndpointFree: the blind-spots block is the one
-// place where free-form, cluster-produced error text reaches a document meant to be
-// forwarded. redact.Error keeps scheme://host, and the wrapped transport error repeats
-// the endpoint in its own words, so rendering the reason verbatim would put the API
-// server's address in a file whose header promises no cluster identity. The reason is
-// therefore allowed through only when it is an API-server authorization message and
-// carries nothing endpoint-shaped; everything else is reduced to a fixed phrase.
-func TestBlindReasonIsWithheldUnlessProvablyEndpointFree(t *testing.T) {
-	transport := redact.Error(&url.Error{
-		Op:  "Get",
-		URL: "https://198.51.100.7:6443/api/v1/namespaces/shop/pods",
-		Err: errors.New("dial tcp 198.51.100.7:6443: connect: connection refused"),
-	})
-
+// TestBlindReasonIsClassifiedNeverEchoed: the blind-spots block is the one place where
+// cluster-produced free text could reach a document meant to be forwarded, and no filter
+// over that text is safe. apierrors.NewForbidden interpolates whatever the authorizer
+// returned, so an authorization message carries the username — on a real cluster that is
+// an IAM ARN, a node's internal DNS name, or an OIDC email — and under webhook
+// authorization it carries a third-party backend's words as well. So the reason is never
+// echoed: it is read only to pick one of kubeagent's own phrases.
+func TestBlindReasonIsClassifiedNeverEchoed(t *testing.T) {
 	cases := []struct {
 		name   string
 		reason string
 		want   string
 	}{
 		{
-			name:   "an authorization message survives verbatim",
+			name:   "an RBAC denial",
 			reason: `pods is forbidden: User "system:serviceaccount:shop:default" cannot list resource "pods" in API group "" in the namespace "shop"`,
-			want:   `pods is forbidden: User "system:serviceaccount:shop:default" cannot list resource "pods" in API group "" in the namespace "shop"`,
+			want:   reasonForbidden,
 		},
 		{
-			name:   "a transport failure is withheld",
-			reason: transport,
-			want:   withheldReason,
+			name:   "an RBAC denial naming an IAM principal",
+			reason: `pods is forbidden: User "arn:aws:iam::198510000007:user/alice" cannot list resource "pods" in API group "" in the namespace "shop"`,
+			want:   reasonForbidden,
 		},
 		{
-			name:   "a timeout is withheld",
+			name:   "a webhook authorizer appending its own words",
+			reason: `pods is forbidden: User "alice" cannot list resource "pods": denied by policy backend authz.internal.example`,
+			want:   reasonForbidden,
+		},
+		{
+			name:   "a resource type the cluster does not serve",
+			reason: "the server could not find the requested resource",
+			want:   reasonNotServed,
+		},
+		{
+			name:   "a missing resource type, the other wording",
+			reason: `the server doesn't have a resource type "verticalpodautoscalers"`,
+			want:   reasonNotServed,
+		},
+		{
+			name:   "a transport failure",
+			reason: "Get https://198.51.100.7:6443: dial tcp 198.51.100.7:6443: connect: connection refused",
+			want:   reasonUnavailable,
+		},
+		{
+			name:   "a timeout",
 			reason: "the server was unable to return a response in the time allotted, but may still be processing the request",
-			want:   withheldReason,
+			want:   reasonUnavailable,
 		},
 		{
-			name:   "an authorization message that still carries an endpoint is withheld",
-			reason: `Get https://198.51.100.7:6443: pods is forbidden`,
-			want:   withheldReason,
-		},
-		{
-			name:   "a bare address is withheld",
-			reason: "lookup 198.51.100.7: no such host",
-			want:   withheldReason,
+			name:   "an empty reason",
+			reason: "",
+			want:   reasonUnavailable,
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := safeReason(tc.reason); got != tc.want {
+			got := safeReason(tc.reason)
+			if got != tc.want {
 				t.Errorf("safeReason(%q) = %q, want %q", tc.reason, got, tc.want)
 			}
+			if got != reasonForbidden && got != reasonNotServed && got != reasonUnavailable {
+				t.Errorf("safeReason returned %q, which is not one of kubeagent's own phrases", got)
+			}
 		})
+	}
+}
+
+// TestRenderEchoesNoBlindSpotReasonText: the same guarantee asserted on the rendered
+// bytes, so a template edit that reaches around safeReason is caught too. Every
+// distinctive word of the cluster's message must be absent from the document.
+func TestRenderEchoesNoBlindSpotReasonText(t *testing.T) {
+	got := render(t, Input{
+		Report: report.Input{Now: fixedNow},
+		Blind: []scan.ReadFailure{
+			{
+				Resource: "pods in namespace shop",
+				Reason:   `pods is forbidden: User "arn:aws:iam::198510000007:user/alice" cannot list resource "pods": denied by authz.internal.example`,
+			},
+			{
+				Resource: "verticalpodautoscalers",
+				Reason:   "the server could not find the requested resource",
+			},
+		},
+	})
+
+	for _, leak := range []string{"arn:aws:iam", "198510000007", "alice", "authz.internal.example", "cannot list resource"} {
+		if strings.Contains(got, leak) {
+			t.Errorf("rendered document contains %q, which came from the cluster's own error text", leak)
+		}
+	}
+	// html/template escapes the apostrophe in reasonForbidden ("kubeagent's") to
+	// &#39;, so the expectation is checked against the same escaped form a reader
+	// of the document actually sees, not the raw Go string constant.
+	for _, want := range []string{
+		"pods in namespace shop", "verticalpodautoscalers",
+		htmlescape.EscapeString(reasonForbidden), htmlescape.EscapeString(reasonNotServed),
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("want %q in the document", want)
+		}
 	}
 }
 
@@ -245,8 +295,8 @@ func TestRenderWithholdsEndpointsFromTheBlindSpotsBlock(t *testing.T) {
 	if !strings.Contains(got, "pods in namespace shop") {
 		t.Error("the resource that could not be read should still be named")
 	}
-	if !strings.Contains(got, withheldReason) {
-		t.Errorf("want the withheld-reason phrase %q in the document", withheldReason)
+	if !strings.Contains(got, reasonUnavailable) {
+		t.Errorf("want the withheld-reason phrase %q in the document", reasonUnavailable)
 	}
 }
 
@@ -278,10 +328,9 @@ func TestRenderReturnsWriteErrors(t *testing.T) {
 // TestRenderBlindSpotsBlock: a document that omits what kubeagent could not read
 // is green-when-blind, and a rendered file is easier to over-trust than an exit
 // code. The block must appear whenever there are partial reads — and only then.
-// The second fixture's reason ("the server could not find the requested
-// resource") deliberately carries no "forbidden" and so is withheld by
-// safeReason: the resource name must still show, but the reason falls back to
-// the fixed phrase rather than the original text.
+// The two fixture reasons are an authorization message and a resource type the
+// cluster does not serve; safeReason classifies each to its own kubeagent phrase
+// rather than echoing the original text.
 func TestRenderBlindSpotsBlock(t *testing.T) {
 	with := render(t, Input{
 		Report:  report.Input{Now: fixedNow},
@@ -294,7 +343,12 @@ func TestRenderBlindSpotsBlock(t *testing.T) {
 	if !strings.Contains(with, "Blind spots") {
 		t.Error("partial reads did not render a blind-spots block")
 	}
-	for _, want := range []string{"pods in namespace restricted", "horizontalpodautoscalers", withheldReason} {
+	// html/template escapes the apostrophe in reasonForbidden ("kubeagent's") to
+	// &#39;, so the expectation is checked against that escaped form.
+	for _, want := range []string{
+		"pods in namespace restricted", "horizontalpodautoscalers",
+		htmlescape.EscapeString(reasonForbidden), htmlescape.EscapeString(reasonNotServed),
+	} {
 		if !strings.Contains(with, want) {
 			t.Errorf("blind-spots block is missing %q", want)
 		}

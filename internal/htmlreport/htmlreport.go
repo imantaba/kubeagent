@@ -18,7 +18,6 @@ import (
 	_ "embed"
 	"html/template"
 	"io"
-	"regexp"
 	"strings"
 	"time"
 
@@ -104,30 +103,35 @@ type findingRow struct {
 // named in full, the reason only when safeReason clears it.
 type blindSpot struct{ Resource, Reason string }
 
-// withheldReason replaces a read failure's reason when it cannot be shown to be free of
-// the cluster's address.
-const withheldReason = "the read failed — see --output text or --output json for the reason"
+// The blind-spots block prints one of these three phrases and never the cluster's own
+// words. They are kubeagent's, so nothing a cluster or a policy webhook can put in an
+// error message can reach a document that is meant to be forwarded.
+const (
+	reasonForbidden   = "permission denied — kubeagent's credentials may not list it"
+	reasonNotServed   = "the cluster does not serve this resource type"
+	reasonUnavailable = "the read failed — see --output text or --output json for the reason"
+)
 
-// endpointish matches the three ways an address reaches free-form error text: a URL, a
-// dotted-quad address, and a host:port pair.
-var endpointish = regexp.MustCompile(`://|\b\d{1,3}(?:\.\d{1,3}){3}\b|\b[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?:\d{2,5}\b`)
-
-// safeReason decides whether a read failure's reason can leave the cluster.
+// safeReason classifies a read failure instead of quoting it.
 //
-// This document is meant to be forwarded, and its header promises no cluster identity.
-// scan.Result.PartialReads carries whatever error the API returned, passed through
-// redact.Error — which strips a URL's path and userinfo but keeps scheme://host, and
-// which leaves the wrapped transport error free to repeat the address in its own words.
-// Filtering that after the fact would be a deny-list, and every form a deny-list misses
-// is an address in a shared file. So this allows instead: an API-server authorization
-// message is composed from the user, verb and resource and never from the endpoint, so
-// it survives verbatim; anything else is reduced to a fixed phrase, and the detail stays
-// in the text and JSON reports, which are not written to be forwarded.
+// scan.Result.PartialReads carries whatever the API returned. No filter over that text is
+// safe: apierrors.NewForbidden interpolates the authorizer's own error, so an
+// authorization message embeds the username — an IAM ARN, a node's internal DNS name or
+// an OIDC email on a real cluster — and under webhook authorization it carries a
+// third-party backend's free text too. Reading the message to choose a phrase can
+// misclassify, which costs a reader some precision; quoting it can leak, which breaks the
+// only guarantee this document makes. The exact message stays in the text and JSON
+// reports, which are not written to be forwarded.
 func safeReason(reason string) string {
-	if strings.Contains(reason, "forbidden") && !endpointish.MatchString(reason) {
-		return reason
+	switch {
+	case strings.Contains(reason, "forbidden"), strings.Contains(reason, "Unauthorized"):
+		return reasonForbidden
+	case strings.Contains(reason, "could not find the requested resource"),
+		strings.Contains(reason, "doesn't have a resource type"):
+		return reasonNotServed
+	default:
+		return reasonUnavailable
 	}
-	return withheldReason
 }
 
 // Render writes the complete HTML document to w. It performs no cluster calls:

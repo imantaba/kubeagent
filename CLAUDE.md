@@ -47,7 +47,13 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   the kubeconfig path and context on stderr — the operator's channel, read
   before the process ever starts serving — while the protocol stream and
   every tool result stay path-free (see
-  [website/docs/features/mcp.md](website/docs/features/mcp.md)).
+  [website/docs/features/mcp.md](website/docs/features/mcp.md)). `kubeagent
+  gate` (`internal/gate`, `internal/findings`, `internal/sarif`,
+  `internal/rolloutwait`) is a third case, though it is not long-lived: it
+  runs once and exits. It too is **read-only toward the cluster** (`get`/`list`
+  only), makes **no LLM calls**, and must never import `internal/remediate` or
+  `internal/explain` (see
+  [website/docs/features/ci-gate.md](website/docs/features/ci-gate.md)).
 
 ## Commit conventions
 
@@ -93,9 +99,11 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   production contract) lives in
   [website/docs/roadmap.md](website/docs/roadmap.md). Update it when a milestone
   ships or the plan shifts.
-- **Theme G slices 1 and 2 have shipped:** the MCP server (`kubeagent mcp`),
-  documented in [website/docs/features/mcp.md](website/docs/features/mcp.md),
-  and the `kubectl` krew plugin (`krew/kubeagent.yaml.tmpl` +
+- **Theme G slices 1, 2 and 3 have shipped:** the MCP server (`kubeagent mcp`),
+  documented in [website/docs/features/mcp.md](website/docs/features/mcp.md);
+  the `kubectl` krew plugin (`krew/kubeagent.yaml.tmpl` +
   `scripts/render-krew-manifest.sh`, rendered at release time and never
-  committed). The rest of Theme G — a CI/CD gate mode, an interactive TUI,
-  and a shareable HTML report — remains ahead.
+  committed); and CI/CD gate mode (`kubeagent gate`), documented in
+  [website/docs/features/ci-gate.md](website/docs/features/ci-gate.md). The
+  rest of Theme G — an interactive TUI and a shareable HTML report — remains
+  ahead.

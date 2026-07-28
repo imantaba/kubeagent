@@ -22,6 +22,7 @@
 - 📦 **Single Go binary** — built on `client-go`, the same library `kubectl` uses. No CRDs, no in-cluster agent required.
 - 📊 **`watch` daemon** — run it in-cluster for continuous read-only diagnosis; tracks issue state across reconciles (new/resolved/flapping, MTTR) and serves it as Prometheus metrics plus a read-only `/issues` endpoint.
 - 🔌 **MCP server** — `kubeagent mcp` serves the same deterministic diagnosis over the Model Context Protocol on stdio, so another AI agent can call it as a tool.
+- 🚦 **CI/CD gate** — `kubeagent gate` turns the same diagnosis into a stable exit-code contract (pass/fail/inconclusive/timeout/usage) and a SARIF renderer, so a pipeline can branch on it instead of grepping text.
 
 ```bash
 go install github.com/imantaba/kubeagent@latest
@@ -404,6 +405,20 @@ a Deployment manifest are in [`deploy/`](deploy/).
 `kubeagent mcp` serves kubeagent's read-only diagnosis to an AI agent over the
 [Model Context Protocol](https://modelcontextprotocol.io) on stdio, and it can
 never write to the cluster.
+
+### CI/CD gate
+
+```bash
+./kubeagent gate --wait-for deployment/api -n prod
+```
+
+`kubeagent gate` runs the same read-only diagnosis and turns it into a stable
+exit-code contract (`0` pass, `1` fail, `2` inconclusive, `3` timeout, `4`
+usage) a pipeline can branch on, plus a SARIF renderer for GitHub code
+scanning. With no `--wait-for` it is a pre-deploy sanity check; with
+`--wait-for kind/name -n namespace` it waits for that rollout to settle and
+judges only findings attributable to it. Read-only, and no LLM call on any
+gate path. See [CI/CD gate](website/docs/features/ci-gate.md).
 
 ## Install
 

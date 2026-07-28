@@ -68,6 +68,14 @@ func invocationName(argv0 string) string {
 // startup. Tests override it to exercise the kubectl-plugin spelling.
 var invokedAs = invocationName(os.Args[0])
 
+// warnf writes one non-fatal warning line, prefixed with the name the user
+// actually typed. Warnings go through here rather than a bare Fprintf so a
+// kubectl-plugin user is never told about a "kubeagent" that is not on their
+// PATH. The trailing newline is supplied.
+func warnf(w io.Writer, format string, args ...any) {
+	fmt.Fprintf(w, "%s: warning: %s\n", invokedAs, fmt.Sprintf(format, args...))
+}
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", invokedAs, err)
@@ -197,14 +205,14 @@ func run(args []string) error {
 
 	usage, _, metricsErr := collect.NodeMetrics(context.Background(), client)
 	if metricsErr != nil {
-		fmt.Fprintf(os.Stderr, "kubeagent: warning: metrics unavailable: %v\n", metricsErr)
+		warnf(os.Stderr, "metrics unavailable: %v", metricsErr)
 	}
 	resourcePods, podsErr := advisory.ClusterPods(context.Background(), client, namespace, res.Inputs.Pods)
 	if podsErr != nil {
-		fmt.Fprintf(os.Stderr,
-			"kubeagent: warning: cluster-wide pod list unavailable: %s; "+
+		warnf(os.Stderr,
+			"cluster-wide pod list unavailable: %s; "+
 				"capacity headroom and the resources summary will be computed from "+
-				"namespace %q only, overstating free capacity across the whole cluster\n",
+				"namespace %q only, overstating free capacity across the whole cluster",
 			redact.Error(podsErr), namespace)
 	}
 	summary := resources.Summarize(nodes, resourcePods, usage)
@@ -237,7 +245,7 @@ func run(args []string) error {
 		}, time.Now())
 
 	for _, d := range advRes.Degradations {
-		fmt.Fprintf(os.Stderr, "kubeagent: warning: %s unavailable: %s\n", d.Subject, d.Reason)
+		warnf(os.Stderr, "%s unavailable: %s", d.Subject, d.Reason)
 	}
 
 	operatorRep := advRes.Operators

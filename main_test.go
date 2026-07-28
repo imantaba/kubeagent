@@ -1818,3 +1818,33 @@ func TestRun_UsageNamesTheKubectlPluginInvocation(t *testing.T) {
 		t.Errorf("usage = %q, still tells a kubectl-plugin user to run the bare binary", got)
 	}
 }
+
+func TestWarnf_NamesThePlainBinaryByDefault(t *testing.T) {
+	saved := invokedAs
+	invokedAs = "kubeagent"
+	defer func() { invokedAs = saved }()
+
+	var buf bytes.Buffer
+	warnf(&buf, "metrics unavailable: %v", errors.New("boom"))
+
+	want := "kubeagent: warning: metrics unavailable: boom\n"
+	if got := buf.String(); got != want {
+		t.Errorf("warnf wrote %q, want %q", got, want)
+	}
+}
+
+func TestWarnf_NamesTheKubectlPluginInvocation(t *testing.T) {
+	saved := invokedAs
+	invokedAs = "kubectl kubeagent"
+	defer func() { invokedAs = saved }()
+
+	var buf bytes.Buffer
+	warnf(&buf, "metrics unavailable: %v", errors.New("boom"))
+
+	// A kubectl-plugin user who trips a warning must not be told the bare
+	// binary's name — it is not on their PATH.
+	want := "kubectl kubeagent: warning: metrics unavailable: boom\n"
+	if got := buf.String(); got != want {
+		t.Errorf("warnf wrote %q, want %q", got, want)
+	}
+}

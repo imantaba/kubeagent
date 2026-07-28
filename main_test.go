@@ -1752,3 +1752,69 @@ func TestEnvDuration(t *testing.T) {
 		})
 	}
 }
+
+// invocationName is a pure function of argv[0] so the kubectl-plugin spelling
+// can be tested without launching a process under that name.
+func TestInvocationName(t *testing.T) {
+	tests := []struct {
+		argv0 string
+		want  string
+	}{
+		{"/home/u/.krew/bin/kubectl-kubeagent", "kubectl kubeagent"},
+		{"kubectl-kubeagent", "kubectl kubeagent"},
+		{"./kubeagent", "kubeagent"},
+		{"/usr/local/bin/kubeagent", "kubeagent"},
+		// kubectl-kubeagent as a DIRECTORY component must not match. A naive
+		// strings.Contains passes every other row and fails this one.
+		{"/opt/kubectl-kubeagent/kubeagent", "kubeagent"},
+		{"", "kubeagent"},
+		{"kubectl-kubeagent-extra", "kubeagent"},
+	}
+	for _, tt := range tests {
+		if got := invocationName(tt.argv0); got != tt.want {
+			t.Errorf("invocationName(%q) = %q, want %q", tt.argv0, got, tt.want)
+		}
+	}
+}
+
+func TestRun_UsageNamesThePlainBinaryByDefault(t *testing.T) {
+	// The test binary's argv[0] basename is never "kubectl-kubeagent", so the
+	// default spelling under `go test` is the plain one.
+	if invokedAs != "kubeagent" {
+		t.Fatalf("invokedAs = %q under go test, want %q", invokedAs, "kubeagent")
+	}
+	err := run(nil)
+	if err == nil {
+		t.Fatal("run(nil) = nil, want the usage error")
+	}
+	if !strings.Contains(err.Error(), "usage: kubeagent scan") {
+		t.Errorf("usage = %q, want it to start by naming `kubeagent scan`", err)
+	}
+}
+
+func TestRun_UsageNamesTheKubectlPluginInvocation(t *testing.T) {
+	saved := invokedAs
+	invokedAs = "kubectl kubeagent"
+	defer func() { invokedAs = saved }()
+
+	err := run(nil)
+	if err == nil {
+		t.Fatal("run(nil) = nil, want the usage error")
+	}
+	got := err.Error()
+	// Every subcommand the usage lists must be named the way the user would
+	// type it, not just the first one.
+	for _, want := range []string{
+		"usage: kubectl kubeagent scan",
+		"| kubectl kubeagent watch",
+		"| kubectl kubeagent mcp",
+		"| kubectl kubeagent version",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("usage = %q, want it to contain %q", got, want)
+		}
+	}
+	if strings.Contains(got, "usage: kubeagent scan") {
+		t.Errorf("usage = %q, still tells a kubectl-plugin user to run the bare binary", got)
+	}
+}

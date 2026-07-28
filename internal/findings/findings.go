@@ -15,7 +15,12 @@ package findings
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
+
+	"github.com/imantaba/kubeagent/internal/diagnose"
+	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/scan"
 )
 
 // Level is a finding's severity, ordered so a threshold comparison is a plain
@@ -71,4 +76,124 @@ type Finding struct {
 	Issue     string `json:"issue"`
 	Reason    string `json:"reason"`
 	Owner     string `json:"owner,omitempty"`
+}
+
+// splitNamespacedName splits diagnose.Finding.Pod ("namespace/name"). A value
+// with no slash is treated as a bare name in no namespace rather than dropped.
+func splitNamespacedName(s string) (namespace, name string) {
+	if i := strings.Index(s, "/"); i >= 0 {
+		return s[:i], s[i+1:]
+	}
+	return "", s
+}
+
+// fromDiagnose maps a detector match. Every diagnose.Finding is Critical: a
+// detector fires only on a concrete, named failure mode, never on a heuristic.
+func fromDiagnose(f diagnose.Finding, owner string) Finding {
+	ns, name := splitNamespacedName(f.Pod)
+	reason := f.Reason
+	if f.Evidence != "" {
+		reason = strings.TrimSpace(reason + " (" + f.Evidence + ")")
+	}
+	return Finding{
+		Level: Critical, Kind: "Pod", Namespace: ns, Name: name,
+		Issue: f.Issue, Reason: reason, Owner: owner,
+	}
+}
+
+// fromWorkload maps a workload that Flagged() but produced no detector match:
+// something is wrong, but no detector named it, so it is a Warning.
+func fromWorkload(w inventory.Workload) Finding {
+	return Finding{
+		Level: Warning, Kind: w.Kind, Namespace: w.Namespace, Name: w.Name,
+		Issue:  w.Status,
+		Reason: fmt.Sprintf("%d/%d ready", w.Ready, w.Desired),
+		Owner:  w.Kind + "/" + w.Name,
+	}
+}
+
+// Flatten projects every attention-worthy class scan.Result carries into one
+// ordered list. The classes mirror internal/mcp/view.go's findingsFromResult:
+// leaving one out would make the gate pass a cluster the CLI calls degraded.
+func Flatten(res scan.Result) []Finding {
+	out := []Finding{}
+
+	for _, w := range res.Inventory.Workloads {
+		owner := w.Kind + "/" + w.Name
+		if len(w.Findings) == 0 {
+			// Prioritize includes restart-only and idle-cron workloads that are
+			// healthy right now; reporting those would be a false positive.
+			if w.Flagged() {
+				out = append(out, fromWorkload(w))
+			}
+			continue
+		}
+		for _, f := range w.Findings {
+			out = append(out, fromDiagnose(f, owner))
+		}
+	}
+
+	for _, i := range res.ServiceIssues {
+		if i.Expected {
+			continue
+		}
+		out = append(out, Finding{Level: Warning, Kind: "Service", Namespace: i.Namespace,
+			Name: i.Name, Issue: i.Problem, Reason: i.Detail})
+	}
+	for _, i := range res.IngressIssues {
+		if i.Expected {
+			continue
+		}
+		out = append(out, Finding{Level: Warning, Kind: "Ingress", Namespace: i.Namespace,
+			Name: i.Ingress, Issue: i.Problem, Reason: i.Detail})
+	}
+	for _, i := range res.PVCIssues {
+		out = append(out, Finding{Level: Warning, Kind: "PersistentVolumeClaim", Namespace: i.Namespace,
+			Name: i.Name, Issue: i.Reason, Reason: i.Detail})
+	}
+	for _, i := range res.StuckTerminating {
+		out = append(out, Finding{Level: Warning, Kind: i.Kind, Namespace: i.Namespace,
+			Name: i.Name, Issue: "stuck terminating", Reason: i.Reason})
+	}
+	for _, i := range res.PDBIssues {
+		out = append(out, Finding{Level: Warning, Kind: "PodDisruptionBudget", Namespace: i.Namespace,
+			Name: i.Name, Issue: i.Category, Reason: i.Reason})
+	}
+	for _, i := range res.HPAIssues {
+		out = append(out, Finding{Level: Warning, Kind: "HorizontalPodAutoscaler", Namespace: i.Namespace,
+			Name: i.Name, Issue: i.Category, Reason: i.Reason})
+	}
+	for _, i := range res.WebhookIssues {
+		out = append(out, Finding{Level: Warning, Kind: i.Kind, Namespace: "",
+			Name: i.Config, Issue: i.Problem, Reason: i.Reason})
+	}
+	for _, i := range res.QuotaIssues {
+		out = append(out, Finding{Level: Warning, Kind: "ResourceQuota", Namespace: i.Namespace,
+			Name: i.Quota, Issue: i.Severity,
+			Reason: fmt.Sprintf("%s %s/%s used", i.Resource, i.Used, i.Hard)})
+	}
+
+	Sort(out)
+	return out
+}
+
+// Sort imposes a total order so an unchanged cluster renders byte-identical
+// output and two runs diff cleanly. Highest severity first, then by object.
+func Sort(f []Finding) {
+	sort.SliceStable(f, func(a, b int) bool {
+		x, y := f[a], f[b]
+		if x.Level != y.Level {
+			return x.Level > y.Level
+		}
+		if x.Namespace != y.Namespace {
+			return x.Namespace < y.Namespace
+		}
+		if x.Kind != y.Kind {
+			return x.Kind < y.Kind
+		}
+		if x.Name != y.Name {
+			return x.Name < y.Name
+		}
+		return x.Issue < y.Issue
+	})
 }

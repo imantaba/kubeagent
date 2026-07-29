@@ -140,9 +140,26 @@ func footer(m Model) string {
 	if m.Err != "" {
 		return truncate("re-scan failed: "+m.Err+"  ·  r retry  q quit", m.Width)
 	}
-	return truncate(fmt.Sprintf(
-		"[1] critical [2] warning+ [0] all (%d)  ↑↓ move  ⏎ detail  b blind  r rescan  ? help  q quit",
-		len(m.visible())), m.Width)
+	// Shed hints from the right rather than truncating one long string. The full
+	// key map is 91 columns, so a plain truncate drops the tail first — and on an
+	// 80-column terminal, the most common one there is, the tail is how to leave.
+	// A program that has taken the whole screen must always say that. `? help`
+	// stays pinned beside it because the help screen is where everything shed
+	// here can still be found.
+	const tail = "? help  q quit"
+	opt := []string{
+		fmt.Sprintf("[1] critical [2] warning+ [0] all (%d)", len(m.visible())),
+		"↑↓ move",
+		"⏎ detail",
+		"b blind",
+		"r rescan",
+	}
+	for n := len(opt); ; n-- {
+		s := strings.Join(append(opt[:n:n], tail), "  ")
+		if n == 0 || len([]rune(s)) <= m.Width {
+			return truncate(s, m.Width)
+		}
+	}
 }
 
 func detailLines(m Model) []string {
@@ -236,10 +253,10 @@ func issueWidth(width int) int {
 }
 
 func rule(width int) string {
-	if width < 6 {
+	if width < 1 {
 		return ""
 	}
-	return strings.Repeat("─", width-6)
+	return strings.Repeat("─", width)
 }
 
 func levelColour(m Model, l findings.Level) string {

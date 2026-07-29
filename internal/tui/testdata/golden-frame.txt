@@ -1,6 +1,6 @@
 ␛[2J␛[Hkubeagent v0.67.0 · all namespaces · 62 workloads · 2026-07-29 11:04:12 UTC
 Cluster: Degraded · 3/3 nodes Ready · 2 blind spots (b)
-──────────────────────────────────────────────────────────────────────────
+────────────────────────────────────────────────────────────────────────────────
   LEVEL    KIND         NAMESPACE   NAME               ISSUE
 ▸ critical Pod          shop        crasher-7d9f-x2    CrashLoopBackOff
   critical Pod          shop        badimage-5b8-qq    ImagePullBackOff
@@ -20,5 +20,5 @@ Cluster: Degraded · 3/3 nodes Ready · 2 blind spots (b)
 
 
 
-──────────────────────────────────────────────────────────────────────────
-[1] critical [2] warning+ [0] all (3)  ↑↓ move  ⏎ detail  b blind  r rescan  ? …
+────────────────────────────────────────────────────────────────────────────────
+[1] critical [2] warning+ [0] all (3)  ↑↓ move  ⏎ detail  ? help  q quit

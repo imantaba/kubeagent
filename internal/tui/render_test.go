@@ -271,3 +271,43 @@ func stripSGR(s string) string {
 		s = s[:i] + s[i+j+1:]
 	}
 }
+
+func TestRule_SpansTheFullWidth(t *testing.T) {
+	if got := len([]rune(rule(80))); got != 80 {
+		t.Errorf("rule(80) = %d runes, want 80", got)
+	}
+	if got := rule(0); got != "" {
+		t.Errorf("rule(0) = %q, want empty", got)
+	}
+}
+
+func TestFooter_AlwaysShowsHelpAndQuit(t *testing.T) {
+	// The footer is shed from the right, never truncated mid-word, because the
+	// two hints an operator cannot do without are how to get the rest of the key
+	// map and how to leave. 80 is the common case; minWidth is the floor.
+	for _, w := range []int{minWidth, 60, 80, 120} {
+		m := listModel()
+		m.Width = w
+		got := footer(m)
+		if n := len([]rune(got)); n > w {
+			t.Errorf("width %d: footer is %d runes: %q", w, n, got)
+		}
+		if !strings.Contains(got, "q quit") {
+			t.Errorf("width %d: footer has no quit hint: %q", w, got)
+		}
+		if !strings.Contains(got, "? help") {
+			t.Errorf("width %d: footer has no help hint: %q", w, got)
+		}
+	}
+}
+
+func TestFooter_KeepsEveryHintWhenItFits(t *testing.T) {
+	m := listModel()
+	m.Width = 120
+	got := footer(m)
+	for _, want := range []string{"[1] critical", "↑↓ move", "⏎ detail", "b blind", "r rescan", "? help", "q quit"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("footer at 120 dropped %q: %q", want, got)
+		}
+	}
+}

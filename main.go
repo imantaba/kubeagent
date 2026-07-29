@@ -461,6 +461,7 @@ func resultInput(res scan.Result) report.Input {
 		HPAIssues:        res.HPAIssues,
 		WebhookIssues:    res.WebhookIssues,
 		QuotaIssues:      res.QuotaIssues,
+		Blind:            res.PartialReads,
 	}
 }
 

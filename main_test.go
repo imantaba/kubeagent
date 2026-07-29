@@ -100,6 +100,14 @@ func TestResultInput_MapsQuotaIssues(t *testing.T) {
 	}
 }
 
+func TestResultInputCarriesBlindSpots(t *testing.T) {
+	res := scan.Result{PartialReads: []scan.ReadFailure{{Resource: "nodes/proxy", Reason: "forbidden: get nodes/proxy"}}}
+	in := resultInput(res)
+	if len(in.Blind) != 1 || in.Blind[0].Resource != "nodes/proxy" {
+		t.Errorf("resultInput dropped PartialReads: got %+v", in.Blind)
+	}
+}
+
 func TestEnvInt_WebhookTimeoutDefault(t *testing.T) {
 	t.Setenv("KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS", "")
 	if got := envInt("KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS", 15); got != 15 {

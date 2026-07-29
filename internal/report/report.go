@@ -31,6 +31,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/remediate"
 	"github.com/imantaba/kubeagent/internal/remediation"
 	"github.com/imantaba/kubeagent/internal/resources"
+	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/secscan"
 	"github.com/imantaba/kubeagent/internal/svchealth"
 	"github.com/imantaba/kubeagent/internal/termhealth"
@@ -63,6 +64,7 @@ type inventoryReport struct {
 	HPAIssues          []hpahealth.Issue           `json:"hpaIssues,omitempty"`
 	WebhookIssues      []webhookhealth.Issue       `json:"webhookIssues,omitempty"`
 	QuotaIssues        []quotahealth.Issue         `json:"quotaIssues,omitempty"`
+	BlindSpots         []scan.ReadFailure          `json:"blindSpots,omitempty"`
 	Explanation        string                      `json:"explanation,omitempty"`
 	Investigation      *investigationView          `json:"investigation,omitempty"`
 	RemediationPlan    []remediationActionView     `json:"remediationPlan,omitempty"`
@@ -137,12 +139,17 @@ type Input struct {
 	// Capacity is the advisory headroom and right-sizing view (opt-in --capacity).
 	// Nil when the flag is off, so a default scan's output is unchanged. No json
 	// tag: Input is never marshalled — the encoded struct is inventoryReport.
-	Capacity               *capacity.Report
-	StuckTerminating       []termhealth.Issue
-	PDBIssues              []pdbhealth.Issue
-	HPAIssues              []hpahealth.Issue
-	WebhookIssues          []webhookhealth.Issue
-	QuotaIssues            []quotahealth.Issue
+	Capacity         *capacity.Report
+	StuckTerminating []termhealth.Issue
+	PDBIssues        []pdbhealth.Issue
+	HPAIssues        []hpahealth.Issue
+	WebhookIssues    []webhookhealth.Issue
+	QuotaIssues      []quotahealth.Issue
+	// Blind is scan.Result.PartialReads — the collector calls that failed, so a
+	// refused read is distinguishable from an empty one. Reasons are rendered
+	// verbatim here; see the safeReason comment in internal/htmlreport, which
+	// classifies instead because that document is written to be forwarded.
+	Blind                  []scan.ReadFailure
 	Explanation            string
 	Investigation          string
 	InvestigationConsulted []string
@@ -181,6 +188,7 @@ func PrintInventory(in Input, format string, w io.Writer) error {
 			HPAIssues:          in.HPAIssues,
 			WebhookIssues:      in.WebhookIssues,
 			QuotaIssues:        in.QuotaIssues,
+			BlindSpots:         in.Blind,
 			Explanation:        in.Explanation,
 			Investigation:      investigationOf(in),
 			RemediationPlan:    remediationPlanOf(in),
@@ -293,6 +301,11 @@ func printInventoryText(in Input, w io.Writer) error {
 		return err
 	}
 
+	hasBlind := len(in.Blind) > 0
+	if err := printBlindSpots(in.Blind, w); err != nil {
+		return err
+	}
+
 	if err := printNotes(in, expected, expectedIng, w); err != nil {
 		return err
 	}
@@ -301,7 +314,7 @@ func printInventoryText(in Input, w io.Writer) error {
 		return err
 	}
 
-	if !hasAttention && !hasSecurity && !hasKubeletHealth && !hasControlPlane && !hasDNS && !hasCerts && in.Cluster.Verdict == "Healthy" {
+	if !hasAttention && !hasSecurity && !hasKubeletHealth && !hasControlPlane && !hasDNS && !hasCerts && !hasBlind && in.Cluster.Verdict == "Healthy" {
 		if _, err := fmt.Fprintln(w, "No issues found. ✅"); err != nil {
 			return err
 		}
@@ -735,6 +748,26 @@ func printQuotaIssues(issues []quotahealth.Issue, w io.Writer) error {
 		}
 	}
 	return nil
+}
+
+// printBlindSpots names what the scan could not read. It prints nothing when the
+// scan saw everything, so a clean run's output is unchanged. Reasons are rendered
+// verbatim — unlike internal/htmlreport.safeReason, which classifies instead of
+// quoting because that document is written to be forwarded; this one is not.
+func printBlindSpots(blind []scan.ReadFailure, w io.Writer) error {
+	if len(blind) == 0 {
+		return nil
+	}
+	if _, err := fmt.Fprintln(w, "BLIND SPOTS"); err != nil {
+		return err
+	}
+	for _, b := range blind {
+		if _, err := fmt.Fprintf(w, "  • %s: %s\n", b.Resource, b.Reason); err != nil {
+			return err
+		}
+	}
+	_, err := fmt.Fprintln(w)
+	return err
 }
 
 // printWebhookIssues lists admission webhooks that will reject every intercepted request.

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.69.0] - 2026-07-29
+
 ### Added
 
 - `kubeagent rbac print` and `kubeagent rbac check`: print the minimal ClusterRole a
@@ -24,6 +26,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--control-plane-health` and the `--operators`/`--drift` advisories recorded it only
   inside their own section. A scan that could not see no longer looks like a scan that saw
   nothing wrong.
+- A refused read is now reported in kubeagent's own words on every surface. The reason
+  string previously carried the API server's own message, which interpolates the
+  authorizer's error and so names the requesting identity — a ServiceAccount, an IAM ARN,
+  an OIDC email, or arbitrary text under webhook authorization. That message reached the
+  scan report, `kubeagent gate`, the TUI and the MCP tool results.
+- `--logs` no longer claims a missing `pods/log` grant when the container simply has no
+  previous run. A container that has never terminated — the normal case for
+  `ImagePullBackOff` and `CreateContainerConfigError` — makes the API server answer `400`,
+  not `403`, and that answer was being reported as a permission problem.
 
 ## [0.68.0] - 2026-07-29
 
@@ -1135,7 +1146,8 @@ infrastructure (a documentation site and a pre-release chaos-test harness).
 - CI (vet/test/build on push & PR) and a release workflow publishing a
   linux/amd64 tarball + `SHA256SUMS` to a GitHub Release.
 
-[Unreleased]: https://github.com/imantaba/kubeagent/compare/v0.68.0...HEAD
+[Unreleased]: https://github.com/imantaba/kubeagent/compare/v0.69.0...HEAD
+[0.69.0]: https://github.com/imantaba/kubeagent/compare/v0.68.0...v0.69.0
 [0.68.0]: https://github.com/imantaba/kubeagent/compare/v0.67.0...v0.68.0
 [0.67.0]: https://github.com/imantaba/kubeagent/compare/v0.66.0...v0.67.0
 [0.66.0]: https://github.com/imantaba/kubeagent/compare/v0.65.0...v0.66.0

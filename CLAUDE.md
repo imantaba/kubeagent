@@ -136,7 +136,7 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   provenance attested for both, and the pre-release guard in
   `scripts/release-vars.sh` that keeps an `-rc` tag off `:latest`. A verifier
   follows [website/docs/verify.md](website/docs/verify.md). Slice 2 —
-  per-feature least-privilege RBAC — has shipped: one `Feature` table in
+  per-feature least-privilege RBAC — has shipped (v0.69.0): one `Feature` table in
   `internal/rbacprofile` generates every RBAC manifest and the chart
   ClusterRole, `kubeagent rbac print`/`check` report what each feature costs
   and whether an identity may run it, and a refused read is now named as a

@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -2107,5 +2108,61 @@ func TestRenderScanLeavesTextAndJSONOnTheOldPath(t *testing.T) {
 		if viaHelper.String() != viaReport.String() {
 			t.Errorf("renderScan changed the %s output", format)
 		}
+	}
+}
+
+func TestRun_UsageMentionsTUI(t *testing.T) {
+	err := run([]string{})
+	if err == nil {
+		t.Fatal("no error")
+	}
+	if !strings.Contains(err.Error(), "tui") {
+		t.Errorf("usage does not mention the tui subcommand: %q", err.Error())
+	}
+}
+
+func TestRunTUI_RejectsUnknownFlag(t *testing.T) {
+	err := run([]string{"tui", "--bogus"})
+	if err == nil {
+		t.Fatal("no error for an unknown flag")
+	}
+	if !strings.Contains(err.Error(), "bogus") {
+		t.Errorf("error does not name the bad flag: %q", err.Error())
+	}
+}
+
+// --output is deliberately absent: a TUI seizes the terminal and is not
+// redirectable, so it is not an output format.
+func TestRunTUI_RejectsOutputFlag(t *testing.T) {
+	err := run([]string{"tui", "--output", "json"})
+	if err == nil {
+		t.Fatal("no error for --output")
+	}
+	if !strings.Contains(err.Error(), "output") {
+		t.Errorf("error does not name the flag: %q", err.Error())
+	}
+}
+
+// The TUI must never make an LLM call, so it must not accept the flags that
+// would ask for one.
+func TestRunTUI_RejectsExplainAndInvestigate(t *testing.T) {
+	for _, flag := range []string{"--explain", "--investigate"} {
+		if err := run([]string{"tui", flag}); err == nil {
+			t.Errorf("%s was accepted", flag)
+		}
+	}
+}
+
+// tuiScanOptions must produce the same defaults gateScanOptions does, so the
+// TUI browses exactly what a bare scan reports.
+//
+// reflect.DeepEqual, not !=: scan.Options carries an ExpectedNodes []string,
+// which makes the struct non-comparable with the operator the brief specifies.
+// DeepEqual still compares the whole value, not a field or two.
+func TestTUIScanOptions_MatchesGateDefaults(t *testing.T) {
+	got := tuiScanOptions("shop")
+	want := gateScanOptions("shop")
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("tuiScanOptions = %+v, want %+v", got, want)
 	}
 }

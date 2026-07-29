@@ -311,3 +311,26 @@ func TestFooter_KeepsEveryHintWhenItFits(t *testing.T) {
 		}
 	}
 }
+
+func TestRender_EveryModeFitsEveryWidth(t *testing.T) {
+	// The golden frame is one mode at one width, so it cannot catch a line that
+	// only overflows on a narrow terminal in a screen the golden does not show.
+	// Sweep instead: every mode, every width from the floor up.
+	modes := map[Mode]string{ModeList: "list", ModeDetail: "detail", ModeBlind: "blind", ModeHelp: "help"}
+	for w := minWidth; w <= 120; w++ {
+		for mode, name := range modes {
+			for _, blind := range []bool{true, false} {
+				m := goldenModel()
+				m.Width, m.Mode = w, mode
+				if !blind {
+					m.Blind = nil
+				}
+				for _, l := range frameLines(Render(m)) {
+					if n := len([]rune(l)); n > w {
+						t.Fatalf("%s at width %d (blind=%v): line is %d runes: %q", name, w, blind, n, l)
+					}
+				}
+			}
+		}
+	}
+}

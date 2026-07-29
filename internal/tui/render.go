@@ -194,10 +194,17 @@ func detailLines(m Model) []string {
 func blindLines(m Model) []string {
 	lines := headerLines(m)
 	lines = append(lines, rule(m.Width))
+	// Wrapped, not appended raw: at 80 columns both sentences fit and the overflow
+	// is invisible, but the second is 73 runes and the terminal floor is 40.
 	if len(m.Blind) == 0 {
-		lines = append(lines, "  kubeagent read everything it asked for.")
+		for _, l := range wrap("kubeagent read everything it asked for.", m.Width-2) {
+			lines = append(lines, "  "+l)
+		}
 	} else {
-		lines = append(lines, "  kubeagent could not read the following, so the findings are incomplete.", "")
+		for _, l := range wrap("kubeagent could not read the following, so the findings are incomplete.", m.Width-2) {
+			lines = append(lines, "  "+l)
+		}
+		lines = append(lines, "")
 		for _, b := range m.Blind {
 			lines = append(lines, "  "+truncate(b.Resource, m.Width-2))
 			// Verbatim: the reason is the diagnosis, and this frame is the

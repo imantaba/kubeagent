@@ -20,6 +20,22 @@
 # both exercise the same build. Windows is deliberately not built: no test or
 # smoke run in this project has ever executed on it, and shipping a binary for
 # a platform nobody has run is a claim the project cannot back.
+#
+# Archives are byte-reproducible: the same tag rebuilt on another machine
+# produces the same SHA256SUMS. tar is told not to record the staging
+# directory's mtime or the building user's uid and name, gzip is told not to
+# stamp its own header, and the Go build is trimmed of absolute paths. Without
+# this a verifier who rebuilds a release gets a mismatch and cannot tell
+# tampering from timestamps.
+#
+# Requires GNU tar 1.28 or newer (--sort=name). bsdtar, the macOS default,
+# does not accept these flags; the script already targets Linux and
+# cross-compiles the darwin binaries.
+#
+# Environment:
+#   SOURCE_DATE_EPOCH   archive mtime, seconds. Defaults to the HEAD commit time.
+#   RELEASE_PLATFORMS   space-separated os/arch list. Defaults to all four.
+#                       Must include linux/amd64.
 set -euo pipefail
 
 die() { echo "error: $*" >&2; exit 1; }
@@ -32,6 +48,17 @@ OUTDIR="${2:-}"
 # Run from the repo root regardless of where we're invoked.
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+
+# Defaulted from the commit rather than from the clock: "now" would be
+# reproducible only within a single run, which defeats the point. A checkout
+# with no commit time is an error, not a reason to substitute one.
+SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "$ROOT" log -1 --pretty=%ct 2>/dev/null || true)}"
+[ -n "$SOURCE_DATE_EPOCH" ] ||
+  die "SOURCE_DATE_EPOCH is unset and HEAD has no commit time (not a git checkout?) — set SOURCE_DATE_EPOCH to build reproducibly"
+
+# RELEASE_PLATFORMS exists so the reproducibility test can double-build a
+# subset quickly. Every real caller gets the default four.
+: "${RELEASE_PLATFORMS:=linux/amd64 linux/arm64 darwin/amd64 darwin/arm64}"
 
 mkdir -p "$OUTDIR"
 OUTDIR="$(cd "$OUTDIR" && pwd)"   # absolute: `tar -C` and the subshell below must agree
@@ -55,23 +82,38 @@ done
 stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
 
-for platform in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+for platform in $RELEASE_PLATFORMS; do
   os="${platform%/*}"
   arch="${platform#*/}"
   echo "building ${os}/${arch}"
   CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
-    go build -ldflags "-X main.version=${VERSION}" -o "$stage/kubeagent" .
+    go build -trimpath -ldflags "-X main.version=${VERSION}" -o "$stage/kubeagent" .
   # NOTICE travels with LICENSE: Apache-2.0 section 4(d) requires redistributions
   # to carry it.
   cp README.md LICENSE NOTICE "$stage/"
-  tar -czf "${OUTDIR}/kubeagent_${VERSION}_${os}_${arch}.tar.gz" \
-    -C "$stage" kubeagent README.md LICENSE NOTICE
+  # LC_ALL=C so --sort=name sorts bytewise everywhere, not by the builder's
+  # locale collation. Each flag closes one leak: entry order, the building
+  # user's uid and name, the staging directory's mtime. gzip is invoked
+  # separately because tar -czf gives no way to pass it -n, and the gzip
+  # header has its own filename and timestamp fields.
+  #
+  # --sort=name only reorders names tar discovers itself (directory
+  # recursion, --files-from); it does not reorder names given explicitly on
+  # the command line, so these four are listed in the bytewise order we want
+  # in the archive (LICENSE < NOTICE < README.md < kubeagent under LC_ALL=C,
+  # since uppercase sorts before lowercase).
+  LC_ALL=C tar --sort=name --numeric-owner --owner=0 --group=0 \
+      --mtime="@${SOURCE_DATE_EPOCH}" \
+      -C "$stage" -cf - LICENSE NOTICE README.md kubeagent |
+    gzip -n > "${OUTDIR}/kubeagent_${VERSION}_${os}_${arch}.tar.gz"
 done
 
 # Unversioned copy so releases/latest/download/kubeagent_linux_amd64.tar.gz
 # always resolves to the newest release. That URL is in the wild — the README
 # quick-install and people's own notes — and dropping it would break every
 # copy of that install line silently.
+[ -f "${OUTDIR}/kubeagent_${VERSION}_linux_amd64.tar.gz" ] ||
+  die "linux/amd64 was not built (RELEASE_PLATFORMS=${RELEASE_PLATFORMS}) — the unversioned archive that releases/latest/download resolves to cannot be produced"
 cp "${OUTDIR}/kubeagent_${VERSION}_linux_amd64.tar.gz" \
    "${OUTDIR}/kubeagent_linux_amd64.tar.gz"
 

@@ -1099,8 +1099,17 @@ scenario_20_rbac() {   # a real least-privilege identity: the API server actuall
   server="$(kubectl --context "$CTX" config view --minify -o jsonpath='{.clusters[0].cluster.server}')"
   kubectl --context "$CTX" config view --minify --raw \
     -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' | base64 -d >"$ca"
-  KUBECONFIG="$kc" kubectl config set-cluster chaos \
-    --server="$server" --certificate-authority="$ca" --embed-certs=true >/dev/null
+  # A kubeconfig that pins the CA out-of-band carries no certificate-authority-data,
+  # and base64 -d on empty input succeeds — so without this branch the scenario would
+  # build a kubeconfig pointing at an empty CA file and fail much later, looking like
+  # a kubeagent bug rather than a harness one.
+  if [ -s "$ca" ]; then
+    KUBECONFIG="$kc" kubectl config set-cluster chaos \
+      --server="$server" --certificate-authority="$ca" --embed-certs=true >/dev/null
+  else
+    KUBECONFIG="$kc" kubectl config set-cluster chaos \
+      --server="$server" --insecure-skip-tls-verify=true >/dev/null
+  fi
   KUBECONFIG="$kc" kubectl config set-credentials chaos --token="$token" >/dev/null
   KUBECONFIG="$kc" kubectl config set-context chaos --cluster=chaos --user=chaos >/dev/null
   KUBECONFIG="$kc" kubectl config use-context chaos >/dev/null

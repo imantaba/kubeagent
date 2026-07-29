@@ -71,4 +71,5 @@ nav:
       - HTML report: features/html-report.md
       - Interactive TUI: features/tui.md
   - Install: install.md
+  - Verifying a release: verify.md
   - Roadmap: roadmap.md

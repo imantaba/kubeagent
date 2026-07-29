@@ -69,5 +69,6 @@ nav:
       - MCP server: features/mcp.md
       - CI/CD gate: features/ci-gate.md
       - HTML report: features/html-report.md
+      - Interactive TUI: features/tui.md
   - Install: install.md
   - Roadmap: roadmap.md

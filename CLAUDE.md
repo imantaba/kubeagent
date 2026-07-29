@@ -54,6 +54,12 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   only), makes **no LLM calls**, and must never import `internal/remediate` or
   `internal/explain` (see
   [website/docs/features/ci-gate.md](website/docs/features/ci-gate.md)).
+  `kubeagent tui` (`internal/tui`) is a fourth case, a long-lived interactive
+  process alongside the watch daemon and the MCP server, not a one-shot run
+  like `gate`. It is **strictly read-only toward the cluster** (`get`/`list`
+  only, not even `watch`), makes **no LLM calls**, and must never import
+  `internal/remediate`, `internal/explain`, `internal/investigate`, or
+  `internal/report` (see [website/docs/features/tui.md](website/docs/features/tui.md)).
   `internal/htmlreport` (the `scan --output html` renderer) is a different case
   and is deliberately allowed to reuse `report.Input`, which transitively pulls
   in `internal/remediate`. The rule above is about capability, not the
@@ -105,11 +111,15 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   production contract) lives in
   [website/docs/roadmap.md](website/docs/roadmap.md). Update it when a milestone
   ships or the plan shifts.
-- **Theme G slices 1, 2 and 3 have shipped:** the MCP server (`kubeagent mcp`),
-  documented in [website/docs/features/mcp.md](website/docs/features/mcp.md);
-  the `kubectl` krew plugin (`krew/kubeagent.yaml.tmpl` +
+- **Theme G slices 1, 2, 3, 4a and 4b have shipped:** the MCP server
+  (`kubeagent mcp`), documented in
+  [website/docs/features/mcp.md](website/docs/features/mcp.md); the `kubectl`
+  krew plugin (`krew/kubeagent.yaml.tmpl` +
   `scripts/render-krew-manifest.sh`, rendered at release time and never
-  committed); and CI/CD gate mode (`kubeagent gate`), documented in
-  [website/docs/features/ci-gate.md](website/docs/features/ci-gate.md). The
-  rest of Theme G — an interactive TUI and a shareable HTML report — remains
-  ahead.
+  committed); CI/CD gate mode (`kubeagent gate`), documented in
+  [website/docs/features/ci-gate.md](website/docs/features/ci-gate.md); the
+  shareable HTML report (`scan --output html`), documented in
+  [website/docs/features/html-report.md](website/docs/features/html-report.md);
+  and the interactive TUI (`kubeagent tui`), documented in
+  [website/docs/features/tui.md](website/docs/features/tui.md). The rest of
+  Theme G — an optional in-cluster dashboard — remains ahead.

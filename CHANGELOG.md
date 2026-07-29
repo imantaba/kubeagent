@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Relicensed to Apache-2.0.** The MIT `LICENSE` is replaced by the Apache
+  License 2.0, with the `NOTICE` file restored. Apache-2.0 is the license
+  foundations expect of a donated project, it grants an explicit patent
+  licence that MIT does not, and relicensing is only cheap while the copyright
+  sits with one author. Every dependency remains permissively licensed
+  (Apache-2.0 / BSD / MIT), so nothing downstream changes.
+
+### Added
+
+- **Project governance documents.** `GOVERNANCE.md` (single-maintainer
+  decision making today, with an automatic switch to lazy consensus plus
+  majority votes once there are three or more maintainers, and stated criteria
+  for becoming one), `MAINTAINERS.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`
+  (the CNCF Code of Conduct, adopted as this project's own text and enforced by
+  the maintainers), and `ADOPTERS.md` — joining the `SECURITY.md` already in
+  the tree.
+- **DCO sign-off is now required and enforced.** Every commit needs a
+  `Signed-off-by:` trailer matching its author (`git commit -s`); there is no
+  CLA. A new `DCO` workflow runs `scripts/dco-check.sh` over each pull
+  request's commits — a self-contained shell check with no third-party action
+  in the path, runnable locally as `scripts/dco-check.sh main`.
+
 ## [0.67.0] - 2026-07-29
 
 ### Added

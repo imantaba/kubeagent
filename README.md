@@ -520,3 +520,24 @@ checked by the CI workflow (vet + test + build).
 ## Design
 
 See [docs/design.md](docs/design.md).
+
+## Contributing
+
+Bug reports, detector ideas, and pull requests are welcome. Start with
+[CONTRIBUTING.md](CONTRIBUTING.md) — it covers the build, the test style
+(write the failing test first), the project invariants a change must not break,
+and the [DCO](https://developercertificate.org/) sign-off (`git commit -s`)
+that every commit needs. There is no CLA.
+
+- **Code of Conduct** — this project follows the
+  [CNCF Code of Conduct](https://github.com/cncf/foundation/blob/main/code-of-conduct.md);
+  see [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+- **Governance** — who decides what, and how to become a maintainer:
+  [GOVERNANCE.md](GOVERNANCE.md) and [MAINTAINERS.md](MAINTAINERS.md).
+- **Security** — do not open a public issue; report privately per
+  [SECURITY.md](SECURITY.md).
+- **Using kubeagent?** Add yourself to [ADOPTERS.md](ADOPTERS.md).
+
+## License
+
+Licensed under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE).

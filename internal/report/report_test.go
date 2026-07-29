@@ -28,6 +28,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/quotahealth"
 	"github.com/imantaba/kubeagent/internal/remediate"
 	"github.com/imantaba/kubeagent/internal/resources"
+	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/secscan"
 	"github.com/imantaba/kubeagent/internal/svchealth"
 	"github.com/imantaba/kubeagent/internal/termhealth"
@@ -2126,5 +2127,94 @@ func TestPrintInventory_OperatorsJSON(t *testing.T) {
 	}
 	if got.Operators.Operators[0].Kinds[0].Counts[operators.StateHealthy] != 12 {
 		t.Errorf("counts did not round-trip: %+v", got.Operators.Operators[0].Kinds[0].Counts)
+	}
+}
+
+// A scan that could not read something must say so on the default surface. Before
+// this, PartialReads reached --output html, gate, tui and MCP but never the text
+// report, so a refused read printed nothing at all.
+func TestTextReportRendersBlindSpots(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy"},
+		Blind: []scan.ReadFailure{
+			{Resource: "nodes/proxy", Reason: "forbidden: get nodes/proxy"},
+			{Resource: "secrets", Reason: "forbidden: list secrets"},
+		},
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatalf("PrintInventory: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "BLIND SPOTS") {
+		t.Errorf("text report has no BLIND SPOTS section:\n%s", out)
+	}
+	for _, want := range []string{"nodes/proxy", "forbidden: get nodes/proxy", "secrets", "forbidden: list secrets"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("text report is missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// The green-when-blind defect this whole feature exists to prevent: a scan that was
+// refused a read must never claim the cluster is clean.
+func TestTextReportDoesNotClaimHealthyWhenBlind(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy"},
+		Blind:   []scan.ReadFailure{{Resource: "nodes/proxy", Reason: "forbidden: get nodes/proxy"}},
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatalf("PrintInventory: %v", err)
+	}
+	if strings.Contains(buf.String(), "No issues found") {
+		t.Errorf("a blind scan reported no issues found:\n%s", buf.String())
+	}
+}
+
+// A clean scan is unchanged: no section, no header, and the healthy line still prints.
+func TestTextReportOmitsBlindSpotsWhenNone(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy"}}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatalf("PrintInventory: %v", err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "BLIND SPOTS") {
+		t.Errorf("clean scan printed a BLIND SPOTS section:\n%s", out)
+	}
+	if !strings.Contains(out, "No issues found") {
+		t.Errorf("clean scan lost its healthy line:\n%s", out)
+	}
+}
+
+func TestJSONReportCarriesBlindSpots(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{Blind: []scan.ReadFailure{{Resource: "pods/log", Reason: "forbidden: get pods/log"}}}
+	if err := PrintInventory(in, "json", &buf); err != nil {
+		t.Fatalf("PrintInventory: %v", err)
+	}
+	var got struct {
+		BlindSpots []struct{ Resource, Reason string } `json:"blindSpots"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(got.BlindSpots) != 1 {
+		t.Fatalf("got %d blind spots, want 1: %s", len(got.BlindSpots), buf.String())
+	}
+	if got.BlindSpots[0].Resource != "pods/log" || got.BlindSpots[0].Reason != "forbidden: get pods/log" {
+		t.Errorf("got %+v, want {pods/log forbidden: get pods/log}", got.BlindSpots[0])
+	}
+}
+
+// omitempty: a default scan's JSON must be byte-identical to what it was before.
+func TestJSONReportOmitsBlindSpotsWhenNone(t *testing.T) {
+	var buf bytes.Buffer
+	if err := PrintInventory(Input{}, "json", &buf); err != nil {
+		t.Fatalf("PrintInventory: %v", err)
+	}
+	if strings.Contains(buf.String(), "blindSpots") {
+		t.Errorf("clean scan emitted a blindSpots key:\n%s", buf.String())
 	}
 }

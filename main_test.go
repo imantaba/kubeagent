@@ -24,6 +24,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
 
+	"github.com/imantaba/kubeagent/internal/advisory"
 	"github.com/imantaba/kubeagent/internal/audit"
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/gate"
@@ -96,6 +97,14 @@ func TestResultInput_MapsQuotaIssues(t *testing.T) {
 	in := resultInput(res)
 	if len(in.QuotaIssues) != 1 || in.QuotaIssues[0].Resource != "pods" {
 		t.Errorf("resultInput dropped QuotaIssues: got %+v", in.QuotaIssues)
+	}
+}
+
+func TestResultInputCarriesBlindSpots(t *testing.T) {
+	res := scan.Result{PartialReads: []scan.ReadFailure{{Resource: "nodes/proxy", Reason: "forbidden: get nodes/proxy"}}}
+	in := resultInput(res)
+	if len(in.Blind) != 1 || in.Blind[0].Resource != "nodes/proxy" {
+		t.Errorf("resultInput dropped PartialReads: got %+v", in.Blind)
 	}
 }
 
@@ -2164,5 +2173,99 @@ func TestTUIScanOptions_MatchesGateDefaults(t *testing.T) {
 	want := gateScanOptions("shop")
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("tuiScanOptions = %+v, want %+v", got, want)
+	}
+}
+
+func TestSelectedRulesResolvesAProfile(t *testing.T) {
+	rules, err := selectedRules("scan", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rules) != 10 {
+		t.Fatalf("scan profile resolved to %d rules, want 10", len(rules))
+	}
+}
+
+func TestSelectedRulesPrefersExplicitFeatures(t *testing.T) {
+	rules, err := selectedRules("scan", "core, certs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, r := range rules {
+		for _, res := range r.Resources {
+			if res == "secrets" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Error("--features core,certs did not include the secrets grant")
+	}
+}
+
+func TestSelectedRulesRejectsAnUnknownProfile(t *testing.T) {
+	if _, err := selectedRules("everything", ""); err == nil {
+		t.Fatal("selectedRules accepted an unknown profile")
+	}
+}
+
+func TestSelectedFeaturesResolvesAProfile(t *testing.T) {
+	features, err := selectedFeatures("scan", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, f := range features {
+		names = append(names, f.Name)
+	}
+	want := []string{"core"}
+	if !reflect.DeepEqual(names, want) {
+		t.Errorf("scan profile resolved to %v, want %v", names, want)
+	}
+}
+
+func TestSelectedFeaturesPrefersExplicitFeatures(t *testing.T) {
+	// The "scan" profile alone resolves to just ["core"]; naming --features
+	// explicitly must win and bring in "certs" too.
+	features, err := selectedFeatures("scan", "core, certs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, f := range features {
+		names = append(names, f.Name)
+	}
+	want := []string{"core", "certs"}
+	if !reflect.DeepEqual(names, want) {
+		t.Errorf("selectedFeatures(\"scan\", \"core, certs\") = %v, want %v", names, want)
+	}
+}
+
+func TestSelectedFeaturesRejectsAnUnknownProfile(t *testing.T) {
+	if _, err := selectedFeatures("everything", ""); err == nil {
+		t.Fatal("selectedFeatures accepted an unknown profile")
+	}
+}
+
+func TestAdvisoryBlindSpotsNamesEachDegradedSubject(t *testing.T) {
+	got := advisoryBlindSpots([]advisory.Degradation{
+		{Sections: []string{"drift"}, Subject: "argoproj.io/applications", Reason: "forbidden"},
+		{Sections: []string{"operators"}, Subject: "longhorn.io/volumes", Reason: "the server could not find the requested resource"},
+	})
+	if len(got) != 1 {
+		t.Fatalf("got %d blind spots, want only the forbidden one: %+v", len(got), got)
+	}
+	if got[0].Resource != "argoproj.io/applications" {
+		t.Errorf("Resource = %q", got[0].Resource)
+	}
+	if !strings.Contains(got[0].Reason, "forbidden") {
+		t.Errorf("Reason = %q, want it to contain \"forbidden\"", got[0].Reason)
+	}
+}
+
+func TestSelectedFeaturesRejectsAnUnknownFeature(t *testing.T) {
+	if _, err := selectedFeatures("scan", "bogus"); err == nil {
+		t.Fatal("selectedFeatures accepted an unknown feature name")
 	}
 }

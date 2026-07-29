@@ -1,3 +1,5 @@
+# Generated from internal/rbacprofile — do not edit by hand.
+# Regenerate: go test ./internal/rbacprofile -run TestGeneratedManifests -update
 # Opt-in add-on: grants read access to container logs via the pods/log subresource,
 # needed only when running `scan --logs`. Apply alongside deploy/ for a restricted
 # context; most human kubeconfigs already allow pods/log. Without it, --logs simply

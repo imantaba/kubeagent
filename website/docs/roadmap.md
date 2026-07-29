@@ -457,7 +457,10 @@ These are the north star; every item below is measured against them.
 - **H · Supply-chain & trust** — signed releases, SBOM and build provenance
   (shipped: keyless cosign signatures, an SPDX SBOM, SLSA build provenance and
   byte-reproducible archives — see [Verifying a release](verify.md));
-  least-privilege RBAC profiles per feature, and fuzzed detectors remain ahead.
+  **per-feature least-privilege RBAC** (shipped: `kubeagent rbac print` and
+  `kubeagent rbac check`, and every RBAC manifest generated from one feature
+  table — see [Least-privilege RBAC](features/rbac.md)). Fuzzed detectors
+  remain ahead.
 
 ### Milestones
 

@@ -1,3 +1,5 @@
+# Generated from internal/rbacprofile — do not edit by hand.
+# Regenerate: go test ./internal/rbacprofile -run TestGeneratedManifests -update
 # Optional add-on grant for `kubeagent scan --dns-health` (and the daemon with
 # KUBEAGENT_DNS_HEALTH=true): read each CoreDNS pod's :9153/metrics via the
 # pods/proxy subresource to flag an elevated SERVFAIL+REFUSED response ratio.

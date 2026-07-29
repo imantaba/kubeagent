@@ -393,15 +393,16 @@ func ConfigMaps(ctx context.Context, client kubernetes.Interface, namespace stri
 	return cms.Items, nil
 }
 
-// NodeStats fetches one node's kubelet /stats/summary through the nodes/proxy
-// subresource (read-only). A forbidden or unreachable node yields
-// (zero, false, nil) so a scan still succeeds without it. Requires the
-// nodes/proxy grant (opt-in; see deploy/rbac-diskusage.yaml).
+// NodeStats reads one node's kubelet summary API through the nodes/proxy
+// subresource. It returns (zero, false, err) when the read is refused or the
+// node is unreachable, so a scan can still succeed without it while naming what
+// it could not see — a discarded error here would make a missing nodes/proxy
+// grant not merely silent but unrepresentable.
 func NodeStats(ctx context.Context, client kubernetes.Interface, node string) (diskusage.NodeSummary, bool, error) {
 	data, err := client.CoreV1().RESTClient().Get().
 		AbsPath(fmt.Sprintf("/api/v1/nodes/%s/proxy/stats/summary", node)).DoRaw(ctx)
 	if err != nil {
-		return diskusage.NodeSummary{}, false, nil // forbidden/unreachable — non-fatal
+		return diskusage.NodeSummary{}, false, err
 	}
 	return parseNodeSummary(node, data)
 }
@@ -445,18 +446,22 @@ func parseNodeSummary(node string, data []byte) (diskusage.NodeSummary, bool, er
 	return out, true, nil
 }
 
-// PreviousLogs fetches the last-terminated instance's logs for one container, capped at
-// 25 lines. Never returns an error (non-fatal, like NodeStats): returns ("", false) on any
-// failure (no previous instance, forbidden, transport error, empty).
-func PreviousLogs(ctx context.Context, client kubernetes.Interface, ns, pod, container string) (string, bool) {
+// PreviousLogs reads the tail of a container's previous run. It returns
+// ("", false, err) when the read is refused, so --logs without a pods/log
+// grant reports a blind spot instead of quietly finding no log cause. An empty
+// log is ("", false, nil): nothing was refused, there was simply nothing there.
+func PreviousLogs(ctx context.Context, client kubernetes.Interface, ns, pod, container string) (string, bool, error) {
 	tail := int64(25)
 	raw, err := client.CoreV1().Pods(ns).GetLogs(pod, &corev1.PodLogOptions{
 		Container: container, Previous: true, TailLines: &tail,
 	}).DoRaw(ctx)
-	if err != nil || len(raw) == 0 {
-		return "", false
+	if err != nil {
+		return "", false, err
 	}
-	return string(raw), true
+	if len(raw) == 0 {
+		return "", false, nil
+	}
+	return string(raw), true, nil
 }
 
 // KubeletHealthz probes a node's kubelet /healthz via the nodes/proxy subresource

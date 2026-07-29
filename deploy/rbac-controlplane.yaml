@@ -1,3 +1,5 @@
+# Generated from internal/rbacprofile — do not edit by hand.
+# Regenerate: go test ./internal/rbacprofile -run TestGeneratedManifests -update
 # Optional add-on grant for `kubeagent scan --control-plane-health` (and the daemon
 # with KUBEAGENT_CONTROL_PLANE_HEALTH=true): read the apiserver /readyz endpoint to
 # flag an unhealthy control plane / etcd. Strictly read-only (a single nonResourceURL

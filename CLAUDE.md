@@ -60,6 +60,12 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   only, not even `watch`), makes **no LLM calls**, and must never import
   `internal/remediate`, `internal/explain`, `internal/investigate`, or
   `internal/report` (see [website/docs/features/tui.md](website/docs/features/tui.md)).
+  `kubeagent rbac` (`internal/rbacprofile`) is a fifth case: a one-shot, read-only command
+  that makes **no LLM calls** and must never import `internal/remediate` or
+  `internal/explain`. Its `check` verb creates `SelfSubjectAccessReview` objects — a virtual
+  resource the API server evaluates and never persists, the same API `kubectl auth can-i`
+  uses. It is the sole non-`--fix` path in kubeagent that issues a POST, and it changes no
+  cluster state.
   `internal/htmlreport` (the `scan --output html` renderer) is a different case
   and is deliberately allowed to reuse `report.Input`, which transitively pulls
   in `internal/remediate`. The rule above is about capability, not the
@@ -129,6 +135,11 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   over `SHA256SUMS` and over the image digest, SPDX SBOMs and SLSA build
   provenance attested for both, and the pre-release guard in
   `scripts/release-vars.sh` that keeps an `-rc` tag off `:latest`. A verifier
-  follows [website/docs/verify.md](website/docs/verify.md). The rest of Theme H
-  — per-feature least-privilege RBAC, fuzzed detectors, the v1.0 production
-  contract — remains ahead.
+  follows [website/docs/verify.md](website/docs/verify.md). Slice 2 —
+  per-feature least-privilege RBAC — has shipped: one `Feature` table in
+  `internal/rbacprofile` generates every RBAC manifest and the chart
+  ClusterRole, `kubeagent rbac print`/`check` report what each feature costs
+  and whether an identity may run it, and a refused read is now named as a
+  blind spot instead of rendering an empty section
+  ([website/docs/features/rbac.md](website/docs/features/rbac.md)). The rest of
+  Theme H — fuzzed detectors and the v1.0 production contract — remains ahead.

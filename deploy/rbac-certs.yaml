@@ -1,3 +1,5 @@
+# Generated from internal/rbacprofile — do not edit by hand.
+# Regenerate: go test ./internal/rbacprofile -run TestGeneratedManifests -update
 # Opt-in add-on: grants the kubeagent ServiceAccount LIST access to Secrets so
 # the --certs / KUBEAGENT_CERTS certificate-expiry check can read the PUBLIC
 # certificate (tls.crt) of kubernetes.io/tls Secrets. kubeagent never reads

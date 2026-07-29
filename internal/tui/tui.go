@@ -42,8 +42,10 @@ type Options struct {
 // checkTTY refuses to run without a terminal on both ends. isTerm is injected so
 // the refusal is testable without a pty.
 //
-// The check runs before kubeagent connects to anything: a pipeline that reached
-// for the TUI by mistake should fail immediately with advice, not after a scan.
+// The check runs before kubeagent reads anything from the cluster: a pipeline
+// that reached for the TUI by mistake should fail immediately with advice, not
+// after a scan. main builds the client first, but cluster.NewClient only reads
+// the kubeconfig — the first network call is the Scan below, after this returns.
 // The message names no kubeconfig path and no context, because stdout here is
 // whatever the operator redirected it to.
 func checkTTY(inFD, outFD int, isTerm func(int) bool) error {

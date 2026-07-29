@@ -2,6 +2,9 @@ package collect
 
 import (
 	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -15,8 +18,14 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	storagev1 "k8s.io/api/storage/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/rest"
+	ktesting "k8s.io/client-go/testing"
 )
 
 func TestCollectInventory_ListsControllersAndPods(t *testing.T) {
@@ -602,5 +611,53 @@ func TestObjectEvents_NoEventsIsNotAnError(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Errorf("ObjectEvents() = %v, want none", got)
+	}
+}
+
+// A forbidden nodes/proxy read must be distinguishable from a node that simply
+// has no stats. Before this, both came back as (zero, false, nil).
+// NodeStats reads through client.CoreV1().RESTClient(), and the fake clientset's
+// RESTClient() is hardcoded to return a nil *rest.RESTClient regardless of any
+// reactor — calling it panics before a PrependReactor("get", "nodes") ever gets a
+// chance to run (confirmed: fake.NewSimpleClientset() + PrependReactor panics with
+// a nil pointer dereference inside k8s.io/client-go/rest.NewRequest, not a clean
+// pass or a benign no-op). So this test uses a real *rest.RESTClient backed by an
+// httptest server that always answers 403 Forbidden — a genuine HTTP round trip
+// through the same code NodeStats calls in production, rather than the fake
+// clientset's reactor chain.
+func TestNodeStatsReturnsForbidden(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"kind":"Status","apiVersion":"v1","status":"Failure","reason":"Forbidden","code":403,"message":"forbidden"}`))
+	}))
+	defer server.Close()
+	client, err := kubernetes.NewForConfig(&rest.Config{Host: server.URL})
+	if err != nil {
+		t.Fatalf("building a client for the fake forbidden server: %v", err)
+	}
+	_, ok, err := NodeStats(context.Background(), client, "node-1")
+	if ok {
+		t.Fatal("NodeStats reported success on a forbidden read")
+	}
+	if err == nil {
+		t.Fatal("NodeStats swallowed a forbidden read; the caller cannot report a blind spot")
+	}
+	if !apierrors.IsForbidden(err) {
+		t.Errorf("err = %v, want a Forbidden error", err)
+	}
+}
+
+func TestPreviousLogsReturnsForbidden(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	client.PrependReactor("get", "pods", func(ktesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "pods/log"}, "pod-1", errors.New("no access"))
+	})
+	_, ok, err := PreviousLogs(context.Background(), client, "ns", "pod-1", "app")
+	if ok {
+		t.Fatal("PreviousLogs reported success on a forbidden read")
+	}
+	if err == nil {
+		t.Fatal("PreviousLogs swallowed a forbidden read")
 	}
 }

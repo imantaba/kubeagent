@@ -24,6 +24,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
 
+	"github.com/imantaba/kubeagent/internal/advisory"
 	"github.com/imantaba/kubeagent/internal/audit"
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/gate"
@@ -2236,6 +2237,22 @@ func TestSelectedFeaturesPrefersExplicitFeatures(t *testing.T) {
 func TestSelectedFeaturesRejectsAnUnknownProfile(t *testing.T) {
 	if _, err := selectedFeatures("everything", ""); err == nil {
 		t.Fatal("selectedFeatures accepted an unknown profile")
+	}
+}
+
+func TestAdvisoryBlindSpotsNamesEachDegradedSubject(t *testing.T) {
+	got := advisoryBlindSpots([]advisory.Degradation{
+		{Sections: []string{"drift"}, Subject: "argoproj.io/applications", Reason: "forbidden"},
+		{Sections: []string{"operators"}, Subject: "longhorn.io/volumes", Reason: "the server could not find the requested resource"},
+	})
+	if len(got) != 1 {
+		t.Fatalf("got %d blind spots, want only the forbidden one: %+v", len(got), got)
+	}
+	if got[0].Resource != "argoproj.io/applications" {
+		t.Errorf("Resource = %q", got[0].Resource)
+	}
+	if !strings.Contains(got[0].Reason, "forbidden") {
+		t.Errorf("Reason = %q, want it to contain \"forbidden\"", got[0].Reason)
 	}
 }
 

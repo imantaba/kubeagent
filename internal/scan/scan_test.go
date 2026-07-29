@@ -3,6 +3,9 @@ package scan
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,7 +25,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	intstr "k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
+	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
+	"k8s.io/client-go/rest"
 	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/imantaba/kubeagent/internal/secscan"
@@ -1278,5 +1284,116 @@ func TestEvaluate_CleanClusterHasNoPartialReads(t *testing.T) {
 	}
 	if len(res.PartialReads) != 0 {
 		t.Errorf("PartialReads = %v, want none on a cluster that answered every list", res.PartialReads)
+	}
+}
+
+// Reason strings must contain "forbidden" or internal/htmlreport.safeReason
+// degrades them to a generic phrase.
+func TestBlindSpotReasonsAreClassifiable(t *testing.T) {
+	for _, r := range []string{
+		blindReason("get nodes/proxy"),
+		blindReason("get pods/log"),
+		blindReason("list secrets"),
+		blindReason("get pods/proxy"),
+		blindReason("get /readyz"),
+	} {
+		if !strings.Contains(r, "forbidden") {
+			t.Errorf("reason %q lacks the substring \"forbidden\"; the HTML report will not classify it", r)
+		}
+	}
+}
+
+// A forbidden --certs read must surface as a named blind spot, not only as a
+// flag inside the certificate report.
+func TestForbiddenCertsRecordsABlindSpot(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	client.PrependReactor("list", "secrets", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "secrets"}, "", errors.New("no access"))
+	})
+	res, err := Evaluate(context.Background(), client, Options{Certs: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, p := range res.PartialReads {
+		if p.Resource == "secrets" && strings.Contains(p.Reason, "forbidden") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("PartialReads = %+v, want a forbidden entry for secrets", res.PartialReads)
+	}
+}
+
+// nodeStatsFailingClient wraps a kubernetes.Interface so CoreV1().RESTClient()
+// resolves to a real, working REST client instead of the fake clientset's own
+// CoreV1().RESTClient(), which is hardcoded to return a nil *rest.RESTClient and
+// panics the instant collect.NodeStats calls it — regardless of whether a reactor
+// is registered. Every other typed client (Nodes, Pods, ...) still delegates to
+// the wrapped fake, so List/Get calls keep seeing the fake's seeded objects and
+// reactors; only the nodes/proxy read goes over a real HTTP round trip.
+type nodeStatsFailingClient struct {
+	kubernetes.Interface
+	rest rest.Interface
+}
+
+func (c nodeStatsFailingClient) CoreV1() corev1client.CoreV1Interface {
+	return nodeStatsFailingCoreV1{CoreV1Interface: c.Interface.CoreV1(), rest: c.rest}
+}
+
+type nodeStatsFailingCoreV1 struct {
+	corev1client.CoreV1Interface
+	rest rest.Interface
+}
+
+func (c nodeStatsFailingCoreV1) RESTClient() rest.Interface {
+	return c.rest
+}
+
+// forbiddenNodeProxyServer starts an httptest server that answers every request
+// with a genuine Forbidden Status object, so apierrors.IsForbidden(err) is true on
+// the caller's end — the same as a real API server refusing a missing nodes/proxy
+// grant.
+func forbiddenNodeProxyServer(t *testing.T) rest.Interface {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"kind":"Status","apiVersion":"v1","status":"Failure","reason":"Forbidden","code":403,"message":"forbidden"}`))
+	}))
+	t.Cleanup(server.Close)
+	real, err := kubernetes.NewForConfig(&rest.Config{Host: server.URL})
+	if err != nil {
+		t.Fatalf("building a client for the fake forbidden server: %v", err)
+	}
+	return real.CoreV1().RESTClient()
+}
+
+// One blind spot per feature, not one per node: a 200-node cluster must not
+// print 200 identical lines.
+func TestForbiddenDiskUsageRecordsOneBlindSpot(t *testing.T) {
+	client := nodeStatsFailingClient{
+		Interface: fake.NewSimpleClientset(
+			&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-1"}},
+			&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-2"}},
+			&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-3"}},
+		),
+		rest: forbiddenNodeProxyServer(t),
+	}
+	res, err := Evaluate(context.Background(), client, Options{DiskUsage: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, p := range res.PartialReads {
+		if p.Resource == "nodes/proxy" {
+			n++
+		}
+	}
+	if n > 1 {
+		t.Errorf("recorded %d nodes/proxy blind spots for 3 nodes, want at most 1", n)
+	}
+	if n == 0 {
+		t.Error("recorded 0 nodes/proxy blind spots, want exactly 1 for a forbidden read")
 	}
 }

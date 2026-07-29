@@ -145,6 +145,13 @@ func nonSystemServices(svcs []corev1.Service) []corev1.Service {
 	return out
 }
 
+// blindReason phrases a refused read. The leading "forbidden" is load-bearing:
+// internal/htmlreport.safeReason classifies by substring, and a reason without
+// it is rendered as the generic "the read failed" line.
+func blindReason(action string) string {
+	return "forbidden: kubeagent's credentials may not " + action
+}
+
 // Evaluate performs the read-only evaluation. The returned error is the raw
 // collection error (callers may wrap it with connectivity.Diagnose).
 func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (Result, error) {
@@ -153,6 +160,20 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 		if err != nil {
 			partialReads = append(partialReads, ReadFailure{Resource: resource, Reason: redact.Error(err)})
 		}
+	}
+
+	// blind records a blind spot in kubeagent's own words. The reason always
+	// starts with "forbidden" so internal/htmlreport.safeReason classifies it as
+	// a permission problem rather than degrading it to a generic phrase — and so
+	// it never carries the API server's message, which names the requesting
+	// identity.
+	blindSeen := map[string]bool{}
+	blind := func(resource, action string) {
+		if blindSeen[resource] {
+			return // one line per feature, not one per node
+		}
+		blindSeen[resource] = true
+		partialReads = append(partialReads, ReadFailure{Resource: resource, Reason: blindReason(action)})
 	}
 
 	inputs, err := collect.CollectInventory(ctx, client, opts.Namespace)
@@ -192,7 +213,11 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 				continue
 			}
 			enriched[key] = true
-			if log, ok := collect.PreviousLogs(ctx, client, ns, name, findings[i].Container); ok {
+			log, ok, logErr := collect.PreviousLogs(ctx, client, ns, name, findings[i].Container)
+			if logErr != nil {
+				blind("pods/log", "get pods/log")
+			}
+			if ok {
 				clue := logscan.Classify(log)
 				if clue.Cause != "" {
 					findings[i].LogCause = clue.Cause
@@ -234,6 +259,9 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 		rep := certhealth.Assess(tlsSecrets, ings, warn, time.Now())
 		if apierrors.IsForbidden(tlsErr) {
 			rep.Forbidden = true
+			blind("secrets", "list secrets")
+		} else {
+			note("secrets", tlsErr)
 		}
 		certReport = &rep
 	}
@@ -323,7 +351,14 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	if opts.DiskUsage {
 		var summaries []diskusage.NodeSummary
 		for _, n := range nodes {
-			if s, ok, _ := collect.NodeStats(ctx, client, n.Name); ok {
+			s, ok, err := collect.NodeStats(ctx, client, n.Name)
+			if err != nil {
+				if apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err) {
+					blind("nodes/proxy", "get nodes/proxy")
+				}
+				continue // an unreachable kubelet is a node problem, not a grant problem
+			}
+			if ok {
 				summaries = append(summaries, s)
 			}
 		}
@@ -337,11 +372,17 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 			probes = append(probes, collect.KubeletHealthz(ctx, client, n.Name))
 		}
 		kubeletHealth = nodehealth.Assess(probes)
+		if kubeletHealth.Forbidden > 0 {
+			blind("nodes/proxy", "get nodes/proxy")
+		}
 	}
 
 	var controlPlane controlplane.Probe
 	if opts.ControlPlaneHealth {
 		controlPlane = collect.ControlPlaneReadyz(ctx, client)
+		if controlPlane.Status == "forbidden" {
+			blind("/readyz", "get /readyz")
+		}
 	}
 
 	var dnsReport dnshealth.Report
@@ -365,6 +406,9 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 			default:
 				unreachable++
 			}
+		}
+		if forbidden > 0 {
+			blind("pods/proxy", "get pods/proxy")
 		}
 		dnsReport = dnshealth.Assess(agg, len(cdns), forbidden, unreachable, ratio, 100)
 	}

@@ -297,6 +297,7 @@ func run(args []string) error {
 	for _, d := range advRes.Degradations {
 		warnf(os.Stderr, "%s unavailable: %s", d.Subject, d.Reason)
 	}
+	res.PartialReads = append(res.PartialReads, advisoryBlindSpots(advRes.Degradations)...)
 
 	operatorRep := advRes.Operators
 	gitopsRep := advRes.GitOps
@@ -397,6 +398,26 @@ func run(args []string) error {
 		}
 	}
 	return nil
+}
+
+// advisoryBlindSpots turns the advisory degradations that are permission
+// problems into blind spots the report will name. Reasons are already redacted
+// by internal/advisory; the "forbidden:" prefix is what makes the HTML report
+// classify them, and it is kubeagent's word, not the API server's. A degradation
+// with any other cause — a CRD that is simply not installed — is not a blind
+// spot and is left to the existing stderr warning.
+func advisoryBlindSpots(degradations []advisory.Degradation) []scan.ReadFailure {
+	var out []scan.ReadFailure
+	for _, d := range degradations {
+		if !strings.Contains(strings.ToLower(d.Reason), "forbidden") {
+			continue
+		}
+		out = append(out, scan.ReadFailure{
+			Resource: d.Subject,
+			Reason:   "forbidden: kubeagent's credentials may not list " + d.Subject,
+		})
+	}
+	return out
 }
 
 // renderScan writes the scan output in the requested format. It is its own

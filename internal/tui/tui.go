@@ -93,8 +93,13 @@ func Run(ctx context.Context, opts Options) error {
 	}()
 	fmt.Fprint(os.Stdout, escEnterAlt+escHideCurs)
 
+	// SIGINT is caught alongside SIGTERM and SIGHUP even though raw mode means the
+	// keyboard cannot produce it — Ctrl-C arrives as the byte 0x03. It reaches this
+	// process from `kill -INT` or a supervisor, and its default disposition would
+	// end the process with the terminal still raw, on an alternate screen, with the
+	// cursor hidden: the exact state the other two are caught to avoid.
 	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGWINCH, syscall.SIGTERM, syscall.SIGHUP)
+	signal.Notify(sigs, syscall.SIGWINCH, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGINT)
 	defer signal.Stop(sigs)
 
 	// Exactly one goroutine, and it does nothing but move bytes: stdin has no
@@ -146,9 +151,9 @@ func Run(ctx context.Context, opts Options) error {
 			pending, m = drainKeys(pending, m, true)
 		case sig := <-sigs:
 			if sig != syscall.SIGWINCH {
-				// SIGTERM or SIGHUP. Returning runs the deferred restore, which
-				// is the whole reason these are handled rather than left to kill
-				// the process with the terminal still in raw mode.
+				// SIGTERM, SIGHUP or SIGINT. Returning runs the deferred restore,
+				// which is the whole reason these are handled rather than left to
+				// kill the process with the terminal still in raw mode.
 				return nil
 			}
 			if w, h, err := term.GetSize(outFD); err == nil {

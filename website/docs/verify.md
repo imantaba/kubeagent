@@ -116,6 +116,10 @@ gh attestation verify "oci://docker.io/imantaba/kubeagent:${VERSION}" \
 Adding `--format json` prints the statement, whose `predicate` field is the
 attested SBOM itself — that copy is the signed one.
 
+The full predicate type carries the SPDX version — `https://spdx.dev/Document/v2.3`
+at the time of writing. `gh` matches `--predicate-type` as a prefix, so the
+shorter form above keeps working when the SPDX version moves.
+
 ```bash
 curl -sSLO "${base}/kubeagent_${VERSION}_sbom.spdx.json"
 ```

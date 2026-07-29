@@ -1,0 +1,112 @@
+name: Bug report
+description: kubeagent crashed, printed something wrong, or did not do what it says it does.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Two things before you start:
+
+        - **Not for security problems.** If the bug is that kubeagent wrote to a
+          cluster it should not have touched, leaked a secret into an LLM prompt,
+          or exposed a credential, close this and
+          [report it privately](https://github.com/imantaba/kubeagent/security/advisories/new)
+          instead. See [SECURITY.md](https://github.com/imantaba/kubeagent/blob/main/SECURITY.md).
+        - **Redact.** kubeagent output can carry namespace, node, and image names
+          from your cluster. Replace anything you would not put in a public issue.
+
+  - type: input
+    id: version
+    attributes:
+      label: kubeagent version
+      description: Output of `kubeagent version`.
+      placeholder: v0.67.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: How was it installed?
+      options:
+        - go install
+        - Release archive (tar.gz)
+        - kubectl krew plugin
+        - Container image
+        - Built from source
+    validations:
+      required: true
+
+  - type: dropdown
+    id: subcommand
+    attributes:
+      label: Which subcommand?
+      options:
+        - scan
+        - watch
+        - mcp
+        - gate
+        - tui
+        - version
+        - Other / not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: Command you ran
+      description: The full command line, including flags. Redact any path that names your cluster.
+      render: shell
+      placeholder: kubeagent scan -n payments --output json
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: The output, the error, or the wrong finding. Paste the relevant part, not the whole log.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+      description: For a wrong or missing finding, say what the pod's real problem was.
+    validations:
+      required: true
+
+  - type: input
+    id: k8s
+    attributes:
+      label: Kubernetes version and distribution
+      description: Output of `kubectl version --short`, plus the distribution if it is not vanilla.
+      placeholder: v1.31.4 — EKS / GKE / k3s / kind / OpenShift
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal reproduction
+      description: >
+        The best report carries a manifest that breaks a pod the same way on an
+        empty cluster — that is what a regression test gets written from. If you
+        cannot produce one, describe the object's state instead (pod phase,
+        container statuses, the events `kubectl describe` shows).
+      render: yaml
+
+  - type: checkboxes
+    id: hygiene
+    attributes:
+      label: Before submitting
+      options:
+        - label: I am on the latest release, or I have checked that the bug is still present there.
+          required: true
+        - label: I have removed cluster identifiers, kubeconfig paths, tokens, internal hostnames, and anything else I would not publish from the output above.
+          required: true
+        - label: This is not a security vulnerability (those go to the private advisory channel).
+          required: true

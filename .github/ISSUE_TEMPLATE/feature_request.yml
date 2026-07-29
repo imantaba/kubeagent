@@ -1,0 +1,55 @@
+name: Feature request
+description: A flag, an output format, a subcommand, or anything else that is not a detector.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For "kubeagent should have caught X", use **Missed failure mode / new
+        detector** instead — it asks the right questions.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you were trying to do, and where kubeagent got in the way. Describe the situation, not the solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like it to do
+      description: If it is a flag or a subcommand, write the command line you want to type.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do instead today
+      description: The workaround, the other tool, or the shell pipeline you reach for now.
+
+  - type: dropdown
+    id: writes
+    attributes:
+      label: Does this need kubeagent to write to the cluster?
+      description: >
+        kubeagent is read-only by default. Writes exist only behind `--fix`, from a
+        fixed allowlist, confirmed one at a time, and never chosen by a model. A
+        proposal that needs a new kind of write is not impossible, but it is a much
+        bigger conversation.
+      options:
+        - "No — reads only"
+        - "Yes — it would need a new write"
+        - Not sure
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Before submitting
+      options:
+        - label: I have checked the [documentation](https://k8sproject.top) and the existing issues.
+          required: true

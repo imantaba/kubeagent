@@ -1,0 +1,80 @@
+name: Missed failure mode / new detector
+description: kubeagent stayed quiet about a broken workload, or explained it wrongly.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        kubeagent's job is to say **why** something is broken. If a real failure
+        left it silent — or if it named the wrong cause — that is worth an issue
+        even when nothing crashed.
+
+        A detector has to earn its place: it must be decidable from read-only
+        `get`/`list`/`watch` data, and it must not fire on a healthy cluster.
+
+  - type: input
+    id: failure
+    attributes:
+      label: The failure in one line
+      placeholder: A StatefulSet pod stuck Pending because its PVC's zone does not match the node's
+    validations:
+      required: true
+
+  - type: textarea
+    id: signal
+    attributes:
+      label: What the cluster shows
+      description: >
+        The evidence a human uses to diagnose it — pod phase, container status,
+        conditions, the event `kubectl describe` prints. This is what a detector
+        would have to key on, so be concrete.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: today
+    attributes:
+      label: What kubeagent says today
+      description: Paste the current output, redacted. "Nothing at all" is a valid answer — say so.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: wanted
+    attributes:
+      label: What it should say
+      description: The finding you would want, in kubeagent's voice — a reason, a detail line, and a suggested fix.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: How should it be reported?
+      options:
+        - Critical — the workload is down
+        - Warning — degraded, or heading for an outage
+        - Info / advisory — worth knowing, not urgent
+    validations:
+      required: true
+
+  - type: textarea
+    id: manifest
+    attributes:
+      label: Manifest that reproduces it
+      description: A manifest that breaks this way on an empty cluster becomes the detector's unit test.
+      render: yaml
+
+  - type: checkboxes
+    id: invariants
+    attributes:
+      label: Fit with the project's invariants
+      options:
+        - label: This can be decided from read-only reads (`get`/`list`/`watch`) — no writes, no exec into a container.
+          required: true
+        - label: It would not fire on a healthy cluster of this kind.
+          required: true
+        - label: It does not need an LLM call to reach the diagnosis.
+          required: true

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/imantaba/kubeagent/security/advisories/new
+    about: Report privately — never in a public issue. See SECURITY.md for what counts as a vulnerability here.
+  - name: Documentation
+    url: https://k8sproject.top
+    about: Feature guides, flags, RBAC, and the quickstart.
+  - name: Code of Conduct
+    url: https://github.com/imantaba/kubeagent/blob/main/CODE_OF_CONDUCT.md
+    about: How we expect people to behave here, and how to report behavior that falls short.

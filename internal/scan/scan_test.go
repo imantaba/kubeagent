@@ -27,6 +27,7 @@ import (
 	intstr "k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/kubernetes/scheme"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/rest"
 	k8stesting "k8s.io/client-go/testing"
@@ -1325,6 +1326,32 @@ func TestForbiddenCertsRecordsABlindSpot(t *testing.T) {
 	}
 }
 
+// A 401 on list secrets must be treated the same as a 403: certs' forbidden
+// branch checked only IsForbidden, so an Unauthorized response fell through to
+// the note() branch instead of being recorded as a named blind spot.
+func TestUnauthorizedCertsRecordsABlindSpot(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	client.PrependReactor("list", "secrets", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewUnauthorized("no access")
+	})
+	res, err := Evaluate(context.Background(), client, Options{Certs: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Certificates == nil || !res.Certificates.Forbidden {
+		t.Errorf("Certificates = %+v, want Forbidden=true on a 401 list secrets", res.Certificates)
+	}
+	found := false
+	for _, p := range res.PartialReads {
+		if p.Resource == "secrets" && strings.Contains(p.Reason, "forbidden") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("PartialReads = %+v, want a forbidden entry for secrets on a 401", res.PartialReads)
+	}
+}
+
 // nodeStatsFailingClient wraps a kubernetes.Interface so CoreV1().RESTClient()
 // resolves to a real, working REST client instead of the fake clientset's own
 // CoreV1().RESTClient(), which is hardcoded to return a nil *rest.RESTClient and
@@ -1395,5 +1422,116 @@ func TestForbiddenDiskUsageRecordsOneBlindSpot(t *testing.T) {
 	}
 	if n == 0 {
 		t.Error("recorded 0 nodes/proxy blind spots, want exactly 1 for a forbidden read")
+	}
+}
+
+// podLogsFailingClient wraps a kubernetes.Interface so CoreV1().Pods(ns).GetLogs
+// resolves to a real, working REST client instead of the fake clientset's own
+// GetLogs, which always succeeds and never lets a test drive a real HTTP error
+// status through DoRaw. Every other typed client (Nodes, Pods List/Get, ...)
+// still delegates to the wrapped fake, so this only replaces the pods/log read.
+type podLogsFailingClient struct {
+	kubernetes.Interface
+	rest rest.Interface
+}
+
+func (c podLogsFailingClient) CoreV1() corev1client.CoreV1Interface {
+	return podLogsFailingCoreV1{CoreV1Interface: c.Interface.CoreV1(), rest: c.rest}
+}
+
+type podLogsFailingCoreV1 struct {
+	corev1client.CoreV1Interface
+	rest rest.Interface
+}
+
+func (c podLogsFailingCoreV1) Pods(namespace string) corev1client.PodInterface {
+	return podLogsFailingPods{PodInterface: c.CoreV1Interface.Pods(namespace), rest: c.rest, ns: namespace}
+}
+
+type podLogsFailingPods struct {
+	corev1client.PodInterface
+	rest rest.Interface
+	ns   string
+}
+
+func (c podLogsFailingPods) GetLogs(name string, opts *corev1.PodLogOptions) *rest.Request {
+	return c.rest.Get().Namespace(c.ns).Name(name).Resource("pods").SubResource("log").VersionedParams(opts, scheme.ParameterCodec)
+}
+
+// previousLogNotFoundServer starts an httptest server that answers every
+// request with a genuine 400 BadRequest Status object — the real API server's
+// answer for a container that has simply never terminated (the normal case
+// for ImagePullBackOff, CreateContainerConfigError, Pending, and a
+// probe-failing container that has not yet restarted), never a 403/401.
+func previousLogNotFoundServer(t *testing.T) rest.Interface {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"kind":"Status","apiVersion":"v1","status":"Failure","reason":"BadRequest","message":"previous terminated container \"web\" in pod \"web-1\" not found","code":400}`))
+	}))
+	t.Cleanup(server.Close)
+	real, err := kubernetes.NewForConfig(&rest.Config{Host: server.URL})
+	if err != nil {
+		t.Fatalf("building a client for the fake bad-request server: %v", err)
+	}
+	return real.CoreV1().RESTClient()
+}
+
+// TestEvaluate_LogsPreviousContainerAbsentIsNotABlindSpot proves that --logs
+// against a container that has never terminated — a routine 400, not a
+// permission denial — records no pods/log blind spot.
+func TestEvaluate_LogsPreviousContainerAbsentIsNotABlindSpot(t *testing.T) {
+	crashPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "web-1", Namespace: "shop", Labels: map[string]string{"app": "web"}},
+		Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
+			Name: "web", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+		}}},
+	}
+	client := podLogsFailingClient{
+		Interface: fake.NewSimpleClientset(crashPod),
+		rest:      previousLogNotFoundServer(t),
+	}
+	res, err := Evaluate(context.Background(), client, Options{Logs: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range res.PartialReads {
+		if p.Resource == "pods/log" {
+			t.Errorf("PartialReads = %+v, want no pods/log entry: a container that has never terminated answers 400, not 403/401", res.PartialReads)
+		}
+	}
+}
+
+// TestEvaluate_NoteRedactsRefusalIdentity proves that a genuine 403 on a
+// note()-covered list (networkpolicies) is reported in kubeagent's own words,
+// never the API server's message — which, under the built-in RBAC authorizer,
+// interpolates the requesting identity.
+func TestEvaluate_NoteRedactsRefusalIdentity(t *testing.T) {
+	identity := `User "system:serviceaccount:prod:kubeagent-sa" cannot list resource`
+	client := fake.NewSimpleClientset()
+	client.PrependReactor("list", "networkpolicies", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewForbidden(schema.GroupResource{Group: "networking.k8s.io", Resource: "networkpolicies"}, "", errors.New(identity))
+	})
+
+	res, err := Evaluate(context.Background(), client, Options{})
+	if err != nil {
+		t.Fatalf("Evaluate() error = %v, want nil (a denied optional list must degrade, not fail)", err)
+	}
+
+	var found *ReadFailure
+	for i := range res.PartialReads {
+		if res.PartialReads[i].Resource == "networkpolicies" {
+			found = &res.PartialReads[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("PartialReads = %v, want an entry for networkpolicies", res.PartialReads)
+	}
+	if !strings.HasPrefix(found.Reason, "forbidden:") {
+		t.Errorf("Reason = %q, want it to start with %q (kubeagent's own wording)", found.Reason, "forbidden:")
+	}
+	if strings.Contains(found.Reason, identity) {
+		t.Errorf("Reason = %q, must not contain the API server's message, which names the requesting identity %q", found.Reason, identity)
 	}
 }

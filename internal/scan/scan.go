@@ -156,11 +156,6 @@ func blindReason(action string) string {
 // collection error (callers may wrap it with connectivity.Diagnose).
 func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (Result, error) {
 	var partialReads []ReadFailure
-	note := func(resource string, err error) {
-		if err != nil {
-			partialReads = append(partialReads, ReadFailure{Resource: resource, Reason: redact.Error(err)})
-		}
-	}
 
 	// blind records a blind spot in kubeagent's own words. The reason always
 	// starts with "forbidden" so internal/htmlreport.safeReason classifies it as
@@ -174,6 +169,22 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 		}
 		blindSeen[resource] = true
 		partialReads = append(partialReads, ReadFailure{Resource: resource, Reason: blindReason(action)})
+	}
+
+	// A refusal is reported in kubeagent's own words. The API server's message
+	// interpolates the authorizer's error, which names the requesting identity — a
+	// ServiceAccount, an IAM ARN, an OIDC email — and under webhook authorization
+	// carries arbitrary third-party text. Everything else keeps the redacted error,
+	// which is what makes an unreachable API server distinguishable from a refused one.
+	note := func(resource string, err error) {
+		switch {
+		case err == nil:
+			return
+		case apierrors.IsForbidden(err), apierrors.IsUnauthorized(err):
+			blind(resource, "read "+resource)
+		default:
+			partialReads = append(partialReads, ReadFailure{Resource: resource, Reason: redact.Error(err)})
+		}
 	}
 
 	inputs, err := collect.CollectInventory(ctx, client, opts.Namespace)
@@ -214,7 +225,7 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 			}
 			enriched[key] = true
 			log, ok, logErr := collect.PreviousLogs(ctx, client, ns, name, findings[i].Container)
-			if logErr != nil {
+			if apierrors.IsForbidden(logErr) || apierrors.IsUnauthorized(logErr) {
 				blind("pods/log", "get pods/log")
 			}
 			if ok {
@@ -257,7 +268,7 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 		}
 		tlsSecrets, tlsErr := collect.TLSSecrets(ctx, client, opts.Namespace)
 		rep := certhealth.Assess(tlsSecrets, ings, warn, time.Now())
-		if apierrors.IsForbidden(tlsErr) {
+		if apierrors.IsForbidden(tlsErr) || apierrors.IsUnauthorized(tlsErr) {
 			rep.Forbidden = true
 			blind("secrets", "list secrets")
 		} else {

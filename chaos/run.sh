@@ -1148,6 +1148,14 @@ print(" ".join(sorted(r["name"] for r in rows if not r["allowed"])))
   local named
   named="$(grep -ciE 'secrets|pods/log|nodes/proxy' "$out" || true)"
 
+  # Same trip-wire scenario 15 runs over its daemon log, here over the scan
+  # output this scenario is about to commit into docs/testing/chaos-results.md:
+  # a refused read must be named in kubeagent's own words, never in the API
+  # server's, which under the built-in RBAC authorizer embeds the requesting
+  # identity's bearer token material.
+  local leaked
+  leaked="$(grep -cE 'BEGIN CERTIFICATE|client-key-data|client-certificate-data|token:' "$out" || true)"
+
   {
     echo '--- rbac check --output json (feature -> allowed) ---'
     printf '%s\n' "$check"
@@ -1158,8 +1166,9 @@ print(" ".join(sorted(r["name"] for r in rows if not r["allowed"])))
     printf 'rbac check: blocked features:        %s\n' "${blocked:-<none>}"
     printf 'scan exit code:                      %s\n' "$rc"
     printf 'blind spots naming a missing grant:  %s\n' "$named"
+    printf 'credential material in recorded output: %s (want 0)\n' "$leaked"
   } | record "20. Least-privilege RBAC (scan-profile-only identity)" \
-    "expect: rbac check core allowed reads True — the generated scan-profile role really does cover core; rbac check blocked features reads exactly 'certs diskusage logs' — the three add-ons the identity was never granted, named by kubeagent from its own table and never quoting the API server; scan exit code is 0 — a missing add-on grant degrades the scan, it does not fail it; blind spots naming a missing grant is at least 1 — the report NAMES secrets / pods/log / nodes/proxy as unread rather than printing three empty sections. That last line reading 0 is the failure this scenario exists to catch: a scan that could not see must never look like a scan that saw nothing wrong"
+    "expect: rbac check core allowed reads True — the generated scan-profile role really does cover core; rbac check blocked features reads exactly 'certs diskusage logs' — the three add-ons the identity was never granted, named by kubeagent from its own table and never quoting the API server; scan exit code is 0 — a missing add-on grant degrades the scan, it does not fail it; blind spots naming a missing grant is at least 1 — the report NAMES secrets / pods/log / nodes/proxy as unread rather than printing three empty sections. That last line reading 0 is the failure this scenario exists to catch: a scan that could not see must never look like a scan that saw nothing wrong. credential material in recorded output must read 0 — this scan output is about to be committed into docs/testing/chaos-results.md, and a refused read reported in kubeagent's own words never carries the scanner ServiceAccount's bearer token or certificate material the way the raw API server message would"
 
   rm -f "$kc" "$ca" "$out"
   unset token

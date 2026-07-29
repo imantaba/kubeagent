@@ -29,6 +29,12 @@ jobs:
         id: ver
         run: echo "version=${{ github.event.inputs.version || github.ref_name }}" >> "$GITHUB_OUTPUT"
 
+      - name: Classify release
+        id: rel
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: scripts/release-vars.sh "$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Test
         run: go test ./...
 
@@ -48,6 +54,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.ver.outputs.version }}
+          prerelease: ${{ steps.rel.outputs.prerelease }}
           files: |
             dist/kubeagent_${{ steps.ver.outputs.version }}_linux_amd64.tar.gz
             dist/kubeagent_${{ steps.ver.outputs.version }}_linux_arm64.tar.gz
@@ -69,8 +76,13 @@ jobs:
         if: ${{ env.DOCKERHUB_TOKEN != '' }}
         env:
           VERSION: ${{ steps.ver.outputs.version }}
+          PUSH_LATEST: ${{ steps.rel.outputs.push_latest }}
         run: |
           docker build -t "imantaba/kubeagent:${VERSION}" --build-arg VERSION="${VERSION}" .
-          docker tag "imantaba/kubeagent:${VERSION}" imantaba/kubeagent:latest
           docker push "imantaba/kubeagent:${VERSION}"
-          docker push imantaba/kubeagent:latest
+          if [ "$PUSH_LATEST" = "true" ]; then
+            docker tag "imantaba/kubeagent:${VERSION}" imantaba/kubeagent:latest
+            docker push imantaba/kubeagent:latest
+          else
+            echo "pre-release ${VERSION}: leaving :latest pointing where it is"
+          fi

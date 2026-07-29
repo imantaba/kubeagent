@@ -242,6 +242,17 @@ func clamp(m Model) Model {
 	n := len(m.visible())
 	if n == 0 {
 		m.Cursor, m.Top = 0, 0
+		// Leave the detail pane too. It shows visible()[Cursor], so with nothing
+		// visible it draws an empty box between the rules — no finding, no message,
+		// no hint that the filter is what emptied it. openDetail already refuses to
+		// enter on an empty list; this is the same rule applied to a list that
+		// empties while the pane is open, which takes two keystrokes: open a detail
+		// pane, then press 1 with no critical findings, or re-scan a cluster the
+		// operator has just fixed. ModeBlind and ModeHelp read no finding, so they
+		// stay put.
+		if m.Mode == ModeDetail {
+			m.Mode = ModeList
+		}
 		return m
 	}
 	if m.Cursor >= n {

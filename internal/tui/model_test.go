@@ -432,3 +432,53 @@ func TestUpdate_ShortListStartsAtTheTop(t *testing.T) {
 		t.Fatalf("top = %d, want 0 (4 findings, 6 rows)", m.Top)
 	}
 }
+
+// The detail pane shows visible()[Cursor]. openDetail refuses to enter it on an
+// empty list, but nothing stopped the list emptying underneath a pane already
+// open — and detailLines draws a blank pane with no message when that happens.
+// Both ways in are reachable with two keystrokes.
+func TestUpdate_FilterEmptyingTheListLeavesDetail(t *testing.T) {
+	m := bigModel()
+	m.All = m.All[20:] // info only: no critical finding to filter down to
+	m = press(m, 'l')  // open the detail pane
+	if m.Mode != ModeDetail {
+		t.Fatalf("setup: mode = %v, want ModeDetail", m.Mode)
+	}
+	m = press(m, '1')
+	if len(m.visible()) != 0 {
+		t.Fatalf("setup: %d findings visible, want 0", len(m.visible()))
+	}
+	if m.Mode != ModeList {
+		t.Errorf("mode = %v, want ModeList: a detail pane with nothing to show is blank", m.Mode)
+	}
+}
+
+func TestUpdate_RescanEmptyingTheListLeavesDetail(t *testing.T) {
+	m := bigModel()
+	m = press(m, 'l')
+	if m.Mode != ModeDetail {
+		t.Fatalf("setup: mode = %v, want ModeDetail", m.Mode)
+	}
+	// The re-scan legitimately comes back clean — the operator fixed the workload
+	// while looking at it.
+	m = Update(m, Event{Kind: EventScanned, Result: &ScanSnapshot{}})
+	if m.Mode != ModeList {
+		t.Errorf("mode = %v, want ModeList", m.Mode)
+	}
+}
+
+// The blind-spot and help screens read no finding, so an empty list must not
+// bounce the operator out of them.
+func TestUpdate_EmptyListKeepsBlindAndHelp(t *testing.T) {
+	for _, tc := range []struct {
+		key  rune
+		want Mode
+	}{{'b', ModeBlind}, {'?', ModeHelp}} {
+		m := bigModel()
+		m = press(m, tc.key)
+		m = Update(m, Event{Kind: EventScanned, Result: &ScanSnapshot{}})
+		if m.Mode != tc.want {
+			t.Errorf("%q: mode = %v, want %v", tc.key, m.Mode, tc.want)
+		}
+	}
+}

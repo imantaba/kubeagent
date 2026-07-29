@@ -2166,3 +2166,37 @@ func TestTUIScanOptions_MatchesGateDefaults(t *testing.T) {
 		t.Errorf("tuiScanOptions = %+v, want %+v", got, want)
 	}
 }
+
+func TestSelectedRulesResolvesAProfile(t *testing.T) {
+	rules, err := selectedRules("scan", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rules) != 10 {
+		t.Fatalf("scan profile resolved to %d rules, want 10", len(rules))
+	}
+}
+
+func TestSelectedRulesPrefersExplicitFeatures(t *testing.T) {
+	rules, err := selectedRules("scan", "core, certs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, r := range rules {
+		for _, res := range r.Resources {
+			if res == "secrets" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Error("--features core,certs did not include the secrets grant")
+	}
+}
+
+func TestSelectedRulesRejectsAnUnknownProfile(t *testing.T) {
+	if _, err := selectedRules("everything", ""); err == nil {
+		t.Fatal("selectedRules accepted an unknown profile")
+	}
+}

@@ -881,8 +881,10 @@ func TestHelmClusterRoleGatesExactlyTheChartFeatures(t *testing.T) {
 			t.Errorf("chart template grants %q, but the daemon never reads it", unwanted)
 		}
 	}
-	if n := strings.Count(got, "{{- end }}"); n != 4 {
-		t.Errorf("chart template has %d conditional ends, want 4", n)
+	// 5, not 4: the four per-feature gates plus the outer
+	// {{- if .Values.rbac.create -}} wrap the chart has always carried.
+	if n := strings.Count(got, "{{- end }}"); n != 5 {
+		t.Errorf("chart template has %d conditional ends, want 5", n)
 	}
 }
 ```
@@ -1192,8 +1194,10 @@ helm template x deploy/helm/kubeagent | grep -c 'kind: ClusterRole'
 helm template x deploy/helm/kubeagent --set certs.enabled=true --set diskUsage.enabled=true | grep -E 'secrets|nodes/proxy'
 ```
 
-Expected: lint passes; the default render has 2 (`ClusterRole` + `ClusterRoleBinding` both
-match the grep); the second render shows both `resources: [secrets]` and
+Expected: lint passes; the default render has 3 — the `ClusterRole`, the
+`ClusterRoleBinding`, and the `kind: ClusterRole` line inside that binding's `roleRef`, which
+the substring grep also matches. It is 3 before this task too, so the number to check is that
+it did not change. The second render shows both `resources: [secrets]` and
 `resources: [nodes/proxy]`.
 
 - [ ] **Step 7: Commit**

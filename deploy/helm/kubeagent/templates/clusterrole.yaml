@@ -1,4 +1,6 @@
 {{- if .Values.rbac.create -}}
+# Generated from internal/rbacprofile — do not edit by hand.
+# Regenerate: go test ./internal/rbacprofile -run TestGeneratedManifests -update
 # Strictly read-only: get/list/watch only. No create/update/patch/delete anywhere.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole

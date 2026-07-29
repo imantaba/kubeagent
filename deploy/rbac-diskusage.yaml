@@ -1,3 +1,5 @@
+# Generated from internal/rbacprofile — do not edit by hand.
+# Regenerate: go test ./internal/rbacprofile -run TestGeneratedManifests -update
 # Opt-in add-on: grants the kubeagent ServiceAccount read access to the kubelet
 # via the nodes/proxy subresource — both the summary API (disk-usage) and
 # /healthz (kubelet-health). Needed when the daemon runs with

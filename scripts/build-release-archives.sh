@@ -61,9 +61,11 @@ for platform in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
   echo "building ${os}/${arch}"
   CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
     go build -ldflags "-X main.version=${VERSION}" -o "$stage/kubeagent" .
-  cp README.md LICENSE "$stage/"
+  # NOTICE travels with LICENSE: Apache-2.0 section 4(d) requires redistributions
+  # to carry it.
+  cp README.md LICENSE NOTICE "$stage/"
   tar -czf "${OUTDIR}/kubeagent_${VERSION}_${os}_${arch}.tar.gz" \
-    -C "$stage" kubeagent README.md LICENSE
+    -C "$stage" kubeagent README.md LICENSE NOTICE
 done
 
 # Unversioned copy so releases/latest/download/kubeagent_linux_amd64.tar.gz

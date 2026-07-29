@@ -202,7 +202,10 @@ func TestEveryGrantHasExactlyOneHome(t *testing.T) {
 // from "fixing" the gap.
 func TestScanOnlyFeaturesAreNotChartGated(t *testing.T) {
 	for _, f := range Features() {
-		if len(f.Rules) == 0 || f.CoveredBy != "" {
+		// core is always present in the chart (it is the base manifest, not a
+		// gated add-on), so — like ScanOnly features — it carries no
+		// HelmCondition. See the HelmCondition field doc.
+		if f.Name == "core" || len(f.Rules) == 0 || f.CoveredBy != "" {
 			continue
 		}
 		if f.ScanOnly && f.HelmCondition != "" {

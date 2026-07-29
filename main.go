@@ -811,6 +811,11 @@ func runRBACCheck(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	// Validate up front, matching runRBACPrint: a typo in --output must fail
+	// immediately, not after connecting to a cluster.
+	if *output != "text" && *output != "json" {
+		return fmt.Errorf("unknown --output %q: want text or json", *output)
+	}
 	selected, err := selectedFeatures(*profile, *features)
 	if err != nil {
 		return err
@@ -855,8 +860,12 @@ func runRBACCheck(args []string) error {
 	}
 	if blocked > 0 {
 		// Exit 1 so a CI step can gate on it, the same contract `kubeagent gate`
-		// offers. Nothing failed to run — the answer is simply "no".
-		return &exitError{code: 1, msg: fmt.Sprintf("%d of %d features are blocked", blocked, len(statuses))}
+		// offers. Nothing failed to run — the answer is simply "no". The
+		// blocked count is already on stdout above (the text summary, or the
+		// JSON results an operator can grep) — msg stays empty, the same
+		// reason runGate's non-pass return does, so main() does not print a
+		// second, differently-worded line to stderr on top of it.
+		return &exitError{code: 1}
 	}
 	return nil
 }

@@ -2200,3 +2200,47 @@ func TestSelectedRulesRejectsAnUnknownProfile(t *testing.T) {
 		t.Fatal("selectedRules accepted an unknown profile")
 	}
 }
+
+func TestSelectedFeaturesResolvesAProfile(t *testing.T) {
+	features, err := selectedFeatures("scan", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, f := range features {
+		names = append(names, f.Name)
+	}
+	want := []string{"core"}
+	if !reflect.DeepEqual(names, want) {
+		t.Errorf("scan profile resolved to %v, want %v", names, want)
+	}
+}
+
+func TestSelectedFeaturesPrefersExplicitFeatures(t *testing.T) {
+	// The "scan" profile alone resolves to just ["core"]; naming --features
+	// explicitly must win and bring in "certs" too.
+	features, err := selectedFeatures("scan", "core, certs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, f := range features {
+		names = append(names, f.Name)
+	}
+	want := []string{"core", "certs"}
+	if !reflect.DeepEqual(names, want) {
+		t.Errorf("selectedFeatures(\"scan\", \"core, certs\") = %v, want %v", names, want)
+	}
+}
+
+func TestSelectedFeaturesRejectsAnUnknownProfile(t *testing.T) {
+	if _, err := selectedFeatures("everything", ""); err == nil {
+		t.Fatal("selectedFeatures accepted an unknown profile")
+	}
+}
+
+func TestSelectedFeaturesRejectsAnUnknownFeature(t *testing.T) {
+	if _, err := selectedFeatures("scan", "bogus"); err == nil {
+		t.Fatal("selectedFeatures accepted an unknown feature name")
+	}
+}

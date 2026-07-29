@@ -83,6 +83,19 @@ func Check(ctx context.Context, client kubernetes.Interface, features []Feature)
 			for _, a := range r.Actions() {
 				ok, err := allowed(ctx, client, a)
 				if err != nil {
+					// redact.Error only special-cases *url.Error (see
+					// internal/redact); a cluster that denies the access-review
+					// request itself typically returns a *apierrors.StatusError,
+					// whose message can embed the requesting identity, and that
+					// passes through unredacted here. Accepted on this one path
+					// only, because of where the returned error can go: Check's
+					// caller (kubeagent rbac check) surfaces a plain error
+					// straight to the operator's own stderr and nowhere else.
+					// It must never cross into a FeatureStatus, the --output
+					// json results, or any other value this package hands back
+					// — those are built solely from Action.String, never from a
+					// server-supplied message (see the comment on
+					// res.Status.Reason below).
 					return nil, fmt.Errorf("could not check %q: %s", a, redact.Error(err))
 				}
 				if !ok {

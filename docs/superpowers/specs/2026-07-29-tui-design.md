@@ -51,7 +51,9 @@ This is the whole coverage claim, and it is deliberately one sentence rather
 than a table of which optional checks are wired. The opt-in advisories
 (`--security`, `--certs`, `--capacity`, `--operators`, `--drift`, `--logs`,
 `--disk-usage`, and the rest) stay where they are: run `kubeagent scan` for
-those. The footer says so.
+those. The help screen (`?`) says so, in one line. The footer is the key map
+and has no room for it; burying the coverage claim in a row of key hints would
+also make it easy to miss, which is the opposite of the point.
 
 ### Flags
 
@@ -84,9 +86,20 @@ is not redirectable, so it is not an output format.
   family. Unlike `internal/htmlreport`, `internal/tui` does not consume
   `report.Input`, so it carries no transitive edge to `internal/remediate`
   either.
-- **No cluster identity on screen.** No context name, no API server URL, no
-  kubeconfig path in any frame. Same rule the HTML report and the gate verdict
-  follow.
+- **No cluster identity in the chrome.** No context name and no kubeconfig path
+  in any frame, ever. Those are values kubeagent was handed and would be
+  printing on purpose; the HTML report and the gate verdict refuse them for the
+  same reason.
+
+  Error text is the one place a host can still appear, and it follows the rule
+  the rest of the CLI already follows rather than a stricter one invented here:
+  a failed re-scan's message goes through `internal/redact` — which strips the
+  path, the query and any userinfo and keeps `scheme://host` — and lands in the
+  footer. That is byte-for-byte what `kubeagent scan` prints to stderr today for
+  the same failure. The distinction that matters is not "which package rendered
+  it" but "where do the bytes go": the HTML report is written to be forwarded,
+  a TUI frame is on the operator's own screen and is never captured. This is the
+  same reasoning that keeps blind-spot reasons verbatim here.
 - `internal/report/testdata/golden-scan.txt` is untouched. This slice adds no
   code to `internal/report`.
 
@@ -327,10 +340,22 @@ const (
 )
 ```
 
-`decodeKey(b []byte) (Key, int)` returns the key and how many bytes it
-consumed. A `0` count means the run is a valid prefix of a longer escape
-sequence that has not fully arrived yet, so `Run` keeps the bytes and reads
-more — this is the split-escape-sequence case the tests cover.
+```go
+func decodeKey(b []byte, final bool) (Key, int)
+```
+
+It returns the key and how many bytes it consumed. A `0` count means the run is
+a valid prefix of a longer escape sequence that has not fully arrived, so `Run`
+keeps the bytes and reads more — the split-escape-sequence case the tests cover.
+
+`final` is what makes a bare `esc` usable. A lone `0x1b` is indistinguishable
+from the start of an arrow-key sequence, so streaming decoding must return `0`
+and wait. Nothing follows a real `esc` press, so waiting forever would make the
+key appear dead until the user pressed something else. `Run` therefore arms a
+50 ms timer whenever bytes are pending and re-decodes with `final: true` when it
+fires; under `final` a lone `0x1b` resolves to `KeyEsc` and an incomplete CSI
+run resolves to `KeyUnknown`. The resolution stays a pure function — only the
+timer lives in `Run`.
 
 ### Re-scan
 
@@ -429,7 +454,7 @@ partial scan can never look complete — the same green-when-blind failure
 | stdin or stdout not a TTY | refuse before connecting, message above, exit 1 |
 | `cluster.NewClient` fails | plain stderr error before raw mode, exit 1 — identical to `scan` |
 | first `scan.Evaluate` fails | plain stderr error before raw mode, exit 1 |
-| re-scan (`r`) fails | stay in the TUI, show the error in the footer, keep the previous findings on screen |
+| re-scan (`r`) fails | stay in the TUI, show `redact.Error(err)` in the footer, keep the previous findings on screen |
 | terminal too small (< 40 cols or < 10 rows) | render a single "terminal too small" line rather than a corrupted frame |
 
 A failed re-scan must not discard the findings already on screen: an operator

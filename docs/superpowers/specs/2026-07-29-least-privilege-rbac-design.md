@@ -90,7 +90,6 @@ The entries, exhaustively:
 | Name | Flag | Rules |
 |------|------|-------|
 | `core` | — | the ten API groups of today's base role, at `get, list` |
-| `watch` | — | the same ten groups, adding the `watch` verb |
 | `certs` | `--certs` | `secrets: list` |
 | `logs` | `--logs` | `pods/log: get` |
 | `diskusage` | `--disk-usage` | `nodes/proxy: get` |
@@ -112,6 +111,11 @@ Subcommands are **not** table entries; they are profiles over these features.
 would duplicate core's rules four times and give the renderer no way to tell a
 subcommand's grant from an add-on's.
 
+The `watch` verb is likewise not a feature. It is a verb elevation applied to
+core's rules by the `watch` profile, because a separate `watch` feature would
+emit a second copy of all ten rules differing only in verbs, and the renderer
+would have no basis for collapsing them.
+
 A feature whose `Rules` is empty is meaningful, not a stub: it records that the
 feature needs nothing beyond core. `internal/capacity`, `internal/credlint`,
 `internal/secscan` and `internal/pvcreclaim` hold no Kubernetes client at all —
@@ -130,8 +134,8 @@ A profile is a named set of features, so an operator does not have to enumerate.
 | Profile | Features | Verbs |
 |---------|----------|-------|
 | `scan` | core | `get, list` |
-| `watch` | core | `get, list, watch` |
-| `full` | core + every add-on | as each feature requires |
+| `watch` | core, verb-elevated | `get, list, watch` |
+| `full` | core + every add-on | `get, list`, plus what each add-on requires |
 
 `scan` is the least-privilege one and is new: a one-shot `kubeagent scan` never
 opens a watch, so `watch` on every resource is privilege it does not use.

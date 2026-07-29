@@ -10,7 +10,9 @@ on:
         required: true
 
 permissions:
-  contents: write
+  contents: write      # publish the GitHub Release
+  id-token: write      # OIDC token -> short-lived Fulcio certificate (keyless cosign)
+  attestations: write  # actions/attest-* write to the GitHub attestation store
 
 jobs:
   release:
@@ -24,6 +26,8 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - uses: sigstore/cosign-installer@v3
+      - uses: anchore/sbom-action/download-syft@v0
 
       - name: Resolve version
         id: ver
@@ -50,6 +54,38 @@ jobs:
           scripts/render-krew-manifest.sh "${VERSION}" dist/SHA256SUMS > dist/kubeagent.yaml
           cat dist/kubeagent.yaml
 
+      # SHA256SUMS already binds every archive by hash, so one signature over
+      # it covers the whole release. Keyless: the signing certificate is
+      # issued to this workflow's OIDC identity and recorded in Rekor, so
+      # there is no private key to guard, rotate, or steal.
+      - name: Sign checksums
+        run: cosign sign-blob --yes dist/SHA256SUMS --bundle dist/SHA256SUMS.cosign.bundle
+
+      # syft scans the built binary rather than go.sum: the SBOM should list
+      # what was linked in, not everything the module graph could have
+      # provided.
+      - name: Generate SBOM
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          mkdir -p sbom
+          tar xzf "dist/kubeagent_${VERSION}_linux_amd64.tar.gz" -C sbom kubeagent
+          syft scan "file:sbom/kubeagent" -o "spdx-json=dist/kubeagent_${VERSION}_sbom.spdx.json"
+
+      - name: Attest archive provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/kubeagent_*.tar.gz
+
+      # Bound to the linux/amd64 archive specifically, because that is the
+      # binary syft scanned. Claiming this SBOM describes the darwin archives
+      # would be a statement nobody verified.
+      - name: Attest archive SBOM
+        uses: actions/attest-sbom@v2
+        with:
+          subject-path: dist/kubeagent_${{ steps.ver.outputs.version }}_linux_amd64.tar.gz
+          sbom-path: dist/kubeagent_${{ steps.ver.outputs.version }}_sbom.spdx.json
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -62,6 +98,8 @@ jobs:
             dist/kubeagent_${{ steps.ver.outputs.version }}_darwin_arm64.tar.gz
             dist/kubeagent_linux_amd64.tar.gz
             dist/SHA256SUMS
+            dist/SHA256SUMS.cosign.bundle
+            dist/kubeagent_${{ steps.ver.outputs.version }}_sbom.spdx.json
             dist/kubeagent.yaml
 
       # Container image for the watch daemon (deploy/deployment.yaml pulls this).
@@ -73,6 +111,7 @@ jobs:
         run: echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
 
       - name: Build + push image
+        id: image
         if: ${{ env.DOCKERHUB_TOKEN != '' }}
         env:
           VERSION: ${{ steps.ver.outputs.version }}
@@ -80,9 +119,49 @@ jobs:
         run: |
           docker build -t "imantaba/kubeagent:${VERSION}" --build-arg VERSION="${VERSION}" .
           docker push "imantaba/kubeagent:${VERSION}"
+          # Sign and attest by digest, never by tag: a tag is a moving
+          # pointer, and a signature over a moving pointer says nothing about
+          # what a later pull receives.
+          digest="$(docker image inspect --format '{{ index .RepoDigests 0 }}' "imantaba/kubeagent:${VERSION}" | cut -d@ -f2)"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
           if [ "$PUSH_LATEST" = "true" ]; then
             docker tag "imantaba/kubeagent:${VERSION}" imantaba/kubeagent:latest
             docker push imantaba/kubeagent:latest
           else
             echo "pre-release ${VERSION}: leaving :latest pointing where it is"
           fi
+
+      - name: Sign image
+        if: ${{ env.DOCKERHUB_TOKEN != '' }}
+        run: cosign sign --yes "imantaba/kubeagent@${{ steps.image.outputs.digest }}"
+
+      # push-to-registry: false — attestations live in GitHub's attestation
+      # store, keyed by digest, and `gh attestation verify oci://…` resolves
+      # them from there. Pushing them to the registry instead would depend on
+      # Docker Hub's OCI referrers support, which is not something to stake a
+      # release on. The image signature is the one registry-side artifact:
+      # cosign's tag-based signature layout has worked on Docker Hub for years.
+      - name: Attest image provenance
+        if: ${{ env.DOCKERHUB_TOKEN != '' }}
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: docker.io/imantaba/kubeagent
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: false
+
+      # The image SBOM is generated separately from the binary's: it also
+      # covers the distroless base layer.
+      - name: Generate image SBOM
+        if: ${{ env.DOCKERHUB_TOKEN != '' }}
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: syft scan "docker:imantaba/kubeagent:${VERSION}" -o spdx-json=image-sbom.spdx.json
+
+      - name: Attest image SBOM
+        if: ${{ env.DOCKERHUB_TOKEN != '' }}
+        uses: actions/attest-sbom@v2
+        with:
+          subject-name: docker.io/imantaba/kubeagent
+          subject-digest: ${{ steps.image.outputs.digest }}
+          sbom-path: image-sbom.spdx.json
+          push-to-registry: false

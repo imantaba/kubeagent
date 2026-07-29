@@ -32,6 +32,12 @@ func TestDecodeKey(t *testing.T) {
 		// consume both, so a stray byte can never wedge the decoder.
 		{"esc then non-csi", []byte{0x1b, 'x'}, false, Key{Kind: KeyEsc}, 2},
 		{"multi-byte rune", []byte("é"), false, Key{Kind: KeyRune, Rune: 'é'}, 2},
+		{"invalid byte", []byte{0xFF}, false, Key{Kind: KeyUnknown}, 1},
+		{"lone continuation byte", []byte{0x80}, false, Key{Kind: KeyUnknown}, 1},
+		{"split rune waits", []byte{0xC3}, false, Key{}, 0},
+		{"split rune resolves when final", []byte{0xC3}, true, Key{Kind: KeyUnknown}, 1},
+		{"lead byte with a bad continuation", []byte{0xC3, 0x41}, false, Key{Kind: KeyUnknown}, 1},
+		{"split three-byte rune waits", []byte{0xE2, 0x96}, false, Key{}, 0},
 		{"empty", nil, false, Key{}, 0},
 	}
 	for _, tt := range tests {

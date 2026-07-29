@@ -25,6 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (the CNCF Code of Conduct, adopted as this project's own text and enforced by
   the maintainers), and `ADOPTERS.md` — joining the `SECURITY.md` already in
   the tree.
+- **Issue forms and a pull-request template.** Three issue forms (bug report,
+  missed failure mode / new detector, feature request) and a PR template that
+  asks a contributor to confirm the change keeps the project's invariants.
+  Blank issues are off; the chooser links the private advisory channel first,
+  so a vulnerability has somewhere to go that is not a public issue. The bug
+  form requires an explicit "I redacted this" acknowledgement, because
+  kubeagent output carries namespace, node, and image names.
 - **DCO sign-off is now required and enforced.** Every commit needs a
   `Signed-off-by:` trailer matching its author (`git commit -s`); there is no
   CLA. A new `DCO` workflow runs `scripts/dco-check.sh` over each pull

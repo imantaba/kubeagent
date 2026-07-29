@@ -113,6 +113,18 @@ func TestReleaseArchives(t *testing.T) {
 	// everyone else. These assertions are what actually pin that down.
 	t.Run("tar entries carry no builder identity or clock", func(t *testing.T) {
 		want := time.Unix(archiveTestEpoch, 0)
+		// Neither `go build` nor `cp` fixes the mode of what it writes —
+		// both inherit the caller's umask. A builder running umask 077
+		// would otherwise stage kubeagent 0700 and the docs 0600 instead
+		// of the 0755/0644 a umask-022 builder gets, and tar would faithfully
+		// record whichever mode it found, producing a different archive for
+		// no reason a verifier could distinguish from tampering.
+		wantMode := map[string]int64{
+			"kubeagent": 0o755,
+			"README.md": 0o644,
+			"LICENSE":   0o644,
+			"NOTICE":    0o644,
+		}
 		for _, h := range tarHeaders(t, archive) {
 			if h.Uid != 0 || h.Gid != 0 {
 				t.Errorf("%s: uid/gid = %d/%d, want 0/0", h.Name, h.Uid, h.Gid)
@@ -122,6 +134,11 @@ func TestReleaseArchives(t *testing.T) {
 			}
 			if !h.ModTime.Equal(want) {
 				t.Errorf("%s: mtime = %s, want %s (SOURCE_DATE_EPOCH)", h.Name, h.ModTime.UTC(), want.UTC())
+			}
+			if wantMode, ok := wantMode[h.Name]; ok {
+				if got := h.Mode & 0o777; got != wantMode {
+					t.Errorf("%s: mode = %#o, want %#o", h.Name, got, wantMode)
+				}
 			}
 		}
 	})
@@ -244,6 +261,12 @@ In `scripts/build-release-archives.sh`, extend the header comment block — afte
 After the `cd "$ROOT"` line, add:
 
 ```bash
+# Glob expansion (the stale-artifact cleanup below, the SHA256SUMS line at
+# the bottom) and tar member order must be bytewise everywhere, not sorted by
+# whatever locale the builder's shell happens to have — a non-C locale can
+# reorder both silently.
+export LC_ALL=C
+
 # Defaulted from the commit rather than from the clock: "now" would be
 # reproducible only within a single run, which defeats the point. A checkout
 # with no commit time is an error, not a reason to substitute one.
@@ -268,14 +291,26 @@ for platform in $RELEASE_PLATFORMS; do
   # NOTICE travels with LICENSE: Apache-2.0 section 4(d) requires redistributions
   # to carry it.
   cp README.md LICENSE NOTICE "$stage/"
-  # LC_ALL=C so --sort=name sorts bytewise everywhere, not by the builder's
-  # locale collation. Each flag closes one leak: entry order, the building
-  # user's uid and name, the staging directory's mtime. gzip is invoked
-  # separately because tar -czf gives no way to pass it -n, and the gzip
-  # header has its own filename and timestamp fields.
-  LC_ALL=C tar --sort=name --numeric-owner --owner=0 --group=0 \
+  # tar records whatever mode the staging files happen to carry, and both
+  # `go build` and `cp` inherit the caller's umask — a builder running with
+  # umask 077 would otherwise produce a different archive from one running
+  # with 022, for no reason a verifier could distinguish from tampering.
+  chmod 0755 "$stage/kubeagent"
+  chmod 0644 "$stage/README.md" "$stage/LICENSE" "$stage/NOTICE"
+  # --sort=name sorts bytewise under LC_ALL=C (exported above). Each flag
+  # closes one leak: entry order, the building user's uid and name, the
+  # staging directory's mtime. gzip is invoked separately because tar -czf
+  # gives no way to pass it -n, and the gzip header has its own filename and
+  # timestamp fields.
+  #
+  # --sort=name only reorders names tar discovers itself (directory
+  # recursion, --files-from); it does not reorder names given explicitly on
+  # the command line, so these four are listed in the bytewise order we want
+  # in the archive (LICENSE < NOTICE < README.md < kubeagent under LC_ALL=C,
+  # since uppercase sorts before lowercase).
+  tar --sort=name --numeric-owner --owner=0 --group=0 \
       --mtime="@${SOURCE_DATE_EPOCH}" \
-      -C "$stage" -cf - kubeagent README.md LICENSE NOTICE |
+      -C "$stage" -cf - LICENSE NOTICE README.md kubeagent |
     gzip -n > "${OUTDIR}/kubeagent_${VERSION}_${os}_${arch}.tar.gz"
 done
 ```

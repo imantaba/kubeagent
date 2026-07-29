@@ -49,6 +49,12 @@ OUTDIR="${2:-}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+# Glob expansion (the stale-artifact cleanup below, the SHA256SUMS line at
+# the bottom) and tar member order must be bytewise everywhere, not sorted by
+# whatever locale the builder's shell happens to have — a non-C locale can
+# reorder both silently.
+export LC_ALL=C
+
 # Defaulted from the commit rather than from the clock: "now" would be
 # reproducible only within a single run, which defeats the point. A checkout
 # with no commit time is an error, not a reason to substitute one.
@@ -91,18 +97,24 @@ for platform in $RELEASE_PLATFORMS; do
   # NOTICE travels with LICENSE: Apache-2.0 section 4(d) requires redistributions
   # to carry it.
   cp README.md LICENSE NOTICE "$stage/"
-  # LC_ALL=C so --sort=name sorts bytewise everywhere, not by the builder's
-  # locale collation. Each flag closes one leak: entry order, the building
-  # user's uid and name, the staging directory's mtime. gzip is invoked
-  # separately because tar -czf gives no way to pass it -n, and the gzip
-  # header has its own filename and timestamp fields.
+  # tar records whatever mode the staging files happen to carry, and both
+  # `go build` and `cp` inherit the caller's umask — a builder running with
+  # umask 077 would otherwise produce a different archive from one running
+  # with 022, for no reason a verifier could distinguish from tampering.
+  chmod 0755 "$stage/kubeagent"
+  chmod 0644 "$stage/README.md" "$stage/LICENSE" "$stage/NOTICE"
+  # --sort=name sorts bytewise under LC_ALL=C (exported above). Each flag
+  # closes one leak: entry order, the building user's uid and name, the
+  # staging directory's mtime. gzip is invoked separately because tar -czf
+  # gives no way to pass it -n, and the gzip header has its own filename and
+  # timestamp fields.
   #
   # --sort=name only reorders names tar discovers itself (directory
   # recursion, --files-from); it does not reorder names given explicitly on
   # the command line, so these four are listed in the bytewise order we want
   # in the archive (LICENSE < NOTICE < README.md < kubeagent under LC_ALL=C,
   # since uppercase sorts before lowercase).
-  LC_ALL=C tar --sort=name --numeric-owner --owner=0 --group=0 \
+  tar --sort=name --numeric-owner --owner=0 --group=0 \
       --mtime="@${SOURCE_DATE_EPOCH}" \
       -C "$stage" -cf - LICENSE NOTICE README.md kubeagent |
     gzip -n > "${OUTDIR}/kubeagent_${VERSION}_${os}_${arch}.tar.gz"

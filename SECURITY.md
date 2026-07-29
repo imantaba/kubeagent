@@ -31,6 +31,14 @@ only. There are no long-term-support branches yet; upgrade to the latest
 release before reporting, and expect a fix to arrive as a new release rather
 than as a patch to an older one.
 
+## Verifying a release
+
+Release archives are signed with [cosign](https://docs.sigstore.dev/) keyless
+signing, ship an SPDX SBOM, carry SLSA build provenance, and are
+byte-reproducible from the tagged source. There is no key to distribute:
+verification pins the release workflow's identity. The commands are in
+[Verifying a release](https://k8sproject.top/verify/).
+
 ## What counts as a vulnerability here
 
 kubeagent reads production clusters and can be pointed at an LLM, so its

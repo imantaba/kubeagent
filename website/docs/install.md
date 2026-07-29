@@ -58,6 +58,10 @@ tar xzf "kubeagent_${VERSION}_${OS}_${ARCH}.tar.gz"
     `VERSION` above — on the
     [Releases page](https://github.com/imantaba/kubeagent/releases).
 
+!!! tip "Verify more than the checksum"
+    Releases are signed, carry an SBOM and build provenance, and are
+    byte-reproducible — see [Verifying a release](verify.md).
+
 ## Run on Kubernetes (daemon)
 
 To run kubeagent **in-cluster** as the read-only [watch daemon](features/watch-mode.md)

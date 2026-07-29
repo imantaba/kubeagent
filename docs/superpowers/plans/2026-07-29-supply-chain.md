@@ -16,7 +16,7 @@
 
 - **Every commit carries a `Signed-off-by` trailer matching its author.** Use `git commit -s`. `main` enforces DCO on pull requests (`scripts/dco-check.sh`); an unsigned commit cannot be merged. Verify with `scripts/dco-check.sh main` before reporting DONE.
 - **No `Co-Authored-By: Claude` trailer, and no AI attribution of any kind** in any commit message, document, comment, changelog entry or code.
-- **No secrets, credentials, private IPs or internal hostnames anywhere**, including test fixtures. Documentation IPs are RFC 5737 (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`); example domains are RFC 2606 (`.example`). The only hosts this slice may name are `github.com`, `docker.io`, `token.actions.githubusercontent.com` and `k8sproject.top`.
+- **No secrets, credentials, private IPs or internal hostnames anywhere**, including test fixtures. Documentation IPs are RFC 5737 (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`); example domains are RFC 2606 (`.example`). No internal, private or operator-specific host may appear; links to public project and tool documentation (e.g. `github.com`, `docker.io`, `token.actions.githubusercontent.com`, `k8sproject.top`, `docs.sigstore.dev`, `cli.github.com`) are fine.
 - **No Go code under `internal/` changes.** All new Go is test-only, in the root `package main`.
 - **`internal/report/testdata/golden-scan.txt` stays byte-identical.**
 - **Go lives at `/usr/local/go/bin`** — `export PATH=$PATH:/usr/local/go/bin`.

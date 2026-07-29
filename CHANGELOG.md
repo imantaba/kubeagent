@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Pre-release tags no longer move `imantaba/kubeagent:latest`.** A SemVer
+  pre-release (`v1.2.3-rc.1`) publishes as a GitHub pre-release and pushes only
+  its own image tag, so an unpinned `docker pull` keeps resolving to the newest
+  stable release. A tag that is not a SemVer release version now stops the
+  release workflow instead of producing a release under a malformed name.
 - **Relicensed to Apache-2.0.** The MIT `LICENSE` is replaced by the Apache
   License 2.0, with the `NOTICE` file restored. Apache-2.0 is the license
   foundations expect of a donated project, it grants an explicit patent
@@ -18,6 +23,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Signed releases, SBOM and build provenance.** Every release now carries a
+  keyless [cosign](https://docs.sigstore.dev/) signature over `SHA256SUMS` —
+  which binds every archive by hash — plus a signed container image, an SPDX
+  SBOM of the linux/amd64 binary, and SLSA build provenance for the archives
+  and the image. Verification pins the release workflow's identity through
+  Fulcio and Rekor, so there is no key to distribute or rotate. New page:
+  [Verifying a release](https://k8sproject.top/verify/).
+- **Byte-reproducible release archives.** The same tag rebuilt on another
+  machine now produces the same `SHA256SUMS`: the Go build is trimmed of
+  absolute paths, tar records a fixed mtime with numeric zero ownership and
+  bytewise entry order, and gzip no longer stamps its header.
 - **Project governance documents.** `GOVERNANCE.md` (single-maintainer
   decision making today, with an automatic switch to lazy consensus plus
   majority votes once there are three or more maintainers, and stated criteria

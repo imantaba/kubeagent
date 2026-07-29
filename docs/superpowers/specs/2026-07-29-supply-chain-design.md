@@ -278,9 +278,10 @@ Only after that does the real version bump and release happen.
 - No `Co-Authored-By: Claude` trailer, and no AI attribution in any commit message,
   document, comment or changelog entry.
 - No secrets, credentials, private IPs or internal hostnames anywhere, including test
-  fixtures. Documentation IPs are RFC 5737; example domains are RFC 2606. The only
-  hosts named in this slice are `github.com`, `docker.io`, `token.actions.githubusercontent.com`
-  and the project's own site.
+  fixtures. Documentation IPs are RFC 5737; example domains are RFC 2606. No internal,
+  private or operator-specific host may appear; links to public project and tool
+  documentation (`github.com`, `docker.io`, `token.actions.githubusercontent.com`, the
+  project's own site, `docs.sigstore.dev`, `cli.github.com`, and the like) are fine.
 - `internal/report/testdata/golden-scan.txt` stays byte-identical.
 - No Go code under `internal/` changes. Nothing in this slice reads a kubeconfig,
   contacts a cluster, or makes a model call.

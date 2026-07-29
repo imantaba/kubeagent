@@ -476,6 +476,9 @@ tar xzf "kubeagent_${VERSION}_${OS}_${ARCH}.tar.gz"
 ./kubeagent scan
 ```
 
+Releases are signed, ship an SPDX SBOM and SLSA build provenance, and are
+byte-reproducible — see [Verifying a release](https://k8sproject.top/verify/).
+
 Windows is not published: nothing in this project's test or chaos suite has
 ever run on it.
 
@@ -504,13 +507,19 @@ git push origin v1.2.3
 
 The release workflow runs the tests, builds the four platform archives
 (`kubeagent_<version>_{linux,darwin}_{amd64,arm64}.tar.gz`) plus `SHA256SUMS`,
-renders the krew plugin manifest from `krew/kubeagent.yaml.tmpl` with those
-checksums, and attaches everything to the GitHub Release. Every push and PR is
-checked by the CI workflow (vet + test + build).
+signs the checksums with keyless cosign, generates an SPDX SBOM, attests build
+provenance for the archives and the image, renders the krew plugin manifest
+from `krew/kubeagent.yaml.tmpl` with those checksums, and attaches everything
+to the GitHub Release. A SemVer pre-release tag (`v1.2.3-rc.1`) publishes as a
+GitHub pre-release and does not move the `:latest` image tag. Every push and PR
+is checked by the CI workflow (vet + test + build).
 
 > A manual dispatch creates the tag at the current commit of the branch it runs
 > on — make sure that branch is at the commit you mean to release before
 > dispatching. A pushed tag releases exactly that tagged commit.
+> Pushing a tag is preferred over a manual dispatch: the signing certificate
+> then pins the tag itself, while a dispatched run can only pin the branch it
+> ran from.
 
 ## Roadmap
 

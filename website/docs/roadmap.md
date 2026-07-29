@@ -379,6 +379,9 @@
   (`--allow-partial-read <resource>`, or `kubeagent gate || [ $? -eq 2 ]`).
   Read-only, and no LLM call on any gate path. **Theme G — slice 3.** See
   [CI/CD gate](features/ci-gate.md).
+- **Verifiable releases** — keyless cosign signatures over `SHA256SUMS` and the
+  container image, an SPDX SBOM, SLSA build provenance, and byte-reproducible
+  archives, all checkable without a key — see [Verifying a release](verify.md)
 
 !!! info "Version history"
     [GitHub Releases](https://github.com/imantaba/kubeagent/releases) and the
@@ -451,8 +454,10 @@ These are the north star; every item below is measured against them.
   verify, SARIF, exit codes); a **shareable HTML report** (shipped, `scan
   --output html`); and an **interactive TUI** (shipped, `kubeagent tui`). An
   optional in-cluster dashboard remains ahead.
-- **H · Supply-chain & trust** — signed releases, SBOM and build provenance,
-  least-privilege RBAC profiles per feature, and fuzzed detectors.
+- **H · Supply-chain & trust** — signed releases, SBOM and build provenance
+  (shipped: keyless cosign signatures, an SPDX SBOM, SLSA build provenance and
+  byte-reproducible archives — see [Verifying a release](verify.md));
+  least-privilege RBAC profiles per feature, and fuzzed detectors remain ahead.
 
 ### Milestones
 

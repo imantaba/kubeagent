@@ -867,6 +867,9 @@ gh attestation verify "kubeagent_${VERSION}_linux_amd64.tar.gz" --repo imantaba/
 gh attestation verify "oci://docker.io/imantaba/kubeagent:${VERSION}" --repo imantaba/kubeagent
 ```
 
+Those two commands check the build provenance only: `gh attestation verify`
+enforces the SLSA provenance predicate unless you name another one.
+
 The release also carries `kubeagent_${VERSION}_sbom.spdx.json`, an SPDX JSON
 bill of materials for the linux/amd64 binary: every Go module linked into it,
 at the version it was built from. It answers "is this release affected by a
@@ -874,9 +877,29 @@ vulnerability in dependency X" without reading the source tree. The container
 image carries its own SBOM as an attestation, because it additionally contains
 the distroless base layer.
 
+The SBOM is a separate attestation with its own predicate type, so it needs
+its own command:
+
+```bash
+gh attestation verify "kubeagent_${VERSION}_linux_amd64.tar.gz" \
+  --repo imantaba/kubeagent \
+  --predicate-type https://spdx.dev/Document
+gh attestation verify "oci://docker.io/imantaba/kubeagent:${VERSION}" \
+  --repo imantaba/kubeagent \
+  --predicate-type https://spdx.dev/Document
+```
+
+Adding `--format json` prints the statement, whose `predicate` field is the
+attested SBOM itself — that copy is the signed one.
+
 ```bash
 curl -sSLO "${base}/kubeagent_${VERSION}_sbom.spdx.json"
 ```
+
+The downloadable `.spdx.json` asset is a convenience copy for tools that want
+a plain file. `SHA256SUMS` covers the archives, not the SBOM, so an asset you
+fetched that way carries no signature of its own — diff it against the
+attested predicate if the file itself has to be trusted.
 
 ## 4. Reproducing the build
 
@@ -1053,6 +1076,6 @@ no RBAC, no `nodes/proxy`, no `--fix`, no watch daemon and no Helm template.
 2. `scripts/dco-check.sh main` — every commit on the branch signed off.
 3. Whole-branch review on opus; fix Critical/Important.
 4. Merge, then push `v0.68.0-rc.1`. The full workflow runs.
-5. Verify against the published pre-release: `cosign verify-blob` on `SHA256SUMS`, `gh attestation verify` on an archive, `cosign verify` on the image, `gh attestation verify oci://…`, and confirm the SBOM lists the expected modules.
+5. Verify against the published pre-release by running every command on `website/docs/verify.md` verbatim: `cosign verify-blob` on `SHA256SUMS`, `gh attestation verify` on an archive, `cosign verify` on the image, `gh attestation verify oci://…`, the two `--predicate-type https://spdx.dev/Document` invocations (this is where the predicate-type string is confirmed against what `actions/attest-sbom` actually emits — read it back with `--format json` if a command rejects it), and confirm the SBOM lists the expected modules.
 6. Confirm `imantaba/kubeagent:latest` still resolves to v0.67.0 — the guard is why the dry run is safe.
 7. Delete the tag and the pre-release, then cut the real v0.68.0.

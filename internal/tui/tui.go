@@ -56,6 +56,12 @@ func checkTTY(inFD, outFD int, isTerm func(int) bool) error {
 // Run draws the TUI until the operator quits. It is the only function in this
 // package that touches a terminal, a signal or the cluster; everything it draws
 // comes from Render and everything it decides comes from Update.
+//
+// Call it at most once per process. It owns os.Stdin for its lifetime, and the
+// goroutine it starts to read stdin cannot be interrupted — a blocking read has
+// no cancellation — so it outlives the call, parked, until the process exits. A
+// second Run would put two readers on the same descriptor and the bytes would
+// split between them unpredictably.
 func Run(ctx context.Context, opts Options) error {
 	inFD, outFD := int(os.Stdin.Fd()), int(os.Stdout.Fd())
 	if err := checkTTY(inFD, outFD, term.IsTerminal); err != nil {
@@ -63,7 +69,11 @@ func Run(ctx context.Context, opts Options) error {
 	}
 
 	// The first scan happens before raw mode, so a connection failure prints as
-	// an ordinary error on an ordinary terminal.
+	// an ordinary error on an ordinary terminal. Its error is returned unredacted,
+	// like scan's own startup failure in main: a connection error the operator
+	// reads on their own stderr is the one place kubeagent names what it could not
+	// reach. Errors that land inside the frame go through redact.Error — see the
+	// re-scan below — because those are on screen, not on the operator's channel.
 	snap, err := opts.Scan(ctx)
 	if err != nil {
 		return err
@@ -93,14 +103,27 @@ func Run(ctx context.Context, opts Options) error {
 	}()
 	fmt.Fprint(os.Stdout, escEnterAlt+escHideCurs)
 
-	// SIGINT is caught alongside SIGTERM and SIGHUP even though raw mode means the
-	// keyboard cannot produce it — Ctrl-C arrives as the byte 0x03. It reaches this
-	// process from `kill -INT` or a supervisor, and its default disposition would
-	// end the process with the terminal still raw, on an alternate screen, with the
-	// cursor hidden: the exact state the other two are caught to avoid.
+	// SIGINT and SIGQUIT are caught alongside SIGTERM and SIGHUP even though raw
+	// mode means the keyboard cannot produce either — MakeRaw clears ISIG, which is
+	// what turns Ctrl-C and Ctrl-\ into signals, so both arrive as ordinary bytes
+	// instead. They still reach this process from `kill` or a supervisor, and their
+	// default disposition would end it with the terminal raw, on an alternate
+	// screen, with the cursor hidden: the state every signal here is caught to
+	// avoid.
 	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGWINCH, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGINT)
+	signal.Notify(sigs, syscall.SIGWINCH, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGINT, syscall.SIGQUIT)
 	defer signal.Stop(sigs)
+
+	// SIGTSTP is ignored rather than caught, for the same reason Ctrl-Z is: this
+	// process cannot suspend safely. Stopping hands the terminal back to the shell,
+	// which sets its own mode; resuming would return here believing the terminal is
+	// still raw when it is not, leaving the operator a shell that echoes nothing.
+	// Supporting suspend properly means restoring on the way down and re-entering
+	// raw mode on SIGCONT — machinery this does not have, so refuse plainly instead
+	// of corrupting the session. ISIG keeps Ctrl-Z off the keyboard path; this
+	// covers `kill -TSTP`.
+	signal.Ignore(syscall.SIGTSTP)
+	defer signal.Reset(syscall.SIGTSTP)
 
 	// Exactly one goroutine, and it does nothing but move bytes: stdin has no
 	// non-blocking read, so a read has to happen off the main loop for select to
@@ -151,7 +174,7 @@ func Run(ctx context.Context, opts Options) error {
 			pending, m = drainKeys(pending, m, true)
 		case sig := <-sigs:
 			if sig != syscall.SIGWINCH {
-				// SIGTERM, SIGHUP or SIGINT. Returning runs the deferred restore,
+				// SIGTERM, SIGHUP, SIGINT or SIGQUIT. Returning runs the restore,
 				// which is the whole reason these are handled rather than left to
 				// kill the process with the terminal still in raw mode.
 				return nil

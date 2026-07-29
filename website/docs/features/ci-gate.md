@@ -82,6 +82,17 @@ A waived resource still appears in the output (`RenderText` prints it,
 should still see what they chose not to be told about, even though it no
 longer forces exit `2`.
 
+## A preflight check for missing grants
+
+`kubeagent gate` fails closed on a resource it cannot read — that is exit
+`2`, deliberately, per the section above — but a red exit `2` on its own
+doesn't say *which* grant is missing. Running `kubeagent rbac check
+--profile scan` as an earlier step in the same pipeline turns "the gate is
+red because a grant is missing" into a message that names the grant before
+`gate` ever runs. Like `gate`, `rbac check` exits `1` when anything it
+checked is blocked, so it composes into the same "fail the step and stop the
+pipeline" pattern — see [Least-privilege RBAC](rbac.md#kubeagent-rbac-check).
+
 ## `--wait-for` scope
 
 With `--wait-for`, only findings attributable to the named workload decide

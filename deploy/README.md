@@ -39,6 +39,21 @@ This creates:
 - A single-replica `Deployment` running `kubeagent watch` from `deployment.yaml`
 - A `ClusterIP` Service exposing the metrics endpoint from `service.yaml`
 
+**Every `rbac*.yaml` in this directory, and the Helm chart's `ClusterRole`, are
+generated** from a single feature table in `internal/rbacprofile` — do not
+hand-edit them. To change a grant, edit the table and regenerate:
+
+```bash
+go test ./internal/rbacprofile -run TestGeneratedManifests -update
+```
+
+A golden test fails the build if a manifest ever drifts from the table. If
+none of the shipped manifests are narrow enough — say, an identity that only
+ever runs `scan --certs` and nothing else — `kubeagent rbac print --features
+core,certs` prints exactly that role instead of the full `full` profile. See
+[Least-privilege RBAC](https://k8sproject.top/features/rbac/) for `rbac print`
+and `rbac check` in full.
+
 ### 4. Verify the daemon is running
 
 ```bash

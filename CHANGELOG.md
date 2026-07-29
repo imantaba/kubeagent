@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `kubeagent rbac print` and `kubeagent rbac check`: print the minimal ClusterRole a
+  profile or feature list needs, and ask the API server whether the current identity may
+  run it. `check` exits 1 when a feature is blocked, so CI can gate on it.
+- Every RBAC manifest under `deploy/` and the chart's ClusterRole are now generated from a
+  single feature table in `internal/rbacprofile`, with a golden test that fails on drift.
+  Role names, resources and verbs are unchanged.
+
+### Fixed
+
+- A refused read behind a feature flag is now named as a blind spot in the scan report.
+  `--disk-usage` and `--logs` discarded the error entirely, so a missing `nodes/proxy` or
+  `pods/log` grant was invisible; `--certs`, `--kubelet-health`, `--dns-health`,
+  `--control-plane-health` and the `--operators`/`--drift` advisories recorded it only
+  inside their own section. A scan that could not see no longer looks like a scan that saw
+  nothing wrong.
+
 ## [0.68.0] - 2026-07-29
 
 ### Changed

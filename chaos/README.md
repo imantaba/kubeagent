@@ -20,7 +20,7 @@ its own `kind-kubeagent-chaos` context and never reads your current kubecontext.
 ./chaos/run.sh                 # create cluster, run all scenarios, leave cluster up
 ./chaos/run.sh --recreate      # delete + recreate the cluster first (clean slate)
 ./chaos/run.sh --teardown      # delete the cluster when finished
-./chaos/run.sh --only 7        # run a single scenario (1..18) for debugging
+./chaos/run.sh --only 7        # run a single scenario (1..20) for debugging
 ./chaos/run.sh --out path.md   # write the report somewhere specific
 ```
 
@@ -61,6 +61,8 @@ The key is read from the environment only; it is never written to the report.
 | 16 | Operator/CRD adapters | install real cert-manager, create a `Certificate` referencing an `Issuer` that does not exist, and apply an unrelated CRD kubeagent has no adapter for | `--operators` names the cert-manager `Certificate` with `Ready=False`, the unadapted CRD is **absent** from the report (the discovery gate proven in both directions), no CR `spec` content appears in any line, and the cluster verdict stays driven by core workloads |
 | 17 | GitOps drift | install real Flux (pinned v2.4.0), create a `GitRepository` pointing at an unresolvable host plus a failing and a suspended `Kustomization` | `--drift` names the failing `Kustomization` as stale (past `--drift-age`) and the other as `suspended`; the `GitRepository`'s repo URL and the fake token embedded in it appear **zero** times anywhere in the report. Flux is removed again afterwards |
 | 18 | Capacity hints, no metrics-server | a `Deployment` with no resource requests, one with a memory limit but no request, and a `Job` requesting 40 CPU cores (unschedulable on this cluster) | `--capacity` names all three structural right-sizing rules and reports the metrics-server-unavailable, structural-rules-only path; no cost/peak/waste vocabulary anywhere. CAPACITY is purely advisory and never itself moves the verdict — the cluster still reads **Degraded**, because the 40-core Job's Pod is genuinely unschedulable and the existing Pending/Unschedulable detector reports that independently |
+| 19 | MCP server over stdio | drive `kubeagent mcp` as the real binary over real stdio (not the fake clientset): `initialize`, `tools/list`, then `tools/call kubeagent_triage` against a crash-looping pod | `tools/list` names exactly `kubeagent_advisory kubeagent_inspect kubeagent_triage` — no tool name contains a write verb (`fix`/`apply`/`delete`/`patch`/`create`); the triage call returns a `degraded` verdict with at least one finding and `coverage.context` echoing back the `--context` the server was started with |
+| 20 | Least-privilege RBAC | generate a `scan`-profile `ClusterRole` with `kubeagent rbac print`, bind it to a fresh ServiceAccount, then run `kubeagent rbac check` and `scan --certs --logs --disk-usage` as that identity alone | `rbac check` reports `core` allowed and exactly `certs diskusage logs` blocked, named from kubeagent's own table, never the API server's; the scan still exits `0`; the report names `secrets`/`pods/log`/`nodes/proxy` as unread rather than showing three empty sections |
 
 ### Validating `--fix` (remediation)
 

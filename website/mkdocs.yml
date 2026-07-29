@@ -70,6 +70,7 @@ nav:
       - CI/CD gate: features/ci-gate.md
       - HTML report: features/html-report.md
       - Interactive TUI: features/tui.md
+      - Least-privilege RBAC: features/rbac.md
   - Install: install.md
   - Verifying a release: verify.md
   - Roadmap: roadmap.md

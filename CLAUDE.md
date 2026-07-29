@@ -60,6 +60,12 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   only, not even `watch`), makes **no LLM calls**, and must never import
   `internal/remediate`, `internal/explain`, `internal/investigate`, or
   `internal/report` (see [website/docs/features/tui.md](website/docs/features/tui.md)).
+  `kubeagent rbac` (`internal/rbacprofile`) is a fifth case: a one-shot, read-only command
+  that makes **no LLM calls** and must never import `internal/remediate` or
+  `internal/explain`. Its `check` verb creates `SelfSubjectAccessReview` objects — a virtual
+  resource the API server evaluates and never persists, the same API `kubectl auth can-i`
+  uses. It is the sole non-`--fix` path in kubeagent that issues a POST, and it changes no
+  cluster state.
   `internal/htmlreport` (the `scan --output html` renderer) is a different case
   and is deliberately allowed to reuse `report.Input`, which transitively pulls
   in `internal/remediate`. The rule above is about capability, not the

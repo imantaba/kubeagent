@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Interactive TUI** — `kubeagent tui` opens a full-screen, keyboard-driven
+  browser over one scan: filter by severity (`1`/`2`/`0`), open a finding in
+  full (`⏎`), read what kubeagent could not see (`b`), re-scan (`r`). It shows
+  exactly what bare `kubeagent scan` shows, makes no LLM call on any path, and
+  is read-only toward the cluster. Three flags — `--kubeconfig`, `--context`,
+  `-n` — and no `--output`: a TUI is not redirectable, and piping it is refused
+  before kubeagent touches the network. Documented at
+  [Interactive TUI](https://k8sproject.top/features/tui/).
+
 ## [0.66.0] - 2026-07-28
 
 ### Added

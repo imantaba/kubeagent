@@ -24,6 +24,7 @@
 - 🔌 **MCP server** — `kubeagent mcp` serves the same deterministic diagnosis over the Model Context Protocol on stdio, so another AI agent can call it as a tool.
 - 🚦 **CI/CD gate** — `kubeagent gate` turns the same diagnosis into a stable exit-code contract (pass/fail/inconclusive/timeout/usage) and a SARIF renderer, so a pipeline can branch on it instead of grepping text.
 - 📄 **Shareable HTML report** — `kubeagent scan --output html` writes one self-contained, script-free HTML file carrying the findings, the blind spots, and the detail — with no cluster identity in it — no context name, no API server URL, no kubeconfig path — so it travels without naming your cluster.
+- 🖥️ **Interactive TUI** — `kubeagent tui` opens a full-screen, keyboard-driven browser over one scan: filter to the criticals, open a finding in full, check what kubeagent could not see, re-scan — no LLM call on any path, no `--fix`.
 
 ```bash
 go install github.com/imantaba/kubeagent@latest

@@ -135,6 +135,11 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   over `SHA256SUMS` and over the image digest, SPDX SBOMs and SLSA build
   provenance attested for both, and the pre-release guard in
   `scripts/release-vars.sh` that keeps an `-rc` tag off `:latest`. A verifier
-  follows [website/docs/verify.md](website/docs/verify.md). The rest of Theme H
-  — per-feature least-privilege RBAC, fuzzed detectors, the v1.0 production
-  contract — remains ahead.
+  follows [website/docs/verify.md](website/docs/verify.md). Slice 2 —
+  per-feature least-privilege RBAC — has shipped: one `Feature` table in
+  `internal/rbacprofile` generates every RBAC manifest and the chart
+  ClusterRole, `kubeagent rbac print`/`check` report what each feature costs
+  and whether an identity may run it, and a refused read is now named as a
+  blind spot instead of rendering an empty section
+  ([website/docs/features/rbac.md](website/docs/features/rbac.md)). The rest of
+  Theme H — fuzzed detectors and the v1.0 production contract — remains ahead.

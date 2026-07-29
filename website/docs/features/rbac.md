@@ -92,6 +92,9 @@ The same check, as JSON:
 kubeagent rbac check --features core,certs,logs,diskusage --output json
 ```
 
+Each object is shown on one line here for reading; the real output is indented
+one field per line.
+
 ```json
 [
   { "name": "core", "summary": "the inventory every command reads: pods, nodes, workloads, events, services, PVCs and the rest", "allowed": true },

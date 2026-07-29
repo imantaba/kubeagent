@@ -260,6 +260,15 @@ func clamp(m Model) Model {
 	if m.Cursor >= m.Top+rows {
 		m.Top = m.Cursor - rows + 1
 	}
+	// Pull Top back up when the list is now too short to fill the window from
+	// there. The two clauses above only ever chase the cursor, so a filter or a
+	// re-scan that shrinks the list under a scrolled view would leave Top where
+	// the longer list put it and paint a mostly blank window with findings
+	// scrolled off above it. Top <= Cursor holds coming in, so Top > n-rows
+	// implies Cursor > n-rows: the cursor stays inside the window this moves to.
+	if m.Top > n-rows {
+		m.Top = n - rows
+	}
 	if m.Top < 0 {
 		m.Top = 0
 	}

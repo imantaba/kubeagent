@@ -383,3 +383,52 @@ func TestDrainKeys_StopsOnQuit(t *testing.T) {
 		t.Fatalf("rest = %q, want the unread j", rest)
 	}
 }
+
+// bigModel is 20 critical then 20 info findings in findings.Sort order, sized so
+// listRows() is 6. Scrolling is the point here, unlike listModel.
+func bigModel() Model {
+	var all []findings.Finding
+	for i := 0; i < 20; i++ {
+		all = append(all, findings.Finding{Level: findings.Critical, Kind: "Pod", Namespace: "shop", Name: "crasher", Issue: "CrashLoopBackOff"})
+	}
+	for i := 0; i < 20; i++ {
+		all = append(all, findings.Finding{Level: findings.Info, Kind: "Service", Namespace: "web", Name: "cache", Issue: "no endpoints"})
+	}
+	return Model{All: all, Mode: ModeList, Width: 80, Height: 12}
+}
+
+func TestUpdate_ShrinkRefillsTheViewport(t *testing.T) {
+	m := bigModel()
+	if rows := m.listRows(); rows != 6 {
+		t.Fatalf("setup: listRows = %d, want 6", rows)
+	}
+	m = press(m, 'G')
+	if m.Cursor != 39 || m.Top != 34 {
+		t.Fatalf("setup: cursor = %d, top = %d; want 39, 34", m.Cursor, m.Top)
+	}
+	// Filtering to critical drops the list from 40 to 20. The cursor lands on the
+	// last critical, but Top must come up far enough to fill the window again —
+	// leaving it where the longer list put it would paint one row and five blanks
+	// with 14 findings scrolled off above.
+	m = press(m, '1')
+	if got := len(m.visible()); got != 20 {
+		t.Fatalf("visible = %d, want 20", got)
+	}
+	if m.Cursor != 19 {
+		t.Fatalf("cursor = %d, want 19", m.Cursor)
+	}
+	if m.Top != 14 {
+		t.Fatalf("top = %d, want 14 (a full window ending on the cursor)", m.Top)
+	}
+}
+
+func TestUpdate_ShortListStartsAtTheTop(t *testing.T) {
+	// Fewer findings than rows: there is nothing to scroll, so Top is 0 whatever
+	// the cursor does.
+	m := listModel()
+	m.Height = 12
+	m = press(m, 'G')
+	if m.Top != 0 {
+		t.Fatalf("top = %d, want 0 (4 findings, 6 rows)", m.Top)
+	}
+}

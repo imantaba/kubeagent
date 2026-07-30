@@ -156,5 +156,15 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   ClusterRole, `kubeagent rbac print`/`check` report what each feature costs
   and whether an identity may run it, and a refused read is now named as a
   blind spot instead of rendering an empty section
-  ([website/docs/features/rbac.md](website/docs/features/rbac.md)). The rest of
-  Theme H — fuzzed detectors and the v1.0 production contract — remains ahead.
+  ([website/docs/features/rbac.md](website/docs/features/rbac.md)). Slice 3 —
+  fuzzed detectors — has shipped (v0.70.0): seven `go test -fuzz` targets assert
+  that no Kubernetes object or endpoint response can panic a scan, that the
+  detector set stays pure and deterministic, and that no raw byte from the
+  cluster reaches a terminal. Objects come from the test-only
+  `internal/fuzzgen`, which draws DNS-1123 alphabets for the fields the API
+  server validates and hostile bytes for the fields it does not; seed corpora
+  replay on a plain `go test`, and a real campaign runs nightly in
+  `.github/workflows/fuzz.yml`. The campaign closed nine unsanitized ingress
+  points, a non-finite-float integer overflow in the DNS health parser, an
+  unbounded `/readyz` check list, and three uncapped proxied reads. The rest of
+  Theme H — the v1.0 production contract — remains ahead.

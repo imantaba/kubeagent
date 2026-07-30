@@ -90,8 +90,21 @@ func (c *Cursor) containerStatuses(n int) []corev1.ContainerStatus {
 }
 
 func (c *Cursor) terminated() *corev1.ContainerStateTerminated {
+	// Reason is usually drawn from the real vocabulary so the detectors' string
+	// comparisons (OOMKilledDetector matches "OOMKilled" exactly) stay reachable,
+	// but 1 in 8 draws goes hostile instead. Unlike a container, namespace, or
+	// pod name — which the API server validates as DNS-1123 — the kubelet/CRI
+	// sets Reason as a free-form string the API server never validates, so a
+	// generator that only ever drew clean Reasons would leave that ingress point
+	// permanently untested.
+	var reason string
+	if c.IntN(8) == 0 {
+		reason = c.Hostile(64)
+	} else {
+		reason = c.Pick(terminatedReasons)
+	}
 	return &corev1.ContainerStateTerminated{
-		Reason:     c.Pick(terminatedReasons),
+		Reason:     reason,
 		Message:    c.Hostile(96),
 		ExitCode:   c.Int32(),
 		StartedAt:  c.Time(Base),

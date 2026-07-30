@@ -123,7 +123,7 @@ func classify(t *testing.T, want, got []byte) string {
 		case !present && isMember(k):
 			// A required entry or enum value disappeared.
 			if strings.Contains(k, "/required#") {
-				additive = append(additive, "no longer required: "+k)
+				breaking = append(breaking, "no longer required: "+k)
 			} else {
 				breaking = append(breaking, "enum value removed: "+k)
 			}
@@ -165,6 +165,89 @@ func classify(t *testing.T, want, got []byte) string {
 
 func isMember(path string) bool {
 	return strings.Contains(path, "/required#") || strings.Contains(path, "/enum#")
+}
+
+// TestClassify is a direct unit test over classify() itself, isolated from the
+// six real documents: each case flips exactly one thing between two minimal
+// schema bodies and checks which side of the version contract classify() puts
+// it on. TestSchemaDrift only ever exercises classify() through whatever the
+// current types happen to drift by, so a polarity bug in one branch can hide
+// for a long time if nobody happens to make that exact kind of change. This
+// test makes every branch reachable on demand.
+func TestClassify(t *testing.T) {
+	tests := []struct {
+		name    string
+		want    string // the committed ("old") document
+		got     string // the freshly generated ("new") document
+		verdict string // "breaking" or "additive"
+	}{
+		{
+			name:    "required field removed",
+			want:    `{"type":"object","properties":{"foo":{"type":"string"}},"required":["foo"]}`,
+			got:     `{"type":"object","properties":{"foo":{"type":"string"}},"required":[]}`,
+			verdict: "breaking",
+		},
+		{
+			name:    "required field added",
+			want:    `{"type":"object","properties":{"foo":{"type":"string"}},"required":[]}`,
+			got:     `{"type":"object","properties":{"foo":{"type":"string"}},"required":["foo"]}`,
+			verdict: "breaking",
+		},
+		{
+			name:    "optional field added",
+			want:    `{"type":"object","properties":{"foo":{"type":"string"}}}`,
+			got:     `{"type":"object","properties":{"foo":{"type":"string"},"bar":{"type":"string"}}}`,
+			verdict: "additive",
+		},
+		{
+			name:    "field type changed",
+			want:    `{"type":"object","properties":{"foo":{"type":"string"}}}`,
+			got:     `{"type":"object","properties":{"foo":{"type":"integer"}}}`,
+			verdict: "breaking",
+		},
+		{
+			name:    "field removed entirely",
+			want:    `{"type":"object","properties":{"foo":{"type":"string"},"bar":{"type":"string"}}}`,
+			got:     `{"type":"object","properties":{"foo":{"type":"string"}}}`,
+			verdict: "breaking",
+		},
+		{
+			name:    "enum value removed",
+			want:    `{"type":"object","properties":{"foo":{"type":"string","enum":["a","b"]}}}`,
+			got:     `{"type":"object","properties":{"foo":{"type":"string","enum":["a"]}}}`,
+			verdict: "breaking",
+		},
+		{
+			name:    "enum value added",
+			want:    `{"type":"object","properties":{"foo":{"type":"string","enum":["a"]}}}`,
+			got:     `{"type":"object","properties":{"foo":{"type":"string","enum":["a","b"]}}}`,
+			verdict: "additive",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out := classify(t, []byte(tt.want), []byte(tt.got))
+			hasBreaking := strings.Contains(out, "BREAKING")
+			switch tt.verdict {
+			case "breaking":
+				if !hasBreaking {
+					t.Errorf("classify() = %q, want a BREAKING line", out)
+				}
+				if !strings.Contains(out, "This is a MAJOR change") {
+					t.Errorf("classify() = %q, want MAJOR-bump instructions", out)
+				}
+			case "additive":
+				if hasBreaking {
+					t.Errorf("classify() = %q, want no BREAKING line", out)
+				}
+				if !strings.Contains(out, "This is a MINOR change") {
+					t.Errorf("classify() = %q, want MINOR-bump instructions", out)
+				}
+			default:
+				t.Fatalf("bad test case: verdict %q is neither breaking nor additive", tt.verdict)
+			}
+		})
+	}
 }
 
 // flatten reduces a document to "path = value" lines so a diff names what moved
@@ -263,6 +346,50 @@ func TestEveryCustomMarshalerHasAnOverride(t *testing.T) {
 			t.Errorf("%s: %s has a custom marshaler but no entry in overrides — reflection would document its Go kind, not its JSON", d.Name, jsonschema.TypeKey(ty))
 		}
 	})
+}
+
+// encoding/json ignores omitempty on a plain (non-pointer) struct-kind field:
+// such a field marshals every time, zero value or not. internal/jsonschema's
+// generator has no way to know that — it takes the tag at its word — so a
+// plain struct field tagged omitempty would publish as optional in the schema
+// while the real output always has it. That understates what kubeagent
+// promises: a consumer reading the schema would not know it can rely on the
+// field always being there. The fix belongs here, not in the generator: this
+// package already carries the other cases reflection cannot see for itself.
+func TestNoOmitemptyOnAPlainStructField(t *testing.T) {
+	eachDocumentType(func(d Document, ty reflect.Type) {
+		if ty.Kind() != reflect.Struct {
+			return
+		}
+		for i := 0; i < ty.NumField(); i++ {
+			f := ty.Field(i)
+			if f.PkgPath != "" || f.Tag.Get("json") == "-" {
+				continue
+			}
+			if f.Type.Kind() != reflect.Struct {
+				continue
+			}
+			if !hasJSONOmitempty(f.Tag.Get("json")) {
+				continue
+			}
+			t.Errorf("%s: %s.%s is a plain (non-pointer) struct field tagged omitempty. encoding/json ignores omitempty there, so the field always marshals — remove the tag, or make the field a pointer so omitempty means what it says.", d.Name, jsonschema.TypeKey(ty), f.Name)
+		}
+	})
+}
+
+// hasJSONOmitempty walks a json tag's comma-separated options looking for
+// omitempty, the same way internal/jsonschema's own (unexported) check does,
+// so an option that merely contains the substring cannot false-positive.
+func hasJSONOmitempty(tag string) bool {
+	_, opts, _ := strings.Cut(tag, ",")
+	for opts != "" {
+		var o string
+		o, opts, _ = strings.Cut(opts, ",")
+		if o == "omitempty" {
+			return true
+		}
+	}
+	return false
 }
 
 // kubeagent must not freeze a type it does not own: a field added upstream in a

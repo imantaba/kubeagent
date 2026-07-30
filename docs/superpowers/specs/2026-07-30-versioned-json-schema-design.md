@@ -366,10 +366,11 @@ its committed file. On a mismatch it flattens both documents to a set of
 `path → type signature` lines, diffs the sets, and reports which kind of change
 happened:
 
-- a path removed, a type changed, a `required` entry added, an enum value
-  removed → **breaking**: the failure says a MAJOR bump is needed.
-- a path added, a `required` entry removed, an enum value added → **additive**:
-  the failure says regenerate and bump MINOR.
+- a path removed, a type changed, a `required` entry added, a `required` entry
+  removed, an enum value removed → **breaking**: the failure says a MAJOR bump
+  is needed.
+- a path added, an enum value added → **additive**: the failure says
+  regenerate and bump MINOR.
 
 Both fail. The point is not to permit one silently; it is that the person who
 made the change is told which kind it was, in the terms the contract uses.

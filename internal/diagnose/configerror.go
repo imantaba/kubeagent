@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
+
+	"github.com/imantaba/kubeagent/internal/safetext"
 )
 
 // ConfigErrorDetector flags a container stuck in CreateContainerConfigError — a
@@ -25,7 +27,7 @@ func configErrorIn(facts PodFacts, statuses []corev1.ContainerStatus, kind strin
 				Pod:       facts.Pod.Namespace + "/" + facts.Pod.Name,
 				Issue:     "CreateContainerConfigError",
 				Reason:    "a referenced ConfigMap or Secret is missing, or a required key is absent — the container cannot start",
-				Evidence:  fmt.Sprintf("%s %q: %s", kind, cs.Name, w.Message),
+				Evidence:  fmt.Sprintf("%s %q: %s", kind, cs.Name, safetext.Line(w.Message)),
 				Container: cs.Name,
 			}
 		}

@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+
+	"github.com/imantaba/kubeagent/internal/safetext"
 )
 
 // ProbeFailureDetector flags a pod that is not Ready because a container's
@@ -40,11 +42,15 @@ func (d ProbeFailureDetector) Detect(facts PodFacts) *Finding {
 		return nil
 	}
 	return &Finding{
-		Pod:       facts.Pod.Namespace + "/" + facts.Pod.Name,
-		Issue:     "ProbeFailure",
-		Reason:    probeReason(probeType),
-		Evidence:  probeEvidence(container, probeType, reason),
-		Container: container,
+		Pod:      facts.Pod.Namespace + "/" + facts.Pod.Name,
+		Issue:    "ProbeFailure",
+		Reason:   probeReason(probeType),
+		Evidence: probeEvidence(container, probeType, reason),
+		// containerFromFieldPath returns a substring of an unvalidated field
+		// path. probeEvidence escapes it with %q, but this field is raw, and it
+		// reaches JSON, SARIF and the TUI. A real cluster's field path already
+		// carries a DNS-1123 name, so this is a no-op on every real input.
+		Container: safetext.Line(container),
 	}
 }
 

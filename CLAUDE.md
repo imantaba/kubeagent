@@ -182,7 +182,7 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   `.github/workflows/fuzz.yml`. The campaign closed nine unsanitized ingress
   points, a non-finite-float integer overflow in the DNS health parser, an
   unbounded `/readyz` check list, and three uncapped proxied reads. Slice 4 —
-  versioned JSON schema — has shipped: `scan`, `gate`, `rbac print`,
+  versioned JSON schema — has shipped (v0.71.0): `scan`, `gate`, `rbac print`,
   `rbac check`, and the watch daemon's `/issues` and `/explanations` all
   declare a `schemaVersion`; `internal/jsonschema` generates each surface's
   schema by reflection over its Go types and `internal/schemadoc` publishes it

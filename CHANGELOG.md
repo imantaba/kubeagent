@@ -26,9 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - kubeagent no longer accepts client-go's default client-side rate limiter
   (5 QPS, burst 10 per API-group client). That default metered the scan against
   itself: measured on a three-node cluster, a scan with every add-on enabled
-  took 2.42s with the limiter and 0.15s without, for byte-identical output. Load
-  shedding is left to the API server's own Priority and Fairness, which knows
-  what the server can take; `KUBEAGENT_QPS` restores a client-side limit.
+  took 6.01s with the limiter and 0.12s without, one read at a time in both,
+  for byte-identical output. Load shedding is left to the API server's own
+  Priority and Fairness, which knows what the server can take; `KUBEAGENT_QPS`
+  restores a client-side limit. The pool is worth a further 2× on top (0.12s to
+  0.06s), and nothing at all underneath the limiter — with the bucket back on,
+  eight workers finish in the same 6.01s as one, which is why both changes
+  shipped together.
 
 ## [0.71.0] - 2026-07-30
 

@@ -59,15 +59,27 @@ per-API-group client** when a program leaves `QPS` unset. Nearly every read a
 scan makes goes through the core API group, so that one bucket metered the whole
 scan.
 
-Measured on a three-node cluster, `scan` with every add-on enabled:
+Measured on a three-node cluster, `scan` with every add-on enabled
+(`--kubelet-health --disk-usage --dns-health --control-plane-health --certs
+--security`), each figure the median of three runs:
 
 | | Wall clock |
 |---|---|
-| With client-go's default limiter | 2.42 s |
-| With no client-side limiter | 0.15 s |
+| One worker, client-go's default limiter (the pre-0.72 behaviour) | 6.01 s |
+| One worker, no client-side limiter | 0.12 s |
+| Eight workers, client-go's default limiter | 6.01 s |
+| Eight workers, no client-side limiter (the default today) | 0.06 s |
 
-Byte-identical output, and no concurrency involved in either run — that is
-purely the limiter.
+Byte-identical output in all four. Rows one and two differ only by the limiter
+and no concurrency is involved in either, so that 50× is purely the limiter;
+rows two and four differ only by the pool, worth a further 2×. Row three is the
+point of the whole exercise: **bounded concurrency underneath a 5 QPS bucket
+buys nothing at all** — the bucket, not the scan, decides when the next request
+leaves. Both changes had to ship together.
+
+With the limiter enabled, client-go logs its own throttling warnings to stderr
+(`"Waited before sending request" … reason="client-side throttling"`). Those
+lines are client-go's, not kubeagent's, and they name the API server address.
 
 Load shedding belongs on the server, where the information is. Kubernetes
 API Priority and Fairness (`flowcontrol.apiserver.k8s.io/v1`, GA) queues and

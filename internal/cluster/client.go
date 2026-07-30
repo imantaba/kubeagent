@@ -81,8 +81,10 @@ func restConfig(kubeconfigPath, contextName string) (*rest.Config, error) {
 // client-go installs a 5 QPS / burst 10 token bucket on each per-API-group
 // client when QPS is left at zero. CoreV1 carries nearly every read a scan
 // makes, so that default meters the whole scan: measured on a three-node
-// cluster, a scan with every add-on enabled took 2.42s with the limiter and
-// 0.15s without, for byte-identical output. A client-side rate also holds the
+// cluster, a scan with every add-on enabled took 6.01s with the limiter and
+// 0.12s without, one read at a time in both, for byte-identical output. Under
+// the limiter the worker pool buys nothing — eight workers finish in the same
+// 6.01s as one — so the two changes ship together. A client-side rate holds the
 // same number whether the API server is idle or dying, while the server's own
 // Priority and Fairness (flowcontrol.apiserver.k8s.io/v1, GA) sheds load based
 // on what it can actually take. QPS -1 disables the limiter entirely.

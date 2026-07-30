@@ -172,7 +172,7 @@ func TestRestConfigHonoursKubeagentBurst(t *testing.T) {
 // A bad knob must degrade to a working scan, not to an error and not to the
 // throttled default.
 func TestRestConfigIgnoresAnUnusableQPSValue(t *testing.T) {
-	for _, v := range []string{"not-a-number", "0", "-5", ""} {
+	for _, v := range []string{"not-a-number", "0", "-5", "", "Inf", "+Inf", "Infinity"} {
 		t.Setenv("KUBEAGENT_QPS", v)
 		path := twoContextKubeconfig(t)
 		cfg, err := restConfig(path, "alpha")

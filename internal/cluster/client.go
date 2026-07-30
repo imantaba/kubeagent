@@ -3,6 +3,7 @@ package cluster
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -88,14 +89,18 @@ func restConfig(kubeconfigPath, contextName string) (*rest.Config, error) {
 //
 // KUBEAGENT_QPS restores a client-side limit for anyone who needs one — a
 // shared cluster with a strict admission budget, a debugging session. A value
-// that does not parse, or is not positive, is ignored: a bad knob degrades to a
-// working scan, never to an error. KUBEAGENT_BURST only takes effect alongside
-// KUBEAGENT_QPS, because with the limiter disabled there is no bucket to size;
-// left unset, client-go applies its own default burst.
+// that does not parse, is not positive, or is not finite, is ignored: a bad
+// knob degrades to a working scan, never to an error. "Inf"/"+Inf"/"Infinity"
+// parse successfully and are > 0, so the finiteness check is not redundant
+// with the positivity check — without it, client-go would build a token-bucket
+// limiter with an IEEE infinite rate rather than leaving the limiter disabled.
+// KUBEAGENT_BURST only takes effect alongside KUBEAGENT_QPS, because with the
+// limiter disabled there is no bucket to size; left unset, client-go applies
+// its own default burst.
 func applyRateLimits(config *rest.Config) {
 	config.QPS = -1
 	if s := os.Getenv("KUBEAGENT_QPS"); s != "" {
-		if v, err := strconv.ParseFloat(s, 32); err == nil && v > 0 {
+		if v, err := strconv.ParseFloat(s, 32); err == nil && v > 0 && !math.IsInf(v, 0) {
 			config.QPS = float32(v)
 		}
 	}

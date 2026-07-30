@@ -464,7 +464,7 @@ These are the north star; every item below is measured against them.
   from arbitrary bytes, and seven `go test -fuzz` targets covering the
   detectors, the log classifier, the redactor and the DNS/readyz/certificate
   parsers run nightly and replay their seed corpora on every pull request).
-  The campaign found unsanitized API text reaching a terminal at eight
+  The campaign found unsanitized API text reaching a terminal at nine
   ingress points and a non-finite-float integer overflow in the DNS health
   parser; both are fixed. The v1.0 production contract remains ahead.
 

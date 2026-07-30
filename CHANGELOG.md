@@ -25,13 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Text from fields the Kubernetes API server does not validate reached an
-  operator's terminal unfiltered at eight ingress points: `waiting.Message`,
-  `terminated.Reason`, `PodScheduled` and event messages, the container name
-  parsed out of an event field path, a crashed container's log excerpt, and the
-  dependency address spliced into a `connection refused` cause. The log tail is
-  the one an unprivileged attacker controls outright, and it carried the same
-  ANSI escapes kubeagent's own TUI uses to switch screens. All eight now pass
-  through `safetext.Line`.
+  operator's terminal unfiltered at nine ingress points: `waiting.Message` (in
+  three detectors), `terminated.Reason`, `PodScheduled` and event messages, the
+  container name parsed out of an event field path, a crashed container's log
+  excerpt, and the dependency address spliced into a `connection refused` cause.
+  The log tail is the one an unprivileged attacker controls outright, and it
+  carried the same ANSI escapes kubeagent's own TUI uses to switch screens. All
+  nine now pass through `safetext.Line`.
 - `dnshealth`: `strconv.ParseFloat` accepts `"NaN"`, `"+Inf"` and `"-Inf"`
   without error, and converting a non-finite or out-of-range float to `int64` is
   implementation-defined — it yields `math.MinInt64` on amd64. A CoreDNS

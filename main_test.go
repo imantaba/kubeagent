@@ -30,8 +30,10 @@ import (
 	"github.com/imantaba/kubeagent/internal/gate"
 	"github.com/imantaba/kubeagent/internal/hpahealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/jsonschema"
 	"github.com/imantaba/kubeagent/internal/pdbhealth"
 	"github.com/imantaba/kubeagent/internal/quotahealth"
+	"github.com/imantaba/kubeagent/internal/rbacprofile"
 	"github.com/imantaba/kubeagent/internal/remediate"
 	"github.com/imantaba/kubeagent/internal/report"
 	"github.com/imantaba/kubeagent/internal/rolloutwait"
@@ -2267,5 +2269,26 @@ func TestAdvisoryBlindSpotsNamesEachDegradedSubject(t *testing.T) {
 func TestSelectedFeaturesRejectsAnUnknownFeature(t *testing.T) {
 	if _, err := selectedFeatures("scan", "bogus"); err == nil {
 		t.Fatal("selectedFeatures accepted an unknown feature name")
+	}
+}
+
+func TestRunRBACPrintJSONIsAVersionedObject(t *testing.T) {
+	out := captureStdout(t, func() {
+		if err := runRBACPrint([]string{"--output", "json"}); err != nil {
+			t.Fatalf("runRBACPrint: %v", err)
+		}
+	})
+	var doc rbacprofile.RulesDocument
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("output is not a RulesDocument: %v\n%s", err, out)
+	}
+	if doc.SchemaVersion != jsonschema.RBACVersion {
+		t.Errorf("schemaVersion = %q, want %q", doc.SchemaVersion, jsonschema.RBACVersion)
+	}
+	if doc.RoleName != "kubeagent" {
+		t.Errorf("roleName = %q, want the --role-name default", doc.RoleName)
+	}
+	if len(doc.Rules) == 0 {
+		t.Error("rules is empty; the scan profile resolves to at least one rule")
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"fmt"
 
 	"github.com/imantaba/kubeagent/internal/findings"
+	"github.com/imantaba/kubeagent/internal/jsonschema"
 	"github.com/imantaba/kubeagent/internal/scan"
 )
 
@@ -59,10 +60,11 @@ type Blindspot struct {
 // the code, a jq filter reads the string, and neither should have to derive the
 // other.
 type Verdict struct {
-	Verdict string         `json:"verdict"`
-	Code    int            `json:"exitCode"`
-	FailOn  findings.Level `json:"failOn"`
-	Scope   string         `json:"scope"`
+	SchemaVersion string         `json:"schemaVersion"`
+	Verdict       string         `json:"verdict"`
+	Code          int            `json:"exitCode"`
+	FailOn        findings.Level `json:"failOn"`
+	Scope         string         `json:"scope"`
 
 	// Detail is the last rollout state --wait-for observed, present whenever a
 	// wait ran and absent otherwise — a pass carries "3/3 replicas ready" as
@@ -102,12 +104,13 @@ func (o Options) inScope(f findings.Finding) bool {
 // which is the green-when-blind case this whole command exists to prevent.
 func Decide(res scan.Result, opts Options) Verdict {
 	v := Verdict{
-		FailOn:       opts.FailOn,
-		Scope:        "cluster",
-		Detail:       opts.TimeoutDetail,
-		Failing:      []findings.Finding{},
-		Reported:     []findings.Finding{},
-		Inconclusive: []Blindspot{},
+		SchemaVersion: jsonschema.GateVersion,
+		FailOn:        opts.FailOn,
+		Scope:         "cluster",
+		Detail:        opts.TimeoutDetail,
+		Failing:       []findings.Finding{},
+		Reported:      []findings.Finding{},
+		Inconclusive:  []Blindspot{},
 	}
 	if opts.ScopeKind != "" {
 		v.Scope = fmt.Sprintf("%s/%s in %s", opts.ScopeKind, opts.ScopeName, opts.ScopeNamespace)

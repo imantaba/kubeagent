@@ -12,6 +12,7 @@ import (
 
 	"github.com/imantaba/kubeagent/internal/alert"
 	"github.com/imantaba/kubeagent/internal/ingresshealth"
+	"github.com/imantaba/kubeagent/internal/jsonschema"
 	"github.com/imantaba/kubeagent/internal/oncall"
 	"github.com/imantaba/kubeagent/internal/redact"
 	"github.com/imantaba/kubeagent/internal/scan"
@@ -627,10 +628,11 @@ type StatsView struct {
 // schema: watch.IssueView reads like a contract where watch.issueView reads
 // like a leaked internal.
 type IssuesReport struct {
-	Clusters []ClusterView `json:"clusters"`
-	Active   []IssueView   `json:"active"`
-	Resolved []IssueView   `json:"resolved"`
-	Stats    StatsView     `json:"stats"`
+	SchemaVersion string        `json:"schemaVersion"`
+	Clusters      []ClusterView `json:"clusters"`
+	Active        []IssueView   `json:"active"`
+	Resolved      []IssueView   `json:"resolved"`
+	Stats         StatsView     `json:"stats"`
 }
 
 func issueViews(cluster string, rs []watchstate.Record, at time.Time, resolved bool) []IssueView {
@@ -669,9 +671,10 @@ func (m *metrics) issuesJSON() ([]byte, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	out := IssuesReport{
-		Clusters: make([]ClusterView, 0, len(m.names)),
-		Active:   []IssueView{},
-		Resolved: []IssueView{},
+		SchemaVersion: jsonschema.WatchVersion,
+		Clusters:      make([]ClusterView, 0, len(m.names)),
+		Active:        []IssueView{},
+		Resolved:      []IssueView{},
 	}
 	for _, n := range m.names {
 		c := m.clusters[n]
@@ -716,8 +719,9 @@ type ExplainStatsView struct {
 // the same reason as IssuesReport: its name becomes a $defs key in a published
 // schema.
 type ExplanationsReport struct {
-	Explanations []ExplanationView `json:"explanations"`
-	Stats        ExplainStatsView  `json:"stats"`
+	SchemaVersion string            `json:"schemaVersion"`
+	Explanations  []ExplanationView `json:"explanations"`
+	Stats         ExplainStatsView  `json:"stats"`
 }
 
 // explanationsJSON renders the latest explanation per object. With --explain off
@@ -727,7 +731,8 @@ func (m *metrics) explanationsJSON() ([]byte, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	out := ExplanationsReport{
-		Explanations: []ExplanationView{},
+		SchemaVersion: jsonschema.WatchVersion,
+		Explanations:  []ExplanationView{},
 		Stats: ExplainStatsView{
 			AllowedTotal:    m.explain.Stats.Allowed,
 			ThrottledTotal:  m.explain.Stats.Throttled,

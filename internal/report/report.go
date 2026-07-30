@@ -20,6 +20,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/hpahealth"
 	"github.com/imantaba/kubeagent/internal/ingresshealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/jsonschema"
 	"github.com/imantaba/kubeagent/internal/nodehealth"
 	"github.com/imantaba/kubeagent/internal/nodereserve"
 	"github.com/imantaba/kubeagent/internal/operators"
@@ -42,6 +43,7 @@ import (
 // is exported because internal/schemadoc has to name it to generate its
 // published schema; nothing outside this package constructs one.
 type ScanReport struct {
+	SchemaVersion      string                      `json:"schemaVersion"`
 	Cluster            clusterhealth.ClusterHealth `json:"cluster"`
 	Workloads          []inventory.Workload        `json:"workloads"`
 	Resources          *resources.Summary          `json:"resources,omitempty"`
@@ -166,6 +168,7 @@ func PrintInventory(in Input, format string, w io.Writer) error {
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
 		return enc.Encode(ScanReport{
+			SchemaVersion:      jsonschema.ScanVersion,
 			Cluster:            in.Cluster,
 			Workloads:          in.Result.Workloads,
 			Resources:          in.Resources,

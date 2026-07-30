@@ -20,6 +20,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/hpahealth"
 	"github.com/imantaba/kubeagent/internal/ingresshealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/jsonschema"
 	"github.com/imantaba/kubeagent/internal/nodehealth"
 	"github.com/imantaba/kubeagent/internal/nodereserve"
 	"github.com/imantaba/kubeagent/internal/oncall"
@@ -636,5 +637,27 @@ func TestExplanationsJSONNamesTheCluster(t *testing.T) {
 	}
 	if !strings.Contains(string(body), `"cluster":"prod-eu"`) {
 		t.Errorf("explanations must name the cluster\n%s", body)
+	}
+}
+
+func TestIssuesAndExplanationsJSONStampTheSchemaVersion(t *testing.T) {
+	m := newMetrics([]string{"local"})
+	for name, get := range map[string]func() ([]byte, error){
+		"/issues":       m.issuesJSON,
+		"/explanations": m.explanationsJSON,
+	} {
+		raw, err := get()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		var doc struct {
+			SchemaVersion string `json:"schemaVersion"`
+		}
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			t.Fatalf("%s is not valid JSON: %v", name, err)
+		}
+		if doc.SchemaVersion != jsonschema.WatchVersion {
+			t.Errorf("%s schemaVersion = %q, want %q", name, doc.SchemaVersion, jsonschema.WatchVersion)
+		}
 	}
 }

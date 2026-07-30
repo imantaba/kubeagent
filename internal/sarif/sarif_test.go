@@ -331,3 +331,19 @@ func TestRenderEndsWithANewline(t *testing.T) {
 		t.Error("rendered SARIF must end in a newline so a shell redirect produces a well-formed file")
 	}
 }
+
+func TestRenderIgnoresTheGateSchemaVersion(t *testing.T) {
+	v := gate.Verdict{Verdict: "pass", Code: 0, Scope: "cluster"}
+	without, err := Render(v, "v0.0.0-test")
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	v.SchemaVersion = "1.0"
+	with, err := Render(v, "v0.0.0-test")
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !bytes.Equal(without, with) {
+		t.Error("the gate's schemaVersion changed the SARIF output; SARIF is versioned by OASIS")
+	}
+}

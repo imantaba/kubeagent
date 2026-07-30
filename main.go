@@ -36,6 +36,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/gate"
 	"github.com/imantaba/kubeagent/internal/htmlreport"
 	"github.com/imantaba/kubeagent/internal/investigate"
+	"github.com/imantaba/kubeagent/internal/jsonschema"
 	"github.com/imantaba/kubeagent/internal/mcp"
 	"github.com/imantaba/kubeagent/internal/nodehealth"
 	"github.com/imantaba/kubeagent/internal/platform"
@@ -816,7 +817,11 @@ func runRBACPrint(args []string) error {
 	case "json":
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		return enc.Encode(rules)
+		return enc.Encode(rbacprofile.RulesDocument{
+			SchemaVersion: jsonschema.RBACVersion,
+			RoleName:      *roleName,
+			Rules:         rules,
+		})
 	default:
 		return fmt.Errorf("unknown --output %q: want yaml or json", *output)
 	}
@@ -859,7 +864,10 @@ func runRBACCheck(args []string) error {
 	if *output == "json" {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(statuses); err != nil {
+		if err := enc.Encode(rbacprofile.CheckDocument{
+			SchemaVersion: jsonschema.RBACVersion,
+			Features:      statuses,
+		}); err != nil {
 			return err
 		}
 	} else {

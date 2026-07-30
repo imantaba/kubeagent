@@ -18,6 +18,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/hpahealth"
 	"github.com/imantaba/kubeagent/internal/ingresshealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/jsonschema"
 	"github.com/imantaba/kubeagent/internal/nodehealth"
 	"github.com/imantaba/kubeagent/internal/nodereserve"
 	"github.com/imantaba/kubeagent/internal/operators"
@@ -2216,5 +2217,21 @@ func TestJSONReportOmitsBlindSpotsWhenNone(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), "blindSpots") {
 		t.Errorf("clean scan emitted a blindSpots key:\n%s", buf.String())
+	}
+}
+
+func TestPrintInventoryStampsTheSchemaVersion(t *testing.T) {
+	var out bytes.Buffer
+	if err := PrintInventory(Input{}, "json", &out); err != nil {
+		t.Fatalf("PrintInventory: %v", err)
+	}
+	var doc struct {
+		SchemaVersion string `json:"schemaVersion"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	if doc.SchemaVersion != jsonschema.ScanVersion {
+		t.Errorf("schemaVersion = %q, want %q", doc.SchemaVersion, jsonschema.ScanVersion)
 	}
 }

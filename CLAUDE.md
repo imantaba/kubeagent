@@ -198,4 +198,11 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   `TestSchemaDrift` fails a shape change that moves without a version bump,
   naming it additive or breaking
   ([website/docs/features/json-schema.md](website/docs/features/json-schema.md)).
+  Slice 5 — bounded scan concurrency — has shipped: `scan`'s independent reads
+  run through a fixed worker pool (`internal/parallel`, 8 workers by default,
+  `KUBEAGENT_SCAN_WORKERS`), and client-go's 5 QPS client-side rate limiter is
+  off by default (`KUBEAGENT_QPS`/`KUBEAGENT_BURST` restore it). Output is
+  byte-identical: the reads write only their own destinations and a single
+  sequential pass afterwards renders in a fixed order
+  ([website/docs/features/tuning.md](website/docs/features/tuning.md)).
   The rest of Theme H — the v1.0 production contract — remains ahead.

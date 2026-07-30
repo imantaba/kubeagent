@@ -45,7 +45,7 @@ the default and the recommended setting.
 
 | | |
 |---|---|
-| `KUBEAGENT_QPS` | Requests per second. Must be a positive number; anything else is ignored |
+| `KUBEAGENT_QPS` | Requests per second. Must be a positive, finite number; anything else — including `Inf` — is ignored |
 | `KUBEAGENT_BURST` | Bucket size. Must be a positive integer; only takes effect alongside `KUBEAGENT_QPS` |
 
 ```bash

@@ -90,11 +90,9 @@ func TestSchemaDrift(t *testing.T) {
 			t.Fatalf("%s: %v", d.Name, err)
 		}
 		if *update {
-			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-				t.Fatalf("%s: %v", d.Name, err)
-			}
-			if err := os.WriteFile(path, got, 0o644); err != nil {
-				t.Fatalf("%s: %v", d.Name, err)
+			if problem := updateSchema(t, path, got); problem != "" {
+				t.Errorf("%s (%s v%s): refusing to overwrite %s in place:\n%s", d.Name, d.Surface, d.Version, rel, problem)
+				continue
 			}
 			t.Logf("wrote %s", rel)
 			continue
@@ -108,6 +106,122 @@ func TestSchemaDrift(t *testing.T) {
 			continue
 		}
 		t.Errorf("%s (%s v%s) has drifted from %s:\n%s", d.Name, d.Surface, d.Version, rel, classify(t, want, got))
+	}
+}
+
+// updateSchema applies -update semantics to one document at path: got
+// overwrites whatever is committed there. Returns "" once the write lands, or
+// classify()'s report — unwritten — when it refuses.
+//
+// This is deliberately the only place -update touches disk, so the refusal
+// added for finding 2 (a breaking change must not silently become an
+// in-place edit) lives in one function that both TestSchemaDrift and the
+// TestUpdate* tests below exercise, rather than being duplicated between the
+// real driver and a parallel test-only copy of the same logic.
+func updateSchema(t *testing.T, path string, got []byte) string {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("%v", err)
+	}
+	want, err := os.ReadFile(path)
+	switch {
+	case err == nil:
+		// Something is already committed at path: refuse to let a breaking
+		// change land as if it were the in-place MINOR edit the same URL
+		// promises. A MAJOR change moves to a new path instead (Path(d)
+		// changes once the surface's version constant is bumped), which
+		// falls into the case below because nothing is committed there yet.
+		if problem := classify(t, want, got); strings.Contains(problem, "BREAKING") {
+			return problem
+		}
+	case os.IsNotExist(err):
+		// Nothing committed at path yet — a MAJOR bump publishing at a new
+		// path, or the first time this document is generated. There is
+		// nothing to compare against, so nothing here can be a breaking
+		// in-place edit.
+	default:
+		t.Fatalf("%v", err)
+	}
+	if err := os.WriteFile(path, got, 0o644); err != nil {
+		t.Fatalf("%v", err)
+	}
+	return ""
+}
+
+// TestUpdateRefusesABreakingChangeInPlace is finding 2: -update must not
+// silently turn a breaking change into an in-place edit of a published file.
+// It operates on a file in t.TempDir(), not on anything under
+// website/docs/schemas/, so it never touches a real committed schema.
+func TestUpdateRefusesABreakingChangeInPlace(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "gate-v1.json")
+	committed := []byte(`{"type":"object","properties":{"verdict":{"type":"string"}},"required":["verdict"]}` + "\n")
+	if err := os.WriteFile(path, committed, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The mutation finding 2 reproduced live: ,omitempty added to
+	// Verdict.Verdict drops it from required. Modeled here as the generator
+	// output that same mutation would produce.
+	breaking := []byte(`{"type":"object","properties":{"verdict":{"type":"string"}},"required":[]}` + "\n")
+
+	problem := updateSchema(t, path, breaking)
+	if problem == "" {
+		t.Fatal("updateSchema() = \"\", want a refusal for a breaking change")
+	}
+	if !strings.Contains(problem, "BREAKING") {
+		t.Errorf("problem = %q, want a BREAKING line", problem)
+	}
+	if !strings.Contains(problem, "MAJOR") {
+		t.Errorf("problem = %q, want MAJOR-bump instructions", problem)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, committed) {
+		t.Errorf("file at %s changed despite the refusal:\ngot  %s\nwant %s (unchanged)", path, got, committed)
+	}
+}
+
+// TestUpdateWritesAnAdditiveChangeInPlace guards the other half of finding 2:
+// the refusal must not also trap an additive change. -update still has to
+// work for the ordinary case.
+func TestUpdateWritesAnAdditiveChangeInPlace(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "gate-v1.json")
+	committed := []byte(`{"type":"object","properties":{"verdict":{"type":"string"}},"required":["verdict"]}` + "\n")
+	if err := os.WriteFile(path, committed, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	additive := []byte(`{"type":"object","properties":{"scope":{"type":"string"},"verdict":{"type":"string"}},"required":["verdict"]}` + "\n")
+
+	if problem := updateSchema(t, path, additive); problem != "" {
+		t.Fatalf("updateSchema() = %q, want no refusal for an additive change", problem)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, additive) {
+		t.Errorf("file at %s:\ngot  %s\nwant %s", path, got, additive)
+	}
+}
+
+// TestUpdateWritesANewFileWhenNoneIsCommitted is the escape hatch a MAJOR
+// bump depends on: Path(d) names a file that does not exist yet once the
+// surface's version constant is bumped, so there is nothing to compare
+// against and nothing that can be "broken" — -update must still write it.
+func TestUpdateWritesANewFileWhenNoneIsCommitted(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "gate-v2.json")
+	content := []byte(`{"type":"object","properties":{"verdict":{"type":"string"}}}` + "\n")
+
+	if problem := updateSchema(t, path, content); problem != "" {
+		t.Fatalf("updateSchema() = %q, want no refusal when nothing is committed at path yet", problem)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, content) {
+		t.Errorf("file at %s:\ngot  %s\nwant %s", path, got, content)
 	}
 }
 
@@ -135,6 +249,17 @@ func classify(t *testing.T, want, got []byte) string {
 	}
 	for k := range b {
 		if _, present := a[k]; present {
+			continue
+		}
+		if inNewSubtree(k, a) {
+			// The $defs entry containing k does not appear anywhere in the
+			// committed document — no document captured against that
+			// document could reach it, so nothing about its shape, however
+			// it looks, can break an existing consumer. Applies uniformly to
+			// every branch below, not just "newly required": the other two
+			// are already additive, so this only changes their wording, not
+			// their verdict.
+			additive = append(additive, "added (new type): "+k)
 			continue
 		}
 		switch {
@@ -165,6 +290,45 @@ func classify(t *testing.T, want, got []byte) string {
 
 func isMember(path string) bool {
 	return strings.Contains(path, "/required#") || strings.Contains(path, "/enum#")
+}
+
+// inNewSubtree reports whether path's containing $defs type is absent from a
+// (the committed/old document) entirely. $defs is flat — every named struct
+// type in a generated schema is exactly one $defs entry, however deep the
+// type is reached through refs — so a $defs entry with no presence at all in
+// a is a subtree no old document could ever reach: nothing in the old
+// document set holds a value shaped by a type its schema never mentioned.
+// That makes any difference found only inside it additive, whatever its
+// shape (finding 1: a new optional field whose type has its own required
+// subfields must not read as a MAJOR change). A path that is not under
+// $defs — a root-level property, say — is never "new" this way: both sides
+// of a diff describe the same root type, so the root itself always exists.
+func inNewSubtree(path string, a map[string]string) bool {
+	c := defsContainer(path)
+	if c == "" {
+		return false
+	}
+	prefix := c + "/"
+	for k := range a {
+		if strings.HasPrefix(k, prefix) {
+			return false
+		}
+	}
+	return true
+}
+
+// defsContainer returns the "/$defs/<Type>" prefix a path lives under, or ""
+// if path is not under $defs at all.
+func defsContainer(path string) string {
+	const prefix = "/$defs/"
+	if !strings.HasPrefix(path, prefix) {
+		return ""
+	}
+	rest := path[len(prefix):]
+	if i := strings.Index(rest, "/"); i >= 0 {
+		return prefix + rest[:i]
+	}
+	return path
 }
 
 // TestClassify is a direct unit test over classify() itself, isolated from the
@@ -222,6 +386,26 @@ func TestClassify(t *testing.T) {
 			want:    `{"type":"object","properties":{"foo":{"type":"string","enum":["a"]}}}`,
 			got:     `{"type":"object","properties":{"foo":{"type":"string","enum":["a","b"]}}}`,
 			verdict: "additive",
+		},
+		{
+			// A brand-new optional field whose type is a brand-new struct with
+			// its own required subfield. No old document reaches
+			// $defs/gate.ProbeInfo at all — it doesn't exist in want — so
+			// nothing about its shape, however it looks, can break an old
+			// consumer. This is the false MAJOR from finding 1.
+			name:    "required field added inside a brand-new $defs type reached only by a new optional field",
+			want:    `{"type":"object","properties":{"foo":{"type":"string"}}}`,
+			got:     `{"type":"object","properties":{"foo":{"type":"string"},"probe":{"$ref":"#/$defs/gate.ProbeInfo"}},"$defs":{"gate.ProbeInfo":{"type":"object","properties":{"x":{"type":"string"}},"required":["x"]}}}`,
+			verdict: "additive",
+		},
+		{
+			// Same shape of diff, but $defs/gate.ProbeInfo already existed in
+			// want: a document captured before this edit could hold ProbeInfo
+			// without "x" and would now fail to validate. Must stay breaking.
+			name:    "required field added inside an existing $defs type",
+			want:    `{"type":"object","properties":{"foo":{"$ref":"#/$defs/gate.ProbeInfo"}},"$defs":{"gate.ProbeInfo":{"type":"object","properties":{"x":{"type":"string"}}}}}`,
+			got:     `{"type":"object","properties":{"foo":{"$ref":"#/$defs/gate.ProbeInfo"}},"$defs":{"gate.ProbeInfo":{"type":"object","properties":{"x":{"type":"string"}},"required":["x"]}}}`,
+			verdict: "breaking",
 		},
 	}
 	for _, tt := range tests {

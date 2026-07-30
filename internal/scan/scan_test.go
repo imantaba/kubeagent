@@ -5,7 +5,9 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1533,5 +1535,253 @@ func TestEvaluate_NoteRedactsRefusalIdentity(t *testing.T) {
 	}
 	if strings.Contains(found.Reason, identity) {
 		t.Errorf("Reason = %q, must not contain the API server's message, which names the requesting identity %q", found.Reason, identity)
+	}
+}
+
+// slowKubeletHealthzServer answers /api/v1/nodes/<name>/proxy/healthz with a 500
+// after a delay that is LONGEST for the first node and shortest for the last, so
+// the probes finish in exactly the reverse of the order they were dispatched.
+//
+// It goes over real HTTP through the swapped RESTClient because that is the only
+// way to get genuine overlap: k8stesting.Fake.Invokes holds a write lock across
+// the whole reactor body, so a reactor that sleeps serialises the calls instead
+// of overlapping them.
+func slowKubeletHealthzServer(t *testing.T, nodes []string) (rest.Interface, func() []string) {
+	t.Helper()
+
+	index := map[string]int{}
+	for i, n := range nodes {
+		index[n] = i
+	}
+
+	var mu sync.Mutex
+	var completed []string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := nodeNameFromHealthzPath(r.URL.Path)
+		i, ok := index[name]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		time.Sleep(time.Duration(len(nodes)-i) * 25 * time.Millisecond)
+
+		mu.Lock()
+		completed = append(completed, name)
+		mu.Unlock()
+
+		// Content-Type must be set: without it, client-go's content negotiation
+		// on a non-2xx response fails before the status code is ever recorded on
+		// the Result, and collect.KubeletHealthz sees code 0 ("unreachable")
+		// instead of 500 ("unhealthy") — same reason forbiddenNodeProxyServer and
+		// previousLogNotFoundServer above set it.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("[-]check-" + name + " failed\n"))
+	}))
+	t.Cleanup(server.Close)
+
+	// QPS -1 for the same reason production uses it: client-go's default token
+	// bucket would meter these probes and defeat the inversion under test.
+	real, err := kubernetes.NewForConfig(&rest.Config{Host: server.URL, QPS: -1})
+	if err != nil {
+		t.Fatalf("building a client for the slow kubelet server: %v", err)
+	}
+	return real.CoreV1().RESTClient(), func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), completed...)
+	}
+}
+
+// nodeNameFromHealthzPath pulls <name> out of /api/v1/nodes/<name>/proxy/healthz.
+func nodeNameFromHealthzPath(p string) string {
+	parts := strings.Split(strings.Trim(p, "/"), "/")
+	if len(parts) < 4 || parts[2] != "nodes" {
+		return ""
+	}
+	return parts[3]
+}
+
+// The phase-2 node fan-out reports in node order even when the probes finish in
+// exactly the opposite order. nodehealth.Assess preserves probe order, so
+// Unhealthy is a direct read-out of the order the pool wrote its slots in.
+func TestKubeletHealthFanOutReportsInNodeOrderNotCompletionOrder(t *testing.T) {
+	names := []string{"node-0", "node-1", "node-2", "node-3", "node-4"}
+	objs := make([]runtime.Object, 0, len(names))
+	for _, n := range names {
+		objs = append(objs, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: n}})
+	}
+
+	restClient, _ := slowKubeletHealthzServer(t, names)
+	client := nodeStatsFailingClient{Interface: fake.NewSimpleClientset(objs...), rest: restClient}
+
+	t.Setenv("KUBEAGENT_SCAN_WORKERS", "8") // all five probes in flight at once
+	res, err := Evaluate(context.Background(), client, Options{KubeletHealth: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got []string
+	for _, iss := range res.KubeletHealth.Unhealthy {
+		got = append(got, iss.Node)
+	}
+	if !reflect.DeepEqual(got, names) {
+		t.Errorf("KubeletHealth.Unhealthy = %v, want %v — the report must follow node order, not completion order", got, names)
+	}
+}
+
+// PartialReads follows the fixed report order, not the order the refusals
+// arrived. The reactors below are registered in the reverse of the expected
+// order, so a report that followed registration or completion order comes out
+// backwards and this test fails.
+func TestPartialReadsFollowReportOrderNotCompletionOrder(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	forbid := func(resource string) {
+		client.Fake.PrependReactor("list", resource, func(k8stesting.Action) (bool, runtime.Object, error) {
+			return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: resource}, "", nil)
+		})
+	}
+	forbid("networkpolicies")
+	forbid("persistentvolumes")
+	forbid("namespaces")
+	forbid("services")
+
+	t.Setenv("KUBEAGENT_SCAN_WORKERS", "8")
+	res, err := Evaluate(context.Background(), client, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got []string
+	for _, p := range res.PartialReads {
+		got = append(got, p.Resource)
+	}
+	want := []string{"services", "namespaces", "persistentvolumes", "networkpolicies"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("PartialReads = %v, want %v", got, want)
+	}
+}
+
+// Four event lists fail with a transport error, so four entries are recorded —
+// note() deduplicates only through blind(), i.e. only for refusals. This pins the
+// "four identical lines" behaviour that the report order deliberately keeps.
+func TestFourFailingEventListsRecordFourEntries(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	client.Fake.PrependReactor("list", "events", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("connection refused")
+	})
+
+	t.Setenv("KUBEAGENT_SCAN_WORKERS", "8")
+	res, err := Evaluate(context.Background(), client, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(res.PartialReads) != 4 {
+		t.Fatalf("PartialReads = %+v, want 4 entries (volume-attach, unhealthy, PVC, FailedCreate)", res.PartialReads)
+	}
+	for i, p := range res.PartialReads {
+		if p.Resource != "events" {
+			t.Errorf("PartialReads[%d].Resource = %q, want %q", i, p.Resource, "events")
+		}
+	}
+}
+
+// determinismFixture builds a cluster with a crash-looping pod, a Deployment, a
+// Service with no endpoints, a PVC and two nodes. Every timestamp is 48 hours in
+// the past so inventory.HumanAge renders whole days ("2d"): an age rendered in
+// seconds would differ between two runs milliseconds apart and the comparison
+// below would be testing the clock rather than the pool.
+func determinismFixture() []runtime.Object {
+	old := metav1.NewTime(time.Now().Add(-48 * time.Hour))
+	return []runtime.Object{
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a", CreationTimestamp: old},
+			Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}},
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-b", CreationTimestamp: old},
+			Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionFalse}}}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "api-1", CreationTimestamp: old, Labels: map[string]string{"app": "api"}},
+			Status: corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{
+				Name: "api", RestartCount: 7,
+				State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff", Message: "back-off restarting failed container"}},
+			}}}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "worker-1", CreationTimestamp: old, Labels: map[string]string{"app": "worker"}},
+			Status: corev1.PodStatus{Phase: corev1.PodPending, Conditions: []corev1.PodCondition{{
+				Type: corev1.PodScheduled, Status: corev1.ConditionFalse, Reason: "Unschedulable", Message: "0/2 nodes are available",
+			}}}},
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "api", CreationTimestamp: old},
+			Spec:   appsv1.DeploymentSpec{Replicas: ptrInt32(3)},
+			Status: appsv1.DeploymentStatus{Replicas: 3, ReadyReplicas: 1}},
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "api", CreationTimestamp: old},
+			Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "api"}, Ports: []corev1.ServicePort{{Port: 80}}}},
+		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "data", CreationTimestamp: old},
+			Status: corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimPending}},
+	}
+}
+
+func ptrInt32(n int32) *int32 { return &n }
+
+// Two runs at different worker counts must produce an identical Result. The
+// third run repeats the second so that a fixture whose output drifts with the
+// clock fails as a fixture bug rather than as a concurrency bug.
+func TestEvaluateIsIndependentOfTheWorkerCount(t *testing.T) {
+	// Built once and reused for every run below: fake.NewSimpleClientset deep-copies
+	// on ingestion, so sharing objs across clientsets is safe, and calling
+	// determinismFixture() fresh per run would give each run a different
+	// time.Now()-derived CreationTimestamp — a raw field DeepEqual compares at
+	// nanosecond precision — which would fail this test on clock drift alone,
+	// never on the pool.
+	objs := determinismFixture()
+	run := func(workers string) Result {
+		t.Setenv("KUBEAGENT_SCAN_WORKERS", workers)
+		res, err := Evaluate(context.Background(), fake.NewSimpleClientset(objs...), Options{Security: true, IncludeRestarts: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+
+	eight, eightAgain := run("8"), run("8")
+	if !reflect.DeepEqual(eight, eightAgain) {
+		t.Fatalf("two runs at the same worker count differed — the fixture is not stable, so the comparison below would be meaningless")
+	}
+
+	one := run("1")
+	if !reflect.DeepEqual(one, eight) {
+		t.Errorf("Evaluate at 1 worker differs from Evaluate at 8 workers:\n one   = %+v\n eight = %+v", one, eight)
+	}
+}
+
+// Repeating the same scan many times must produce the same Result every time.
+// The reactor delays each list by an amount derived from the resource name — a
+// stable delay, no randomness — which is enough to vary which goroutine reaches
+// the fake's lock first, and so to sample real orderings.
+func TestEvaluateIsStableAcrossRepeatedRuns(t *testing.T) {
+	// Same reasoning as TestEvaluateIsIndependentOfTheWorkerCount: build the
+	// fixture once so every run shares the same CreationTimestamp values instead
+	// of each newClient() call minting its own time.Now().
+	objs := determinismFixture()
+	newClient := func() *fake.Clientset {
+		c := fake.NewSimpleClientset(objs...)
+		c.Fake.PrependReactor("list", "*", func(action k8stesting.Action) (bool, runtime.Object, error) {
+			time.Sleep(time.Duration(len(action.GetResource().Resource)%5) * time.Millisecond)
+			return false, nil, nil // fall through to the tracker
+		})
+		return c
+	}
+
+	t.Setenv("KUBEAGENT_SCAN_WORKERS", "8")
+	first, err := Evaluate(context.Background(), newClient(), Options{Security: true, IncludeRestarts: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i < 20; i++ {
+		got, err := Evaluate(context.Background(), newClient(), Options{Security: true, IncludeRestarts: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(got, first) {
+			t.Fatalf("run %d differed from run 0 — the output depends on the schedule", i)
+		}
 	}
 }

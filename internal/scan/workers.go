@@ -4,6 +4,8 @@ import (
 	"context"
 	"os"
 	"strconv"
+
+	"github.com/imantaba/kubeagent/internal/parallel"
 )
 
 const (
@@ -53,9 +55,7 @@ func scanWorkers() int {
 // closure touches, so this needs no lock and no shared state. Blind spots are
 // recorded by the caller afterwards, in a fixed report order.
 func runReads(ctx context.Context, reads []func(context.Context) error) []error {
-	errs := make([]error, len(reads))
-	for i, f := range reads {
-		errs[i] = f(ctx)
-	}
-	return errs
+	return parallel.Do(ctx, scanWorkers(), len(reads), func(ctx context.Context, i int) error {
+		return reads[i](ctx)
+	})
 }

@@ -67,6 +67,13 @@ type FeatureStatus struct {
 	Missing []string `json:"missing,omitempty"`
 }
 
+// CheckDocument is the --output json shape of `rbac check`, wrapping what was a
+// bare array so the output can declare its version.
+type CheckDocument struct {
+	SchemaVersion string          `json:"schemaVersion"`
+	Features      []FeatureStatus `json:"features"`
+}
+
 // Check asks the API server whether the current identity may perform every
 // action the named features need.
 //

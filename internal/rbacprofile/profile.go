@@ -38,6 +38,16 @@ type Rule struct {
 	Verbs           []string `json:"verbs"`
 }
 
+// RulesDocument is the --output json shape of `rbac print`. The command used to
+// emit a bare array of rules; an array root can carry no version field, so the
+// rules moved under a key. RoleName is here because it is what the YAML form
+// names the ClusterRole, and a consumer generating one needs both halves.
+type RulesDocument struct {
+	SchemaVersion string `json:"schemaVersion"`
+	RoleName      string `json:"roleName"`
+	Rules         []Rule `json:"rules"`
+}
+
 // Feature is one thing an operator can turn on, and what it costs in grants.
 type Feature struct {
 	// Name identifies the feature to `kubeagent rbac --features`.

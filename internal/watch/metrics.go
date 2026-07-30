@@ -584,10 +584,10 @@ func ageSeconds(since, at time.Time) int64 {
 	return s
 }
 
-// issueView is one record as served by /issues. The pointer fields distinguish
+// IssueView is one record as served by /issues. The pointer fields distinguish
 // "not applicable" from a legitimate zero: active records carry ageSeconds and
 // omit resolution data, resolved records the reverse.
-type issueView struct {
+type IssueView struct {
 	Cluster           string `json:"cluster"`
 	Kind              string `json:"kind"`
 	Namespace         string `json:"namespace,omitempty"`
@@ -603,17 +603,17 @@ type issueView struct {
 	ResolutionSeconds *int64 `json:"resolutionSeconds,omitempty"`
 }
 
-// clusterView is one watched cluster's status. It exists so an operator can tell
+// ClusterView is one watched cluster's status. It exists so an operator can tell
 // "this cluster reported no issues" apart from "this cluster could not be
 // reached" — an empty active list looks identical either way.
-type clusterView struct {
+type ClusterView struct {
 	Name     string `json:"name"`
 	Up       bool   `json:"up"`
 	LastScan string `json:"lastScan"`
 	Error    string `json:"error,omitempty"`
 }
 
-type statsView struct {
+type StatsView struct {
 	NewTotal               int64   `json:"newTotal"`
 	ResolvedTotal          int64   `json:"resolvedTotal"`
 	FlapTotal              int64   `json:"flapTotal"`
@@ -622,17 +622,21 @@ type statsView struct {
 	ResolutionSecondsCount int64   `json:"resolutionSecondsCount"`
 }
 
-type issuesView struct {
-	Clusters []clusterView `json:"clusters"`
-	Active   []issueView   `json:"active"`
-	Resolved []issueView   `json:"resolved"`
-	Stats    statsView     `json:"stats"`
+// IssuesReport is the document served by GET /issues. Exported, like the view
+// types it reaches, because these names become $defs keys in a published
+// schema: watch.IssueView reads like a contract where watch.issueView reads
+// like a leaked internal.
+type IssuesReport struct {
+	Clusters []ClusterView `json:"clusters"`
+	Active   []IssueView   `json:"active"`
+	Resolved []IssueView   `json:"resolved"`
+	Stats    StatsView     `json:"stats"`
 }
 
-func issueViews(cluster string, rs []watchstate.Record, at time.Time, resolved bool) []issueView {
-	out := make([]issueView, 0, len(rs))
+func issueViews(cluster string, rs []watchstate.Record, at time.Time, resolved bool) []IssueView {
+	out := make([]IssueView, 0, len(rs))
 	for _, r := range rs {
-		v := issueView{
+		v := IssueView{
 			Cluster:     cluster,
 			Kind:        r.Key.Kind,
 			Namespace:   r.Key.Namespace,
@@ -664,14 +668,14 @@ func rfc3339(t time.Time) string { return t.UTC().Format(time.RFC3339) }
 func (m *metrics) issuesJSON() ([]byte, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	out := issuesView{
-		Clusters: make([]clusterView, 0, len(m.names)),
-		Active:   []issueView{},
-		Resolved: []issueView{},
+	out := IssuesReport{
+		Clusters: make([]ClusterView, 0, len(m.names)),
+		Active:   []IssueView{},
+		Resolved: []IssueView{},
 	}
 	for _, n := range m.names {
 		c := m.clusters[n]
-		cv := clusterView{Name: n, Up: c.up, Error: c.lastError}
+		cv := ClusterView{Name: n, Up: c.up, Error: c.lastError}
 		if c.lastScanUnix != 0 {
 			cv.LastScan = rfc3339(time.Unix(c.lastScanUnix, 0))
 		}
@@ -688,8 +692,8 @@ func (m *metrics) issuesJSON() ([]byte, error) {
 	return json.Marshal(out)
 }
 
-// explanationView is one record as served by /explanations.
-type explanationView struct {
+// ExplanationView is one record as served by /explanations.
+type ExplanationView struct {
 	Cluster     string   `json:"cluster"`
 	Kind        string   `json:"kind"`
 	Namespace   string   `json:"namespace,omitempty"`
@@ -700,7 +704,7 @@ type explanationView struct {
 	Text        string   `json:"text"`
 }
 
-type explainStatsView struct {
+type ExplainStatsView struct {
 	AllowedTotal    int64   `json:"allowedTotal"`
 	ThrottledTotal  int64   `json:"throttledTotal"`
 	FailedTotal     int64   `json:"failedTotal"`
@@ -708,9 +712,12 @@ type explainStatsView struct {
 	BudgetRemaining float64 `json:"budgetRemaining"`
 }
 
-type explanationsView struct {
-	Explanations []explanationView `json:"explanations"`
-	Stats        explainStatsView  `json:"stats"`
+// ExplanationsReport is the document served by GET /explanations. Exported for
+// the same reason as IssuesReport: its name becomes a $defs key in a published
+// schema.
+type ExplanationsReport struct {
+	Explanations []ExplanationView `json:"explanations"`
+	Stats        ExplainStatsView  `json:"stats"`
 }
 
 // explanationsJSON renders the latest explanation per object. With --explain off
@@ -719,9 +726,9 @@ type explanationsView struct {
 func (m *metrics) explanationsJSON() ([]byte, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	out := explanationsView{
-		Explanations: []explanationView{},
-		Stats: explainStatsView{
+	out := ExplanationsReport{
+		Explanations: []ExplanationView{},
+		Stats: ExplainStatsView{
 			AllowedTotal:    m.explain.Stats.Allowed,
 			ThrottledTotal:  m.explain.Stats.Throttled,
 			FailedTotal:     m.explain.Stats.Failed,
@@ -734,7 +741,7 @@ func (m *metrics) explanationsJSON() ([]byte, error) {
 		if issues == nil {
 			issues = []string{}
 		}
-		out.Explanations = append(out.Explanations, explanationView{
+		out.Explanations = append(out.Explanations, ExplanationView{
 			Cluster:     x.Cluster,
 			Kind:        x.Kind,
 			Namespace:   x.Namespace,

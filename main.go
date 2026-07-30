@@ -48,6 +48,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/rolloutwait"
 	"github.com/imantaba/kubeagent/internal/sarif"
 	"github.com/imantaba/kubeagent/internal/scan"
+	"github.com/imantaba/kubeagent/internal/schemadoc"
 	"github.com/imantaba/kubeagent/internal/tui"
 	"github.com/imantaba/kubeagent/internal/watch"
 )
@@ -145,8 +146,11 @@ func run(args []string) error {
 	if len(args) > 0 && args[0] == "rbac" {
 		return runRBAC(args[1:])
 	}
+	if len(args) > 0 && args[0] == "schema" {
+		return runSchema(args[1:], os.Stdout)
+	}
 	if len(args) == 0 || args[0] != "scan" {
-		return fmt.Errorf("usage: %[1]s scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json|html] [--explain] [--investigate] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--kubelet-health] [--control-plane-health] [--dns-health] [--certs [--cert-warn-days n]] [--operators] [--drift] [--drift-age dur] [--capacity] [--logs] [--node-heartbeat-threshold dur] [--expected-nodes a,b,…] [--fix [--dry-run|--yes] [--audit-log path]] [--rollback --audit-log path] | %[1]s watch [--kubeconfig path] [--context name (repeatable)] [--cluster-name name] [--include-local] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] [--alert-format json|slack|alertmanager] [--alert-repeat dur] [--slo-target pct] [--explain [--explain-cooldown dur] [--explain-budget n] [--model name]] | %[1]s mcp [--kubeconfig path] [--context name] [--allow-context-switch] [--logs] | %[1]s gate [--kubeconfig path] [--context name] [-n namespace] [--wait-for kind/name] [--timeout dur] [--fail-on critical|warning|info] [--allow-partial-read resource (repeatable)] [--output text|json|sarif] | %[1]s tui [--kubeconfig path] [--context name] [-n namespace] | %[1]s rbac print [--profile scan|watch|full] [--features a,b,…] [--role-name name] [--output yaml|json] | %[1]s rbac check [--kubeconfig path] [--context name] [--profile scan|watch|full] [--features a,b,…] [--output text|json] | %[1]s version", invokedAs)
+		return fmt.Errorf("usage: %[1]s scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json|html] [--explain] [--investigate] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--kubelet-health] [--control-plane-health] [--dns-health] [--certs [--cert-warn-days n]] [--operators] [--drift] [--drift-age dur] [--capacity] [--logs] [--node-heartbeat-threshold dur] [--expected-nodes a,b,…] [--fix [--dry-run|--yes] [--audit-log path]] [--rollback --audit-log path] | %[1]s watch [--kubeconfig path] [--context name (repeatable)] [--cluster-name name] [--include-local] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] [--alert-format json|slack|alertmanager] [--alert-repeat dur] [--slo-target pct] [--explain [--explain-cooldown dur] [--explain-budget n] [--model name]] | %[1]s mcp [--kubeconfig path] [--context name] [--allow-context-switch] [--logs] | %[1]s gate [--kubeconfig path] [--context name] [-n namespace] [--wait-for kind/name] [--timeout dur] [--fail-on critical|warning|info] [--allow-partial-read resource (repeatable)] [--output text|json|sarif] | %[1]s tui [--kubeconfig path] [--context name] [-n namespace] | %[1]s rbac print [--profile scan|watch|full] [--features a,b,…] [--role-name name] [--output yaml|json] | %[1]s rbac check [--kubeconfig path] [--context name] [--profile scan|watch|full] [--features a,b,…] [--output text|json] | %[1]s schema [name] | %[1]s version", invokedAs)
 	}
 
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
@@ -747,6 +751,32 @@ func runRBAC(args []string) error {
 		return runRBACCheck(args[1:])
 	}
 	return fmt.Errorf("usage: %[1]s rbac print [--profile scan|watch|full] [--features a,b,…] [--role-name name] [--output yaml|json] | %[1]s rbac check [--kubeconfig path] [--context name] [--profile scan|watch|full] [--features a,b,…] [--output text|json]", invokedAs)
+}
+
+// runSchema prints the JSON Schema for one machine-readable document, or lists
+// them all. Generated at runtime from the same code path that writes the
+// committed files, so what the binary prints is what the binary's types are —
+// there is no embedded copy that could drift.
+//
+// Read-only in the strongest sense: it reads Go types. No cluster connection, no
+// kubeconfig, no LLM call.
+func runSchema(args []string, w io.Writer) error {
+	if len(args) == 0 {
+		for _, d := range schemadoc.Documents {
+			fmt.Fprintf(w, "  %-19s surface %-6s v%s\n", d.Name, d.Surface, d.Version)
+		}
+		fmt.Fprintf(w, "\nPrint one:\n  %s schema <name>\n", invokedAs)
+		return nil
+	}
+	if len(args) > 1 {
+		return fmt.Errorf("usage: %s schema [name]", invokedAs)
+	}
+	doc, err := schemadoc.Generate(args[0])
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(doc)
+	return err
 }
 
 // splitFeatureList turns "core, certs" into ["core", "certs"], tolerating the

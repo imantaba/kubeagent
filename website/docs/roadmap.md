@@ -475,8 +475,16 @@ These are the north star; every item below is measured against them.
   binary with no cluster and no kubeconfig, and a drift test
   (`internal/schemadoc`) fails a shape change that moves without a version
   bump, naming it additive or breaking — see
-  [JSON schema contract](features/json-schema.md). The v1.0 production
-  contract remains ahead.
+  [JSON schema contract](features/json-schema.md). Slice 5 — bounded scan
+  concurrency — has shipped: `scan`'s independent reads run through a bounded
+  worker pool (`internal/parallel`, `KUBEAGENT_SCAN_WORKERS`, 8 by default),
+  and kubeagent no longer accepts client-go's default 5 QPS client-side rate
+  limiter, which had been metering the scan against itself — 2.42s versus
+  0.15s for byte-identical output on a three-node cluster. Ordering is
+  preserved by construction: no read closure touches shared state, and a
+  sequential block afterwards walks a fixed report order
+  ([tuning](features/tuning.md)). The rest of Theme H — the v1.0 production
+  contract — remains ahead.
 
 ### Milestones
 

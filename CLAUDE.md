@@ -34,8 +34,15 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   LLM-decided. Without `--fix`, kubeagent never creates, updates, patches, or
   deletes anything.
 - v1 uses the **standard-library `flag`** package only — no Cobra yet.
-- v1 CLI (`scan`) is **sequential** — no goroutines. `internal/watch` is no
-  longer the only documented long-lived-process exception: the `watch` daemon
+- **`scan` runs its independent reads through a bounded worker pool**
+  (`internal/parallel`, capped by `KUBEAGENT_SCAN_WORKERS`, 8 by default). The
+  v1 "sequential, no goroutines" simplification is retired. Determinism is
+  preserved by construction, not by discipline: no read closure touches shared
+  state, each writes only its own destination, and a sequential block afterwards
+  walks a fixed report order — so the rendered bytes are never a function of
+  which read answered first. `internal/parallel` must never import
+  `internal/remediate` or `internal/explain`. `internal/watch` is no longer the
+  only documented long-lived-process exception: the `watch` daemon
   runs informers, a heartbeat ticker, and an HTTP server concurrently, and
   `kubeagent mcp` (`internal/mcp`) is a second long-lived server, serving MCP
   tool calls over stdio for as long as the client stays connected. Both remain

@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `KUBEAGENT_SCAN_WORKERS` — how many of `scan`'s independent cluster reads may
+  be in flight at once. 8 by default, clamped to 1..64. A value that does not
+  parse is ignored rather than raised as an error. Under `kubeagent watch` the
+  daemon runs one goroutine per cluster, so the effective cap across the process
+  is this number times the number of clusters watched.
+- `KUBEAGENT_QPS` and `KUBEAGENT_BURST` — restore a client-side request rate
+  limit for anyone who needs one. Unset, kubeagent applies none.
+
+### Changed
+
+- `scan` now issues its independent cluster reads through a bounded worker pool
+  instead of one at a time. Output is unchanged, byte for byte: blind spots and
+  read failures are recorded by a sequential block that walks a fixed report
+  order, so the rendered order can never depend on which read answered first.
+- kubeagent no longer accepts client-go's default client-side rate limiter
+  (5 QPS, burst 10 per API-group client). That default metered the scan against
+  itself: measured on a three-node cluster, a scan with every add-on enabled
+  took 2.42s with the limiter and 0.15s without, for byte-identical output. Load
+  shedding is left to the API server's own Priority and Fairness, which knows
+  what the server can take; `KUBEAGENT_QPS` restores a client-side limit.
+
 ## [0.71.0] - 2026-07-30
 
 ### Added

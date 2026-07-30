@@ -72,6 +72,7 @@ nav:
       - Interactive TUI: features/tui.md
       - Least-privilege RBAC: features/rbac.md
       - JSON schema contract: features/json-schema.md
+      - Performance tuning: features/tuning.md
   - Install: install.md
   - Verifying a release: verify.md
   - Roadmap: roadmap.md

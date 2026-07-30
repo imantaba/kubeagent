@@ -416,7 +416,12 @@ scenario_12_watch() {   # stateful watch daemon: NEW on outage, RESOLVED on repa
 
   {
     echo '--- daemon transition log (NEW / RESOLVED / FLAPPING lines only) ---'
-    { grep -E 'kubeagent: (NEW|RESOLVED|FLAPPING) ' "$wlog" || echo '<no transition lines logged>'; }
+    # The cluster name is bracketed into every daemon line by clusterLogf
+    # (internal/watch/cluster.go), so this pattern has to allow it. Without the
+    # optional bracket this grep silently matched nothing from e5ef861 onward and
+    # the section read '<no transition lines logged>' on every run — a missing
+    # transition and a stale pattern looked identical.
+    { grep -E 'kubeagent: (\[[^]]*\] )?(NEW|RESOLVED|FLAPPING) ' "$wlog" || echo '<no transition lines logged>'; }
     echo
     echo '--- /issues while the outage was firing ---'
     printf '%s\n' "$firing" | python3 -m json.tool 2>/dev/null || printf '%s\n' "$firing"

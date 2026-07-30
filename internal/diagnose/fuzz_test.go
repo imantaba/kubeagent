@@ -37,7 +37,7 @@ func FuzzDetectors(f *testing.F) {
 	f.Add([]byte("\xff\xfe\xfd"))
 	f.Add([]byte("Readiness probe failed: HTTP probe failed with statuscode: 503"))
 	f.Add([]byte("Multi-Attach error for volume pvc-0"))
-	f.Add([]byte("‮gnp.txt.exe"))
+	f.Add([]byte("\u202egnp.txt.exe"))
 
 	f.Fuzz(func(t *testing.T, in []byte) {
 		c := fuzzgen.New(in)

@@ -1,6 +1,10 @@
 package diagnose
 
-import corev1 "k8s.io/api/core/v1"
+import (
+	corev1 "k8s.io/api/core/v1"
+
+	"github.com/imantaba/kubeagent/internal/safetext"
+)
 
 // PendingDetector flags pods the scheduler cannot place on any node.
 type PendingDetector struct{}
@@ -15,7 +19,7 @@ func (d PendingDetector) Detect(facts PodFacts) *Finding {
 				Pod:      facts.Pod.Namespace + "/" + facts.Pod.Name,
 				Issue:    "Unschedulable",
 				Reason:   "No node can schedule this pod (resources, taints, or affinity)",
-				Evidence: c.Message,
+				Evidence: safetext.Line(c.Message),
 			}
 		}
 	}

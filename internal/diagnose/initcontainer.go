@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
+
+	"github.com/imantaba/kubeagent/internal/safetext"
 )
 
 // InitContainerDetector flags a pod blocked in its init phase because an init
@@ -38,7 +40,7 @@ func initFinding(pod *corev1.Pod, cs corev1.ContainerStatus, idx, total int) *Fi
 			Pod:       podName,
 			Issue:     "Init:" + w.Reason,
 			Reason:    "an init container's image cannot be pulled — the pod cannot start",
-			Evidence:  fmt.Sprintf("init container %q %s: %s", cs.Name, pos, w.Message),
+			Evidence:  fmt.Sprintf("init container %q %s: %s", cs.Name, pos, safetext.Line(w.Message)),
 			Container: cs.Name,
 		}
 	}

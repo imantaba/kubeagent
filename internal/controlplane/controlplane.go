@@ -4,7 +4,16 @@
 // the nodehealth classify helper for kubelet /healthz.
 package controlplane
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/imantaba/kubeagent/internal/safetext"
+)
+
+// maxFailedChecks bounds the reported failing-check list. A real apiserver has
+// on the order of a dozen readyz checks; a body claiming hundreds is not one,
+// and a report is for reading, not for archiving whatever answered the port.
+const maxFailedChecks = 20
 
 // Probe is the apiserver /readyz classification.
 type Probe struct {
@@ -30,14 +39,22 @@ func ParseReadyz(code int, body []byte) Probe {
 }
 
 // failedChecks extracts the check name from each "[-]<name> …" line of a verbose
-// /readyz body, in order. Returns nil when there are none (a generic not-ready).
+// /readyz body, in order, sanitized and capped at maxFailedChecks. Returns nil
+// when there are none (a generic not-ready).
+//
+// These names are tokens from an HTTP response body that no schema constrains,
+// and they are printed. Sanitizing them here rather than at each renderer keeps
+// the guarantee with the parser that produced them.
 func failedChecks(body []byte) []string {
 	var failed []string
 	for _, ln := range strings.Split(string(body), "\n") {
+		if len(failed) == maxFailedChecks {
+			break
+		}
 		ln = strings.TrimSpace(ln)
 		if strings.HasPrefix(ln, "[-]") {
 			if fields := strings.Fields(ln[3:]); len(fields) > 0 {
-				failed = append(failed, fields[0])
+				failed = append(failed, safetext.Line(fields[0]))
 			}
 		}
 	}

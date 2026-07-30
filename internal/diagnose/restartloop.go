@@ -3,6 +3,8 @@ package diagnose
 import (
 	"fmt"
 	"time"
+
+	"github.com/imantaba/kubeagent/internal/safetext"
 )
 
 const (
@@ -38,7 +40,7 @@ func (d RestartLoopDetector) Detect(facts PodFacts) *Finding {
 			Pod:       facts.Pod.Namespace + "/" + facts.Pod.Name,
 			Issue:     "RestartLoop",
 			Reason:    "Container keeps exiting with an error and restarting",
-			Evidence:  fmt.Sprintf("container %q, %d restarts, last exit %d (%s), %s ago", cs.Name, cs.RestartCount, term.ExitCode, term.Reason, age),
+			Evidence:  fmt.Sprintf("container %q, %d restarts, last exit %d (%s), %s ago", cs.Name, cs.RestartCount, term.ExitCode, safetext.Line(term.Reason), age),
 			Container: cs.Name,
 		}
 	}

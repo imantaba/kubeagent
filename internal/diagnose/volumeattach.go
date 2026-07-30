@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+
+	"github.com/imantaba/kubeagent/internal/safetext"
 )
 
 // VolumeAttachDetector flags a pod stuck at container creation because a volume
@@ -28,7 +30,7 @@ func (d VolumeAttachDetector) Detect(facts PodFacts) *Finding {
 		Pod:      facts.Pod.Namespace + "/" + facts.Pod.Name,
 		Issue:    "VolumeAttachError",
 		Reason:   reason,
-		Evidence: ev.Message,
+		Evidence: safetext.Line(ev.Message),
 	}
 }
 

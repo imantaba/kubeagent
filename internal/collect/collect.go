@@ -464,6 +464,24 @@ func PreviousLogs(ctx context.Context, client kubernetes.Interface, ns, pod, con
 	return string(raw), true, nil
 }
 
+// maxProxyBody bounds what kubeagent will parse from a proxied endpoint — a
+// kubelet /healthz, a CoreDNS /metrics, an apiserver /readyz. 1 MiB is well past
+// any real response and well short of a body worth parsing by mistake.
+//
+// This bounds the parsers and any later copy, NOT the transfer: client-go's
+// Result.Raw() returns a body it has already read in full, with no cap, and
+// gives no access to the underlying reader. Bounding the transfer would need a
+// custom http.RoundTripper on the rest config — a separate change.
+const maxProxyBody = 1 << 20
+
+// capBody returns at most maxProxyBody bytes of b.
+func capBody(b []byte) []byte {
+	if len(b) > maxProxyBody {
+		return b[:maxProxyBody]
+	}
+	return b
+}
+
 // KubeletHealthz probes a node's kubelet /healthz via the nodes/proxy subresource
 // and classifies the result. Never returns an error (non-fatal, like NodeStats).
 func KubeletHealthz(ctx context.Context, client kubernetes.Interface, node string) nodehealth.Probe {
@@ -471,7 +489,7 @@ func KubeletHealthz(ctx context.Context, client kubernetes.Interface, node strin
 	body, _ := client.CoreV1().RESTClient().Get().
 		AbsPath(fmt.Sprintf("/api/v1/nodes/%s/proxy/healthz", node)).
 		Do(ctx).StatusCode(&code).Raw()
-	return classify(node, code, body)
+	return classify(node, code, capBody(body))
 }
 
 // CoreDNSMetrics fetches a CoreDNS pod's :9153/metrics via the pods/proxy
@@ -483,7 +501,7 @@ func CoreDNSMetrics(ctx context.Context, client kubernetes.Interface, namespace,
 	body, _ := client.CoreV1().RESTClient().Get().
 		AbsPath(fmt.Sprintf("/api/v1/namespaces/%s/pods/%s:9153/proxy/metrics", namespace, pod)).
 		Do(ctx).StatusCode(&code).Raw()
-	return body, code
+	return capBody(body), code
 }
 
 // ControlPlaneReadyz probes the apiserver /readyz?verbose endpoint and classifies
@@ -494,7 +512,7 @@ func ControlPlaneReadyz(ctx context.Context, client kubernetes.Interface) contro
 	body, _ := client.CoreV1().RESTClient().Get().
 		AbsPath("/readyz").Param("verbose", "true").
 		Do(ctx).StatusCode(&code).Raw()
-	return controlplane.ParseReadyz(code, body)
+	return controlplane.ParseReadyz(code, capBody(body))
 }
 
 // classify maps a /healthz probe result to a Probe. 200 is ok; 401/403 is

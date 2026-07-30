@@ -1,6 +1,10 @@
 package diagnose
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/imantaba/kubeagent/internal/safetext"
+)
 
 // ImagePullDetector flags containers that cannot pull their image.
 type ImagePullDetector struct{}
@@ -13,7 +17,7 @@ func (d ImagePullDetector) Detect(facts PodFacts) *Finding {
 				Pod:      facts.Pod.Namespace + "/" + facts.Pod.Name,
 				Issue:    w.Reason,
 				Reason:   "Bad image reference or registry authentication",
-				Evidence: fmt.Sprintf("container %q: %s", cs.Name, w.Message),
+				Evidence: fmt.Sprintf("container %q: %s", cs.Name, safetext.Line(w.Message)),
 			}
 		}
 	}

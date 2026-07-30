@@ -5,6 +5,8 @@ package logscan
 import (
 	"regexp"
 	"strings"
+
+	"github.com/imantaba/kubeagent/internal/safetext"
 )
 
 // Clue is the classified root cause from a container's crash logs.
@@ -28,7 +30,11 @@ type signature struct {
 var signatures = []signature{
 	{"panic", regexp.MustCompile(`(?i)^panic:|goroutine \d+ \[running\]:`), func([]string) string { return "application panic (code bug)" }},
 	{"entrypoint", regexp.MustCompile(`(?i)exec:.*(?:executable file not found|no such file or directory|permission denied)`), func([]string) string { return "bad command or entrypoint" }},
-	{"conn-refused", regexp.MustCompile(`(?i)dial tcp (\S+): connect: connection refused`), func(m []string) string { return "cannot reach a dependency (" + m[1] + ") — connection refused" }},
+	// m[1] is a \S+ capture from the container's own log. \S excludes only
+	// whitespace, so it can carry ESC, NUL, or invalid UTF-8 — sanitize it.
+	{"conn-refused", regexp.MustCompile(`(?i)dial tcp (\S+): connect: connection refused`), func(m []string) string {
+		return "cannot reach a dependency (" + safetext.Line(m[1]) + ") — connection refused"
+	}},
 	{"dns", regexp.MustCompile(`(?i)no such host|server misbehaving`), func([]string) string { return "DNS resolution failed (name lookup)" }},
 	{"oom-inproc", regexp.MustCompile(`(?i)out of memory|cannot allocate memory|std::bad_alloc`), func([]string) string { return "ran out of memory in-process" }},
 	{"config", regexp.MustCompile(`(?i)^yaml:|invalid character .* looking for|failed to parse|invalid config`), func([]string) string { return "configuration parse/validation error" }},
@@ -51,19 +57,24 @@ func Classify(log string) Clue {
 				continue
 			}
 			if m := s.re.FindStringSubmatch(ln); m != nil {
-				return Clue{Signature: s.name, Excerpt: truncate(ln), Cause: s.cause(m)}
+				return Clue{Signature: s.name, Excerpt: sanitize(ln), Cause: s.cause(m)}
 			}
 		}
 	}
 	for i := len(lines) - 1; i >= 0; i-- {
 		if ln := strings.TrimSpace(lines[i]); ln != "" {
-			return Clue{Excerpt: truncate(ln), Cause: "last output before exit (no known signature)"}
+			return Clue{Excerpt: sanitize(ln), Cause: "last output before exit (no known signature)"}
 		}
 	}
 	return Clue{}
 }
 
-func truncate(s string) string {
+// sanitize makes one log line fit to print and bounds it to maxExcerpt runes.
+// safetext.Line runs FIRST: sanitizing after truncation would spend the excerpt
+// budget on characters about to be dropped, and would leave a control character
+// inside the kept prefix untouched.
+func sanitize(s string) string {
+	s = safetext.Line(s)
 	if r := []rune(s); len(r) > maxExcerpt {
 		return string(r[:maxExcerpt]) + "…"
 	}

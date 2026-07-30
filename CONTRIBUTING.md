@@ -81,6 +81,25 @@ house style, and it is what review will ask about.
 
   Then refresh the README demo GIF and the quickstart example output in
   `website/docs/quickstart.md` in the same pull request.
+- **Fuzzing.** Seven native fuzz targets cover the parsers and the detector set
+  (`FuzzDetectors`, `FuzzClassify`, `FuzzRedactURL`, `FuzzRedactError`,
+  `FuzzParseResponses`, `FuzzParseReadyz`, `FuzzCertAssess`). Their seed corpora
+  replay on a plain `go test ./...`, so a regression a past campaign found fails
+  your pull request immediately — no fuzzing budget needed. A real campaign runs
+  nightly in `.github/workflows/fuzz.yml`, one job per target, because
+  `go test -fuzz` takes exactly one target and one package per invocation. To
+  run one yourself:
+
+  ```bash
+  go test ./internal/diagnose -run '^$' -fuzz '^FuzzDetectors$' -fuzztime 60s
+  ```
+
+  If Go writes a file under `testdata/fuzz/<Target>/`, that is a real finding:
+  fix the cause and **commit the file** — it becomes a permanent regression seed.
+  Objects come from `internal/fuzzgen`, which is test-only: it draws DNS-1123
+  alphabets for the fields the API server validates and hostile bytes for the
+  fields it does not. Text that crosses into a kubeagent value passes through
+  `internal/safetext.Line` at its ingress point, not at each renderer.
 - A larger end-to-end suite that breaks pods on a disposable Kind cluster lives
   in [chaos/](chaos/) and is run before a release, not on every PR.
 

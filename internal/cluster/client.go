@@ -3,9 +3,11 @@ package cluster
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
@@ -69,7 +71,46 @@ func restConfig(kubeconfigPath, contextName string) (*rest.Config, error) {
 		}
 		return nil, fmt.Errorf("loading kubeconfig %q (context %q): %w", path, contextName, err)
 	}
+	applyRateLimits(config)
 	return config, nil
+}
+
+// applyRateLimits sets the client-side request rate for every client kubeagent
+// builds. The default is no client-side limit at all.
+//
+// client-go installs a 5 QPS / burst 10 token bucket on each per-API-group
+// client when QPS is left at zero. CoreV1 carries nearly every read a scan
+// makes, so that default meters the whole scan: measured on a three-node
+// cluster, a scan with every add-on enabled took 6.01s with the limiter and
+// 0.12s without, one read at a time in both, for byte-identical output. Under
+// the limiter the worker pool buys nothing — eight workers finish in the same
+// 6.01s as one — so the two changes ship together. A client-side rate holds the
+// same number whether the API server is idle or dying, while the server's own
+// Priority and Fairness (flowcontrol.apiserver.k8s.io/v1, GA) sheds load based
+// on what it can actually take. QPS -1 disables the limiter entirely.
+//
+// KUBEAGENT_QPS restores a client-side limit for anyone who needs one — a
+// shared cluster with a strict admission budget, a debugging session. A value
+// that does not parse, is not positive, or is not finite, is ignored: a bad
+// knob degrades to a working scan, never to an error. "Inf"/"+Inf"/"Infinity"
+// parse successfully and are > 0, so the finiteness check is not redundant
+// with the positivity check — without it, client-go would build a token-bucket
+// limiter with an IEEE infinite rate rather than leaving the limiter disabled.
+// KUBEAGENT_BURST only takes effect alongside KUBEAGENT_QPS, because with the
+// limiter disabled there is no bucket to size; left unset, client-go applies
+// its own default burst.
+func applyRateLimits(config *rest.Config) {
+	config.QPS = -1
+	if s := os.Getenv("KUBEAGENT_QPS"); s != "" {
+		if v, err := strconv.ParseFloat(s, 32); err == nil && v > 0 && !math.IsInf(v, 0) {
+			config.QPS = float32(v)
+		}
+	}
+	if s := os.Getenv("KUBEAGENT_BURST"); s != "" {
+		if v, err := strconv.Atoi(s); err == nil && v > 0 {
+			config.Burst = v
+		}
+	}
 }
 
 // NewInClusterOrKubeconfig builds a clientset from the in-cluster service-account
@@ -77,6 +118,7 @@ func restConfig(kubeconfigPath, contextName string) (*rest.Config, error) {
 // context) for local development.
 func NewInClusterOrKubeconfig(kubeconfigPath, contextName string) (*kubernetes.Clientset, error) {
 	if cfg, err := rest.InClusterConfig(); err == nil {
+		applyRateLimits(cfg) // this branch never reaches restConfig
 		return kubernetes.NewForConfig(cfg)
 	} else if err != rest.ErrNotInCluster {
 		return nil, fmt.Errorf("loading in-cluster config: %w", err)

@@ -9,6 +9,7 @@ import (
 	admissionv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	batchv1 "k8s.io/api/batch/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
@@ -26,54 +27,107 @@ import (
 	"github.com/imantaba/kubeagent/internal/nodehealth"
 )
 
+// Pods lists pods in the given namespace (or all namespaces when empty).
+// Read-only: a List call.
+func Pods(ctx context.Context, client kubernetes.Interface, namespace string) ([]corev1.Pod, error) {
+	list, err := client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("listing pods: %w", err)
+	}
+	return list.Items, nil
+}
+
+// Deployments lists Deployments in the given namespace (or all namespaces when
+// empty). Read-only: a List call.
+func Deployments(ctx context.Context, client kubernetes.Interface, namespace string) ([]appsv1.Deployment, error) {
+	list, err := client.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("listing deployments: %w", err)
+	}
+	return list.Items, nil
+}
+
+// ReplicaSets lists ReplicaSets in the given namespace (or all namespaces when
+// empty). Read-only: a List call.
+func ReplicaSets(ctx context.Context, client kubernetes.Interface, namespace string) ([]appsv1.ReplicaSet, error) {
+	list, err := client.AppsV1().ReplicaSets(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("listing replicasets: %w", err)
+	}
+	return list.Items, nil
+}
+
+// StatefulSets lists StatefulSets in the given namespace (or all namespaces when
+// empty). Read-only: a List call.
+func StatefulSets(ctx context.Context, client kubernetes.Interface, namespace string) ([]appsv1.StatefulSet, error) {
+	list, err := client.AppsV1().StatefulSets(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("listing statefulsets: %w", err)
+	}
+	return list.Items, nil
+}
+
+// DaemonSets lists DaemonSets in the given namespace (or all namespaces when
+// empty). Read-only: a List call. SystemDaemonSets is a different thing: it
+// lists kube-system only, regardless of the scan's namespace filter.
+func DaemonSets(ctx context.Context, client kubernetes.Interface, namespace string) ([]appsv1.DaemonSet, error) {
+	list, err := client.AppsV1().DaemonSets(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("listing daemonsets: %w", err)
+	}
+	return list.Items, nil
+}
+
+// Jobs lists Jobs in the given namespace (or all namespaces when empty).
+// Read-only: a List call.
+func Jobs(ctx context.Context, client kubernetes.Interface, namespace string) ([]batchv1.Job, error) {
+	list, err := client.BatchV1().Jobs(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("listing jobs: %w", err)
+	}
+	return list.Items, nil
+}
+
+// CronJobs lists CronJobs in the given namespace (or all namespaces when empty).
+// Read-only: a List call.
+func CronJobs(ctx context.Context, client kubernetes.Interface, namespace string) ([]batchv1.CronJob, error) {
+	list, err := client.BatchV1().CronJobs(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("listing cronjobs: %w", err)
+	}
+	return list.Items, nil
+}
+
 // CollectInventory lists pods and the controller kinds (Deployments, ReplicaSets,
 // StatefulSets, DaemonSets, Jobs, CronJobs) in the given namespace (or all
-// namespaces when empty). Read-only: List calls only.
+// namespaces when empty). Read-only: List calls only. It stops at the first
+// failure and returns what it had, the same as it always did; the scan calls the
+// seven functions directly so it can issue them together.
 func CollectInventory(ctx context.Context, client kubernetes.Interface, namespace string) (inventory.Inputs, error) {
 	var in inventory.Inputs
+	var err error
 
-	pods, err := client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return in, fmt.Errorf("listing pods: %w", err)
+	if in.Pods, err = Pods(ctx, client, namespace); err != nil {
+		return in, err
 	}
-	in.Pods = pods.Items
-
-	deploys, err := client.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return in, fmt.Errorf("listing deployments: %w", err)
+	if in.Deployments, err = Deployments(ctx, client, namespace); err != nil {
+		return in, err
 	}
-	in.Deployments = deploys.Items
-
-	rs, err := client.AppsV1().ReplicaSets(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return in, fmt.Errorf("listing replicasets: %w", err)
+	if in.ReplicaSets, err = ReplicaSets(ctx, client, namespace); err != nil {
+		return in, err
 	}
-	in.ReplicaSets = rs.Items
-
-	sts, err := client.AppsV1().StatefulSets(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return in, fmt.Errorf("listing statefulsets: %w", err)
+	if in.StatefulSets, err = StatefulSets(ctx, client, namespace); err != nil {
+		return in, err
 	}
-	in.StatefulSets = sts.Items
-
-	ds, err := client.AppsV1().DaemonSets(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return in, fmt.Errorf("listing daemonsets: %w", err)
+	if in.DaemonSets, err = DaemonSets(ctx, client, namespace); err != nil {
+		return in, err
 	}
-	in.DaemonSets = ds.Items
-
-	jobs, err := client.BatchV1().Jobs(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return in, fmt.Errorf("listing jobs: %w", err)
+	if in.Jobs, err = Jobs(ctx, client, namespace); err != nil {
+		return in, err
 	}
-	in.Jobs = jobs.Items
-
-	cronjobs, err := client.BatchV1().CronJobs(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return in, fmt.Errorf("listing cronjobs: %w", err)
+	if in.CronJobs, err = CronJobs(ctx, client, namespace); err != nil {
+		return in, err
 	}
-	in.CronJobs = cronjobs.Items
-
 	return in, nil
 }
 

@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"k8s.io/client-go/rest"
 )
 
 func TestResolveKubeconfig_PrefersExplicitPath(t *testing.T) {
@@ -123,5 +125,89 @@ func TestNewDynamicClients_UnknownContextIsAnError(t *testing.T) {
 func TestNewDynamicClients_BadPathReturnsError(t *testing.T) {
 	if _, _, err := NewDynamicClients("/nonexistent/kubeconfig", ""); err == nil {
 		t.Fatal("expected an error for a missing kubeconfig, got nil")
+	}
+}
+
+// client-go defaults every per-API-group client to a 5 QPS / burst 10 token
+// bucket. CoreV1 carries nearly every read a scan makes, so that default meters
+// the scan at 5 requests per second — measured at 2.42s versus 0.15s for the
+// same, byte-identical output. QPS -1 disables the limiter and leaves shedding
+// to the API server's Priority and Fairness.
+func TestRestConfigDisablesTheClientSideRateLimiter(t *testing.T) {
+	path := twoContextKubeconfig(t)
+	cfg, err := restConfig(path, "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.QPS != -1 {
+		t.Errorf("QPS = %v, want -1 (limiter disabled)", cfg.QPS)
+	}
+}
+
+func TestRestConfigHonoursKubeagentQPS(t *testing.T) {
+	t.Setenv("KUBEAGENT_QPS", "25")
+	path := twoContextKubeconfig(t)
+	cfg, err := restConfig(path, "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.QPS != 25 {
+		t.Errorf("QPS = %v, want 25", cfg.QPS)
+	}
+}
+
+func TestRestConfigHonoursKubeagentBurst(t *testing.T) {
+	t.Setenv("KUBEAGENT_QPS", "25")
+	t.Setenv("KUBEAGENT_BURST", "50")
+	path := twoContextKubeconfig(t)
+	cfg, err := restConfig(path, "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Burst != 50 {
+		t.Errorf("Burst = %v, want 50", cfg.Burst)
+	}
+}
+
+// A bad knob must degrade to a working scan, not to an error and not to the
+// throttled default.
+func TestRestConfigIgnoresAnUnusableQPSValue(t *testing.T) {
+	for _, v := range []string{"not-a-number", "0", "-5", "", "Inf", "+Inf", "Infinity"} {
+		t.Setenv("KUBEAGENT_QPS", v)
+		path := twoContextKubeconfig(t)
+		cfg, err := restConfig(path, "alpha")
+		if err != nil {
+			t.Fatalf("KUBEAGENT_QPS=%q: %v", v, err)
+		}
+		if cfg.QPS != -1 {
+			t.Errorf("KUBEAGENT_QPS=%q gave QPS = %v, want -1", v, cfg.QPS)
+		}
+	}
+}
+
+func TestRestConfigIgnoresAnUnusableBurstValue(t *testing.T) {
+	for _, v := range []string{"not-a-number", "0", "-5"} {
+		t.Setenv("KUBEAGENT_QPS", "25")
+		t.Setenv("KUBEAGENT_BURST", v)
+		path := twoContextKubeconfig(t)
+		cfg, err := restConfig(path, "alpha")
+		if err != nil {
+			t.Fatalf("KUBEAGENT_BURST=%q: %v", v, err)
+		}
+		if cfg.Burst != 0 {
+			t.Errorf("KUBEAGENT_BURST=%q gave Burst = %v, want 0 (client-go's own default)", v, cfg.Burst)
+		}
+	}
+}
+
+// The in-cluster branch of NewInClusterOrKubeconfig builds its config from
+// rest.InClusterConfig() and never reaches restConfig, so the limiter fix has to
+// live in a helper both call. This test guards the helper directly: if someone
+// inlines it back into restConfig, the daemon silently keeps the old limiter.
+func TestApplyRateLimitsDisablesTheLimiterOnAnyConfig(t *testing.T) {
+	cfg := &rest.Config{Host: "https://apiserver.example:6443"}
+	applyRateLimits(cfg)
+	if cfg.QPS != -1 {
+		t.Errorf("QPS = %v, want -1", cfg.QPS)
 	}
 }

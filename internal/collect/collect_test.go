@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -28,6 +29,78 @@ import (
 	"k8s.io/client-go/rest"
 	ktesting "k8s.io/client-go/testing"
 )
+
+// The seven list functions the scan's phase-1 pool calls. Each wraps its error
+// with the same text CollectInventory used, so an operator reading a failure
+// sees the same sentence they always did.
+func TestSingleListFunctionsWrapTheirErrors(t *testing.T) {
+	cases := []struct {
+		name     string
+		resource string
+		want     string
+		call     func(context.Context, kubernetes.Interface) error
+	}{
+		{"Pods", "pods", "listing pods: ", func(ctx context.Context, c kubernetes.Interface) error {
+			_, err := Pods(ctx, c, "")
+			return err
+		}},
+		{"Deployments", "deployments", "listing deployments: ", func(ctx context.Context, c kubernetes.Interface) error {
+			_, err := Deployments(ctx, c, "")
+			return err
+		}},
+		{"ReplicaSets", "replicasets", "listing replicasets: ", func(ctx context.Context, c kubernetes.Interface) error {
+			_, err := ReplicaSets(ctx, c, "")
+			return err
+		}},
+		{"StatefulSets", "statefulsets", "listing statefulsets: ", func(ctx context.Context, c kubernetes.Interface) error {
+			_, err := StatefulSets(ctx, c, "")
+			return err
+		}},
+		{"DaemonSets", "daemonsets", "listing daemonsets: ", func(ctx context.Context, c kubernetes.Interface) error {
+			_, err := DaemonSets(ctx, c, "")
+			return err
+		}},
+		{"Jobs", "jobs", "listing jobs: ", func(ctx context.Context, c kubernetes.Interface) error {
+			_, err := Jobs(ctx, c, "")
+			return err
+		}},
+		{"CronJobs", "cronjobs", "listing cronjobs: ", func(ctx context.Context, c kubernetes.Interface) error {
+			_, err := CronJobs(ctx, c, "")
+			return err
+		}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := fake.NewSimpleClientset()
+			client.PrependReactor("list", tc.resource, func(ktesting.Action) (bool, runtime.Object, error) {
+				return true, nil, errors.New("boom")
+			})
+			err := tc.call(context.Background(), client)
+			if err == nil {
+				t.Fatalf("%s returned no error, want one", tc.name)
+			}
+			if !strings.HasPrefix(err.Error(), tc.want) {
+				t.Errorf("%s error = %q, want prefix %q", tc.name, err.Error(), tc.want)
+			}
+		})
+	}
+}
+
+// The namespace argument still scopes the list.
+func TestSingleListFunctionsHonourTheNamespaceFilter(t *testing.T) {
+	client := fake.NewSimpleClientset(
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "a"}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "other", Name: "b"}},
+	)
+	pods, err := Pods(context.Background(), client, "shop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pods) != 1 || pods[0].Name != "a" {
+		t.Errorf("Pods(ns=shop) = %d pods %v, want just shop/a", len(pods), pods)
+	}
+}
 
 func TestCollectInventory_ListsControllersAndPods(t *testing.T) {
 	client := fake.NewSimpleClientset(

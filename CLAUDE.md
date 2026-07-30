@@ -72,6 +72,21 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   dependency graph: `Render` takes an `io.Writer` and a value, holds no client
   and no context, and never reads `RemediationPlan`. It must still never import
   `internal/remediate`, `internal/explain` or `internal/investigate` directly.
+- **Untrusted API text is sanitized at ingress, not at each renderer.** Every
+  value read from a field the API server does not validate — `waiting.Message`,
+  `terminated.Reason`, condition and event messages, `involvedObject.fieldPath`,
+  container log text, an X.509 subject or SAN, a `/readyz` check name — passes
+  through `internal/safetext.Line` at the point it first enters a kubeagent
+  value. Renderers then print what they are given. Adding a new renderer must
+  never mean adding a new sanitizer, and a new detector that reads an
+  unvalidated field must sanitize it there. Matching decisions
+  (`strings.Contains`, a regexp) run on the **raw** value: sanitizing before
+  matching would let a control character spliced mid-word evade a signature.
+- **`internal/fuzzgen` is test-only.** It imports `testing`, so no non-test file
+  may import it — every kubeagent binary would otherwise carry the testing
+  package's flag registrations. `TestNoProductionImport` enforces this by walking
+  the repository with `go/parser`. Like `internal/safetext`, it must never import
+  `internal/remediate` or `internal/explain`.
 
 ## Commit conventions
 

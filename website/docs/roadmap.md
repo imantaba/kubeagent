@@ -459,8 +459,14 @@ These are the north star; every item below is measured against them.
   byte-reproducible archives — see [Verifying a release](verify.md));
   **per-feature least-privilege RBAC** (shipped: `kubeagent rbac print` and
   `kubeagent rbac check`, and every RBAC manifest generated from one feature
-  table — see [Least-privilege RBAC](features/rbac.md)). Fuzzed detectors
-  remain ahead.
+  table — see [Least-privilege RBAC](features/rbac.md)); **fuzzed detectors**
+  (shipped: native Go fuzzing — `internal/fuzzgen` builds Kubernetes objects
+  from arbitrary bytes, and seven `go test -fuzz` targets covering the
+  detectors, the log classifier, the redactor and the DNS/readyz/certificate
+  parsers run nightly and replay their seed corpora on every pull request).
+  The campaign found unsanitized API text reaching a terminal at eight
+  ingress points and a non-finite-float integer overflow in the DNS health
+  parser; both are fixed. The v1.0 production contract remains ahead.
 
 ### Milestones
 

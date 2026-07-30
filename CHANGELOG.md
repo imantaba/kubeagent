@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Native fuzzing across the detectors and the advisory parsers: seven `go test
+  -fuzz` targets assert that no Kubernetes object or endpoint response can panic
+  a scan, that the detector set stays pure and deterministic, and that no raw
+  byte from the cluster reaches a terminal. Seed corpora replay on a plain `go
+  test`, so a regression fails a pull request without any fuzzing budget; a real
+  campaign runs nightly in `.github/workflows/fuzz.yml`. Objects come from the
+  test-only `internal/fuzzgen`, which draws DNS-1123 alphabets for the fields the
+  API server validates and hostile bytes for the fields it does not.
+- `internal/safetext`: one sanitizer (`Line`) for text arriving from unvalidated
+  API fields — bounds it to 512 runes and removes control characters, Unicode
+  formatting characters (U+202E and friends, which `unicode.IsControl` does not
+  catch) and invalid UTF-8.
+
+### Fixed
+
+- Text from fields the Kubernetes API server does not validate reached an
+  operator's terminal unfiltered at eight ingress points: `waiting.Message`,
+  `terminated.Reason`, `PodScheduled` and event messages, the container name
+  parsed out of an event field path, a crashed container's log excerpt, and the
+  dependency address spliced into a `connection refused` cause. The log tail is
+  the one an unprivileged attacker controls outright, and it carried the same
+  ANSI escapes kubeagent's own TUI uses to switch screens. All eight now pass
+  through `safetext.Line`.
+- `dnshealth`: `strconv.ParseFloat` accepts `"NaN"`, `"+Inf"` and `"-Inf"`
+  without error, and converting a non-finite or out-of-range float to `int64` is
+  implementation-defined — it yields `math.MinInt64` on amd64. A CoreDNS
+  exporter reporting any of them turned a DNS response count negative and
+  dragged the error ratio with it. Non-finite and negative samples are dropped,
+  large ones clamped, and every accumulation saturates instead of wrapping.
+- `controlplane`: the failing `/readyz` check names were tokens lifted from an
+  HTTP body no schema constrains, printed unfiltered, with no count bound. They
+  are now sanitized and capped at 20.
+- `certhealth`: a certificate's `CommonName` and DNS SANs are chosen by whoever
+  creates the `kubernetes.io/tls` Secret, and X.509 string types do not exclude
+  control characters. Both are sanitized before they reach a report.
+- `collect`: the kubelet `/healthz`, CoreDNS `/metrics` and apiserver `/readyz`
+  reads handed an unbounded body straight to a parser. Parsed input is now capped
+  at 1 MiB. This bounds the parsers, not the transfer: client-go's `Raw()`
+  returns a body it has already read in full and gives no access to the
+  underlying reader.
+
 ## [0.69.0] - 2026-07-29
 
 ### Added

@@ -1,0 +1,65 @@
+name: fuzz
+
+# Fuzzing is a search, not a check: it belongs on a schedule, not on every push.
+# The seed corpus of every target replays on the normal `go test ./...` in CI, so
+# a regression a past campaign found still fails a pull request immediately.
+#
+# `go test -fuzz` accepts exactly one target and one package per invocation,
+# which is why this is a matrix of (package, target) pairs rather than one job.
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      fuzztime:
+        description: 'Budget per target, as a Go duration (e.g. 120s, 10m)'
+        required: false
+        default: '120s'
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - package: ./internal/diagnose
+            target: FuzzDetectors
+          - package: ./internal/logscan
+            target: FuzzClassify
+          - package: ./internal/redact
+            target: FuzzRedactURL
+          - package: ./internal/redact
+            target: FuzzRedactError
+          - package: ./internal/dnshealth
+            target: FuzzParseResponses
+          - package: ./internal/controlplane
+            target: FuzzParseReadyz
+          - package: ./internal/certhealth
+            target: FuzzCertAssess
+    name: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Fuzz ${{ matrix.target }}
+        run: |
+          go test ${{ matrix.package }} \
+            -run '^$' \
+            -fuzz '^${{ matrix.target }}$' \
+            -fuzztime '${{ inputs.fuzztime || '120s' }}'
+
+      - name: Upload any crasher
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crashers-${{ matrix.target }}
+          path: internal/**/testdata/fuzz/**
+          if-no-files-found: ignore

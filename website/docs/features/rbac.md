@@ -92,17 +92,23 @@ The same check, as JSON:
 kubeagent rbac check --features core,certs,logs,diskusage --output json
 ```
 
-Each object is shown on one line here for reading; the real output is indented
-one field per line.
+Each feature object is shown on one line here for reading; the real output is
+indented one field per line.
 
 ```json
-[
-  { "name": "core", "summary": "the inventory every command reads: pods, nodes, workloads, events, services, PVCs and the rest", "allowed": true },
-  { "name": "certs", "flag": "--certs", "summary": "TLS certificate expiry, read from the public tls.crt of kubernetes.io/tls Secrets", "allowed": false, "missing": ["list secrets"] },
-  { "name": "logs", "flag": "--logs", "summary": "the last lines of a crashed container's previous log, to name the cause", "allowed": false, "missing": ["get pods/log"] },
-  { "name": "diskusage", "flag": "--disk-usage", "summary": "node filesystem and inode pressure, read from the kubelet summary API", "allowed": false, "missing": ["get nodes/proxy"] }
-]
+{
+  "schemaVersion": "1.0",
+  "features": [
+    { "name": "core", "summary": "the inventory every command reads: pods, nodes, workloads, events, services, PVCs and the rest", "allowed": true },
+    { "name": "certs", "flag": "--certs", "summary": "TLS certificate expiry, read from the public tls.crt of kubernetes.io/tls Secrets", "allowed": false, "missing": ["list secrets"] },
+    { "name": "logs", "flag": "--logs", "summary": "the last lines of a crashed container's previous log, to name the cause", "allowed": false, "missing": ["get pods/log"] },
+    { "name": "diskusage", "flag": "--disk-usage", "summary": "node filesystem and inode pressure, read from the kubelet summary API", "allowed": false, "missing": ["get nodes/proxy"] }
+  ]
+}
 ```
+
+`rbac print --output json` wraps the same way — `{"schemaVersion": "1.0",
+"roleName": "…", "rules": […]}` — instead of a bare `Rule` array.
 
 Every `missing` entry is phrased by kubeagent from its own table — `Action.String()`
 in `internal/rbacprofile` — never from the API server's own denial message,

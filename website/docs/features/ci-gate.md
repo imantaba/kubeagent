@@ -170,6 +170,7 @@ kubeagent gate --context kind-kubeagent-gate -n demo --output json
 
 ```json
 {
+  "schemaVersion": "1.0",
   "verdict": "fail",
   "exitCode": 1,
   "failOn": "critical",

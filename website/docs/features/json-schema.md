@@ -106,12 +106,23 @@ existing just because kubeagent moved on.
 ## Validating a captured document offline
 
 Any generally available JSON Schema validator works. For example, with
-[`check-jsonschema`](https://check-jsonschema.readthedocs.io/):
+[`check-jsonschema`](https://check-jsonschema.readthedocs.io/), which accepts
+`--schemafile` as either a local path or a URL:
 
 ```bash
 pip install check-jsonschema
 
 kubeagent scan --output json > captured.json
+
+# local: the schema committed in this repo, or printed fresh by the binary —
+# `kubeagent schema scan` writes the same bytes as the committed file
+# (TestSchemaDrift in internal/schemadoc enforces that), so either works
+# without a network call:
+check-jsonschema --schemafile website/docs/schemas/scan-v1.json captured.json
+kubeagent schema scan > scan-v1.json
+check-jsonschema --schemafile scan-v1.json captured.json
+
+# remote: the published URL, once this site has deployed the schema at it:
 check-jsonschema --schemafile https://k8sproject.top/schemas/scan-v1.json captured.json
 ```
 

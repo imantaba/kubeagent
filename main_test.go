@@ -30,12 +30,15 @@ import (
 	"github.com/imantaba/kubeagent/internal/gate"
 	"github.com/imantaba/kubeagent/internal/hpahealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/jsonschema"
 	"github.com/imantaba/kubeagent/internal/pdbhealth"
 	"github.com/imantaba/kubeagent/internal/quotahealth"
+	"github.com/imantaba/kubeagent/internal/rbacprofile"
 	"github.com/imantaba/kubeagent/internal/remediate"
 	"github.com/imantaba/kubeagent/internal/report"
 	"github.com/imantaba/kubeagent/internal/rolloutwait"
 	"github.com/imantaba/kubeagent/internal/scan"
+	"github.com/imantaba/kubeagent/internal/schemadoc"
 	"github.com/imantaba/kubeagent/internal/termhealth"
 	"github.com/imantaba/kubeagent/internal/watch"
 	"github.com/imantaba/kubeagent/internal/webhookhealth"
@@ -2267,5 +2270,102 @@ func TestAdvisoryBlindSpotsNamesEachDegradedSubject(t *testing.T) {
 func TestSelectedFeaturesRejectsAnUnknownFeature(t *testing.T) {
 	if _, err := selectedFeatures("scan", "bogus"); err == nil {
 		t.Fatal("selectedFeatures accepted an unknown feature name")
+	}
+}
+
+func TestRunRBACPrintJSONIsAVersionedObject(t *testing.T) {
+	out := captureStdout(t, func() {
+		if err := runRBACPrint([]string{"--output", "json"}); err != nil {
+			t.Fatalf("runRBACPrint: %v", err)
+		}
+	})
+	var doc rbacprofile.RulesDocument
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("output is not a RulesDocument: %v\n%s", err, out)
+	}
+	if doc.SchemaVersion != jsonschema.RBACVersion {
+		t.Errorf("schemaVersion = %q, want %q", doc.SchemaVersion, jsonschema.RBACVersion)
+	}
+	if doc.RoleName != "kubeagent" {
+		t.Errorf("roleName = %q, want the --role-name default", doc.RoleName)
+	}
+	if len(doc.Rules) == 0 {
+		t.Error("rules is empty; the scan profile resolves to at least one rule")
+	}
+}
+
+func TestRunSchema_ListsEveryDocument(t *testing.T) {
+	var out bytes.Buffer
+	if err := runSchema(nil, &out); err != nil {
+		t.Fatalf("runSchema: %v", err)
+	}
+	for _, d := range schemadoc.Documents {
+		if !strings.Contains(out.String(), d.Name) {
+			t.Errorf("listing does not mention %q:\n%s", d.Name, out.String())
+		}
+	}
+	if !strings.Contains(out.String(), invokedAs+" schema") {
+		t.Errorf("listing does not show how to print one:\n%s", out.String())
+	}
+}
+
+func TestRunSchema_PrintsAValidDocument(t *testing.T) {
+	var out bytes.Buffer
+	if err := runSchema([]string{"scan"}, &out); err != nil {
+		t.Fatalf("runSchema: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	if got, _ := doc["$id"].(string); !strings.HasSuffix(got, "scan-v1.json") {
+		t.Errorf("$id = %q, want it to end in scan-v1.json", got)
+	}
+}
+
+// What the binary prints must be what the binary's types are: the committed
+// file and the runtime output come from one code path, and this proves it.
+func TestRunSchema_MatchesTheCommittedFile(t *testing.T) {
+	var out bytes.Buffer
+	if err := runSchema([]string{"gate"}, &out); err != nil {
+		t.Fatalf("runSchema: %v", err)
+	}
+	want, err := os.ReadFile(filepath.Join("website", "docs", "schemas", "gate-v1.json"))
+	if err != nil {
+		t.Fatalf("read the committed file: %v", err)
+	}
+	if !bytes.Equal(out.Bytes(), want) {
+		t.Error("`schema gate` does not match website/docs/schemas/gate-v1.json")
+	}
+}
+
+func TestRunSchema_UnknownNameNamesTheValidOnes(t *testing.T) {
+	err := runSchema([]string{"nope"}, io.Discard)
+	if err == nil {
+		t.Fatal("want an error for an unknown document name")
+	}
+	if !strings.Contains(err.Error(), "scan") {
+		t.Errorf("error %q does not name the valid documents", err)
+	}
+}
+
+func TestRunSchema_RejectsExtraArguments(t *testing.T) {
+	if err := runSchema([]string{"scan", "gate"}, io.Discard); err == nil {
+		t.Fatal("want a usage error for two document names")
+	}
+}
+
+// The command reads Go types: no kubeconfig, no cluster, no LLM call.
+func TestRun_SchemaNeedsNoKubeconfig(t *testing.T) {
+	t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "does-not-exist"))
+	if err := run([]string{"schema", "scan"}); err != nil {
+		t.Errorf("schema must not need a cluster: %v", err)
+	}
+}
+
+func TestRun_UsageMentionsSchemaCommand(t *testing.T) {
+	err := run(nil)
+	if err == nil || !strings.Contains(err.Error(), "schema") {
+		t.Errorf("usage does not mention the schema command: %v", err)
 	}
 }

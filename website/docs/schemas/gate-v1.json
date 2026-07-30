@@ -1,0 +1,134 @@
+{
+  "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+  "$defs": {
+    "findings.Finding": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "issue": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "level": {
+          "enum": [
+            "info",
+            "warning",
+            "critical"
+          ],
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "issue",
+        "kind",
+        "level",
+        "name",
+        "namespace",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "gate.Blindspot": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "resource": {
+          "type": "string"
+        },
+        "waived": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "reason",
+        "resource",
+        "waived"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://k8sproject.top/schemas/gate-v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The document written by `kubeagent gate --output json`: the verdict, its exit code, the failing and reported findings, and the reads that were refused.",
+  "properties": {
+    "detail": {
+      "type": "string"
+    },
+    "exitCode": {
+      "type": "integer"
+    },
+    "failOn": {
+      "enum": [
+        "info",
+        "warning",
+        "critical"
+      ],
+      "type": "string"
+    },
+    "failing": {
+      "items": {
+        "$ref": "#/$defs/findings.Finding"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "inconclusive": {
+      "items": {
+        "$ref": "#/$defs/gate.Blindspot"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "reported": {
+      "items": {
+        "$ref": "#/$defs/findings.Finding"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "schemaVersion": {
+      "description": "This document's schema version, MAJOR.MINOR. Treat an unknown MINOR as compatible.",
+      "pattern": "^1\\.[0-9]+$",
+      "type": "string"
+    },
+    "scope": {
+      "type": "string"
+    },
+    "verdict": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "exitCode",
+    "failOn",
+    "failing",
+    "inconclusive",
+    "reported",
+    "schemaVersion",
+    "scope",
+    "verdict"
+  ],
+  "title": "kubeagent gate verdict",
+  "type": "object"
+}

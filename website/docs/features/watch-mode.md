@@ -134,8 +134,17 @@ curl -s localhost:8080/issues | jq .
 
 ```json
 {
+  "schemaVersion": "1.0",
+  "clusters": [
+    {
+      "name": "local",
+      "up": true,
+      "lastScan": "2026-07-25T10:16:12Z"
+    }
+  ],
   "active": [
     {
+      "cluster": "local",
       "kind": "Deployment",
       "namespace": "shop",
       "name": "web",
@@ -150,6 +159,7 @@ curl -s localhost:8080/issues | jq .
   ],
   "resolved": [
     {
+      "cluster": "local",
       "kind": "Service",
       "namespace": "shop",
       "name": "api-svc",
@@ -174,18 +184,25 @@ curl -s localhost:8080/issues | jq .
 }
 ```
 
-Fields: `kind` / `namespace` / `name` / `issue` identify the tracked instance
-(`namespace` is omitted entirely for a cluster-scoped issue, e.g. `Node`);
-`firstSeen` is the first time this key was ever observed; `firingSince` is
-when the *current* firing started (a re-fire after resolving moves this
-forward, `firstSeen` does not); `lastSeen` is the last reconcile that observed
-it; `firings` counts inactive→active transitions; `flapping` is whether it has
-crossed the flap threshold. `ageSeconds` (seconds since `firingSince`) appears
-only on records in `active`; `resolvedAt` and `resolutionSeconds` appear only
-on records in `resolved`. `stats` mirrors the six counter metrics above
+Fields: `clusters` is the roster of every watched cluster (`name`, `up`,
+`lastScan`, and `error` when unreachable — see
+[Watching several clusters](#watching-several-clusters)). Each record's own
+`cluster` field ties it back to one of those roster entries. `kind` /
+`namespace` / `name` / `issue` identify the tracked instance (`namespace` is
+omitted entirely for a cluster-scoped issue, e.g. `Node`); `firstSeen` is the
+first time this key was ever observed; `firingSince` is when the *current*
+firing started (a re-fire after resolving moves this forward, `firstSeen`
+does not); `lastSeen` is the last reconcile that observed it; `firings`
+counts inactive→active transitions; `flapping` is whether it has crossed the
+flap threshold. `ageSeconds` (seconds since `firingSince`) appears only on
+records in `active`; `resolvedAt` and `resolutionSeconds` appear only on
+records in `resolved`. `stats` mirrors the six counter metrics above
 (`newTotal`, `resolvedTotal`, `flapTotal`, `droppedTotal`,
 `resolutionSecondsSum`, `resolutionSecondsCount`). Both `active` and
 `resolved` are `[]`, never `null`, when there is nothing to report.
+
+The shape of this document, and of `/explanations` below, is versioned; see
+[JSON schema contract](json-schema.md).
 
 ### Limits and restart semantics
 

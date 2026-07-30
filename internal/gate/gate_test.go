@@ -1,11 +1,14 @@
 package gate
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/findings"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/jsonschema"
 	"github.com/imantaba/kubeagent/internal/scan"
 )
 
@@ -228,5 +231,19 @@ func TestDecideNeverReturnsNilSlices(t *testing.T) {
 	v := Decide(scan.Result{}, Options{FailOn: findings.Critical})
 	if v.Failing == nil || v.Reported == nil || v.Inconclusive == nil {
 		t.Fatalf("nil slice in verdict: %+v — --output json must emit [] not null", v)
+	}
+}
+
+func TestDecideStampsTheSchemaVersion(t *testing.T) {
+	v := Decide(scan.Result{}, Options{FailOn: findings.Critical})
+	if v.SchemaVersion != jsonschema.GateVersion {
+		t.Errorf("SchemaVersion = %q, want %q", v.SchemaVersion, jsonschema.GateVersion)
+	}
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if !strings.Contains(string(raw), `"schemaVersion":"`+jsonschema.GateVersion+`"`) {
+		t.Errorf("verdict JSON has no schemaVersion:\n%s", raw)
 	}
 }

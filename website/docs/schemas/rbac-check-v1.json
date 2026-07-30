@@ -1,0 +1,59 @@
+{
+  "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+  "$defs": {
+    "rbacprofile.FeatureStatus": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "allowed": {
+          "type": "boolean"
+        },
+        "flag": {
+          "type": "string"
+        },
+        "missing": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "name": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "allowed",
+        "name",
+        "summary"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://k8sproject.top/schemas/rbac-check-v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The document written by `kubeagent rbac check --output json`: per feature, whether the current identity may run it and which actions it lacks.",
+  "properties": {
+    "features": {
+      "items": {
+        "$ref": "#/$defs/rbacprofile.FeatureStatus"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "schemaVersion": {
+      "description": "This document's schema version, MAJOR.MINOR. Treat an unknown MINOR as compatible.",
+      "pattern": "^1\\.[0-9]+$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "features",
+    "schemaVersion"
+  ],
+  "title": "kubeagent RBAC check",
+  "type": "object"
+}

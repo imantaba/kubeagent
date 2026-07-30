@@ -170,6 +170,7 @@ kubeagent gate --context kind-kubeagent-gate -n demo --output json
 
 ```json
 {
+  "schemaVersion": "1.0",
   "verdict": "fail",
   "exitCode": 1,
   "failOn": "critical",
@@ -196,6 +197,9 @@ reads `verdict`, and neither has to derive the other. `failing` only ever
 holds findings that decided this exit code; `reported` holds everything else
 kubeagent saw (out of scope, or below `--fail-on`); `inconclusive` lists any
 blind spot, waived or not.
+
+The shape of this document is versioned; see
+[JSON schema contract](json-schema.md).
 
 ## SARIF
 

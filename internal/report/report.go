@@ -20,6 +20,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/hpahealth"
 	"github.com/imantaba/kubeagent/internal/ingresshealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/jsonschema"
 	"github.com/imantaba/kubeagent/internal/nodehealth"
 	"github.com/imantaba/kubeagent/internal/nodereserve"
 	"github.com/imantaba/kubeagent/internal/operators"
@@ -38,8 +39,11 @@ import (
 	"github.com/imantaba/kubeagent/internal/webhookhealth"
 )
 
-// inventoryReport is the JSON shape for the workload inventory.
-type inventoryReport struct {
+// ScanReport is the JSON document written by `kubeagent scan --output json`. It
+// is exported because internal/schemadoc has to name it to generate its
+// published schema; nothing outside this package constructs one.
+type ScanReport struct {
+	SchemaVersion      string                      `json:"schemaVersion"`
 	Cluster            clusterhealth.ClusterHealth `json:"cluster"`
 	Workloads          []inventory.Workload        `json:"workloads"`
 	Resources          *resources.Summary          `json:"resources,omitempty"`
@@ -66,27 +70,27 @@ type inventoryReport struct {
 	QuotaIssues        []quotahealth.Issue         `json:"quotaIssues,omitempty"`
 	BlindSpots         []scan.ReadFailure          `json:"blindSpots,omitempty"`
 	Explanation        string                      `json:"explanation,omitempty"`
-	Investigation      *investigationView          `json:"investigation,omitempty"`
-	RemediationPlan    []remediationActionView     `json:"remediationPlan,omitempty"`
+	Investigation      *InvestigationView          `json:"investigation,omitempty"`
+	RemediationPlan    []RemediationActionView     `json:"remediationPlan,omitempty"`
 }
 
-type investigationView struct {
+type InvestigationView struct {
 	Consulted []string `json:"consulted,omitempty"`
 	Narrative string   `json:"narrative"`
 }
 
 // investigationOf builds the JSON view, or nil when no investigation ran.
-func investigationOf(in Input) *investigationView {
+func investigationOf(in Input) *InvestigationView {
 	if in.Investigation == "" {
 		return nil
 	}
-	return &investigationView{Consulted: in.InvestigationConsulted, Narrative: in.Investigation}
+	return &InvestigationView{Consulted: in.InvestigationConsulted, Narrative: in.Investigation}
 }
 
-// remediationActionView is the JSON shape of one proposed --fix action. Status is
+// RemediationActionView is the JSON shape of one proposed --fix action. Status is
 // always "proposed" in this slice; apply outcomes become durable in the audit-log
 // slice.
-type remediationActionView struct {
+type RemediationActionView struct {
 	Kind              string             `json:"kind"`
 	Target            string             `json:"target"`
 	Summary           string             `json:"summary"`
@@ -96,13 +100,13 @@ type remediationActionView struct {
 	Status            string             `json:"status"`
 }
 
-func remediationPlanOf(in Input) []remediationActionView {
+func remediationPlanOf(in Input) []RemediationActionView {
 	if len(in.RemediationPlan) == 0 {
 		return nil
 	}
-	out := make([]remediationActionView, len(in.RemediationPlan))
+	out := make([]RemediationActionView, len(in.RemediationPlan))
 	for i, a := range in.RemediationPlan {
-		out[i] = remediationActionView{
+		out[i] = RemediationActionView{
 			Kind: a.Kind, Target: a.Target, Summary: a.Summary, Reason: a.Reason,
 			KubectlEquivalent: a.KubectlEquivalent, Changes: a.Changes, Status: "proposed",
 		}
@@ -138,7 +142,7 @@ type Input struct {
 	GitOps *gitops.Report
 	// Capacity is the advisory headroom and right-sizing view (opt-in --capacity).
 	// Nil when the flag is off, so a default scan's output is unchanged. No json
-	// tag: Input is never marshalled — the encoded struct is inventoryReport.
+	// tag: Input is never marshalled — the encoded struct is ScanReport.
 	Capacity         *capacity.Report
 	StuckTerminating []termhealth.Issue
 	PDBIssues        []pdbhealth.Issue
@@ -163,7 +167,8 @@ func PrintInventory(in Input, format string, w io.Writer) error {
 	case "json":
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
-		return enc.Encode(inventoryReport{
+		return enc.Encode(ScanReport{
+			SchemaVersion:      jsonschema.ScanVersion,
 			Cluster:            in.Cluster,
 			Workloads:          in.Result.Workloads,
 			Resources:          in.Resources,

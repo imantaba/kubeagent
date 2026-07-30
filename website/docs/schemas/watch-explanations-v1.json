@@ -1,0 +1,107 @@
+{
+  "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+  "$defs": {
+    "watch.ExplainStatsView": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "allowedTotal": {
+          "type": "integer"
+        },
+        "budgetRemaining": {
+          "type": "number"
+        },
+        "droppedTotal": {
+          "type": "integer"
+        },
+        "failedTotal": {
+          "type": "integer"
+        },
+        "throttledTotal": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "allowedTotal",
+        "budgetRemaining",
+        "droppedTotal",
+        "failedTotal",
+        "throttledTotal"
+      ],
+      "type": "object"
+    },
+    "watch.ExplanationView": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "cluster": {
+          "type": "string"
+        },
+        "explainedAt": {
+          "type": "string"
+        },
+        "issues": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "kind": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "cluster",
+        "explainedAt",
+        "issues",
+        "kind",
+        "model",
+        "name",
+        "text"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://k8sproject.top/schemas/watch-explanations-v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The document served by the watch daemon's GET /explanations: the latest model explanation per object, and the explain budget's totals.",
+  "properties": {
+    "explanations": {
+      "items": {
+        "$ref": "#/$defs/watch.ExplanationView"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "schemaVersion": {
+      "description": "This document's schema version, MAJOR.MINOR. Treat an unknown MINOR as compatible.",
+      "pattern": "^1\\.[0-9]+$",
+      "type": "string"
+    },
+    "stats": {
+      "$ref": "#/$defs/watch.ExplainStatsView"
+    }
+  },
+  "required": [
+    "explanations",
+    "schemaVersion",
+    "stats"
+  ],
+  "title": "kubeagent watch explanations",
+  "type": "object"
+}

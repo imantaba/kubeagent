@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Versioned JSON output** — every machine-readable document now declares a
+  `schemaVersion` (`scan`, `gate`, `rbac print`, `rbac check`, and the watch
+  daemon's `/issues` and `/explanations`), and each surface's JSON Schema is
+  generated from the Go types and published at
+  `https://k8sproject.top/schemas/<name>-v1.json`. A drift test fails when a
+  document's shape moves without a version bump, and says whether the change was
+  additive or breaking. See
+  [the JSON schema contract](https://k8sproject.top/features/json-schema/).
+- **`kubeagent schema [name]`** — print the schema of any output document, or
+  list them. Generated at runtime from the running binary's own types; needs no
+  cluster and no kubeconfig.
+
+### Changed
+
+- **Breaking: `rbac print --output json` and `rbac check --output json` now emit
+  an object, not a bare array.** An array root cannot carry a version field, so
+  the rules moved under `rules` (alongside `roleName`) and the feature statuses
+  under `features`, each beside a `schemaVersion`. Taken deliberately before
+  1.0: an unversioned array root could never gain a version later without
+  exactly this break. Recover the old shape with
+  `jq '.rules'` or `jq '.features'`.
+
 ## [0.70.0] - 2026-07-30
 
 ### Added

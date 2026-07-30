@@ -108,6 +108,9 @@ Every `missing` entry is phrased by kubeagent from its own table — `Action.Str
 in `internal/rbacprofile` — never from the API server's own denial message,
 which can embed the requesting identity (see the note below).
 
+The shape of both `rbac print --output json` and `rbac check --output json`
+is versioned; see [JSON schema contract](json-schema.md).
+
 ## The feature table
 
 Every feature kubeagent ships, what flag turns it on, and exactly what it

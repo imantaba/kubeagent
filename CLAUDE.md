@@ -87,6 +87,21 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   package's flag registrations. `TestNoProductionImport` enforces this by walking
   the repository with `go/parser`. Like `internal/safetext`, it must never import
   `internal/remediate` or `internal/explain`.
+- **`internal/jsonschema` imports nothing from kubeagent** — it is the schema
+  generator, importable by every surface package including the ones that may not
+  import `internal/remediate` or `internal/explain`. `internal/schemadoc` is the
+  opposite case and deliberately so: it imports the four surface packages to
+  name the six document roots, so it transitively reaches `remediate` and
+  `explain`. That is allowed — the invariants constrain what those packages
+  import, not who imports them — and only `main.go` and `schemadoc`'s own tests
+  import it. It holds no client and no context and makes no call.
+- **The six JSON documents are a versioned contract.** Changing a field name, a
+  type, or an enum value in `report.ScanReport`, `gate.Verdict`,
+  `rbacprofile.RulesDocument`, `rbacprofile.CheckDocument`,
+  `watch.IssuesReport` or `watch.ExplanationsReport` means bumping the surface's
+  version in `internal/jsonschema` and regenerating with
+  `go test ./internal/schemadoc -run TestSchemaDrift -update`. The drift test
+  says whether the change was additive (MINOR) or breaking (MAJOR).
 
 ## Commit conventions
 
@@ -166,5 +181,14 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   replay on a plain `go test`, and a real campaign runs nightly in
   `.github/workflows/fuzz.yml`. The campaign closed nine unsanitized ingress
   points, a non-finite-float integer overflow in the DNS health parser, an
-  unbounded `/readyz` check list, and three uncapped proxied reads. The rest of
-  Theme H — the v1.0 production contract — remains ahead.
+  unbounded `/readyz` check list, and three uncapped proxied reads. Slice 4 —
+  versioned JSON schema — has shipped: `scan`, `gate`, `rbac print`,
+  `rbac check`, and the watch daemon's `/issues` and `/explanations` all
+  declare a `schemaVersion`; `internal/jsonschema` generates each surface's
+  schema by reflection over its Go types and `internal/schemadoc` publishes it
+  under `website/docs/schemas/`, `kubeagent schema [name]` prints any of them
+  from the running binary with no cluster and no kubeconfig, and
+  `TestSchemaDrift` fails a shape change that moves without a version bump,
+  naming it additive or breaking
+  ([website/docs/features/json-schema.md](website/docs/features/json-schema.md)).
+  The rest of Theme H — the v1.0 production contract — remains ahead.

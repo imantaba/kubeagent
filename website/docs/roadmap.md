@@ -466,7 +466,17 @@ These are the north star; every item below is measured against them.
   parsers run nightly and replay their seed corpora on every pull request).
   The campaign found unsanitized API text reaching a terminal at nine
   ingress points and a non-finite-float integer overflow in the DNS health
-  parser; both are fixed. The v1.0 production contract remains ahead.
+  parser; both are fixed. **Versioned JSON schema** — shipped: every
+  machine-readable document (`scan`, `gate`, `rbac print`, `rbac check`, and
+  the watch daemon's `/issues` and `/explanations`) now declares a
+  `schemaVersion`, each surface's schema is generated from its Go types and
+  published at `https://k8sproject.top/schemas/<name>-v1.json`, the
+  `kubeagent schema [name]` command prints any of them from the running
+  binary with no cluster and no kubeconfig, and a drift test
+  (`internal/schemadoc`) fails a shape change that moves without a version
+  bump, naming it additive or breaking — see
+  [JSON schema contract](features/json-schema.md). The v1.0 production
+  contract remains ahead.
 
 ### Milestones
 

@@ -51,7 +51,12 @@ See [Install](install.md) for prebuilt binaries and the in-cluster daemon.
 
 # pick a context and scope to one namespace, emit JSON
 ./kubeagent scan --context my-cluster -n my-namespace --output json
+```
 
+The shape of this document — and of kubeagent's other machine-readable
+outputs — is versioned; see the [JSON schema contract](features/json-schema.md).
+
+```bash
 # point at a specific kubeconfig file
 ./kubeagent scan --kubeconfig /path/to/config
 

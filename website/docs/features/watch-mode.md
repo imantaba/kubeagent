@@ -187,6 +187,9 @@ on records in `resolved`. `stats` mirrors the six counter metrics above
 `resolutionSecondsSum`, `resolutionSecondsCount`). Both `active` and
 `resolved` are `[]`, never `null`, when there is nothing to report.
 
+The shape of this document, and of `/explanations` below, is versioned; see
+[JSON schema contract](json-schema.md).
+
 ### Limits and restart semantics
 
 Retention and flap detection use fixed defaults; there are no flags to tune

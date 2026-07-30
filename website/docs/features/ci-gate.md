@@ -197,6 +197,9 @@ holds findings that decided this exit code; `reported` holds everything else
 kubeagent saw (out of scope, or below `--fail-on`); `inconclusive` lists any
 blind spot, waived or not.
 
+The shape of this document is versioned; see
+[JSON schema contract](json-schema.md).
+
 ## SARIF
 
 `kubeagent gate --output sarif` renders the same verdict as a

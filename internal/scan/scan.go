@@ -192,17 +192,7 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 		return Result{}, err
 	}
 
-	detectors := []diagnose.Detector{
-		diagnose.CrashLoopDetector{},
-		diagnose.ImagePullDetector{},
-		diagnose.OOMKilledDetector{},
-		diagnose.PendingDetector{},
-		diagnose.VolumeAttachDetector{},
-		diagnose.RestartLoopDetector{Now: time.Now()},
-		diagnose.InitContainerDetector{},
-		diagnose.ProbeFailureDetector{},
-		diagnose.ConfigErrorDetector{},
-	}
+	detectors := diagnose.DefaultDetectors(time.Now())
 	attachEvents, attachErr := collect.VolumeAttachEvents(ctx, client, opts.Namespace)
 	note("events", attachErr)
 	unhealthyEvents, unhealthyErr := collect.UnhealthyEvents(ctx, client, opts.Namespace)

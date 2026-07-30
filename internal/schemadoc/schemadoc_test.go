@@ -1,0 +1,355 @@
+package schemadoc
+
+import (
+	"bytes"
+	"encoding"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"os"
+	"path/filepath"
+	"reflect"
+	"sort"
+	"strings"
+	"testing"
+
+	"github.com/imantaba/kubeagent/internal/jsonschema"
+)
+
+var update = flag.Bool("update", false, "rewrite the committed schema files")
+
+// repoPath resolves a repository-relative path from this package's directory.
+func repoPath(t *testing.T, rel string) string {
+	t.Helper()
+	return filepath.Join("..", "..", rel)
+}
+
+func TestDocumentsTableIsWellFormed(t *testing.T) {
+	seen := map[string]bool{}
+	for _, d := range Documents {
+		if d.Name == "" || d.Surface == "" || d.Version == "" || d.Title == "" || d.Description == "" {
+			t.Errorf("%+v has an empty field", d)
+		}
+		if d.Root == nil || d.Root.Kind() != reflect.Struct {
+			t.Errorf("%s: root is not a struct type", d.Name)
+		}
+		if seen[d.Name] {
+			t.Errorf("%s: duplicate document name", d.Name)
+		}
+		seen[d.Name] = true
+		if _, err := jsonschema.Major(d.Version); err != nil {
+			t.Errorf("%s: %v", d.Name, err)
+		}
+	}
+	if len(Documents) != 6 {
+		t.Errorf("Documents has %d entries, want the six documented surfaces", len(Documents))
+	}
+}
+
+func TestEveryDocumentDeclaresASchemaVersion(t *testing.T) {
+	for _, d := range Documents {
+		f, ok := d.Root.FieldByName("SchemaVersion")
+		if !ok {
+			t.Errorf("%s: root %s has no SchemaVersion field", d.Name, d.Root)
+			continue
+		}
+		if got := f.Tag.Get("json"); got != "schemaVersion" {
+			t.Errorf("%s: SchemaVersion json tag = %q, want schemaVersion", d.Name, got)
+		}
+	}
+}
+
+func TestGenerateUnknownNameNamesTheValidOnes(t *testing.T) {
+	_, err := Generate("nope")
+	if err == nil {
+		t.Fatal("want an error for an unknown document name")
+	}
+	for _, n := range Names() {
+		if !strings.Contains(err.Error(), n) {
+			t.Errorf("error %q does not mention %q", err, n)
+		}
+	}
+}
+
+// TestSchemaDrift is the contract's enforcement: the committed documents are
+// exactly what the current types generate, and a mismatch says which kind of
+// change happened in the terms the version contract uses.
+//
+// Regenerate deliberately:
+//
+//	go test ./internal/schemadoc -run TestSchemaDrift -update
+func TestSchemaDrift(t *testing.T) {
+	for _, d := range Documents {
+		rel, err := Path(d)
+		if err != nil {
+			t.Fatalf("%s: %v", d.Name, err)
+		}
+		path := repoPath(t, rel)
+		got, err := Generate(d.Name)
+		if err != nil {
+			t.Fatalf("%s: %v", d.Name, err)
+		}
+		if *update {
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatalf("%s: %v", d.Name, err)
+			}
+			if err := os.WriteFile(path, got, 0o644); err != nil {
+				t.Fatalf("%s: %v", d.Name, err)
+			}
+			t.Logf("wrote %s", rel)
+			continue
+		}
+		want, err := os.ReadFile(path)
+		if err != nil {
+			t.Errorf("%s: %v\nregenerate with: go test ./internal/schemadoc -run TestSchemaDrift -update", d.Name, err)
+			continue
+		}
+		if bytes.Equal(got, want) {
+			continue
+		}
+		t.Errorf("%s (%s v%s) has drifted from %s:\n%s", d.Name, d.Surface, d.Version, rel, classify(t, want, got))
+	}
+}
+
+// classify reports what moved between two schema documents, and whether that is
+// a breaking or an additive change under the version contract.
+func classify(t *testing.T, want, got []byte) string {
+	t.Helper()
+	a, b := flatten(t, want), flatten(t, got)
+	var breaking, additive []string
+	for k, av := range a {
+		bv, present := b[k]
+		switch {
+		case !present && isMember(k):
+			// A required entry or enum value disappeared.
+			if strings.Contains(k, "/required#") {
+				additive = append(additive, "no longer required: "+k)
+			} else {
+				breaking = append(breaking, "enum value removed: "+k)
+			}
+		case !present:
+			breaking = append(breaking, "removed: "+k)
+		case av != bv:
+			breaking = append(breaking, fmt.Sprintf("changed: %s (%s → %s)", k, av, bv))
+		}
+	}
+	for k := range b {
+		if _, present := a[k]; present {
+			continue
+		}
+		switch {
+		case strings.Contains(k, "/required#"):
+			breaking = append(breaking, "newly required: "+k)
+		case strings.Contains(k, "/enum#"):
+			additive = append(additive, "enum value added: "+k)
+		default:
+			additive = append(additive, "added: "+k)
+		}
+	}
+	sort.Strings(breaking)
+	sort.Strings(additive)
+	var b2 strings.Builder
+	for _, line := range breaking {
+		fmt.Fprintf(&b2, "  BREAKING  %s\n", line)
+	}
+	for _, line := range additive {
+		fmt.Fprintf(&b2, "  additive  %s\n", line)
+	}
+	if len(breaking) > 0 {
+		b2.WriteString("\nThis is a MAJOR change: bump the surface's version constant in internal/jsonschema, publish the new file beside the old one, and record it in the CHANGELOG under Changed.\n")
+	} else {
+		b2.WriteString("\nThis is a MINOR change: bump the surface's minor in internal/jsonschema, then regenerate:\n  go test ./internal/schemadoc -run TestSchemaDrift -update\n")
+	}
+	return b2.String()
+}
+
+func isMember(path string) bool {
+	return strings.Contains(path, "/required#") || strings.Contains(path, "/enum#")
+}
+
+// flatten reduces a document to "path = value" lines so a diff names what moved
+// instead of printing two JSON blobs. required and enum arrays flatten to one
+// membership line per element, because their order carries no meaning and an
+// index-based diff would report every element after an insertion as changed.
+func flatten(t *testing.T, doc []byte) map[string]string {
+	t.Helper()
+	var v any
+	if err := json.Unmarshal(doc, &v); err != nil {
+		t.Fatalf("flatten: %v", err)
+	}
+	out := map[string]string{}
+	walkJSON("", v, out)
+	return out
+}
+
+func walkJSON(path string, v any, out map[string]string) {
+	switch x := v.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(x))
+		for k := range x {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			walkJSON(path+"/"+k, x[k], out)
+		}
+	case []any:
+		if base := path[strings.LastIndex(path, "/")+1:]; base == "required" || base == "enum" {
+			for _, e := range x {
+				out[fmt.Sprintf("%s#%v", path, e)] = "present"
+			}
+			return
+		}
+		for i, e := range x {
+			walkJSON(fmt.Sprintf("%s[%d]", path, i), e, out)
+		}
+	default:
+		out[path] = fmt.Sprintf("%v", v)
+	}
+}
+
+// walkTypes visits every type reachable from root through the fields
+// encoding/json emits — the same reachability the generator walks.
+func walkTypes(t reflect.Type, seen map[reflect.Type]bool, visit func(reflect.Type)) {
+	if seen[t] {
+		return
+	}
+	seen[t] = true
+	visit(t)
+	switch t.Kind() {
+	case reflect.Pointer, reflect.Slice, reflect.Array:
+		walkTypes(t.Elem(), seen, visit)
+	case reflect.Map:
+		walkTypes(t.Key(), seen, visit)
+		walkTypes(t.Elem(), seen, visit)
+	case reflect.Struct:
+		for i := 0; i < t.NumField(); i++ {
+			f := t.Field(i)
+			if f.PkgPath != "" || f.Tag.Get("json") == "-" {
+				continue
+			}
+			walkTypes(f.Type, seen, visit)
+		}
+	}
+}
+
+// eachDocumentType visits every type in every document, once per document so a
+// failure can name which one.
+func eachDocumentType(visit func(d Document, t reflect.Type)) {
+	for _, d := range Documents {
+		seen := map[reflect.Type]bool{}
+		walkTypes(d.Root, seen, func(t reflect.Type) { visit(d, t) })
+	}
+}
+
+func named(t reflect.Type) bool { return t.Name() != "" && t.PkgPath() != "" }
+
+// A type with a custom marshaler emits JSON its Go kind does not describe.
+// Reflection cannot see that, so every such type needs an override — and the
+// next one added must fail here rather than ship a schema that is simply wrong.
+func TestEveryCustomMarshalerHasAnOverride(t *testing.T) {
+	jm := reflect.TypeOf((*json.Marshaler)(nil)).Elem()
+	tm := reflect.TypeOf((*encoding.TextMarshaler)(nil)).Elem()
+	eachDocumentType(func(d Document, ty reflect.Type) {
+		if !named(ty) {
+			return
+		}
+		custom := ty.Implements(jm) || reflect.PointerTo(ty).Implements(jm) ||
+			ty.Implements(tm) || reflect.PointerTo(ty).Implements(tm)
+		if !custom {
+			return
+		}
+		if _, ok := overrides[jsonschema.TypeKey(ty)]; !ok {
+			t.Errorf("%s: %s has a custom marshaler but no entry in overrides — reflection would document its Go kind, not its JSON", d.Name, jsonschema.TypeKey(ty))
+		}
+	})
+}
+
+// kubeagent must not freeze a type it does not own: a field added upstream in a
+// future Kubernetes release would trip the drift test as a breaking change
+// nobody could fix, and would silently widen what kubeagent has promised.
+func TestNoForeignTypesInAnyDocument(t *testing.T) {
+	eachDocumentType(func(d Document, ty reflect.Type) {
+		p := ty.PkgPath()
+		if p == "" || strings.HasPrefix(p, "github.com/imantaba/kubeagent/") || stdlib(p) {
+			return
+		}
+		t.Errorf("%s: %s.%s is not kubeagent's type. Either project it into a type this repo owns, or describe it and accept that its shape is not kubeagent's to promise.", d.Name, p, ty.Name())
+	})
+}
+
+// stdlib reports whether an import path is in the standard library: its first
+// segment has no dot, so it is not a domain.
+func stdlib(p string) bool {
+	first, _, _ := strings.Cut(p, "/")
+	return !strings.Contains(first, ".")
+}
+
+// An un-enumerated enum is the failure mode that matters: a consumer switching
+// on a value it was never told about.
+func TestEveryNamedStringTypeIsEnumeratedOrFreeForm(t *testing.T) {
+	eachDocumentType(func(d Document, ty reflect.Type) {
+		if ty.Kind() != reflect.String || !named(ty) {
+			return
+		}
+		key := jsonschema.TypeKey(ty)
+		if _, ok := enums[key]; ok {
+			return
+		}
+		if freeFormStrings[key] {
+			return
+		}
+		t.Errorf("%s: %s is a named string type with no enum entry. Add its constants to enums, or add it to freeFormStrings to say a consumer must not switch on the value.", d.Name, key)
+	})
+}
+
+// Every override must describe a type that is actually in a document, or the
+// table is carrying a stale entry that hides a real drift.
+func TestNoStaleTableEntries(t *testing.T) {
+	present := map[string]bool{}
+	eachDocumentType(func(_ Document, ty reflect.Type) {
+		if named(ty) {
+			present[jsonschema.TypeKey(ty)] = true
+		}
+	})
+	for key := range overrides {
+		if !present[key] {
+			t.Errorf("overrides has %q, which appears in no document", key)
+		}
+	}
+	for key := range enums {
+		if !present[key] {
+			t.Errorf("enums has %q, which appears in no document", key)
+		}
+	}
+	for key := range freeFormStrings {
+		if !present[key] {
+			t.Errorf("freeFormStrings has %q, which appears in no document", key)
+		}
+	}
+}
+
+// The published $id must resolve to the file the document is committed at, or a
+// consumer following the $id gets a 404.
+func TestPublishedIDMatchesTheCommittedPath(t *testing.T) {
+	for _, d := range Documents {
+		raw, err := Generate(d.Name)
+		if err != nil {
+			t.Fatalf("%s: %v", d.Name, err)
+		}
+		var doc struct {
+			ID string `json:"$id"`
+		}
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			t.Fatalf("%s: %v", d.Name, err)
+		}
+		rel, err := Path(d)
+		if err != nil {
+			t.Fatalf("%s: %v", d.Name, err)
+		}
+		want := "https://k8sproject.top/" + strings.TrimPrefix(rel, "website/docs/")
+		if doc.ID != want {
+			t.Errorf("%s: $id = %q, want %q", d.Name, doc.ID, want)
+		}
+	}
+}

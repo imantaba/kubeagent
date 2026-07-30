@@ -1,0 +1,165 @@
+{
+  "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+  "$defs": {
+    "watch.ClusterView": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "error": {
+          "type": "string"
+        },
+        "lastScan": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "up": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "lastScan",
+        "name",
+        "up"
+      ],
+      "type": "object"
+    },
+    "watch.IssueView": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "ageSeconds": {
+          "type": "integer"
+        },
+        "cluster": {
+          "type": "string"
+        },
+        "firingSince": {
+          "type": "string"
+        },
+        "firings": {
+          "type": "integer"
+        },
+        "firstSeen": {
+          "type": "string"
+        },
+        "flapping": {
+          "type": "boolean"
+        },
+        "issue": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "lastSeen": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "resolutionSeconds": {
+          "type": "integer"
+        },
+        "resolvedAt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "cluster",
+        "firingSince",
+        "firings",
+        "firstSeen",
+        "flapping",
+        "issue",
+        "kind",
+        "lastSeen",
+        "name"
+      ],
+      "type": "object"
+    },
+    "watch.StatsView": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "droppedTotal": {
+          "type": "integer"
+        },
+        "flapTotal": {
+          "type": "integer"
+        },
+        "newTotal": {
+          "type": "integer"
+        },
+        "resolutionSecondsCount": {
+          "type": "integer"
+        },
+        "resolutionSecondsSum": {
+          "type": "number"
+        },
+        "resolvedTotal": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "droppedTotal",
+        "flapTotal",
+        "newTotal",
+        "resolutionSecondsCount",
+        "resolutionSecondsSum",
+        "resolvedTotal"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://k8sproject.top/schemas/watch-issues-v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The document served by the watch daemon's GET /issues: each watched cluster's reachability, the active and resolved issues, and the run totals.",
+  "properties": {
+    "active": {
+      "items": {
+        "$ref": "#/$defs/watch.IssueView"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "clusters": {
+      "items": {
+        "$ref": "#/$defs/watch.ClusterView"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "resolved": {
+      "items": {
+        "$ref": "#/$defs/watch.IssueView"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "schemaVersion": {
+      "description": "This document's schema version, MAJOR.MINOR. Treat an unknown MINOR as compatible.",
+      "pattern": "^1\\.[0-9]+$",
+      "type": "string"
+    },
+    "stats": {
+      "$ref": "#/$defs/watch.StatsView"
+    }
+  },
+  "required": [
+    "active",
+    "clusters",
+    "resolved",
+    "schemaVersion",
+    "stats"
+  ],
+  "title": "kubeagent watch issues",
+  "type": "object"
+}

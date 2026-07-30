@@ -1,0 +1,1776 @@
+{
+  "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+  "$defs": {
+    "capacity.Headroom": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "excluded": {
+          "items": {
+            "$ref": "#/$defs/capacity.NodeExclusion"
+          },
+          "type": "array"
+        },
+        "freeCPU": {
+          "type": "string"
+        },
+        "freeMemory": {
+          "type": "string"
+        },
+        "includedNodes": {
+          "type": "integer"
+        },
+        "largestCPUFit": {
+          "$ref": "#/$defs/capacity.NodeFit"
+        },
+        "largestMemFit": {
+          "$ref": "#/$defs/capacity.NodeFit"
+        },
+        "nodeLoss": {
+          "$ref": "#/$defs/capacity.NodeLoss"
+        },
+        "tightestNode": {
+          "$ref": "#/$defs/capacity.TightNode"
+        },
+        "totalNodes": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "freeCPU",
+        "freeMemory",
+        "includedNodes",
+        "totalNodes"
+      ],
+      "type": "object"
+    },
+    "capacity.NodeExclusion": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "node": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "node",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "capacity.NodeFit": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "cpu": {
+          "type": "string"
+        },
+        "memory": {
+          "type": "string"
+        },
+        "node": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "cpu",
+        "memory",
+        "node"
+      ],
+      "type": "object"
+    },
+    "capacity.NodeLoss": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "blocker": {
+          "type": "string"
+        },
+        "blockerCPU": {
+          "type": "string"
+        },
+        "fits": {
+          "type": "boolean"
+        },
+        "node": {
+          "type": "string"
+        },
+        "placed": {
+          "type": "integer"
+        },
+        "singleNode": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "fits",
+        "node",
+        "placed",
+        "singleNode"
+      ],
+      "type": "object"
+    },
+    "capacity.Owner": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "bestEffort": {
+          "type": "boolean"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "observed": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "name",
+        "namespace"
+      ],
+      "type": "object"
+    },
+    "capacity.Report": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "headroom": {
+          "$ref": "#/$defs/capacity.Headroom"
+        },
+        "rightSizing": {
+          "$ref": "#/$defs/capacity.RightSizing"
+        }
+      },
+      "type": "object"
+    },
+    "capacity.RightSizing": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "metricsAvailable": {
+          "type": "boolean"
+        },
+        "podsReporting": {
+          "type": "integer"
+        },
+        "podsTotal": {
+          "type": "integer"
+        },
+        "rules": {
+          "items": {
+            "$ref": "#/$defs/capacity.Rule"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "metricsAvailable",
+        "podsReporting",
+        "podsTotal"
+      ],
+      "type": "object"
+    },
+    "capacity.Rule": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "name": {
+          "enum": [
+            "noRequests",
+            "limitNoRequest",
+            "neverSchedulable"
+          ],
+          "type": "string"
+        },
+        "owners": {
+          "items": {
+            "$ref": "#/$defs/capacity.Owner"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "truncated": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "owners"
+      ],
+      "type": "object"
+    },
+    "capacity.TightNode": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "node": {
+          "type": "string"
+        },
+        "pct": {
+          "type": "integer"
+        },
+        "resource": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "node",
+        "pct",
+        "resource"
+      ],
+      "type": "object"
+    },
+    "certhealth.Cert": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "commonName": {
+          "type": "string"
+        },
+        "days": {
+          "type": "integer"
+        },
+        "ingresses": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "name": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "notAfter": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "commonName",
+        "days",
+        "name",
+        "namespace",
+        "notAfter"
+      ],
+      "type": "object"
+    },
+    "certhealth.Invalid": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "detail": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "detail",
+        "name",
+        "namespace"
+      ],
+      "type": "object"
+    },
+    "certhealth.Report": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "checked": {
+          "type": "integer"
+        },
+        "expired": {
+          "items": {
+            "$ref": "#/$defs/certhealth.Cert"
+          },
+          "type": "array"
+        },
+        "expiring": {
+          "items": {
+            "$ref": "#/$defs/certhealth.Cert"
+          },
+          "type": "array"
+        },
+        "forbidden": {
+          "type": "boolean"
+        },
+        "invalid": {
+          "items": {
+            "$ref": "#/$defs/certhealth.Invalid"
+          },
+          "type": "array"
+        },
+        "warnDays": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "checked",
+        "warnDays"
+      ],
+      "type": "object"
+    },
+    "clusterhealth.ClusterHealth": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "downNodes": {
+          "items": {
+            "$ref": "#/$defs/clusterhealth.DownNode"
+          },
+          "type": "array"
+        },
+        "nodeIssues": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "nodesExpectedAbsent": {
+          "type": "integer"
+        },
+        "nodesReady": {
+          "type": "integer"
+        },
+        "nodesStaleHeartbeat": {
+          "type": "integer"
+        },
+        "nodesTotal": {
+          "type": "integer"
+        },
+        "scopeNote": {
+          "type": "string"
+        },
+        "systemIssues": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "verdict": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "nodesReady",
+        "nodesTotal",
+        "verdict"
+      ],
+      "type": "object"
+    },
+    "clusterhealth.DownNode": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "controlplane.Probe": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "failed": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "type": "object"
+    },
+    "credlint.Finding": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "location": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "pattern": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "location",
+        "name",
+        "namespace",
+        "pattern"
+      ],
+      "type": "object"
+    },
+    "diagnose.ContainerResources": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "container": {
+          "type": "string"
+        },
+        "cpuLimit": {
+          "type": "string"
+        },
+        "cpuRequest": {
+          "type": "string"
+        },
+        "memLimit": {
+          "type": "string"
+        },
+        "memRequest": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "container",
+        "cpuLimit",
+        "cpuRequest",
+        "memLimit",
+        "memRequest"
+      ],
+      "type": "object"
+    },
+    "diagnose.Finding": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "confidence": {
+          "type": "string"
+        },
+        "container": {
+          "type": "string"
+        },
+        "evidence": {
+          "type": "string"
+        },
+        "issue": {
+          "type": "string"
+        },
+        "logCause": {
+          "type": "string"
+        },
+        "logExcerpt": {
+          "type": "string"
+        },
+        "pod": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "resources": {
+          "$ref": "#/$defs/diagnose.ContainerResources"
+        }
+      },
+      "required": [
+        "evidence",
+        "issue",
+        "pod",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "diskusage.Report": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "nodes": {
+          "items": {
+            "$ref": "#/$defs/diskusage.VolumeUsage"
+          },
+          "type": "array"
+        },
+        "over": {
+          "items": {
+            "$ref": "#/$defs/diskusage.VolumeUsage"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "threshold": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "over",
+        "threshold"
+      ],
+      "type": "object"
+    },
+    "diskusage.VolumeUsage": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "capacityBytes": {
+          "type": "integer"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "node": {
+          "type": "string"
+        },
+        "ratio": {
+          "type": "number"
+        },
+        "usedBytes": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "capacityBytes",
+        "kind",
+        "name",
+        "ratio",
+        "usedBytes"
+      ],
+      "type": "object"
+    },
+    "dnshealth.Report": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "detail": {
+          "type": "string"
+        },
+        "errorResponses": {
+          "type": "integer"
+        },
+        "podsProbed": {
+          "type": "integer"
+        },
+        "servfailRatio": {
+          "type": "number"
+        },
+        "status": {
+          "type": "string"
+        },
+        "totalResponses": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "errorResponses",
+        "podsProbed",
+        "servfailRatio",
+        "status",
+        "totalResponses"
+      ],
+      "type": "object"
+    },
+    "gitops.KindReport": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "apiVersion": {
+          "type": "string"
+        },
+        "counts": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "propertyNames": {
+            "enum": [
+              "synced",
+              "pending",
+              "stale",
+              "blocked",
+              "unknown"
+            ]
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "drifted": {
+          "items": {
+            "$ref": "#/$defs/gitops.Workload"
+          },
+          "type": "array"
+        },
+        "error": {
+          "type": "string"
+        },
+        "forbidden": {
+          "type": "boolean"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "truncated": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "counts",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "gitops.ReconcilerReport": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "apiVersions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "kinds": {
+          "items": {
+            "$ref": "#/$defs/gitops.KindReport"
+          },
+          "type": "array"
+        },
+        "reconciler": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "reconciler"
+      ],
+      "type": "object"
+    },
+    "gitops.Report": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "reconcilers": {
+          "items": {
+            "$ref": "#/$defs/gitops.ReconcilerReport"
+          },
+          "type": "array"
+        },
+        "threshold": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threshold"
+      ],
+      "type": "object"
+    },
+    "gitops.Workload": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "detail": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "reconciler": {
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "synced",
+            "pending",
+            "stale",
+            "blocked",
+            "unknown"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "name",
+        "reconciler",
+        "state"
+      ],
+      "type": "object"
+    },
+    "hpahealth.Issue": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "category": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "category",
+        "name",
+        "namespace",
+        "reason",
+        "target"
+      ],
+      "type": "object"
+    },
+    "ingresshealth.RouteIssue": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "detail": {
+          "type": "string"
+        },
+        "expected": {
+          "type": "boolean"
+        },
+        "host": {
+          "type": "string"
+        },
+        "ingress": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "port": {
+          "type": "string"
+        },
+        "problem": {
+          "type": "string"
+        },
+        "service": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "detail",
+        "ingress",
+        "namespace",
+        "problem",
+        "service"
+      ],
+      "type": "object"
+    },
+    "inventory.PodRow": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "age": {
+          "type": "string"
+        },
+        "image": {
+          "type": "string"
+        },
+        "ip": {
+          "type": "string"
+        },
+        "lastRestart": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "node": {
+          "type": "string"
+        },
+        "phase": {
+          "type": "string"
+        },
+        "ready": {
+          "type": "string"
+        },
+        "restarts": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "age",
+        "image",
+        "ip",
+        "name",
+        "node",
+        "phase",
+        "ready",
+        "restarts"
+      ],
+      "type": "object"
+    },
+    "inventory.RolloutChange": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "newImage": {
+          "type": "string"
+        },
+        "oldImage": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "string"
+        },
+        "since": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "revision",
+        "since"
+      ],
+      "type": "object"
+    },
+    "inventory.Workload": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "desired": {
+          "type": "integer"
+        },
+        "findings": {
+          "items": {
+            "$ref": "#/$defs/diagnose.Finding"
+          },
+          "type": "array"
+        },
+        "image": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "lastRestart": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "networkPolicies": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "pods": {
+          "items": {
+            "$ref": "#/$defs/inventory.PodRow"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "podsOmitted": {
+          "type": "integer"
+        },
+        "priority": {
+          "type": "integer"
+        },
+        "ready": {
+          "type": "integer"
+        },
+        "restarts": {
+          "type": "integer"
+        },
+        "rollout": {
+          "$ref": "#/$defs/inventory.RolloutChange"
+        },
+        "rootCause": {
+          "type": "string"
+        },
+        "schedule": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "desired",
+        "image",
+        "kind",
+        "name",
+        "namespace",
+        "pods",
+        "ready",
+        "restarts",
+        "status"
+      ],
+      "type": "object"
+    },
+    "nodehealth.Issue": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "detail": {
+          "type": "string"
+        },
+        "node": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "node"
+      ],
+      "type": "object"
+    },
+    "nodehealth.Report": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "forbidden": {
+          "type": "integer"
+        },
+        "probed": {
+          "type": "integer"
+        },
+        "unhealthy": {
+          "items": {
+            "$ref": "#/$defs/nodehealth.Issue"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "forbidden",
+        "probed"
+      ],
+      "type": "object"
+    },
+    "nodereserve.NodeReservation": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "cpuReserved": {
+          "type": "string"
+        },
+        "ephemeralReserved": {
+          "type": "string"
+        },
+        "memReserved": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "noCPUReserve": {
+          "type": "boolean"
+        },
+        "noEphemeralReserve": {
+          "type": "boolean"
+        },
+        "role": {
+          "type": "string"
+        },
+        "warning": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "cpuReserved",
+        "ephemeralReserved",
+        "memReserved",
+        "name",
+        "warning"
+      ],
+      "type": "object"
+    },
+    "nodereserve.Report": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "cpuNone": {
+          "type": "integer"
+        },
+        "ephemeralNone": {
+          "type": "integer"
+        },
+        "ephemeralReporting": {
+          "type": "integer"
+        },
+        "nodes": {
+          "items": {
+            "$ref": "#/$defs/nodereserve.NodeReservation"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "warnCount": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "cpuNone",
+        "ephemeralNone",
+        "ephemeralReporting",
+        "nodes",
+        "warnCount"
+      ],
+      "type": "object"
+    },
+    "operators.KindReport": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "apiVersion": {
+          "type": "string"
+        },
+        "counts": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "propertyNames": {
+            "enum": [
+              "healthy",
+              "progressing",
+              "unhealthy",
+              "suspended",
+              "unknown"
+            ]
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "error": {
+          "type": "string"
+        },
+        "forbidden": {
+          "type": "boolean"
+        },
+        "judged": {
+          "type": "boolean"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "truncated": {
+          "type": "integer"
+        },
+        "unhealthy": {
+          "items": {
+            "$ref": "#/$defs/operators.Resource"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "counts",
+        "judged",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "operators.OperatorReport": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "apiVersions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "kinds": {
+          "items": {
+            "$ref": "#/$defs/operators.KindReport"
+          },
+          "type": "array"
+        },
+        "operator": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "operator"
+      ],
+      "type": "object"
+    },
+    "operators.Report": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "operators": {
+          "items": {
+            "$ref": "#/$defs/operators.OperatorReport"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "operators.Resource": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "operator": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "healthy",
+            "progressing",
+            "unhealthy",
+            "suspended",
+            "unknown"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "name",
+        "operator",
+        "state"
+      ],
+      "type": "object"
+    },
+    "pdbhealth.Issue": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "category": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "rule": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "category",
+        "name",
+        "namespace",
+        "reason",
+        "rule"
+      ],
+      "type": "object"
+    },
+    "platform.Facts": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "cloud": {
+          "type": "string"
+        },
+        "cni": {
+          "type": "string"
+        },
+        "distro": {
+          "type": "string"
+        },
+        "ingress": {
+          "type": "string"
+        },
+        "kubeVersion": {
+          "type": "string"
+        },
+        "runtime": {
+          "type": "string"
+        },
+        "storage": {
+          "items": {
+            "$ref": "#/$defs/platform.Storage"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "platform.Storage": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "default": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "pvchealth.Issue": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "detail": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "phase": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "storageClass": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "detail",
+        "name",
+        "namespace",
+        "phase",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "pvcreclaim.PVCReclaim": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "capacity": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "pv": {
+          "type": "string"
+        },
+        "storageClass": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "namespace",
+        "pv"
+      ],
+      "type": "object"
+    },
+    "pvcreclaim.Report": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "count": {
+          "type": "integer"
+        },
+        "pvcs": {
+          "items": {
+            "$ref": "#/$defs/pvcreclaim.PVCReclaim"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "count",
+        "pvcs"
+      ],
+      "type": "object"
+    },
+    "quotahealth.Issue": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "hard": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "quota": {
+          "type": "string"
+        },
+        "ratio": {
+          "type": "number"
+        },
+        "resource": {
+          "type": "string"
+        },
+        "severity": {
+          "type": "string"
+        },
+        "used": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "hard",
+        "namespace",
+        "quota",
+        "ratio",
+        "resource",
+        "severity",
+        "used"
+      ],
+      "type": "object"
+    },
+    "remediate.Change": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "field": {
+          "type": "string"
+        },
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "field"
+      ],
+      "type": "object"
+    },
+    "report.InvestigationView": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "consulted": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "narrative": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "narrative"
+      ],
+      "type": "object"
+    },
+    "report.RemediationActionView": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "changes": {
+          "items": {
+            "$ref": "#/$defs/remediate.Change"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "kubectlEquivalent": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "kubectlEquivalent",
+        "reason",
+        "status",
+        "summary",
+        "target"
+      ],
+      "type": "object"
+    },
+    "resources.Line": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "allocatable": {
+          "type": "string"
+        },
+        "limits": {
+          "type": "string"
+        },
+        "limitsPct": {
+          "type": "integer"
+        },
+        "requests": {
+          "type": "string"
+        },
+        "requestsPct": {
+          "type": "integer"
+        },
+        "usage": {
+          "type": "string"
+        },
+        "usagePct": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "allocatable",
+        "limits",
+        "limitsPct",
+        "requests",
+        "requestsPct"
+      ],
+      "type": "object"
+    },
+    "resources.Summary": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "cpu": {
+          "$ref": "#/$defs/resources.Line"
+        },
+        "memory": {
+          "$ref": "#/$defs/resources.Line"
+        },
+        "metricsAvailable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "cpu",
+        "memory",
+        "metricsAvailable"
+      ],
+      "type": "object"
+    },
+    "scan.ReadFailure": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "Reason": {
+          "type": "string"
+        },
+        "Resource": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "Reason",
+        "Resource"
+      ],
+      "type": "object"
+    },
+    "secscan.Finding": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "check": {
+          "type": "string"
+        },
+        "container": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "profile": {
+          "type": "string"
+        },
+        "workload": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "check",
+        "detail",
+        "kind",
+        "namespace",
+        "profile",
+        "workload"
+      ],
+      "type": "object"
+    },
+    "svchealth.Issue": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "backing": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "expected": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "problem": {
+          "type": "string"
+        },
+        "since": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "detail",
+        "name",
+        "namespace",
+        "problem",
+        "type"
+      ],
+      "type": "object"
+    },
+    "termhealth.Issue": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "age": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "pastGrace": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "age",
+        "kind",
+        "name",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "webhookhealth.Issue": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "config": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "problem": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "service": {
+          "type": "string"
+        },
+        "webhook": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "config",
+        "kind",
+        "problem",
+        "reason",
+        "service",
+        "webhook"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://k8sproject.top/schemas/scan-v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The document written by `kubeagent scan --output json`: the cluster verdict, the prioritized workload inventory, and the findings of every check the run enabled.",
+  "properties": {
+    "blindSpots": {
+      "items": {
+        "$ref": "#/$defs/scan.ReadFailure"
+      },
+      "type": "array"
+    },
+    "capacity": {
+      "$ref": "#/$defs/capacity.Report"
+    },
+    "certificates": {
+      "$ref": "#/$defs/certhealth.Report"
+    },
+    "cluster": {
+      "$ref": "#/$defs/clusterhealth.ClusterHealth"
+    },
+    "controlPlane": {
+      "$ref": "#/$defs/controlplane.Probe"
+    },
+    "credentialWarnings": {
+      "items": {
+        "$ref": "#/$defs/credlint.Finding"
+      },
+      "type": "array"
+    },
+    "diskUsage": {
+      "$ref": "#/$defs/diskusage.Report"
+    },
+    "dns": {
+      "$ref": "#/$defs/dnshealth.Report"
+    },
+    "explanation": {
+      "type": "string"
+    },
+    "gitops": {
+      "$ref": "#/$defs/gitops.Report"
+    },
+    "hpaIssues": {
+      "items": {
+        "$ref": "#/$defs/hpahealth.Issue"
+      },
+      "type": "array"
+    },
+    "ingressIssues": {
+      "items": {
+        "$ref": "#/$defs/ingresshealth.RouteIssue"
+      },
+      "type": "array"
+    },
+    "investigation": {
+      "$ref": "#/$defs/report.InvestigationView"
+    },
+    "kubeletHealth": {
+      "$ref": "#/$defs/nodehealth.Report"
+    },
+    "nodeReserve": {
+      "$ref": "#/$defs/nodereserve.Report"
+    },
+    "operators": {
+      "$ref": "#/$defs/operators.Report"
+    },
+    "pdbIssues": {
+      "items": {
+        "$ref": "#/$defs/pdbhealth.Issue"
+      },
+      "type": "array"
+    },
+    "platform": {
+      "$ref": "#/$defs/platform.Facts"
+    },
+    "pvcIssues": {
+      "items": {
+        "$ref": "#/$defs/pvchealth.Issue"
+      },
+      "type": "array"
+    },
+    "pvcReclaim": {
+      "$ref": "#/$defs/pvcreclaim.Report"
+    },
+    "quotaIssues": {
+      "items": {
+        "$ref": "#/$defs/quotahealth.Issue"
+      },
+      "type": "array"
+    },
+    "remediationPlan": {
+      "items": {
+        "$ref": "#/$defs/report.RemediationActionView"
+      },
+      "type": "array"
+    },
+    "resources": {
+      "$ref": "#/$defs/resources.Summary"
+    },
+    "schemaVersion": {
+      "description": "This document's schema version, MAJOR.MINOR. Treat an unknown MINOR as compatible.",
+      "pattern": "^1\\.[0-9]+$",
+      "type": "string"
+    },
+    "securityIssues": {
+      "items": {
+        "$ref": "#/$defs/secscan.Finding"
+      },
+      "type": "array"
+    },
+    "serviceIssues": {
+      "items": {
+        "$ref": "#/$defs/svchealth.Issue"
+      },
+      "type": "array"
+    },
+    "stuckTerminating": {
+      "items": {
+        "$ref": "#/$defs/termhealth.Issue"
+      },
+      "type": "array"
+    },
+    "webhookIssues": {
+      "items": {
+        "$ref": "#/$defs/webhookhealth.Issue"
+      },
+      "type": "array"
+    },
+    "workloads": {
+      "items": {
+        "$ref": "#/$defs/inventory.Workload"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "cluster",
+    "schemaVersion",
+    "workloads"
+  ],
+  "title": "kubeagent scan report",
+  "type": "object"
+}

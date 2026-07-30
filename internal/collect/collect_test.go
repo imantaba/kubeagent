@@ -1,6 +1,7 @@
 package collect
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -659,5 +660,43 @@ func TestPreviousLogsReturnsForbidden(t *testing.T) {
 	}
 	if err == nil {
 		t.Fatal("PreviousLogs swallowed a forbidden read")
+	}
+}
+
+func TestCapBody(t *testing.T) {
+	small := []byte("ok")
+	if got := capBody(small); string(got) != "ok" {
+		t.Errorf("capBody shortened a small body to %q", got)
+	}
+	big := bytes.Repeat([]byte("a"), maxProxyBody+4096)
+	if got := capBody(big); len(got) != maxProxyBody {
+		t.Errorf("capBody returned %d bytes, want %d", len(got), maxProxyBody)
+	}
+	if got := capBody(nil); got != nil {
+		t.Errorf("capBody(nil) = %v, want nil", got)
+	}
+}
+
+// A proxied endpoint answering with far more than kubeagent will ever parse must
+// not hand the whole body to a parser. client-go's Raw() has already read it
+// all, so this bounds what the parsers see and what a later copy costs — not the
+// transfer itself.
+func TestCoreDNSMetricsCapsTheBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(bytes.Repeat([]byte("a"), maxProxyBody+64*1024))
+	}))
+	defer server.Close()
+	client, err := kubernetes.NewForConfig(&rest.Config{Host: server.URL})
+	if err != nil {
+		t.Fatalf("building a client for the oversized-body server: %v", err)
+	}
+	body, code := CoreDNSMetrics(context.Background(), client, "kube-system", "coredns-1")
+	if code != 200 {
+		t.Errorf("code = %d, want 200", code)
+	}
+	if len(body) != maxProxyBody {
+		t.Errorf("body = %d bytes, want it capped at %d", len(body), maxProxyBody)
 	}
 }

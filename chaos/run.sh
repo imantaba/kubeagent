@@ -1119,24 +1119,32 @@ scenario_20_rbac() {   # a real least-privilege identity: the API server actuall
   local check
   check="$(./kubeagent rbac check --kubeconfig "$kc" --features core,certs,logs,diskusage \
     --output json 2>/dev/null || true)"
+  # rbac check --output json emits a document object ({"schemaVersion", "features": [...]}),
+  # not a bare array — an array root can't carry a version field. A shape that isn't that
+  # object prints PARSE-FAILED rather than going quiet, so a future format change shows up
+  # as a broken parse in the recorded report instead of silently emptying core_ok/blocked
+  # the way a bare `except ValueError: sys.exit(0)` would.
   local core_ok blocked
   core_ok="$(printf '%s' "$check" | python3 -c '
 import json, sys
 try:
-    rows = json.load(sys.stdin)
-except ValueError:
-    sys.exit(0)
-for r in rows:
-    if r["name"] == "core":
-        print(r["allowed"])
+    doc = json.load(sys.stdin)
+    rows = doc["features"]
+    for r in rows:
+        if r["name"] == "core":
+            print(r["allowed"])
+            break
+except (ValueError, TypeError, KeyError):
+    print("PARSE-FAILED")
 ' 2>/dev/null || true)"
   blocked="$(printf '%s' "$check" | python3 -c '
 import json, sys
 try:
-    rows = json.load(sys.stdin)
-except ValueError:
-    sys.exit(0)
-print(" ".join(sorted(r["name"] for r in rows if not r["allowed"])))
+    doc = json.load(sys.stdin)
+    rows = doc["features"]
+    print(" ".join(sorted(r["name"] for r in rows if not r["allowed"])))
+except (ValueError, TypeError, KeyError):
+    print("PARSE-FAILED")
 ' 2>/dev/null || true)"
 
   # The scan itself: three add-on flags the identity cannot serve. It must still

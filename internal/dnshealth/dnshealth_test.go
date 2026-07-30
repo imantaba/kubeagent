@@ -1,6 +1,7 @@
 package dnshealth
 
 import (
+	"math"
 	"reflect"
 	"testing"
 )
@@ -100,5 +101,63 @@ func TestAssess_AllUnreachable(t *testing.T) {
 func TestAssess_MixedForbiddenAndUnreachable(t *testing.T) {
 	if got := Assess(nil, 2, 1, 1, 0.05, 100); got.Status != "forbidden" {
 		t.Errorf("Status = %q, want forbidden (mixed failure, forbidden priority)", got.Status)
+	}
+}
+
+// TestAssess_HostileMaps calls Assess directly with maps no ParseResponses
+// output could ever contain. Assess is exported and pure, so it must hold for
+// any map a caller hands it — but FuzzParseResponses can never reach that
+// guard, because there Assess only ever receives a map ParseResponses already
+// sanitized. These cases exercise the guard the way a hostile direct caller
+// would.
+func TestAssess_HostileMaps(t *testing.T) {
+	cases := []struct {
+		name string
+		agg  map[string]int64
+	}{
+		{
+			name: "negative counts",
+			agg:  map[string]int64{"NOERROR": -10, "SERVFAIL": -5, "REFUSED": -3},
+		},
+		{
+			name: "math.MinInt64",
+			agg:  map[string]int64{"NOERROR": math.MinInt64, "SERVFAIL": 100},
+		},
+		{
+			name: "math.MaxInt64 in more than one key saturates rather than wraps",
+			agg:  map[string]int64{"NOERROR": math.MaxInt64, "SERVFAIL": math.MaxInt64, "REFUSED": math.MaxInt64},
+		},
+		{
+			// Moderate magnitudes, not math.MinInt64: a large-enough negative
+			// term here would underflow past int64's minimum and wrap around to
+			// a large *positive* total, which would coincidentally satisfy every
+			// invariant below despite the guard being gone — the same trap
+			// finding 5 flagged for a fuzz seed applies just as much here.
+			name: "mix of negative and positive",
+			agg:  map[string]int64{"NOERROR": 500, "SERVFAIL": -2000, "REFUSED": 50, "NXDOMAIN": -100},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rep := Assess(tc.agg, 1, 0, 0, 0.05, 0)
+
+			switch rep.Status {
+			case "ok", "degraded", "forbidden", "unreachable", "":
+			default:
+				t.Errorf("Status = %q, outside the documented set", rep.Status)
+			}
+			if rep.ErrorResponses < 0 || rep.TotalResponses < 0 {
+				t.Errorf("negative counts: errors=%d total=%d", rep.ErrorResponses, rep.TotalResponses)
+			}
+			if rep.ErrorResponses > rep.TotalResponses {
+				t.Errorf("errors %d exceed total %d", rep.ErrorResponses, rep.TotalResponses)
+			}
+			if math.IsNaN(rep.ServfailRatio) || math.IsInf(rep.ServfailRatio, 0) {
+				t.Errorf("ServfailRatio = %v", rep.ServfailRatio)
+			}
+			if rep.ServfailRatio < 0 || rep.ServfailRatio > 1 {
+				t.Errorf("ServfailRatio = %v, outside [0,1]", rep.ServfailRatio)
+			}
+		})
 	}
 }

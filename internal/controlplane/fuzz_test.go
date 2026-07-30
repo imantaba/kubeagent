@@ -29,8 +29,12 @@ func FuzzParseReadyz(f *testing.F) {
 		default:
 			t.Errorf("ParseReadyz(%d): status %q is outside the documented set", code, p.Status)
 		}
-		if len(p.Failed) > maxFailedChecks {
-			t.Errorf("ParseReadyz(%d): %d failing checks exceeds the %d-entry cap", code, len(p.Failed), maxFailedChecks)
+		// Deliberately a literal, not maxFailedChecks: a test that reads the
+		// constant under test only proves the code agrees with itself, and the
+		// point of this bound is that a /readyz body cannot make kubeagent print
+		// an unbounded list, however large maxFailedChecks itself is set.
+		if len(p.Failed) > 20 {
+			t.Errorf("ParseReadyz(%d): %d failing checks exceeds the 20-entry cap", code, len(p.Failed))
 		}
 		for i, name := range p.Failed {
 			where := fmt.Sprintf("failed[%d]", i)

@@ -70,9 +70,9 @@ func ParseResponses(body []byte) map[string]int64 {
 		if err != nil || math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
 			continue
 		}
-		n := int64(v)
-		if v > float64(maxCount) {
-			n = maxCount
+		n := maxCount
+		if v <= float64(maxCount) {
+			n = int64(v)
 		}
 		out[rcode] = saturatingAdd(out[rcode], n)
 	}
@@ -108,9 +108,6 @@ func Assess(agg map[string]int64, podsProbed, forbidden, unreachable int, thresh
 	if unreachable == podsProbed {
 		return Report{Status: "unreachable"}
 	}
-	// Assess is exported and pure: it must hold for any map a caller hands it,
-	// not only for one ParseResponses produced. Negative counts are dropped and
-	// the sum saturates rather than wrapping.
 	// Assess is exported and pure: it must hold for any map a caller hands it,
 	// not only for one ParseResponses produced. Negative counts are dropped and
 	// the sum saturates rather than wrapping.

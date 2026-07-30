@@ -2,10 +2,28 @@ package dnshealth
 
 import (
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/imantaba/kubeagent/internal/fuzzgen"
 )
+
+// seedOverflowAcrossKeys builds a /metrics body that pushes Assess's total
+// over math.MaxInt64 by summing three different rcode keys, not by doubling
+// one. Each key is repeated enough times that its own per-key sum (~3.6e18)
+// stays well under math.MaxInt64, so saturatingAdd never caps a single key —
+// only the three-key total inside Assess does. Unlike two additions to the
+// same key, which can cancel to exactly 0 in two's-complement arithmetic (as
+// the seed this replaces did), three distinct positive sums that overflow
+// wrap to a large negative number, which int64 arithmetic cannot hide.
+func seedOverflowAcrossKeys() string {
+	var b strings.Builder
+	for _, rcode := range []string{"NOERROR", "SERVFAIL", "REFUSED"} {
+		line := `coredns_dns_responses_total{rcode="` + rcode + `"} 9223372036854775807` + "\n"
+		b.WriteString(strings.Repeat(line, 400))
+	}
+	return b.String()
+}
 
 // FuzzParseResponses fuzzes both halves of the CoreDNS metrics path: parsing a
 // /metrics body, and judging the parsed counts. The second []byte drives the
@@ -18,7 +36,7 @@ func FuzzParseResponses(f *testing.F) {
 	f.Add([]byte(`coredns_dns_responses_total{rcode="NOERROR"} -Inf`), []byte{2})
 	f.Add([]byte(`coredns_dns_responses_total{rcode="NOERROR"} 1e30`), []byte{3})
 	f.Add([]byte(`coredns_dns_responses_total{rcode="NOERROR"} -5`), []byte{4})
-	f.Add([]byte("coredns_dns_responses_total{rcode=\"NOERROR\"} 9223372036854775807\ncoredns_dns_responses_total{rcode=\"NOERROR\"} 9223372036854775807"), []byte{5})
+	f.Add([]byte(seedOverflowAcrossKeys()), []byte{5})
 	f.Add([]byte(`coredns_dns_response_rcode_count_total{rcode="SERVFAIL"} 7`), []byte{6})
 	f.Add([]byte{}, []byte{})
 

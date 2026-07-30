@@ -77,10 +77,13 @@ func FuzzCertAssess(f *testing.F) {
 			if _, err := time.Parse(time.RFC3339, cert.NotAfter); err != nil {
 				t.Errorf("NotAfter = %q is not RFC3339: %v", cert.NotAfter, err)
 			}
-			for i, ing := range cert.Ingresses {
-				fuzzgen.AssertSafe(t, "cert.ingresses", ing)
-				_ = i
-			}
+			// cert.Ingresses is not exercised here: Assess is called above with
+			// ingresses = nil, so it is always empty. Ingress-derived entries are
+			// "ns/name (host)", built from an Ingress's namespace, name, and
+			// spec.rules[].host — all three are DNS-1123-validated by the API
+			// server, so no cluster can produce a hostile one. Asserting safety
+			// over them would assert something false about production, the same
+			// reason internal/fuzzgen never draws names from hostile bytes.
 		}
 
 		again := Assess([]corev1.Secret{secret}, nil, warnDays, fuzzNow)

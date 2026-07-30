@@ -19,7 +19,7 @@ import (
 var now = time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC)
 
 // certPEM builds a self-signed certificate with the given CN/SANs and NotAfter.
-func certPEM(t testing.TB, cn string, sans []string, notAfter time.Time) []byte {
+func certPEM(t *testing.T, cn string, sans []string, notAfter time.Time) []byte {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {

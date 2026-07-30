@@ -1,6 +1,7 @@
 package scan
 
 import (
+	"context"
 	"os"
 	"strconv"
 )
@@ -42,4 +43,19 @@ func scanWorkers() int {
 		return maxScanWorkers
 	}
 	return n
+}
+
+// runReads executes every read closure and returns their errors in INDEX order:
+// errs[i] is always the error from reads[i]. The index-ordered contract is what
+// lets the body become a bounded worker pool without any caller changing.
+//
+// Every closure owns its own destination variables and touches nothing another
+// closure touches, so this needs no lock and no shared state. Blind spots are
+// recorded by the caller afterwards, in a fixed report order.
+func runReads(ctx context.Context, reads []func(context.Context) error) []error {
+	errs := make([]error, len(reads))
+	for i, f := range reads {
+		errs[i] = f(ctx)
+	}
+	return errs
 }

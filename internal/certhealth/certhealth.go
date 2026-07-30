@@ -15,6 +15,8 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+
+	"github.com/imantaba/kubeagent/internal/safetext"
 )
 
 // Cert holds metadata about a single TLS certificate from a kubernetes.io/tls Secret.
@@ -70,9 +72,13 @@ func Assess(secrets []corev1.Secret, ingresses []networkingv1.Ingress, warnDays 
 			rep.Invalid = append(rep.Invalid, Invalid{Namespace: s.Namespace, Name: s.Name, Detail: "invalid certificate data"})
 			continue
 		}
-		name := cert.Subject.CommonName
+		// The subject and SANs are attacker-controlled: any identity that can
+		// create a kubernetes.io/tls Secret chooses them, X.509 string types do
+		// not exclude control characters, and CommonName is printed in the text
+		// report, the JSON, the HTML report and the TUI.
+		name := safetext.Line(cert.Subject.CommonName)
 		if name == "" && len(cert.DNSNames) > 0 {
-			name = cert.DNSNames[0]
+			name = safetext.Line(cert.DNSNames[0])
 		}
 		c := Cert{
 			Namespace:  s.Namespace,

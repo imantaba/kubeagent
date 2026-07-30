@@ -72,12 +72,13 @@ Every document carries, as its first property:
 
 A string, `MAJOR.MINOR`:
 
-- **MINOR bump** — fields added, an optional field became optional in a new
-  place, an enum gained a value. A parser written against `1.0` still works
-  against `1.3`.
-- **MAJOR bump** — a field was removed or renamed, a type changed, a field that
-  was always present became optional, an enum lost a value. A parser written
-  against `1.x` may break.
+- **MINOR bump** — an *optional* field added (its own type may carry required
+  fields of its own — no `1.0` document could ever reach a type `1.0` never
+  mentions), an optional field became optional in a new place, an enum gained
+  a value. A parser written against `1.0` still works against `1.3`.
+- **MAJOR bump** — a field was removed or renamed, a type changed, a field
+  that was always present became optional, an optional field became always
+  present, an enum lost a value. A parser written against `1.x` may break.
 
 All four surfaces start at `1.0`. The version is **not** the kubeagent release
 version and does not move with it.

@@ -49,12 +49,15 @@ today, and **the schema version is not the kubeagent release version** — a
 surface's number moves only when its own document's shape moves, so a new
 `scan` field does not disturb a script reading the `gate` document.
 
-- **MINOR** — adds a field, or adds an enum value. A parser written against
-  `1.0` still works against `1.3`: it just won't know about anything past
-  `1.0`.
+- **MINOR** — adds an *optional* field, or adds an enum value. A parser
+  written against `1.0` still works against `1.3`: it just won't know about
+  anything past `1.0`. The new field's own type may have required fields of
+  its own — no document validated against `1.0` could ever reach them, since
+  `1.0` never mentions that type at all.
 - **MAJOR** — removes or renames a field, changes a field's type, makes an
-  always-present field optional, or removes an enum value. Anything a `1.0`
-  parser would choke on or silently misread.
+  always-present field optional, makes an optional field always-present, or
+  removes an enum value. Anything a `1.0` parser would choke on or silently
+  misread.
 
 ## How to pin
 
@@ -79,6 +82,11 @@ A `schemaVersion` promise is narrower than it might look. Not covered:
   MINOR release, or even a patch.
 - **Anything under `explanation` or `investigation`.** That's model output.
   It has a shape, but its content is not deterministic and never will be.
+- **Integer and float width.** `int`, `int8`…`int64`, and every `uint*` all
+  render as `{"type":"integer"}`; `float32` and `float64` both render as
+  `{"type":"number"}`. JSON Schema has no native width of its own, so
+  widening or narrowing one of these — `int` to `int64`, say — produces no
+  diff: it's invisible to the schema and to the drift test alike.
 
 Matching on a `reason` string will break the day the wording changes. The
 stable thing to match on is `issue`.

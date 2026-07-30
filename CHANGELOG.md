@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.72.0] - 2026-07-31
+
 ### Added
 
 - `KUBEAGENT_SCAN_WORKERS` — how many of `scan`'s independent cluster reads may
@@ -1244,7 +1246,8 @@ infrastructure (a documentation site and a pre-release chaos-test harness).
 - CI (vet/test/build on push & PR) and a release workflow publishing a
   linux/amd64 tarball + `SHA256SUMS` to a GitHub Release.
 
-[Unreleased]: https://github.com/imantaba/kubeagent/compare/v0.71.0...HEAD
+[Unreleased]: https://github.com/imantaba/kubeagent/compare/v0.72.0...HEAD
+[0.72.0]: https://github.com/imantaba/kubeagent/compare/v0.71.0...v0.72.0
 [0.71.0]: https://github.com/imantaba/kubeagent/compare/v0.70.0...v0.71.0
 [0.70.0]: https://github.com/imantaba/kubeagent/compare/v0.69.0...v0.70.0
 [0.69.0]: https://github.com/imantaba/kubeagent/compare/v0.68.0...v0.69.0

@@ -11,8 +11,14 @@ package policy
 //	registry.example.com/*  against  registry.example.com/team/app:1.0
 //
 // Hence this. It is iterative, allocates nothing, and backtracks to the last
-// star rather than recursing, so a pattern full of stars stays linear in the
-// length of s rather than exponential.
+// star rather than recursing — so it cannot grow the stack and cannot go
+// exponential the way a naive recursive translation can. But it is not
+// linear: worst case is O(len(pattern) * len(s)), realized by a single star
+// followed by a long, almost-matching literal run, where each mismatch
+// re-scans nearly the whole literal. A caller must not hand this an unbounded
+// value — the matches/notMatches evaluation path caps the length of the
+// compared value before it reaches here; do not remove that cap on the
+// mistaken belief that this function is linear.
 func globMatch(pattern, s string) bool {
 	var (
 		p, i  int // cursors into pattern and s

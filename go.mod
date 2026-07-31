@@ -6,6 +6,7 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.51.0
 	github.com/google/jsonschema-go v0.4.3
 	github.com/modelcontextprotocol/go-sdk v1.6.1
+	github.com/spf13/cobra v1.10.2
 	golang.org/x/term v0.39.0
 	k8s.io/api v0.36.2
 	k8s.io/apimachinery v0.36.2
@@ -25,6 +26,7 @@ require (
 	github.com/go-openapi/swag v0.23.0 // indirect
 	github.com/google/gnostic-models v0.7.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/invopop/jsonschema v0.14.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect

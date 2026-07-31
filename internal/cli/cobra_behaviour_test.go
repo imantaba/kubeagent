@@ -4,8 +4,12 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // TestGateHelpExitsZero pins the last of the --help change. gate is the one
@@ -226,6 +230,54 @@ func TestCompletionScriptCarriesNoPathOrURL(t *testing.T) {
 		if strings.Contains(line, "://") {
 			t.Errorf("completion bash script carries a URL outside Cobra's own boilerplate: %q", line)
 		}
+	}
+}
+
+// allCommands returns cmd and every command in its subtree, depth-first —
+// root, then each top-level command, then each of its own subcommands (rbac
+// print and rbac check).
+func allCommands(cmd *cobra.Command) []*cobra.Command {
+	cmds := []*cobra.Command{cmd}
+	for _, c := range cmd.Commands() {
+		cmds = append(cmds, allCommands(c)...)
+	}
+	return cmds
+}
+
+// TestNormalizeNeverSwallowsAFlagAfterABooleanFlag is the systematic guard
+// for the bug longFlagLookup's arity fix closes. Normalize used to set
+// expectValue for any registered long flag written without =, regardless of
+// whether that flag actually takes a value — so a boolean long flag
+// (-explain) followed by another single-dash long flag on the same command
+// line swallowed that next flag as its own value, leaving it single-dash,
+// and pflag then read it as a shorthand cluster and failed.
+//
+// Rather than a hand-picked list of flags, this walks the real command tree
+// newRootCommand builds and checks every boolean-or-count long flag Cobra
+// actually registers on every real subcommand — pflag leaves NoOptDefVal
+// empty exactly for the flags that require a value, so a non-empty
+// NoOptDefVal is pflag's own signal that a flag stands alone. For each such
+// flag, in both its single- and double-dash spelling, a following
+// single-dash long flag must come out rewritten to double-dash rather than
+// swallowed. It asserts on Normalize's output directly; it never runs a
+// command, which would need a live cluster.
+func TestNormalizeNeverSwallowsAFlagAfterABooleanFlag(t *testing.T) {
+	for _, cmd := range allCommands(newRootCommand()) {
+		lookup := longFlagLookup(cmd)
+		cmd.Flags().VisitAll(func(f *pflag.Flag) {
+			if f.NoOptDefVal == "" {
+				return // takes a value; not the case this test guards
+			}
+			for _, lead := range []string{"-" + f.Name, "--" + f.Name} {
+				in := []string{lead, "-" + f.Name}
+				want := []string{"--" + f.Name, "--" + f.Name}
+				got := Normalize(in, lookup)
+				if !slices.Equal(got, want) {
+					t.Errorf("%s: Normalize(%q) = %q, want %q — the flag after %s was swallowed instead of rewritten",
+						cmd.CommandPath(), in, got, want, lead)
+				}
+			}
+		})
 	}
 }
 

@@ -120,9 +120,19 @@ func newRootCommand() *cobra.Command {
 	return root
 }
 
-// longFlagLookup reports whether a name is a long flag on cmd, for Normalize.
-func longFlagLookup(cmd *cobra.Command) func(string) bool {
-	return func(name string) bool { return cmd.Flags().Lookup(name) != nil }
+// longFlagLookup reports whether a name is a long flag on cmd and, if so,
+// whether it takes a value, for Normalize. pflag sets NoOptDefVal on a flag
+// exactly when it can stand alone with no following argument — a bool or a
+// count — so an empty NoOptDefVal is pflag's own signal that the flag needs
+// one.
+func longFlagLookup(cmd *cobra.Command) func(name string) (registered, takesValue bool) {
+	return func(name string) (bool, bool) {
+		f := cmd.Flags().Lookup(name)
+		if f == nil {
+			return false, false
+		}
+		return true, f.NoOptDefVal == ""
+	}
 }
 
 // Run parses the top-level command line and dispatches to the named

@@ -5,13 +5,25 @@ import (
 	"testing"
 )
 
-// known is the flag set the table pretends the target command declares.
-func known(name string) bool {
-	switch name {
-	case "kubeconfig", "context", "output", "namespace", "disk-threshold":
-		return true
-	}
-	return false
+// knownTakesValue is the flag set the table pretends the target command
+// declares, alongside whether each one takes a value. false means a boolean
+// (or count) flag that pflag lets stand alone — the distinction Normalize
+// needs to avoid swallowing the flag that follows one.
+var knownTakesValue = map[string]bool{
+	"kubeconfig":     true,
+	"context":        true,
+	"output":         true,
+	"namespace":      true,
+	"disk-threshold": true,
+	"explain":        false,
+	"dry-run":        false,
+	"verbose":        false,
+}
+
+// known implements Normalize's lookup signature over knownTakesValue.
+func known(name string) (registered, takesValue bool) {
+	takesValue, ok := knownTakesValue[name]
+	return ok, takesValue
 }
 
 func TestNormalize(t *testing.T) {
@@ -48,6 +60,31 @@ func TestNormalize(t *testing.T) {
 		{"empty string element", []string{""}, []string{""}},
 		{"registered flag with explicit empty value", []string{"-kubeconfig="}, []string{"--kubeconfig="}},
 		{"already double dash with explicit empty value", []string{"--kubeconfig="}, []string{"--kubeconfig="}},
+
+		// Regression coverage for the boolean-swallow bug: a registered
+		// boolean long flag written without = must never set expectValue, in
+		// either single- or double-dash form, or the flag that follows it is
+		// consumed as its value instead of being rewritten — which is exactly
+		// what broke -explain -kubeconfig path and --explain -kubeconfig path
+		// before longFlagLookup reported arity.
+		{"boolean single-dash flag followed by a single-dash value flag",
+			[]string{"-explain", "-kubeconfig", "/nonexistent/kc"},
+			[]string{"--explain", "--kubeconfig", "/nonexistent/kc"}},
+		{"boolean double-dash flag followed by a single-dash value flag",
+			[]string{"--explain", "-kubeconfig", "/nonexistent/kc"},
+			[]string{"--explain", "--kubeconfig", "/nonexistent/kc"}},
+		{"value flag's value legitimately looks like a flag",
+			[]string{"-kubeconfig", "-weird"},
+			[]string{"--kubeconfig", "-weird"}},
+		{"boolean written with an explicit =false value",
+			[]string{"-explain=false"},
+			[]string{"--explain=false"}},
+		{"boolean at the very end of the args",
+			[]string{"-explain"},
+			[]string{"--explain"}},
+		{"two booleans in a row",
+			[]string{"-explain", "-dry-run"},
+			[]string{"--explain", "--dry-run"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := Normalize(tc.in, known)

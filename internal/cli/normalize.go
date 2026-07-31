@@ -14,8 +14,21 @@ import "strings"
 // flag. Registered shorthands (-n, -h), a bare -, anything after a bare --,
 // and any argument in a value position are all left alone.
 //
+// lookup reports two things about a candidate long-flag name: whether the
+// target command registers it at all (registered), and, only when it does,
+// whether it consumes the next argument as its value (takesValue) — false
+// for a boolean or count flag, which pflag lets stand alone with no
+// following token. Normalize only treats the token after a rewritten flag as
+// that flag's value when takesValue is true; a boolean or count flag written
+// without = is rewritten in place and the very next token is then free to be
+// read as the start of a new flag, exactly as it would be after any other
+// flag boundary. This holds symmetrically whether the flag being rewritten
+// was itself written with one dash or two — a boolean given as --explain
+// must not swallow a single-dash flag that follows it any more than -explain
+// does.
+//
 // It returns a new slice; the input is not modified.
-func Normalize(args []string, isLongFlag func(string) bool) []string {
+func Normalize(args []string, lookup func(name string) (registered, takesValue bool)) []string {
 	if args == nil {
 		return nil
 	}
@@ -24,25 +37,27 @@ func Normalize(args []string, isLongFlag func(string) bool) []string {
 	for _, a := range args {
 		switch {
 		case expectValue:
-			// The previous element was a long flag with no =, so this is its
-			// value however much it looks like a flag.
+			// The previous element was a long flag that takes a value and was
+			// written without =, so this is its value however much it looks
+			// like a flag.
 			expectValue = false
 		case a == "--":
 			out = append(out, args[len(out):]...)
 			return out
 		case len(a) > 1 && a[0] == '-' && a[1] != '-':
 			name, rest, hasEq := strings.Cut(a[1:], "=")
-			if isLongFlag(name) {
+			if registered, takesValue := lookup(name); registered {
 				if hasEq {
 					a = "--" + name + "=" + rest
 				} else {
 					a = "--" + name
-					expectValue = true
+					expectValue = takesValue
 				}
 			}
 		case strings.HasPrefix(a, "--"):
 			name, _, hasEq := strings.Cut(a[2:], "=")
-			expectValue = !hasEq && isLongFlag(name)
+			registered, takesValue := lookup(name)
+			expectValue = !hasEq && registered && takesValue
 		}
 		out = append(out, a)
 	}

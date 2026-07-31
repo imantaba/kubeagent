@@ -2,11 +2,11 @@ package cli
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"os"
 	"time"
 
+	"github.com/spf13/cobra"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 
@@ -68,47 +68,61 @@ type scanOptions struct {
 	namespace              string
 }
 
+// bindScanFlags declares scan's flags on cmd, writing into o. Flag names,
+// defaults and usage strings are unchanged from the standard-library FlagSet
+// this replaces, except --namespace/-n: the standard library needed two
+// separate declarations to accept both spellings, pflag expresses that as one
+// flag with a shorthand, and only the long form's usage text survives.
+//
+// The four env-defaulted flags (--operators, --drift, --drift-age,
+// --capacity) keep their envBool/envDuration default expressions verbatim;
+// those are evaluated when the command is built, same as before.
+func bindScanFlags(cmd *cobra.Command, o *scanOptions) {
+	f := cmd.Flags()
+	f.StringVar(&o.kubeconfig, "kubeconfig", "", "path to kubeconfig (default: $KUBECONFIG or ~/.kube/config)")
+	f.StringVar(&o.contextName, "context", "", "kubeconfig context to use (default: current-context)")
+	f.StringVar(&o.output, "output", "text", "output format: text | json | html")
+	f.BoolVar(&o.explain, "explain", false, "summarize findings via one LLM call (needs ANTHROPIC_API_KEY, or KUBEAGENT_EXPLAIN_ENDPOINT for a local OpenAI-compatible model)")
+	f.BoolVar(&o.investigate, "investigate", false, "agentic read-only investigation of findings via a bounded tool-use loop (needs ANTHROPIC_API_KEY; supersedes --explain)")
+	f.StringVar(&o.model, "model", "", "model for --explain / --investigate (default: $KUBEAGENT_MODEL or claude-opus-4-8; the local model name when KUBEAGENT_EXPLAIN_ENDPOINT is set)")
+	f.BoolVar(&o.includeCron, "include-cron", false, "include CronJobs in the report")
+	f.BoolVar(&o.includeRestarts, "include-restarts", false, "include workloads that are healthy now but have restarted")
+	f.BoolVar(&o.lintSecrets, "lint-secrets", false, "scan ConfigMaps and pod env for credentials stored in the clear (never prints values)")
+	f.BoolVar(&o.pvcReclaimFull, "pvc-reclaim", false, "list every PVC on a Delete reclaim policy (default: a grouped summary)")
+	f.BoolVar(&o.diskUsage, "disk-usage", false, "check node filesystem and PVC usage via the kubelet (needs the nodes/proxy grant)")
+	f.Float64Var(&o.diskThreshold, "disk-threshold", 0.80, "with --disk-usage: warn at this used ratio (0-1)")
+	f.BoolVar(&o.kubeletHealth, "kubelet-health", false, "probe each kubelet's /healthz via nodes/proxy and flag unhealthy nodes (needs the nodes/proxy add-on)")
+	f.BoolVar(&o.controlPlaneHealth, "control-plane-health", false, "probe the apiserver /readyz endpoint and flag an unhealthy control plane / etcd (needs the /readyz grant)")
+	f.BoolVar(&o.dnsHealth, "dns-health", false, "probe CoreDNS /metrics and flag an elevated SERVFAIL+REFUSED response ratio (needs the pods/proxy grant)")
+	f.BoolVar(&o.certs, "certs", false, "check TLS-secret certificate expiry (public certs only; needs the secrets add-on grant)")
+	f.IntVar(&o.certWarnDays, "cert-warn-days", 30, "with --certs: warn when a certificate expires within this many days")
+	f.BoolVar(&o.operators, "operators", envBool("KUBEAGENT_OPERATORS", false), "report operator custom-resource health (cert-manager, CloudNativePG, Longhorn, Argo CD, Flux, Prometheus operator; advisory, needs deploy/rbac-operators.yaml on a restricted context)")
+	f.BoolVar(&o.drift, "drift", envBool("KUBEAGENT_DRIFT", false), "report GitOps convergence for Argo CD and Flux (advisory, needs deploy/rbac-gitops.yaml on a restricted context)")
+	f.DurationVar(&o.driftAge, "drift-age", envDuration("KUBEAGENT_DRIFT_AGE", time.Hour), "how long an object may differ from Git before --drift calls it stale (e.g. 30m, 2h)")
+	f.BoolVar(&o.capacity, "capacity", envBool("KUBEAGENT_CAPACITY", false), "report scheduling headroom and structurally wrong workload shapes (advisory; uses metrics-server for context when present)")
+	f.BoolVar(&o.logs, "logs", false, "read each crashing container's previous logs and classify the failure (needs the pods/log grant)")
+	f.DurationVar(&o.nodeHeartbeatThreshold, "node-heartbeat-threshold", 40*time.Second, "flag a Ready node whose kubelet lease is stale beyond this (0 disables)")
+	f.StringVar(&o.expectedNodes, "expected-nodes", "", "names of nodes expected in the cluster; a declared name with no Node object is flagged Degraded (comma-separated)")
+	f.BoolVar(&o.security, "security", false, "flag insecure workloads and exposed Services (read-only, advisory)")
+	f.BoolVar(&o.securityVerbose, "security-verbose", false, "with --security: list every finding per workload (default: dangerous findings in full, restricted gaps aggregated)")
+	f.BoolVar(&o.suggest, "suggest", false, "print a deterministic next-step suggestion (and a read-only kubectl command) under each finding")
+	f.BoolVar(&o.fix, "fix", false, "propose and (after confirmation) apply safe, reversible remediations (opt-in writes)")
+	f.BoolVar(&o.dryRun, "dry-run", false, "with --fix: print proposed remediations only; never prompt or write")
+	f.BoolVar(&o.assumeYes, "yes", false, "with --fix: apply all proposed remediations without prompting")
+	f.StringVar(&o.auditLog, "audit-log", "", "with --fix: append a JSON-lines audit record per action to this file")
+	f.BoolVar(&o.rollback, "rollback", false, "undo the most recent applied fix recorded in --audit-log (requires --audit-log)")
+	f.StringVarP(&o.namespace, "namespace", "n", "", "namespace to scan (default: all namespaces)")
+}
+
 // parseScanFlags parses `kubeagent scan`'s command line. Pure: it reads the
 // environment for the four env-defaulted flags and nothing else, contacts no
-// cluster, and writes nothing.
+// cluster, and writes nothing. It builds a throwaway command so the flag
+// declarations have exactly one home, in bindScanFlags.
 func parseScanFlags(args []string) (scanOptions, error) {
 	var o scanOptions
-	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
-	fs.StringVar(&o.kubeconfig, "kubeconfig", "", "path to kubeconfig (default: $KUBECONFIG or ~/.kube/config)")
-	fs.StringVar(&o.contextName, "context", "", "kubeconfig context to use (default: current-context)")
-	fs.StringVar(&o.output, "output", "text", "output format: text | json | html")
-	fs.BoolVar(&o.explain, "explain", false, "summarize findings via one LLM call (needs ANTHROPIC_API_KEY, or KUBEAGENT_EXPLAIN_ENDPOINT for a local OpenAI-compatible model)")
-	fs.BoolVar(&o.investigate, "investigate", false, "agentic read-only investigation of findings via a bounded tool-use loop (needs ANTHROPIC_API_KEY; supersedes --explain)")
-	fs.StringVar(&o.model, "model", "", "model for --explain / --investigate (default: $KUBEAGENT_MODEL or claude-opus-4-8; the local model name when KUBEAGENT_EXPLAIN_ENDPOINT is set)")
-	fs.BoolVar(&o.includeCron, "include-cron", false, "include CronJobs in the report")
-	fs.BoolVar(&o.includeRestarts, "include-restarts", false, "include workloads that are healthy now but have restarted")
-	fs.BoolVar(&o.lintSecrets, "lint-secrets", false, "scan ConfigMaps and pod env for credentials stored in the clear (never prints values)")
-	fs.BoolVar(&o.pvcReclaimFull, "pvc-reclaim", false, "list every PVC on a Delete reclaim policy (default: a grouped summary)")
-	fs.BoolVar(&o.diskUsage, "disk-usage", false, "check node filesystem and PVC usage via the kubelet (needs the nodes/proxy grant)")
-	fs.Float64Var(&o.diskThreshold, "disk-threshold", 0.80, "with --disk-usage: warn at this used ratio (0-1)")
-	fs.BoolVar(&o.kubeletHealth, "kubelet-health", false, "probe each kubelet's /healthz via nodes/proxy and flag unhealthy nodes (needs the nodes/proxy add-on)")
-	fs.BoolVar(&o.controlPlaneHealth, "control-plane-health", false, "probe the apiserver /readyz endpoint and flag an unhealthy control plane / etcd (needs the /readyz grant)")
-	fs.BoolVar(&o.dnsHealth, "dns-health", false, "probe CoreDNS /metrics and flag an elevated SERVFAIL+REFUSED response ratio (needs the pods/proxy grant)")
-	fs.BoolVar(&o.certs, "certs", false, "check TLS-secret certificate expiry (public certs only; needs the secrets add-on grant)")
-	fs.IntVar(&o.certWarnDays, "cert-warn-days", 30, "with --certs: warn when a certificate expires within this many days")
-	fs.BoolVar(&o.operators, "operators", envBool("KUBEAGENT_OPERATORS", false), "report operator custom-resource health (cert-manager, CloudNativePG, Longhorn, Argo CD, Flux, Prometheus operator; advisory, needs deploy/rbac-operators.yaml on a restricted context)")
-	fs.BoolVar(&o.drift, "drift", envBool("KUBEAGENT_DRIFT", false), "report GitOps convergence for Argo CD and Flux (advisory, needs deploy/rbac-gitops.yaml on a restricted context)")
-	fs.DurationVar(&o.driftAge, "drift-age", envDuration("KUBEAGENT_DRIFT_AGE", time.Hour), "how long an object may differ from Git before --drift calls it stale (e.g. 30m, 2h)")
-	fs.BoolVar(&o.capacity, "capacity", envBool("KUBEAGENT_CAPACITY", false), "report scheduling headroom and structurally wrong workload shapes (advisory; uses metrics-server for context when present)")
-	fs.BoolVar(&o.logs, "logs", false, "read each crashing container's previous logs and classify the failure (needs the pods/log grant)")
-	fs.DurationVar(&o.nodeHeartbeatThreshold, "node-heartbeat-threshold", 40*time.Second, "flag a Ready node whose kubelet lease is stale beyond this (0 disables)")
-	fs.StringVar(&o.expectedNodes, "expected-nodes", "", "names of nodes expected in the cluster; a declared name with no Node object is flagged Degraded (comma-separated)")
-	fs.BoolVar(&o.security, "security", false, "flag insecure workloads and exposed Services (read-only, advisory)")
-	fs.BoolVar(&o.securityVerbose, "security-verbose", false, "with --security: list every finding per workload (default: dangerous findings in full, restricted gaps aggregated)")
-	fs.BoolVar(&o.suggest, "suggest", false, "print a deterministic next-step suggestion (and a read-only kubectl command) under each finding")
-	fs.BoolVar(&o.fix, "fix", false, "propose and (after confirmation) apply safe, reversible remediations (opt-in writes)")
-	fs.BoolVar(&o.dryRun, "dry-run", false, "with --fix: print proposed remediations only; never prompt or write")
-	fs.BoolVar(&o.assumeYes, "yes", false, "with --fix: apply all proposed remediations without prompting")
-	fs.StringVar(&o.auditLog, "audit-log", "", "with --fix: append a JSON-lines audit record per action to this file")
-	fs.BoolVar(&o.rollback, "rollback", false, "undo the most recent applied fix recorded in --audit-log (requires --audit-log)")
-	fs.StringVar(&o.namespace, "namespace", "", "namespace to scan (default: all namespaces)")
-	fs.StringVar(&o.namespace, "n", "", "namespace to scan (shorthand)")
-	if err := fs.Parse(args); err != nil {
+	cmd := &cobra.Command{Use: "scan", SilenceErrors: true, SilenceUsage: true}
+	bindScanFlags(cmd, &o)
+	if err := cmd.Flags().Parse(Normalize(args, longFlagLookup(cmd))); err != nil {
 		return scanOptions{}, err
 	}
 	return o, nil
@@ -327,4 +341,21 @@ func runScan(o scanOptions) error {
 		}
 	}
 	return nil
+}
+
+// newScanCommand builds `kubeagent scan`.
+func newScanCommand() *cobra.Command {
+	var o scanOptions
+	cmd := &cobra.Command{
+		Use:           "scan",
+		Short:         "Diagnose a cluster and report what is wrong",
+		Args:          cobra.NoArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runScan(o)
+		},
+	}
+	bindScanFlags(cmd, &o)
+	return cmd
 }

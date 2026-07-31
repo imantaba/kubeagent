@@ -115,7 +115,7 @@ func newRootCommand() *cobra.Command {
 			return usageError()
 		},
 	}
-	root.AddCommand(newVersionCommand(), newSchemaCommand(), newMCPCommand(), newTUICommand())
+	root.AddCommand(newVersionCommand(), newSchemaCommand(), newMCPCommand(), newTUICommand(), newScanCommand())
 	return root
 }
 
@@ -129,10 +129,10 @@ func longFlagLookup(cmd *cobra.Command) func(string) bool {
 // touches no process-global state itself (Main owns stderr and the exit
 // code), so a test can assert on the returned error alone.
 //
-// version, schema, mcp and tui are built and dispatched through Cobra; watch,
-// gate, rbac and scan stay on their standard-library parse<Command>Flags path
-// until Tasks 7 and 8 migrate them, at which point this function collapses to
-// a single root.Execute() call.
+// version, schema, mcp, tui and scan are built and dispatched through Cobra;
+// watch, gate and rbac stay on their standard-library parse<Command>Flags path
+// until Task 8 migrates them, at which point this function collapses to a
+// single root.Execute() call.
 func Run(args []string) error {
 	switch {
 	case len(args) > 0 && args[0] == "watch":
@@ -141,12 +141,6 @@ func Run(args []string) error {
 		return runGate(args[1:])
 	case len(args) > 0 && args[0] == "rbac":
 		return runRBAC(args[1:])
-	case len(args) > 0 && args[0] == "scan":
-		o, err := parseScanFlags(args[1:])
-		if err != nil {
-			return err
-		}
-		return runScan(o)
 	}
 	root := newRootCommand()
 	if len(args) == 0 {

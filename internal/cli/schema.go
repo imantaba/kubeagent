@@ -3,6 +3,9 @@ package cli
 import (
 	"fmt"
 	"io"
+	"os"
+
+	"github.com/spf13/cobra"
 
 	"github.com/imantaba/kubeagent/internal/schemadoc"
 )
@@ -31,4 +34,20 @@ func runSchema(args []string, w io.Writer) error {
 	}
 	_, err = w.Write(doc)
 	return err
+}
+
+// newSchemaCommand builds `kubeagent schema`. It keeps its own argument
+// handling rather than cobra.MaximumNArgs(1), because that would reword the
+// "usage: kubeagent schema [name]" error runSchema already produces.
+func newSchemaCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:           "schema [name]",
+		Short:         "Print the JSON Schema for a machine-readable document",
+		Args:          cobra.ArbitraryArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runSchema(args, os.Stdout)
+		},
+	}
 }

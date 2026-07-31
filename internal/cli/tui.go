@@ -2,8 +2,9 @@ package cli
 
 import (
 	"context"
-	"flag"
 	"time"
+
+	"github.com/spf13/cobra"
 
 	"github.com/imantaba/kubeagent/internal/cluster"
 	"github.com/imantaba/kubeagent/internal/scan"
@@ -31,18 +32,27 @@ type tuiOptions struct {
 	namespace   string
 }
 
-// parseTUIFlags parses `kubeagent tui`'s command line. Pure: it contacts no
-// cluster and writes nothing. Like gate, it declares its own small flag set
-// rather than inheriting scan's: three flags is the whole surface, and there
-// is no --output because a TUI seizes the terminal and is not redirectable.
+// bindTUIFlags declares tui's flags on cmd, writing into o. Like gate, tui
+// declares its own small flag set rather than inheriting scan's: three flags
+// is the whole surface, and there is no --output because a TUI seizes the
+// terminal and is not redirectable. --namespace and -n are one flag with a
+// shorthand (StringVarP), replacing the two separate StringVar calls the
+// standard library needed to accept both spellings.
+func bindTUIFlags(cmd *cobra.Command, o *tuiOptions) {
+	f := cmd.Flags()
+	f.StringVar(&o.kubeconfig, "kubeconfig", "", "path to kubeconfig (default: $KUBECONFIG or ~/.kube/config)")
+	f.StringVar(&o.contextName, "context", "", "kubeconfig context to use (default: current-context)")
+	f.StringVarP(&o.namespace, "namespace", "n", "", "namespace to browse (default: all namespaces)")
+}
+
+// parseTUIFlags parses tui's command line without running it. It builds a
+// throwaway command so the flag declarations have exactly one home. Pure: it
+// contacts no cluster and writes nothing.
 func parseTUIFlags(args []string) (tuiOptions, error) {
 	var o tuiOptions
-	fs := flag.NewFlagSet("tui", flag.ContinueOnError)
-	fs.StringVar(&o.kubeconfig, "kubeconfig", "", "path to kubeconfig (default: $KUBECONFIG or ~/.kube/config)")
-	fs.StringVar(&o.contextName, "context", "", "kubeconfig context to use (default: current-context)")
-	fs.StringVar(&o.namespace, "namespace", "", "namespace to browse (default: all namespaces)")
-	fs.StringVar(&o.namespace, "n", "", "namespace to browse (shorthand)")
-	if err := fs.Parse(args); err != nil {
+	cmd := &cobra.Command{Use: "tui", SilenceErrors: true, SilenceUsage: true}
+	bindTUIFlags(cmd, &o)
+	if err := cmd.Flags().Parse(Normalize(args, longFlagLookup(cmd))); err != nil {
 		return tuiOptions{}, err
 	}
 	return o, nil
@@ -80,4 +90,21 @@ func runTUI(args []string) error {
 		return err
 	}
 	return runTUIOpts(o)
+}
+
+// newTUICommand builds `kubeagent tui`.
+func newTUICommand() *cobra.Command {
+	var o tuiOptions
+	cmd := &cobra.Command{
+		Use:           "tui",
+		Short:         "Browse scan results interactively",
+		Args:          cobra.NoArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runTUIOpts(o)
+		},
+	}
+	bindTUIFlags(cmd, &o)
+	return cmd
 }

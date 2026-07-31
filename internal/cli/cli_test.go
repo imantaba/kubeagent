@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	appsv1 "k8s.io/api/apps/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -1642,17 +1643,19 @@ func TestUsage_MentionsTheMCPSubcommand(t *testing.T) {
 // protocol owns stdout on the stdio transport, so a single stray write from
 // any reachable failure path in runMCP corrupts the protocol stream for
 // every caller. This is exercised over the failure paths reachable without a
-// cluster: -h, an undefined flag, and a connection failure against a
-// nonexistent kubeconfig.
+// cluster: an undefined flag, and a connection failure against a nonexistent
+// kubeconfig. (-h used to be a third row here; see TestMCPHelpGoesToStdout for
+// why it moved out.)
 //
-// runMCP builds its flag.FlagSet with flag.ContinueOnError and never calls
-// SetOutput, so on the two flag-parsing failures the flag package's own
-// usage/error text goes to os.Stderr only because that is flag.Output's
-// default target — invisible in this file, and one SetOutput(os.Stdout) call
-// away from silently breaking. The connection failure is a different kind of
-// path: runMCP does not print anything itself there, it only returns an
-// error for the caller to report (main() does that at the top level), so
-// that case is checked via the returned error rather than captured stderr.
+// parseMCPFlags builds a throwaway *cobra.Command and calls its pflag.FlagSet
+// directly — it never goes through Cobra's own Execute()/ExecuteC(), which is
+// the only layer that ever copies a flag-parsing error to a real,
+// process-level stderr. pflag's FlagSet.Parse, constructed by Cobra with
+// ContinueOnError, returns a parse error without writing anywhere in that
+// case (unlike the standard library's flag package, which always printed via
+// failf regardless of ErrorHandling). So neither case here writes to os.Stderr
+// any more; both are checked via the returned error instead, the same way the
+// connection failure already was.
 func TestRunMCP_StdoutStaysEmptyOnFailurePaths(t *testing.T) {
 	dir := t.TempDir()
 	bad := filepath.Join(dir, "mcp-purity-nonexistent-kubeconfig")
@@ -1664,8 +1667,7 @@ func TestRunMCP_StdoutStaysEmptyOnFailurePaths(t *testing.T) {
 		// written directly to os.Stderr for this case.
 		wantStderr bool
 	}{
-		{name: "help", args: []string{"-h"}, wantStderr: true},
-		{name: "undefined flag", args: []string{"--bogus"}, wantStderr: true},
+		{name: "undefined flag", args: []string{"--bogus"}, wantStderr: false},
 		{name: "connection failure", args: []string{"--kubeconfig", bad}, wantStderr: false},
 	}
 
@@ -1695,6 +1697,28 @@ func TestRunMCP_StdoutStaysEmptyOnFailurePaths(t *testing.T) {
 					"here would mean the connection failure was silenced entirely")
 			}
 		})
+	}
+}
+
+// TestMCPHelpGoesToStdout documents a deliberate change. Under the standard
+// library, `mcp -h` wrote usage to stderr; Cobra writes help to stdout. That
+// is safe here even though the MCP protocol owns stdout: --help returns
+// before Serve is ever called, so there is no stream to corrupt, and a client
+// speaking protocol never passes --help. The stdout-purity invariant for the
+// paths that DO fail is unchanged and still asserted next door.
+func TestMCPHelpGoesToStdout(t *testing.T) {
+	var err error
+	stdout := captureStdout(t, func() {
+		stderr := captureStderr(t, func() { err = Run([]string{"mcp", "--help"}) })
+		if stderr != "" {
+			t.Errorf("stderr = %q, want empty", stderr)
+		}
+	})
+	if err != nil {
+		t.Fatalf("Run([mcp --help]) = %v, want nil", err)
+	}
+	if stdout == "" {
+		t.Error("stdout is empty, want the help text")
 	}
 }
 
@@ -2637,5 +2661,80 @@ func TestSmallCommandFlagDefaults(t *testing.T) {
 	}
 	if c.profile != "full" || c.output != "text" {
 		t.Errorf("rbac check defaults = %+v, want profile full, output text", c)
+	}
+}
+
+func TestRootCommandTreeIsSilent(t *testing.T) {
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		if !c.SilenceErrors {
+			t.Errorf("%s: SilenceErrors = false, want true", c.CommandPath())
+		}
+		if !c.SilenceUsage {
+			t.Errorf("%s: SilenceUsage = false, want true", c.CommandPath())
+		}
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+	}
+	walk(newRootCommand())
+}
+
+func TestRootCommandNamesTheInvokedSpelling(t *testing.T) {
+	old := invokedAs
+	invokedAs = "kubectl kubeagent"
+	defer func() { invokedAs = old }()
+
+	root := newRootCommand()
+	if got := root.CommandPath(); got != "kubectl kubeagent" {
+		t.Errorf("root.CommandPath() = %q, want %q", got, "kubectl kubeagent")
+	}
+	for _, sub := range root.Commands() {
+		if sub.Name() != "mcp" {
+			continue
+		}
+		if got := sub.CommandPath(); got != "kubectl kubeagent mcp" {
+			t.Errorf("mcp.CommandPath() = %q, want %q", got, "kubectl kubeagent mcp")
+		}
+	}
+}
+
+// TestSubcommandHelpExitsZero pins --help's exit status for the four
+// commands this task moved onto Cobra. Today the inner flag sets on the
+// commands that have NOT moved yet (scan, watch, gate, rbac) still return
+// flag.ErrHelp from parse<Command>Flags, which exitCodeFor maps to exit 1 —
+// that is unchanged and out of scope here; Tasks 7 and 8 give it the same
+// treatment when those commands migrate. Under Cobra, --help prints to
+// stdout and Run returns nil, which exitCodeFor maps to 0.
+func TestSubcommandHelpExitsZero(t *testing.T) {
+	for _, args := range [][]string{{"version", "--help"}, {"schema", "--help"}, {"mcp", "--help"}, {"tui", "--help"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			err := Run(args)
+			if err != nil {
+				t.Errorf("Run(%v) = %v, want nil", args, err)
+			}
+			if got := exitCodeFor(err); got != 0 {
+				t.Errorf("exit code = %d, want 0", got)
+			}
+		})
+	}
+}
+
+// TestRootHelpKeepsTheUsageError pins the one help path that is NOT exit 0.
+// `kubeagent --help` has always fallen through to the usage error — stderr,
+// exit 1 — because the standard-library dispatch only recognised a
+// subcommand as the first argument. That is arguably a wart, but exit codes
+// are frozen for this migration, so it stays. Fix it in its own change,
+// where it is visible as its own diff.
+func TestRootHelpKeepsTheUsageError(t *testing.T) {
+	err := Run([]string{"--help"})
+	if err == nil {
+		t.Fatal("Run([--help]) = nil, want the usage error")
+	}
+	if !strings.Contains(err.Error(), "usage: ") {
+		t.Errorf("error = %q, want the usage error", err)
+	}
+	if got := exitCodeFor(err); got != 1 {
+		t.Errorf("exit code = %d, want 1", got)
 	}
 }

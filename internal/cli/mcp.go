@@ -2,7 +2,8 @@ package cli
 
 import (
 	"context"
-	"flag"
+
+	"github.com/spf13/cobra"
 
 	"github.com/imantaba/kubeagent/internal/mcp"
 )
@@ -17,17 +18,25 @@ type mcpOptions struct {
 	logs               bool
 }
 
-// parseMCPFlags parses `kubeagent mcp`'s command line. Pure: it contacts no
-// cluster and writes nothing.
+// bindMCPFlags declares mcp's flags on cmd, writing into o. Flag names,
+// defaults and usage strings are unchanged from the standard-library
+// FlagSet this replaces.
+func bindMCPFlags(cmd *cobra.Command, o *mcpOptions) {
+	f := cmd.Flags()
+	f.StringVar(&o.kubeconfig, "kubeconfig", "", "path to kubeconfig (default: $KUBECONFIG or ~/.kube/config)")
+	f.StringVar(&o.contextName, "context", "", "kubeconfig context to use (default: current context)")
+	f.BoolVar(&o.allowContextSwitch, "allow-context-switch", false,
+		"let tool calls name a different kubeconfig context, and expose list_contexts")
+	f.BoolVar(&o.logs, "logs", false, "enrich findings with a short log tail from failing containers")
+}
+
+// parseMCPFlags parses mcp's command line without running it. It builds a
+// throwaway command so the flag declarations have exactly one home.
 func parseMCPFlags(args []string) (mcpOptions, error) {
 	var o mcpOptions
-	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
-	fs.StringVar(&o.kubeconfig, "kubeconfig", "", "path to kubeconfig (default: $KUBECONFIG or ~/.kube/config)")
-	fs.StringVar(&o.contextName, "context", "", "kubeconfig context to use (default: current context)")
-	fs.BoolVar(&o.allowContextSwitch, "allow-context-switch", false,
-		"let tool calls name a different kubeconfig context, and expose list_contexts")
-	fs.BoolVar(&o.logs, "logs", false, "enrich findings with a short log tail from failing containers")
-	if err := fs.Parse(args); err != nil {
+	cmd := &cobra.Command{Use: "mcp", SilenceErrors: true, SilenceUsage: true}
+	bindMCPFlags(cmd, &o)
+	if err := cmd.Flags().Parse(Normalize(args, longFlagLookup(cmd))); err != nil {
 		return mcpOptions{}, err
 	}
 	return o, nil
@@ -53,4 +62,21 @@ func runMCP(args []string) error {
 		return err
 	}
 	return runMCPOpts(o)
+}
+
+// newMCPCommand builds `kubeagent mcp`.
+func newMCPCommand() *cobra.Command {
+	var o mcpOptions
+	cmd := &cobra.Command{
+		Use:           "mcp",
+		Short:         "Serve read-only diagnosis over the Model Context Protocol",
+		Args:          cobra.NoArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runMCPOpts(o)
+		},
+	}
+	bindMCPFlags(cmd, &o)
+	return cmd
 }

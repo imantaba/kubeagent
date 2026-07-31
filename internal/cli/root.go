@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+
+	"github.com/spf13/cobra"
 )
 
 // version is the build version. main passes it in from its own package-level
@@ -81,39 +83,80 @@ func Main(v string) int {
 	return exitCodeFor(err)
 }
 
+// usageError is kubeagent's top-level usage error: the exhaustive list of
+// every subcommand and its flags. Both the root command's RunE and Run's
+// unknown-subcommand fallback return it, so an invalid invocation always
+// gets this text rather than Cobra's own "unknown command" text.
+func usageError() error {
+	return fmt.Errorf("usage: %[1]s scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json|html] [--explain] [--investigate] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--kubelet-health] [--control-plane-health] [--dns-health] [--certs [--cert-warn-days n]] [--operators] [--drift] [--drift-age dur] [--capacity] [--logs] [--node-heartbeat-threshold dur] [--expected-nodes a,b,…] [--fix [--dry-run|--yes] [--audit-log path]] [--rollback --audit-log path] | %[1]s watch [--kubeconfig path] [--context name (repeatable)] [--cluster-name name] [--include-local] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] [--alert-format json|slack|alertmanager] [--alert-repeat dur] [--slo-target pct] [--explain [--explain-cooldown dur] [--explain-budget n] [--model name]] | %[1]s mcp [--kubeconfig path] [--context name] [--allow-context-switch] [--logs] | %[1]s gate [--kubeconfig path] [--context name] [-n namespace] [--wait-for kind/name] [--timeout dur] [--fail-on critical|warning|info] [--allow-partial-read resource (repeatable)] [--output text|json|sarif] | %[1]s tui [--kubeconfig path] [--context name] [-n namespace] | %[1]s rbac print [--profile scan|watch|full] [--features a,b,…] [--role-name name] [--output yaml|json] | %[1]s rbac check [--kubeconfig path] [--context name] [--profile scan|watch|full] [--features a,b,…] [--output text|json] | %[1]s schema [name] | %[1]s version", invokedAs)
+}
+
+// newRootCommand builds the command tree. It is a function rather than a
+// package-level var so each test gets a clean tree, and so invokedAs is read
+// at construction time — the tests that exercise the kubectl-plugin spelling
+// set it and rebuild.
+func newRootCommand() *cobra.Command {
+	root := &cobra.Command{
+		Use:           "kubeagent",
+		Short:         "Read-only Kubernetes troubleshooting",
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		// CommandDisplayNameAnnotation makes CommandPath render the spelling
+		// the user actually typed. krew installs the binary as
+		// kubectl-kubeagent, and Use cannot carry a space because Name takes
+		// everything before the first one — "kubectl kubeagent" would produce
+		// a root named "kubectl" and a subcommand path of "kubectl scan".
+		Annotations: map[string]string{
+			cobra.CommandDisplayNameAnnotation: invokedAs,
+		},
+		// A bare `kubeagent` returns the usage error the standard-library
+		// implementation returned, so the exit code and the text are unchanged.
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return usageError()
+		},
+	}
+	root.AddCommand(newVersionCommand(), newSchemaCommand(), newMCPCommand(), newTUICommand())
+	return root
+}
+
+// longFlagLookup reports whether a name is a long flag on cmd, for Normalize.
+func longFlagLookup(cmd *cobra.Command) func(string) bool {
+	return func(name string) bool { return cmd.Flags().Lookup(name) != nil }
+}
+
 // Run parses the top-level command line and dispatches to the named
 // subcommand. It is the seam every test in this package drives directly: it
 // touches no process-global state itself (Main owns stderr and the exit
 // code), so a test can assert on the returned error alone.
+//
+// version, schema, mcp and tui are built and dispatched through Cobra; watch,
+// gate, rbac and scan stay on their standard-library parse<Command>Flags path
+// until Tasks 7 and 8 migrate them, at which point this function collapses to
+// a single root.Execute() call.
 func Run(args []string) error {
-	if len(args) > 0 && args[0] == "version" {
-		fmt.Fprintln(os.Stdout, versionLine())
-		return nil
-	}
-	if len(args) > 0 && args[0] == "watch" {
+	switch {
+	case len(args) > 0 && args[0] == "watch":
 		return runWatch(args[1:])
-	}
-	if len(args) > 0 && args[0] == "mcp" {
-		return runMCP(args[1:])
-	}
-	if len(args) > 0 && args[0] == "gate" {
+	case len(args) > 0 && args[0] == "gate":
 		return runGate(args[1:])
-	}
-	if len(args) > 0 && args[0] == "tui" {
-		return runTUI(args[1:])
-	}
-	if len(args) > 0 && args[0] == "rbac" {
+	case len(args) > 0 && args[0] == "rbac":
 		return runRBAC(args[1:])
+	case len(args) > 0 && args[0] == "scan":
+		o, err := parseScanFlags(args[1:])
+		if err != nil {
+			return err
+		}
+		return runScan(o)
 	}
-	if len(args) > 0 && args[0] == "schema" {
-		return runSchema(args[1:], os.Stdout)
+	root := newRootCommand()
+	if len(args) == 0 {
+		return usageError()
 	}
-	if len(args) == 0 || args[0] != "scan" {
-		return fmt.Errorf("usage: %[1]s scan [--kubeconfig path] [--context name] [-n namespace] [--output text|json|html] [--explain] [--investigate] [--model name] [--include-cron] [--include-restarts] [--pvc-reclaim] [--lint-secrets] [--security] [--security-verbose] [--disk-usage [--disk-threshold r]] [--kubelet-health] [--control-plane-health] [--dns-health] [--certs [--cert-warn-days n]] [--operators] [--drift] [--drift-age dur] [--capacity] [--logs] [--node-heartbeat-threshold dur] [--expected-nodes a,b,…] [--fix [--dry-run|--yes] [--audit-log path]] [--rollback --audit-log path] | %[1]s watch [--kubeconfig path] [--context name (repeatable)] [--cluster-name name] [--include-local] [-n namespace] [--metrics-addr addr] [--heartbeat dur] [--debounce dur] [--alert-format json|slack|alertmanager] [--alert-repeat dur] [--slo-target pct] [--explain [--explain-cooldown dur] [--explain-budget n] [--model name]] | %[1]s mcp [--kubeconfig path] [--context name] [--allow-context-switch] [--logs] | %[1]s gate [--kubeconfig path] [--context name] [-n namespace] [--wait-for kind/name] [--timeout dur] [--fail-on critical|warning|info] [--allow-partial-read resource (repeatable)] [--output text|json|sarif] | %[1]s tui [--kubeconfig path] [--context name] [-n namespace] | %[1]s rbac print [--profile scan|watch|full] [--features a,b,…] [--role-name name] [--output yaml|json] | %[1]s rbac check [--kubeconfig path] [--context name] [--profile scan|watch|full] [--features a,b,…] [--output text|json] | %[1]s schema [name] | %[1]s version", invokedAs)
+	// Resolve the subcommand first so Normalize can consult its own flag set.
+	sub, rest, err := root.Find(args)
+	if err != nil || sub == root {
+		return usageError()
 	}
-	opts, err := parseScanFlags(args[1:])
-	if err != nil {
-		return err
-	}
-	return runScan(opts)
+	root.SetArgs(append([]string{sub.Name()}, Normalize(rest, longFlagLookup(sub))...))
+	return root.Execute()
 }

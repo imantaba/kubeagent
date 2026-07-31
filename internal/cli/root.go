@@ -115,7 +115,8 @@ func newRootCommand() *cobra.Command {
 			return usageError()
 		},
 	}
-	root.AddCommand(newVersionCommand(), newSchemaCommand(), newMCPCommand(), newTUICommand(), newScanCommand())
+	root.AddCommand(newVersionCommand(), newSchemaCommand(), newMCPCommand(), newTUICommand(), newScanCommand(),
+		newWatchCommand(), newGateCommand(), newRBACCommand())
 	return root
 }
 
@@ -129,28 +130,27 @@ func longFlagLookup(cmd *cobra.Command) func(string) bool {
 // touches no process-global state itself (Main owns stderr and the exit
 // code), so a test can assert on the returned error alone.
 //
-// version, schema, mcp, tui and scan are built and dispatched through Cobra;
-// watch, gate and rbac stay on their standard-library parse<Command>Flags path
-// until Task 8 migrates them, at which point this function collapses to a
-// single root.Execute() call.
+// Every subcommand is built and dispatched through Cobra.
 func Run(args []string) error {
-	switch {
-	case len(args) > 0 && args[0] == "watch":
-		return runWatch(args[1:])
-	case len(args) > 0 && args[0] == "gate":
-		return runGate(args[1:])
-	case len(args) > 0 && args[0] == "rbac":
-		return runRBAC(args[1:])
-	}
-	root := newRootCommand()
 	if len(args) == 0 {
 		return usageError()
 	}
-	// Resolve the subcommand first so Normalize can consult its own flag set.
+	root := newRootCommand()
 	sub, rest, err := root.Find(args)
 	if err != nil || sub == root {
 		return usageError()
 	}
-	root.SetArgs(append([]string{sub.Name()}, Normalize(rest, longFlagLookup(sub))...))
+	root.SetArgs(append(commandPathArgs(sub, root), Normalize(rest, longFlagLookup(sub))...))
 	return root.Execute()
+}
+
+// commandPathArgs rebuilds the verb path from root down to sub — one element
+// for `scan`, two for `rbac print` — so SetArgs re-resolves the same command
+// Find already located.
+func commandPathArgs(sub, root *cobra.Command) []string {
+	var path []string
+	for c := sub; c != nil && c != root; c = c.Parent() {
+		path = append([]string{c.Name()}, path...)
+	}
+	return path
 }

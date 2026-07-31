@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -438,7 +437,7 @@ func TestRunWatch_NoAlertWebhookFlag(t *testing.T) {
 	dir := t.TempDir()
 	bad := filepath.Join(dir, "nonexistent")
 	err := runWatch([]string{"--alert-webhook", "http://example.invalid/hook", "--kubeconfig", bad})
-	if err == nil || !strings.Contains(err.Error(), "flag provided but not defined") {
+	if err == nil || !strings.Contains(err.Error(), "unknown flag") {
 		t.Fatalf("expected no --alert-webhook flag to exist, got: %v", err)
 	}
 }
@@ -645,31 +644,25 @@ func TestRunWatch_SLOTargetDefaultsToOff(t *testing.T) {
 	// be a valid target — it would pass validation and silently turn SLO
 	// tracking on for every operator who upgrades without touching the flag.
 	//
-	// --help is the only way to observe a flag.Float64 default without either
-	// starting the daemon (which requires a live target that has since fallen
-	// through validation) or reaching into the flag.FlagSet's internals. Go's
-	// flag.PrintDefaults appends a literal " (default X)" suffix to a flag's
-	// usage line only when the default is NOT the type's zero value; at the
-	// zero value it prints just the usage text. So the trailing "\n" right
-	// after the usage string is exactly what discriminates "off by default"
-	// from "on by default": with a non-zero default (e.g. 50), this same line
-	// would instead read '...(0 = SLO tracking off) (default 50)\n'. A future
-	// maintainer must not loosen this to a substring/Contains check without
-	// the terminator — this branch has already shipped three prefix-matching
-	// assertions that passed for the wrong reason.
+	// Under the standard library this scraped --help's stderr output, because
+	// that was the only way to observe a registered flag.Float64 default
+	// without starting the daemon. Under Cobra/pflag, a throwaway command
+	// built by parseWatchFlags never has --help registered (Cobra only wires
+	// it up inside Execute, which parseWatchFlags never calls), so --help
+	// falls through to pflag's own fallback instead of exercising the
+	// registered default. Reading the default straight off the registered
+	// flag is direct and does not depend on either flag package's --help
+	// formatting.
 	t.Setenv("KUBEAGENT_SLO_TARGET", "")
-	stderr := captureStderr(t, func() {
-		err := runWatch([]string{"--help"})
-		if !errors.Is(err, flag.ErrHelp) {
-			t.Fatalf("runWatch([--help]) error = %v, want flag.ErrHelp", err)
-		}
-	})
-	if !strings.Contains(stderr, "-slo-target float") {
-		t.Fatalf("expected --help output to describe -slo-target as a float flag, got: %q", stderr)
+	var o watchOptions
+	cmd := &cobra.Command{Use: "watch", SilenceErrors: true, SilenceUsage: true}
+	bindWatchFlags(cmd, &o)
+	f := cmd.Flags().Lookup("slo-target")
+	if f == nil {
+		t.Fatal("no --slo-target flag registered")
 	}
-	want := "availability SLO as a percentage, e.g. 99.9 (0 = SLO tracking off)\n"
-	if !strings.Contains(stderr, want) {
-		t.Fatalf("expected --help output to show --slo-target defaulting to off (no non-zero default suffix), got: %q", stderr)
+	if f.DefValue != "0" {
+		t.Fatalf("--slo-target default = %q, want %q (SLO tracking off)", f.DefValue, "0")
 	}
 }
 
@@ -1528,24 +1521,6 @@ func TestUsageMentionsTheExplainFlags(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("usage does not mention %s", want)
 		}
-	}
-}
-
-// TestContextListCollectsRepeats pins the flag type: --context is repeatable,
-// and each occurrence names one cluster to watch.
-func TestContextListCollectsRepeats(t *testing.T) {
-	var got contextList
-	fs := flag.NewFlagSet("watch", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Var(&got, "context", "")
-	if err := fs.Parse([]string{"--context", "a", "--context", "b"}); err != nil {
-		t.Fatalf("Parse: %v", err)
-	}
-	if len(got) != 2 || got[0] != "a" || got[1] != "b" {
-		t.Errorf("contextList = %v, want [a b]", got)
-	}
-	if err := fs.Parse([]string{"--context", ""}); err == nil {
-		t.Error("an empty --context must be rejected")
 	}
 }
 
@@ -2699,21 +2674,21 @@ func TestRootCommandNamesTheInvokedSpelling(t *testing.T) {
 	}
 }
 
-// TestSubcommandHelpExitsZero pins --help's exit status for every command
-// that has moved onto Cobra so far: version, schema, mcp, tui, and — since
-// Task 7 — scan. Under Cobra, --help is a normal registered bool flag;
-// Command.execute checks it, ExecuteC intercepts the resulting flag.ErrHelp,
-// writes real help to stdout, and returns nil, which exitCodeFor maps to 0.
+// TestSubcommandHelpExitsZero pins --help's exit status for every command:
+// version, schema, mcp, tui, scan, watch, gate and rbac. Under Cobra, --help
+// is a normal registered bool flag; Command.execute checks it, ExecuteC
+// intercepts the resulting flag.ErrHelp, writes real help to stdout, and
+// returns nil, which exitCodeFor maps to 0.
 //
-// watch and rbac stay on the standard-library flag package until Task 8:
-// their parse<Command>Flags still returns flag.ErrHelp as a plain error,
-// which exitCodeFor's default case maps to exit 1. gate is the exception —
-// runGate wraps every parse error, including flag.ErrHelp, in
-// &exitError{code: gate.CodeUsage}, so `gate --help` exits 4, not 1. Task 8
-// brings watch, gate and rbac onto the same Cobra footing as the commands
-// below.
+// gate is the notable change: before its migration, runGate wrapped every
+// parse error, including flag.ErrHelp, in &exitError{code: gate.CodeUsage},
+// so `gate --help` exited 4, not 0. Cobra's own --help handling now runs
+// before newGateCommand's RunE (and before its SetFlagErrorFunc, which only
+// sees flag *errors*, not the help request), so `gate --help` exits 0 like
+// every other command — a human running it by hand sees help and a clean
+// exit; CI never runs it with --help.
 func TestSubcommandHelpExitsZero(t *testing.T) {
-	for _, args := range [][]string{{"version", "--help"}, {"schema", "--help"}, {"mcp", "--help"}, {"tui", "--help"}, {"scan", "--help"}} {
+	for _, args := range [][]string{{"version", "--help"}, {"schema", "--help"}, {"mcp", "--help"}, {"tui", "--help"}, {"scan", "--help"}, {"watch", "--help"}, {"gate", "--help"}, {"rbac", "--help"}} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			err := Run(args)
 			if err != nil {

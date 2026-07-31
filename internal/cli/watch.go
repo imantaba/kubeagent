@@ -2,14 +2,14 @@ package cli
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"math"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
+
+	"github.com/spf13/cobra"
 
 	"github.com/imantaba/kubeagent/internal/alert"
 	"github.com/imantaba/kubeagent/internal/cluster"
@@ -24,17 +24,19 @@ import (
 // can cancel.
 var watchRun = watch.Run
 
-// contextList collects a repeatable --context flag: one occurrence per cluster
-// the daemon should watch.
-type contextList []string
-
-func (c *contextList) String() string { return strings.Join(*c, ",") }
-
-func (c *contextList) Set(v string) error {
-	if v == "" {
-		return fmt.Errorf("--context cannot be empty")
+// checkContexts rejects an empty --context value. It lives beside the parser
+// rather than in runWatchOpts: Task 3's TestParseWatchFlagsRejectsEmptyContext
+// asserts the error from parseWatchFlags's own return value, so the check runs
+// there. newWatchCommand's RunE calls it too — bindWatchFlags binds
+// o.contexts directly onto the real command, so Cobra's own flag parsing has
+// already filled it by the time RunE runs, on the same command line
+// parseWatchFlags would have rejected.
+func checkContexts(contexts []string) error {
+	for _, c := range contexts {
+		if c == "" {
+			return fmt.Errorf("--context cannot be empty")
+		}
 	}
-	*c = append(*c, v)
 	return nil
 }
 
@@ -67,7 +69,7 @@ func buildTargets(kubeconfig, clusterName string, contexts []string, includeLoca
 // cluster: parseWatchFlags is pure, and runWatchOpts does the I/O.
 type watchOptions struct {
 	kubeconfig      string
-	contexts        contextList
+	contexts        []string
 	clusterName     string
 	includeLocal    bool
 	metricsAddr     string
@@ -85,31 +87,48 @@ type watchOptions struct {
 	namespace       string
 }
 
+// bindWatchFlags declares watch's flags on cmd, writing into o. Flag names,
+// defaults and usage strings are unchanged from the standard-library FlagSet
+// this replaces, except --namespace/-n: the standard library needed two
+// separate declarations to accept both spellings, pflag expresses that as one
+// flag with a shorthand, and only the long form's usage text survives.
+// --context uses StringArrayVar, not StringSliceVar: the slice form splits its
+// input on commas, which would turn --context a,b into two contexts where
+// today it is one context literally named a,b.
+func bindWatchFlags(cmd *cobra.Command, o *watchOptions) {
+	f := cmd.Flags()
+	f.StringVar(&o.kubeconfig, "kubeconfig", "", "path to kubeconfig for local dev (ignored in-cluster)")
+	f.StringArrayVar(&o.contexts, "context", nil,
+		"kubeconfig context to watch; repeat the flag to watch several clusters from one daemon")
+	f.StringVar(&o.clusterName, "cluster-name", envOr("KUBEAGENT_CLUSTER_NAME", "local"), "name for the default cluster — the one watched when no --context is given; becomes its `cluster` metric label")
+	f.BoolVar(&o.includeLocal, "include-local", envBool("KUBEAGENT_INCLUDE_LOCAL", false), "also watch the default cluster alongside every --context (no-op when no --context is given)")
+	f.StringVar(&o.metricsAddr, "metrics-addr", envOr("KUBEAGENT_METRICS_ADDR", ":8080"), "address for /metrics, /healthz, /readyz")
+	f.DurationVar(&o.heartbeat, "heartbeat", envDur("KUBEAGENT_HEARTBEAT", 60*time.Second), "safety-net full re-evaluation interval")
+	f.DurationVar(&o.debounce, "debounce", envDur("KUBEAGENT_DEBOUNCE", 2*time.Second), "coalescing window for change events")
+	f.BoolVar(&o.includeCron, "include-cron", false, "include CronJobs in the evaluation")
+	f.BoolVar(&o.includeRestarts, "include-restarts", false, "include workloads that are healthy now but have restarted")
+	f.StringVar(&o.alertFormat, "alert-format", envOr("KUBEAGENT_ALERT_FORMAT", "json"), "alert payload format: json, slack, or alertmanager")
+	f.DurationVar(&o.alertRepeat, "alert-repeat", envDur("KUBEAGENT_ALERT_REPEAT", 0), "re-send interval for still-firing alerts (0 = the format default: 4h, or 60s for alertmanager)")
+	f.Float64Var(&o.sloTarget, "slo-target", envFloat("KUBEAGENT_SLO_TARGET", 0), "availability SLO as a percentage, e.g. 99.9 (0 = SLO tracking off)")
+	f.BoolVar(&o.explain, "explain", envBool("KUBEAGENT_EXPLAIN", false), "explain new incidents via one LLM call each (needs ANTHROPIC_API_KEY, or KUBEAGENT_EXPLAIN_ENDPOINT for a local OpenAI-compatible model)")
+	f.DurationVar(&o.explainCooldown, "explain-cooldown", envDur("KUBEAGENT_EXPLAIN_COOLDOWN", time.Hour), "minimum gap between explanations for the same object (0 = no per-object gap)")
+	f.IntVar(&o.explainBudget, "explain-budget", envInt("KUBEAGENT_EXPLAIN_BUDGET", 20), "model calls per hour, and the burst capacity")
+	f.StringVar(&o.model, "model", "", "model for --explain (default: $KUBEAGENT_MODEL or claude-opus-4-8; the local model name when KUBEAGENT_EXPLAIN_ENDPOINT is set)")
+	f.StringVarP(&o.namespace, "namespace", "n", envOr("KUBEAGENT_NAMESPACE", ""), "namespace to watch (default: all)")
+}
+
 // parseWatchFlags parses `kubeagent watch`'s command line. Pure: it reads the
 // environment for the nine env-defaulted flags and nothing else, contacts no
-// cluster, and writes nothing.
+// cluster, and writes nothing. It builds a throwaway command so the flag
+// declarations have exactly one home, in bindWatchFlags.
 func parseWatchFlags(args []string) (watchOptions, error) {
 	var o watchOptions
-	fs := flag.NewFlagSet("watch", flag.ContinueOnError)
-	fs.StringVar(&o.kubeconfig, "kubeconfig", "", "path to kubeconfig for local dev (ignored in-cluster)")
-	fs.Var(&o.contexts, "context", "kubeconfig context to watch; repeat the flag to watch several clusters from one daemon")
-	fs.StringVar(&o.clusterName, "cluster-name", envOr("KUBEAGENT_CLUSTER_NAME", "local"), "name for the default cluster — the one watched when no --context is given; becomes its `cluster` metric label")
-	fs.BoolVar(&o.includeLocal, "include-local", envBool("KUBEAGENT_INCLUDE_LOCAL", false), "also watch the default cluster alongside every --context (no-op when no --context is given)")
-	fs.StringVar(&o.metricsAddr, "metrics-addr", envOr("KUBEAGENT_METRICS_ADDR", ":8080"), "address for /metrics, /healthz, /readyz")
-	fs.DurationVar(&o.heartbeat, "heartbeat", envDur("KUBEAGENT_HEARTBEAT", 60*time.Second), "safety-net full re-evaluation interval")
-	fs.DurationVar(&o.debounce, "debounce", envDur("KUBEAGENT_DEBOUNCE", 2*time.Second), "coalescing window for change events")
-	fs.BoolVar(&o.includeCron, "include-cron", false, "include CronJobs in the evaluation")
-	fs.BoolVar(&o.includeRestarts, "include-restarts", false, "include workloads that are healthy now but have restarted")
-	fs.StringVar(&o.alertFormat, "alert-format", envOr("KUBEAGENT_ALERT_FORMAT", "json"), "alert payload format: json, slack, or alertmanager")
-	fs.DurationVar(&o.alertRepeat, "alert-repeat", envDur("KUBEAGENT_ALERT_REPEAT", 0), "re-send interval for still-firing alerts (0 = the format default: 4h, or 60s for alertmanager)")
-	fs.Float64Var(&o.sloTarget, "slo-target", envFloat("KUBEAGENT_SLO_TARGET", 0), "availability SLO as a percentage, e.g. 99.9 (0 = SLO tracking off)")
-	fs.BoolVar(&o.explain, "explain", envBool("KUBEAGENT_EXPLAIN", false), "explain new incidents via one LLM call each (needs ANTHROPIC_API_KEY, or KUBEAGENT_EXPLAIN_ENDPOINT for a local OpenAI-compatible model)")
-	fs.DurationVar(&o.explainCooldown, "explain-cooldown", envDur("KUBEAGENT_EXPLAIN_COOLDOWN", time.Hour), "minimum gap between explanations for the same object (0 = no per-object gap)")
-	fs.IntVar(&o.explainBudget, "explain-budget", envInt("KUBEAGENT_EXPLAIN_BUDGET", 20), "model calls per hour, and the burst capacity")
-	fs.StringVar(&o.model, "model", "", "model for --explain (default: $KUBEAGENT_MODEL or claude-opus-4-8; the local model name when KUBEAGENT_EXPLAIN_ENDPOINT is set)")
-	fs.StringVar(&o.namespace, "namespace", envOr("KUBEAGENT_NAMESPACE", ""), "namespace to watch (default: all)")
-	fs.StringVar(&o.namespace, "n", envOr("KUBEAGENT_NAMESPACE", ""), "namespace to watch (shorthand)")
-	if err := fs.Parse(args); err != nil {
+	cmd := &cobra.Command{Use: "watch", SilenceErrors: true, SilenceUsage: true}
+	bindWatchFlags(cmd, &o)
+	if err := cmd.Flags().Parse(Normalize(args, longFlagLookup(cmd))); err != nil {
+		return watchOptions{}, err
+	}
+	if err := checkContexts(o.contexts); err != nil {
 		return watchOptions{}, err
 	}
 	return o, nil
@@ -229,4 +248,28 @@ func runWatch(args []string) error {
 		return err
 	}
 	return runWatchOpts(o)
+}
+
+// newWatchCommand builds `kubeagent watch`.
+func newWatchCommand() *cobra.Command {
+	var o watchOptions
+	cmd := &cobra.Command{
+		Use:           "watch",
+		Short:         "Watch a cluster continuously and alert on new issues",
+		Args:          cobra.NoArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// bindWatchFlags binds o.contexts directly onto this command, so
+			// Cobra's own ParseFlags has already filled it by the time RunE
+			// runs; checkContexts here is the same check parseWatchFlags runs
+			// for a caller that parses without executing.
+			if err := checkContexts(o.contexts); err != nil {
+				return err
+			}
+			return runWatchOpts(o)
+		},
+	}
+	bindWatchFlags(cmd, &o)
+	return cmd
 }

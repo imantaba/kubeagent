@@ -3,11 +3,11 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"os"
-	"strings"
 	"time"
+
+	"github.com/spf13/cobra"
 
 	"github.com/imantaba/kubeagent/internal/cluster"
 	"github.com/imantaba/kubeagent/internal/connectivity"
@@ -44,12 +44,6 @@ func gateScanOptions(namespace string) scan.Options {
 	}
 }
 
-// stringList collects a repeatable flag's values.
-type stringList []string
-
-func (s *stringList) String() string     { return strings.Join(*s, ",") }
-func (s *stringList) Set(v string) error { *s = append(*s, v); return nil }
-
 // gateOptions is `kubeagent gate`'s parsed command line. One field per flag,
 // in declaration order. It exists so flag wiring is testable without a
 // cluster: parseGateFlags is pure, and runGateOpts does the I/O.
@@ -61,28 +55,42 @@ type gateOptions struct {
 	waitFor          string
 	timeout          time.Duration
 	pollInterval     time.Duration
-	allowPartialRead stringList
+	allowPartialRead []string
 	namespace        string
+}
+
+// bindGateFlags declares gate's flags on cmd, writing into o. Flag names,
+// defaults and usage strings are unchanged from the standard-library FlagSet
+// this replaces, except --namespace/-n: the standard library needed two
+// separate declarations to accept both spellings, pflag expresses that as one
+// flag with a shorthand, and only the long form's usage text survives.
+// --allow-partial-read uses StringArrayVar, not StringSliceVar: the slice
+// form splits its input on commas, which would silently turn one
+// comma-containing resource name into two.
+func bindGateFlags(cmd *cobra.Command, o *gateOptions) {
+	f := cmd.Flags()
+	f.StringVar(&o.kubeconfig, "kubeconfig", "", "path to kubeconfig (default: $KUBECONFIG or ~/.kube/config)")
+	f.StringVar(&o.contextName, "context", "", "kubeconfig context to use (default: current-context)")
+	f.StringVar(&o.output, "output", "text", "output format: text | json | sarif")
+	f.StringVar(&o.failOn, "fail-on", "critical", "fail the gate at this severity or above: critical | warning | info")
+	f.StringVar(&o.waitFor, "wait-for", "", "post-deploy verify: wait for this workload's rollout to settle, then judge only it (kind/name, e.g. deployment/api)")
+	f.DurationVar(&o.timeout, "timeout", 5*time.Minute, "with --wait-for: give up waiting after this long (exit 3)")
+	f.DurationVar(&o.pollInterval, "poll-interval", 2*time.Second, "with --wait-for: how often to re-read the workload")
+	f.StringArrayVar(&o.allowPartialRead, "allow-partial-read", nil, "accept that this resource cannot be read, instead of exiting 2 (repeatable, e.g. leases)")
+	f.StringVarP(&o.namespace, "namespace", "n", "", "namespace to judge (default: all namespaces)")
 }
 
 // parseGateFlags parses `kubeagent gate`'s command line. Pure: it contacts no
 // cluster and writes nothing. It returns a plain error rather than an
 // *exitError — the exit-4-on-parse-failure contract belongs to runGate, not
 // here, so this stays usable from a test that just wants the parsed values.
+// It builds a throwaway command so the flag declarations have exactly one
+// home, in bindGateFlags.
 func parseGateFlags(args []string) (gateOptions, error) {
 	var o gateOptions
-	fs := flag.NewFlagSet("gate", flag.ContinueOnError)
-	fs.StringVar(&o.kubeconfig, "kubeconfig", "", "path to kubeconfig (default: $KUBECONFIG or ~/.kube/config)")
-	fs.StringVar(&o.contextName, "context", "", "kubeconfig context to use (default: current-context)")
-	fs.StringVar(&o.output, "output", "text", "output format: text | json | sarif")
-	fs.StringVar(&o.failOn, "fail-on", "critical", "fail the gate at this severity or above: critical | warning | info")
-	fs.StringVar(&o.waitFor, "wait-for", "", "post-deploy verify: wait for this workload's rollout to settle, then judge only it (kind/name, e.g. deployment/api)")
-	fs.DurationVar(&o.timeout, "timeout", 5*time.Minute, "with --wait-for: give up waiting after this long (exit 3)")
-	fs.DurationVar(&o.pollInterval, "poll-interval", 2*time.Second, "with --wait-for: how often to re-read the workload")
-	fs.Var(&o.allowPartialRead, "allow-partial-read", "accept that this resource cannot be read, instead of exiting 2 (repeatable, e.g. leases)")
-	fs.StringVar(&o.namespace, "namespace", "", "namespace to judge (default: all namespaces)")
-	fs.StringVar(&o.namespace, "n", "", "namespace to judge (shorthand)")
-	if err := fs.Parse(args); err != nil {
+	cmd := &cobra.Command{Use: "gate", SilenceErrors: true, SilenceUsage: true}
+	bindGateFlags(cmd, &o)
+	if err := cmd.Flags().Parse(Normalize(args, longFlagLookup(cmd))); err != nil {
 		return gateOptions{}, err
 	}
 	return o, nil
@@ -215,4 +223,28 @@ func runGate(args []string) error {
 		return &exitError{code: gate.CodeUsage, msg: err.Error()}
 	}
 	return runGateOpts(o)
+}
+
+// newGateCommand builds `kubeagent gate`.
+func newGateCommand() *cobra.Command {
+	var o gateOptions
+	cmd := &cobra.Command{
+		Use:           "gate",
+		Short:         "Judge a scan and exit with a code CI can branch on",
+		Args:          cobra.NoArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runGateOpts(o)
+		},
+	}
+	bindGateFlags(cmd, &o)
+	// Without this, a bad flag reaches Main as a plain error and exits 1 —
+	// reading to a pipeline as "kubeagent found problems" rather than "the
+	// flags were wrong", the exact confusion the five-code contract exists to
+	// prevent.
+	cmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
+		return &exitError{code: gate.CodeUsage, msg: err.Error()}
+	})
+	return cmd
 }

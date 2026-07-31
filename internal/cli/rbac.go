@@ -3,27 +3,16 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/spf13/cobra"
 
 	"github.com/imantaba/kubeagent/internal/cluster"
 	"github.com/imantaba/kubeagent/internal/jsonschema"
 	"github.com/imantaba/kubeagent/internal/rbacprofile"
 )
-
-// runRBAC dispatches the two rbac verbs. Standard-library flag only — v1 has no
-// Cobra, so each verb owns its own FlagSet, the same shape runGate uses.
-func runRBAC(args []string) error {
-	if len(args) > 0 && args[0] == "print" {
-		return runRBACPrint(args[1:])
-	}
-	if len(args) > 0 && args[0] == "check" {
-		return runRBACCheck(args[1:])
-	}
-	return fmt.Errorf("usage: %[1]s rbac print [--profile scan|watch|full] [--features a,b,…] [--role-name name] [--output yaml|json] | %[1]s rbac check [--kubeconfig path] [--context name] [--profile scan|watch|full] [--features a,b,…] [--output text|json]", invokedAs)
-}
 
 // splitFeatureList turns "core, certs" into ["core", "certs"], tolerating the
 // spaces a human types.
@@ -86,16 +75,25 @@ type rbacPrintOptions struct {
 	output   string
 }
 
+// bindRBACPrintFlags declares rbac print's flags on cmd, writing into o.
+// Flag names, defaults and usage strings are unchanged from the
+// standard-library FlagSet this replaces.
+func bindRBACPrintFlags(cmd *cobra.Command, o *rbacPrintOptions) {
+	f := cmd.Flags()
+	f.StringVar(&o.profile, "profile", "scan", "permission profile: scan | watch | full")
+	f.StringVar(&o.features, "features", "", "comma-separated feature names, instead of a profile")
+	f.StringVar(&o.roleName, "role-name", "kubeagent", "metadata.name of the printed ClusterRole")
+	f.StringVar(&o.output, "output", "yaml", "output format: yaml | json")
+}
+
 // parseRBACPrintFlags parses `kubeagent rbac print`'s command line. Pure: it
-// contacts no cluster and writes nothing.
+// contacts no cluster and writes nothing. It builds a throwaway command so
+// the flag declarations have exactly one home, in bindRBACPrintFlags.
 func parseRBACPrintFlags(args []string) (rbacPrintOptions, error) {
 	var o rbacPrintOptions
-	fs := flag.NewFlagSet("rbac print", flag.ContinueOnError)
-	fs.StringVar(&o.profile, "profile", "scan", "permission profile: scan | watch | full")
-	fs.StringVar(&o.features, "features", "", "comma-separated feature names, instead of a profile")
-	fs.StringVar(&o.roleName, "role-name", "kubeagent", "metadata.name of the printed ClusterRole")
-	fs.StringVar(&o.output, "output", "yaml", "output format: yaml | json")
-	if err := fs.Parse(args); err != nil {
+	cmd := &cobra.Command{Use: "print", SilenceErrors: true, SilenceUsage: true}
+	bindRBACPrintFlags(cmd, &o)
+	if err := cmd.Flags().Parse(Normalize(args, longFlagLookup(cmd))); err != nil {
 		return rbacPrintOptions{}, err
 	}
 	return o, nil
@@ -145,17 +143,26 @@ type rbacCheckOptions struct {
 	output      string
 }
 
+// bindRBACCheckFlags declares rbac check's flags on cmd, writing into o.
+// Flag names, defaults and usage strings are unchanged from the
+// standard-library FlagSet this replaces.
+func bindRBACCheckFlags(cmd *cobra.Command, o *rbacCheckOptions) {
+	f := cmd.Flags()
+	f.StringVar(&o.kubeconfig, "kubeconfig", "", "path to kubeconfig (default: $KUBECONFIG or ~/.kube/config)")
+	f.StringVar(&o.contextName, "context", "", "kubeconfig context to use (default: current-context)")
+	f.StringVar(&o.profile, "profile", "full", "permission profile: scan | watch | full")
+	f.StringVar(&o.features, "features", "", "comma-separated feature names, instead of a profile")
+	f.StringVar(&o.output, "output", "text", "output format: text | json")
+}
+
 // parseRBACCheckFlags parses `kubeagent rbac check`'s command line. Pure: it
-// contacts no cluster and writes nothing.
+// contacts no cluster and writes nothing. It builds a throwaway command so
+// the flag declarations have exactly one home, in bindRBACCheckFlags.
 func parseRBACCheckFlags(args []string) (rbacCheckOptions, error) {
 	var o rbacCheckOptions
-	fs := flag.NewFlagSet("rbac check", flag.ContinueOnError)
-	fs.StringVar(&o.kubeconfig, "kubeconfig", "", "path to kubeconfig (default: $KUBECONFIG or ~/.kube/config)")
-	fs.StringVar(&o.contextName, "context", "", "kubeconfig context to use (default: current-context)")
-	fs.StringVar(&o.profile, "profile", "full", "permission profile: scan | watch | full")
-	fs.StringVar(&o.features, "features", "", "comma-separated feature names, instead of a profile")
-	fs.StringVar(&o.output, "output", "text", "output format: text | json")
-	if err := fs.Parse(args); err != nil {
+	cmd := &cobra.Command{Use: "check", SilenceErrors: true, SilenceUsage: true}
+	bindRBACCheckFlags(cmd, &o)
+	if err := cmd.Flags().Parse(Normalize(args, longFlagLookup(cmd))); err != nil {
 		return rbacCheckOptions{}, err
 	}
 	return o, nil
@@ -232,4 +239,55 @@ func runRBACCheck(args []string) error {
 		return err
 	}
 	return runRBACCheckOpts(o)
+}
+
+// newRBACPrintCommand builds `kubeagent rbac print`.
+func newRBACPrintCommand() *cobra.Command {
+	var o rbacPrintOptions
+	cmd := &cobra.Command{
+		Use:           "print",
+		Short:         "Print the ClusterRole a permission profile needs",
+		Args:          cobra.NoArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runRBACPrintOpts(o)
+		},
+	}
+	bindRBACPrintFlags(cmd, &o)
+	return cmd
+}
+
+// newRBACCheckCommand builds `kubeagent rbac check`.
+func newRBACCheckCommand() *cobra.Command {
+	var o rbacCheckOptions
+	cmd := &cobra.Command{
+		Use:           "check",
+		Short:         "Check whether the current identity may run a permission profile",
+		Args:          cobra.NoArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runRBACCheckOpts(o)
+		},
+	}
+	bindRBACCheckFlags(cmd, &o)
+	return cmd
+}
+
+// newRBACCommand builds `kubeagent rbac`.
+func newRBACCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:           "rbac",
+		Short:         "Report the permissions each feature needs",
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		// A bare `kubeagent rbac` returns the same usage error it returned
+		// before the migration, rather than Cobra's default of printing help.
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return fmt.Errorf("usage: %[1]s rbac print [--profile scan|watch|full] [--features a,b,…] [--role-name name] [--output yaml|json] | %[1]s rbac check [--kubeconfig path] [--context name] [--profile scan|watch|full] [--features a,b,…] [--output text|json]", invokedAs)
+		},
+	}
+	cmd.AddCommand(newRBACPrintCommand(), newRBACCheckCommand())
+	return cmd
 }

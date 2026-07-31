@@ -18,6 +18,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/gitops"
 	"github.com/imantaba/kubeagent/internal/jsonschema"
 	"github.com/imantaba/kubeagent/internal/operators"
+	"github.com/imantaba/kubeagent/internal/policy"
 	"github.com/imantaba/kubeagent/internal/rbacprofile"
 	"github.com/imantaba/kubeagent/internal/report"
 	"github.com/imantaba/kubeagent/internal/watch"
@@ -96,6 +97,9 @@ var enums = map[string][]string{
 	"capacity.RuleName": {
 		string(capacity.RuleNoRequests), string(capacity.RuleLimitNoRequest),
 		string(capacity.RuleNeverSchedulable),
+	},
+	"policy.Level": {
+		string(policy.LevelInfo), string(policy.LevelWarning), string(policy.LevelCritical),
 	},
 }
 

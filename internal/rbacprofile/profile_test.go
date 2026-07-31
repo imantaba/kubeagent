@@ -56,8 +56,17 @@ func TestEveryFeatureIsWellFormed(t *testing.T) {
 func TestEveryGrantHasExactlyOneHome(t *testing.T) {
 	for _, f := range Features() {
 		if len(f.Rules) == 0 {
-			if f.Manifest != "" || f.CoveredBy != "" {
+			// A feature can declare zero rules of its own and still name who
+			// covers it (policy: every kind it may select is one core already
+			// grants), but it may never claim a manifest it does nothing to
+			// justify.
+			if f.Manifest != "" {
 				t.Errorf("feature %q needs no grant but claims a manifest", f.Name)
+			}
+			if f.CoveredBy != "" {
+				if _, ok := Lookup(f.CoveredBy); !ok {
+					t.Errorf("feature %q is CoveredBy unknown feature %q", f.Name, f.CoveredBy)
+				}
 			}
 			continue
 		}
@@ -178,5 +187,32 @@ func TestFeaturesReturnsACopy(t *testing.T) {
 	first[0].Name = "clobbered"
 	if Features()[0].Name == "clobbered" {
 		t.Fatal("Features() handed out the package's own slice")
+	}
+}
+
+// The policy feature must cost nothing: the kinds a rule may select are the
+// kinds core already grants, so a shipped ClusterRole that grew a rule because
+// of this feature means the selectable-kind table drifted from coreRules.
+func TestPolicyFeatureAddsNoRules(t *testing.T) {
+	var f *Feature
+	for i := range features {
+		if features[i].Name == "policy" {
+			f = &features[i]
+		}
+	}
+	if f == nil {
+		t.Fatal("no policy feature in the table")
+	}
+	if len(f.Rules) != 0 {
+		t.Errorf("the policy feature declares %d rules; it must be covered by core", len(f.Rules))
+	}
+	if f.CoveredBy != "core" {
+		t.Errorf("CoveredBy = %q, want core", f.CoveredBy)
+	}
+	if f.Manifest != "" || f.RoleName != "" || f.HelmCondition != "" {
+		t.Errorf("the policy feature must ship no manifest and gate nothing in the chart: %#v", f)
+	}
+	if !f.ScanOnly {
+		t.Error("ScanOnly = false; the watch daemon has no --policy")
 	}
 }

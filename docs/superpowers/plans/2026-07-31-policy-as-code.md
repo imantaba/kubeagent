@@ -2110,6 +2110,10 @@ func TestLoadDetectsADuplicateIDAcrossFiles(t *testing.T) {
 // TestConfigMapDataPathIsALoadError pins the spec's second security exclusion.
 // Without it, a policy file landed in a repo, run under `gate --output sarif`
 // and uploaded to a code-scanning dashboard, is an exfiltration channel.
+// Every path here is single-quoted where it is spliced into the document. In a
+// flow-style {...} mapping, [ and ] are YAML indicator characters: an unquoted
+// data["token"] does not parse at all, and the case would then pass for the
+// wrong reason — "invalid YAML" rather than the exclusion it exists to prove.
 func TestConfigMapDataPathIsALoadError(t *testing.T) {
 	// Every spelling of the same read, including the two bracket forms a
 	// string-prefix check would miss.
@@ -2120,7 +2124,7 @@ func TestConfigMapDataPathIsALoadError(t *testing.T) {
 		doc := Document{Source: "cm.yaml", Data: []byte(`
 - id: read-configmap
   match: {kind: ConfigMap}
-  assert: {path: ` + path + `, op: exists}
+  assert: {path: '` + path + `', op: exists}
   level: info
   message: reads a ConfigMap value
 `)}
@@ -2234,7 +2238,7 @@ func TestLoadRejects(t *testing.T) {
 		{"lte takes exactly one value", `
 - id: x
   match: {kind: Pod}
-  assert: {path: spec.containers[*].resources.limits.memory, op: lte, values: ["1Gi", "2Gi"]}
+  assert: {path: "spec.containers[*].resources.limits.memory", op: lte, values: ["1Gi", "2Gi"]}
   level: info
   message: m
 `, "exactly one value"},
@@ -3310,9 +3314,9 @@ func FuzzLoadPolicy(f *testing.F) {
 // hostile object text can panic a scan, that evidence never carries a raw byte
 // from the cluster to a terminal, and that evaluation is deterministic.
 func FuzzEvaluatePolicy(f *testing.F) {
-	f.Add("- id: x\n  match: {kind: Pod}\n  assert: {path: spec.containers[*].image, op: matches, values: [\"registry.example.com/*\"]}\n  level: critical\n  message: m\n",
+	f.Add("- id: x\n  match: {kind: Pod}\n  assert: {path: \"spec.containers[*].image\", op: matches, values: [\"registry.example.com/*\"]}\n  level: critical\n  message: m\n",
 		"registry.example.com/app:1.0", "prod", "tier")
-	f.Add("- id: x\n  match: {kind: Pod}\n  assert: {path: spec.containers[*].resources.limits.cpu, op: exists}\n  level: warning\n  message: m\n",
+	f.Add("- id: x\n  match: {kind: Pod}\n  assert: {path: \"spec.containers[*].resources.limits.cpu\", op: exists}\n  level: warning\n  message: m\n",
 		"\x1b[2Japp", "\x00ns", "")
 
 	f.Fuzz(func(t *testing.T, src, image, namespace, nsLabel string) {

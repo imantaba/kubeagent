@@ -1133,6 +1133,7 @@ package policy
 
 import (
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -1198,6 +1199,37 @@ func TestCheckOpGlobMatching(t *testing.T) {
 	}
 	if ok, _ := checkOp(OpNotMatches, present("docker.example.net/app:1.0"), vals); !ok {
 		t.Error("an unlisted registry satisfies notMatches")
+	}
+}
+
+// An annotation value can be hundreds of kilobytes and comes from whoever
+// wrote the workload. globMatch is quadratic in the worst case, so an
+// unbounded call would let that author stall a scan. Over the cap the slot is
+// skipped, never silently reported as matching or as not matching — both would
+// be a judgement kubeagent did not actually make.
+func TestCheckOpSkipsAValueTooLongToMatchSafely(t *testing.T) {
+	long := strings.Repeat("a", maxMatchLen+1)
+	atCap := strings.Repeat("a", maxMatchLen)
+
+	for _, op := range []Op{OpMatches, OpNotMatches} {
+		ok, skip := checkOp(op, present(long), []string{"a*"})
+		if !skip {
+			t.Errorf("%s on a %d-byte value: skip=false, want true", op, len(long))
+		}
+		if ok {
+			t.Errorf("%s on an over-cap value returned ok=true; a skipped slot decides nothing", op)
+		}
+		// One byte under the cap still evaluates: the cap must not quietly
+		// disable matching for ordinary values.
+		if _, skip := checkOp(op, present(atCap), []string{"a*"}); skip {
+			t.Errorf("%s on a %d-byte value was skipped; the cap is inclusive", op, len(atCap))
+		}
+	}
+
+	// Only the glob operators are capped. Equality is a byte compare and costs
+	// nothing, so capping it would drop a comparison that was safe to make.
+	if _, skip := checkOp(OpIn, present(long), []string{long}); skip {
+		t.Error("in was skipped on a long value; only the glob operators are capped")
 	}
 }
 
@@ -1311,6 +1343,13 @@ import (
 // parses as a number or a Kubernetes quantity. A skipped slot is not a
 // violation: a policy must never turn a field it cannot read into an
 // accusation.
+// maxMatchLen bounds what the glob operators will look at. Every value a
+// policy realistically matches on — an image reference, a label value, a
+// storage class name — is far below this; the cap exists for the annotation
+// nobody expected. Do not remove it on the belief that globMatch is linear:
+// it is not, and glob.go says so.
+const maxMatchLen = 4096
+
 func checkOp(op Op, s Slot, values []string) (ok, skip bool) {
 	// exists and notExists are the only operators that have an opinion about
 	// absence itself.
@@ -1347,20 +1386,22 @@ func checkOp(op Op, s Slot, values []string) (ok, skip bool) {
 			}
 		}
 		return true, false
-	case OpMatches:
+	case OpMatches, OpNotMatches:
+		// globMatch is O(len(pattern) * len(got)) in the worst case — a single
+		// star followed by a long partly-matching literal run. `got` comes from
+		// the cluster and an annotation value can reach hundreds of kilobytes,
+		// so an unbounded call is a workload author's denial of service against
+		// a scan. Over the cap the slot is skipped, the same answer a non-scalar
+		// gets: kubeagent declines to judge rather than guessing.
+		if len(got) > maxMatchLen {
+			return false, true
+		}
 		for _, v := range values {
 			if globMatch(v, got) {
-				return true, false
+				return op == OpMatches, false
 			}
 		}
-		return false, false
-	case OpNotMatches:
-		for _, v := range values {
-			if globMatch(v, got) {
-				return false, false
-			}
-		}
-		return true, false
+		return op == OpNotMatches, false
 	case OpGt, OpGte, OpLt, OpLte:
 		cmp, cmpOK := compareNumeric(got, values[0])
 		if !cmpOK {

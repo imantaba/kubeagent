@@ -1697,6 +1697,100 @@ func TestWorkloadWithNoPodTemplateLabelsIsCoveredOnlyByAnEmptySelector(t *testin
 	}
 }
 
+// TestRelationHoldsSurvivesMalformedCandidates asserts that relationHolds
+// never panics on a hostile or malformed candidate object, and never treats
+// a malformed shape as evidence of coverage. Values under a PDB or HPA come
+// from a cluster (or, in internal/fuzzgen's case, from a fuzz-generated Go
+// object) and are not guaranteed to be well-typed: a bare Go int where an
+// int64/float64 is expected, a string where a map is expected, and so on
+// must all fall through to "does not cover" rather than crash the process.
+func TestRelationHoldsSurvivesMalformedCandidates(t *testing.T) {
+	dep := workload("Deployment", "prod", "web", map[string]string{"app": "web"})
+
+	cases := []struct {
+		name string
+		rel  Relation
+		in   Inputs
+	}{
+		{
+			name: "nil PDB entry in the slice",
+			rel:  RelationHasPDB,
+			in:   Inputs{PDBs: []*unstructured.Unstructured{nil}},
+		},
+		{
+			name: "nil HPA entry in the slice",
+			rel:  RelationHasHPA,
+			in:   Inputs{HPAs: []*unstructured.Unstructured{nil}},
+		},
+		{
+			name: "PDB spec is a string, not a map",
+			rel:  RelationHasPDB,
+			in: Inputs{PDBs: []*unstructured.Unstructured{{Object: map[string]any{
+				"kind":     "PodDisruptionBudget",
+				"metadata": map[string]any{"name": "pdb", "namespace": "prod"},
+				"spec":     "not-a-map",
+			}}}},
+		},
+		{
+			name: "PDB spec.selector is a list, not a map",
+			rel:  RelationHasPDB,
+			in: Inputs{PDBs: []*unstructured.Unstructured{{Object: map[string]any{
+				"kind":     "PodDisruptionBudget",
+				"metadata": map[string]any{"name": "pdb", "namespace": "prod"},
+				"spec": map[string]any{
+					"selector": []any{"not", "a", "map"},
+				},
+			}}}},
+		},
+		{
+			name: "PDB matchLabels value is a number",
+			rel:  RelationHasPDB,
+			in: Inputs{PDBs: []*unstructured.Unstructured{
+				pdb("prod", map[string]any{"matchLabels": map[string]any{"app": 5.0}}),
+			}},
+		},
+		{
+			name: "PDB matchLabels value is a nested map",
+			rel:  RelationHasPDB,
+			in: Inputs{PDBs: []*unstructured.Unstructured{
+				pdb("prod", map[string]any{"matchLabels": map[string]any{"app": map[string]any{"nested": "value"}}}),
+			}},
+		},
+		{
+			name: "PDB matchLabels value is nil",
+			rel:  RelationHasPDB,
+			in: Inputs{PDBs: []*unstructured.Unstructured{
+				pdb("prod", map[string]any{"matchLabels": map[string]any{"app": nil}}),
+			}},
+		},
+		{
+			name: "PDB matchLabels value is a bare Go int, the exact shape that panics today",
+			rel:  RelationHasPDB,
+			in: Inputs{PDBs: []*unstructured.Unstructured{
+				pdb("prod", map[string]any{"matchLabels": map[string]any{"app": int(5)}}),
+			}},
+		},
+		{
+			name: "HPA spec.scaleTargetRef is a list, not a map",
+			rel:  RelationHasHPA,
+			in: Inputs{HPAs: []*unstructured.Unstructured{{Object: map[string]any{
+				"kind":     "HorizontalPodAutoscaler",
+				"metadata": map[string]any{"name": "hpa", "namespace": "prod"},
+				"spec": map[string]any{
+					"scaleTargetRef": []any{"not", "a", "map"},
+				},
+			}}}},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := relationHolds(c.rel, dep, c.in); got {
+				t.Errorf("relationHolds = %v, want false: a malformed candidate must never count as coverage", got)
+			}
+		})
+	}
+}
+
 func TestUnknownRelationNeverHolds(t *testing.T) {
 	dep := workload("Deployment", "prod", "web", nil)
 	if relationHolds(Relation("hasNetworkPolicy"), dep, Inputs{}) {
@@ -1751,6 +1845,13 @@ func relationHolds(rel Relation, obj *unstructured.Unstructured, in Inputs) bool
 // matchExpressions does not cover the workload — kubeagent says "no PDB
 // covers this" rather than guessing at set-based semantics it does not
 // implement.
+//
+// The selector is read with NestedFieldNoCopy, not NestedMap. NestedMap
+// deep-copies through runtime.DeepCopyJSON, which panics on any value outside
+// the JSON leaf set — a bare Go int is enough. Nothing decoded from the API
+// server carries one, but the fuzz targets construct objects in Go, so the
+// panic is reachable from the harness even though it is not reachable from a
+// cluster. Do not swap this back for the copying accessor.
 func coveredByPDB(obj *unstructured.Unstructured, pdbs []*unstructured.Unstructured) bool {
 	ns := obj.GetNamespace()
 	labels := podTemplateLabels(obj)
@@ -1758,10 +1859,15 @@ func coveredByPDB(obj *unstructured.Unstructured, pdbs []*unstructured.Unstructu
 		if p == nil || p.GetNamespace() != ns {
 			continue
 		}
-		selector, found, err := unstructured.NestedMap(p.Object, "spec", "selector")
+		sel, found, err := unstructured.NestedFieldNoCopy(p.Object, "spec", "selector")
 		if err != nil || !found {
 			// A PDB with no selector selects nothing kubeagent can reason
 			// about; ignore it rather than treat it as universal.
+			continue
+		}
+		selector, ok := sel.(map[string]any)
+		if !ok {
+			// spec.selector is present but not an object — nothing to match.
 			continue
 		}
 		if exprs, ok := selector["matchExpressions"].([]any); ok && len(exprs) > 0 {
@@ -1781,6 +1887,15 @@ func coveredByPDB(obj *unstructured.Unstructured, pdbs []*unstructured.Unstructu
 
 // targetedByHPA reports whether any HorizontalPodAutoscaler in the workload's
 // namespace scales it.
+//
+// Only scaleTargetRef.kind and .name are compared; apiVersion is not read at
+// all. An HPA targeting {apiVersion: "custom.example.com/v1", kind:
+// "Deployment", name: "web"} would therefore be reported as covering an
+// apps/v1 Deployment named "web", even though its scaleTargetRef names a
+// different API group. That is acceptable here because RelationValidForKind
+// restricts this relation to Deployment, StatefulSet and ReplicaSet — three
+// fixed, built-in apps/v1 kinds a rule can select — so there is no other API
+// group in play for kubeagent to disambiguate against in practice.
 func targetedByHPA(obj *unstructured.Unstructured, hpas []*unstructured.Unstructured) bool {
 	ns, kind, name := obj.GetNamespace(), obj.GetKind(), obj.GetName()
 	for _, h := range hpas {

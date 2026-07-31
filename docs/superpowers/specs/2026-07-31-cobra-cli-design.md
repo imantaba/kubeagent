@@ -361,7 +361,7 @@ supply-chain event, and worth stating plainly rather than assuming:
 | Module | Status now | Status after |
 |---|---|---|
 | `github.com/spf13/cobra` | absent | direct require |
-| `github.com/spf13/pflag` | indirect (via client-go) | direct require |
+| `github.com/spf13/pflag` | indirect (via client-go) | indirect (now also via cobra) |
 | `github.com/inconshreveable/mousetrap` | absent | indirect (cobra, Windows-only) |
 
 One genuinely new module in the build graph, plus one promotion of a module
@@ -425,8 +425,9 @@ Copied verbatim into the implementation plan:
 - URLs are credentials — no log line, error, or generated script carries more
   than `scheme://host`.
 - Kubeconfig paths are credentials.
-- `go.mod` / `go.sum` change is expected here and only here: `cobra` added,
-  `pflag` promoted. No other dependency.
+- `go.mod` / `go.sum` change is expected here and only here: `cobra` added
+  direct, `mousetrap` added indirect. No other dependency, and `pflag` stays
+  indirect.
 
 ## Risks
 

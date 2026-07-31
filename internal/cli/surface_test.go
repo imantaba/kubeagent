@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"io"
 	"strings"
 	"testing"
 	"time"
@@ -486,54 +485,6 @@ func TestInvokedAsSpelling(t *testing.T) {
 		if got := invocationName(tc.argv0); got != tc.want {
 			t.Errorf("invocationName(%q) = %q, want %q", tc.argv0, got, tc.want)
 		}
-	}
-}
-
-// TestCompletionEmitsAScriptForEveryShell asserts that `kubeagent completion`
-// produces a non-trivial, name-bearing script for each of the four shells
-// Cobra supports.
-func TestCompletionEmitsAScriptForEveryShell(t *testing.T) {
-	for _, shell := range []string{"bash", "zsh", "fish", "powershell"} {
-		t.Run(shell, func(t *testing.T) {
-			root := newRootCommand()
-			var out strings.Builder
-			root.SetOut(&out)
-			root.SetArgs([]string{"completion", shell})
-			if err := root.Execute(); err != nil {
-				t.Fatalf("completion %s: %v", shell, err)
-			}
-			if out.Len() == 0 {
-				t.Fatalf("completion %s produced no output", shell)
-			}
-			if !strings.Contains(out.String(), "kubeagent") {
-				t.Errorf("completion %s does not name the command", shell)
-			}
-		})
-	}
-}
-
-// TestCompletionRejectsAnUnknownShell asserts that a shell name outside the
-// four Cobra supports is rejected rather than silently accepted.
-func TestCompletionRejectsAnUnknownShell(t *testing.T) {
-	root := newRootCommand()
-	root.SetOut(io.Discard)
-	root.SetErr(io.Discard)
-	root.SetArgs([]string{"completion", "nonesuch"})
-	if err := root.Execute(); err == nil {
-		t.Fatal("completion nonesuch = nil, want an error")
-	}
-}
-
-// TestCompletionNeedsNoCluster asserts that a completion script is
-// generatable with no kubeconfig at all — completion is the one kubeagent
-// command that touches nothing.
-func TestCompletionNeedsNoCluster(t *testing.T) {
-	t.Setenv("KUBECONFIG", "/nonexistent/kubeconfig")
-	root := newRootCommand()
-	root.SetOut(io.Discard)
-	root.SetArgs([]string{"completion", "bash"})
-	if err := root.Execute(); err != nil {
-		t.Errorf("completion bash with no kubeconfig: %v", err)
 	}
 }
 

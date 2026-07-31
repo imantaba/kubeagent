@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -96,26 +97,99 @@ func TestStrayPositionalArgumentIsRejected(t *testing.T) {
 	}
 }
 
+// TestCompletionEmitsAScriptForEveryShell asserts that `kubeagent completion`
+// produces a non-trivial, name-bearing script for each of the four shells
+// Cobra supports.
+//
+// Moved here from surface_test.go: that file's entire value is that it can
+// be shown byte-identical to the commit that created it with one `git diff`,
+// so a reviewer never has to read it line by line to confirm the three
+// frozen tables were left alone. A new test — even one that never touches
+// those tables — defeats that property the moment it lands there instead of
+// here.
+func TestCompletionEmitsAScriptForEveryShell(t *testing.T) {
+	for _, shell := range []string{"bash", "zsh", "fish", "powershell"} {
+		t.Run(shell, func(t *testing.T) {
+			root := newRootCommand()
+			var out strings.Builder
+			root.SetOut(&out)
+			root.SetArgs([]string{"completion", shell})
+			if err := root.Execute(); err != nil {
+				t.Fatalf("completion %s: %v", shell, err)
+			}
+			if out.Len() == 0 {
+				t.Fatalf("completion %s produced no output", shell)
+			}
+			if !strings.Contains(out.String(), "kubeagent") {
+				t.Errorf("completion %s does not name the command", shell)
+			}
+		})
+	}
+}
+
+// TestCompletionRejectsAnUnknownShell asserts that a shell name outside the
+// four Cobra supports is rejected rather than silently accepted. Moved here
+// alongside TestCompletionEmitsAScriptForEveryShell — see its comment.
+func TestCompletionRejectsAnUnknownShell(t *testing.T) {
+	root := newRootCommand()
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	root.SetArgs([]string{"completion", "nonesuch"})
+	if err := root.Execute(); err == nil {
+		t.Fatal("completion nonesuch = nil, want an error")
+	}
+}
+
+// TestCompletionNeedsNoCluster asserts that a completion script is
+// generatable with no kubeconfig at all — completion is the one kubeagent
+// command that touches nothing. Moved here alongside
+// TestCompletionEmitsAScriptForEveryShell — see its comment.
+func TestCompletionNeedsNoCluster(t *testing.T) {
+	t.Setenv("KUBECONFIG", "/nonexistent/kubeconfig")
+	root := newRootCommand()
+	root.SetOut(io.Discard)
+	root.SetArgs([]string{"completion", "bash"})
+	if err := root.Execute(); err != nil {
+		t.Errorf("completion bash with no kubeconfig: %v", err)
+	}
+}
+
+// cobraUpstreamComment is the one line Cobra's own bash-completion-v2
+// template carries that names a scheme. Confirmed by generating the actual
+// script (`kubeagent completion bash | grep '://'`) and reading it back with
+// `xxd`, byte for byte: eight literal spaces, then the comment, no trailing
+// whitespace, no tab. It links an upstream GitHub issue explaining a shell
+// quirk; it ships in every Cobra program's bash script; it names no
+// kubeagent build detail and is not a credential. It is boilerplate present
+// in every Cobra CLI's output and is not something kubeagent controls, so it
+// is excluded by exact line rather than by pattern — matching on "any
+// github.com URL" or "any :// on a comment line" would also silently wave
+// through a real leak that happened to reuse the same shape. Anything else
+// carrying a scheme is kubeagent's own text and is a leak: a completion
+// script is a file users commit to dotfile repos and paste into issues.
+const cobraUpstreamComment = "        # https://github.com/spf13/cobra/issues/1508"
+
 // TestCompletionScriptCarriesNoPathOrURL pins a project-wide rule onto the
 // one new command the Cobra migration adds: a generated completion script
-// must never carry a filesystem path from the machine it was built on.
-// Kubeconfig paths are treated as credentials in this project, and a
-// completion script is a file users commonly commit to dotfile repos or
-// paste into issues, so it must be as safe to share as the binary name it
-// embeds. Cobra's generators only ever embed the command tree — names,
-// flags, short descriptions — so this should hold for every shell; bash is
-// the representative check.
+// must never carry a filesystem path from the machine it was built on, nor
+// a URL kubeagent itself put there. Kubeconfig paths and URLs are treated as
+// credentials in this project, and a completion script is a file users
+// commonly commit to dotfile repos or paste into issues, so it must be as
+// safe to share as the binary name it embeds. Cobra's generators only ever
+// embed the command tree — names, flags, short descriptions — so this
+// should hold for every shell; bash is the representative check.
 //
-// This does not assert "no URL at all": Cobra's own bash-completion-v2
-// template embeds a static comment linking a public upstream GitHub issue
-// (https://github.com/spf13/cobra/issues/1508) to explain a shell quirk.
-// That line ships in every Cobra program's bash script; it names no
-// kubeagent build detail and is not a credential, so it is not the leak this
-// test guards against. What the test does assert — no occurrence of this
-// build's actual working directory or home directory — is a direct,
-// environment-derived check for "no absolute path from the build machine",
-// rather than a substring list that would have to special-case Cobra's own
-// boilerplate.
+// Three independent axes, each asserted unconditionally (a lookup failure
+// fails the test rather than silently skipping the check it guards):
+//   - no "/home/" — a common Linux user-directory prefix;
+//   - no occurrence of this run's actual working directory or home
+//     directory — a direct, environment-derived check for "no absolute path
+//     from the build machine", rather than a static substring guess;
+//   - no line containing "://" other than the one known-safe Cobra
+//     boilerplate line named by cobraUpstreamComment (see its comment) — a
+//     future Short, Long or Example string that bakes in a real URL (an
+//     internal wiki link, a webhook, a URL with a token) is exactly what
+//     this axis exists to catch.
 func TestCompletionScriptCarriesNoPathOrURL(t *testing.T) {
 	root := newRootCommand()
 	var out strings.Builder
@@ -128,10 +202,29 @@ func TestCompletionScriptCarriesNoPathOrURL(t *testing.T) {
 	if strings.Contains(script, "/home/") {
 		t.Errorf("completion bash script contains %q, want none", "/home/")
 	}
-	if wd, err := os.Getwd(); err == nil && strings.Contains(script, wd) {
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v — this check must not silently skip", err)
+	}
+	if strings.Contains(script, wd) {
 		t.Errorf("completion bash script embeds the build machine's working directory %q", wd)
 	}
-	if home, err := os.UserHomeDir(); err == nil && strings.Contains(script, home) {
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("os.UserHomeDir: %v — this check must not silently skip", err)
+	}
+	if strings.Contains(script, home) {
 		t.Errorf("completion bash script embeds the build machine's home directory %q", home)
+	}
+
+	for _, line := range strings.Split(script, "\n") {
+		if line == cobraUpstreamComment {
+			continue
+		}
+		if strings.Contains(line, "://") {
+			t.Errorf("completion bash script carries a URL outside Cobra's own boilerplate: %q", line)
+		}
 	}
 }

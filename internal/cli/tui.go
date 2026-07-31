@@ -22,39 +22,62 @@ func tuiScanOptions(namespace string) scan.Options {
 	}
 }
 
-// runTUI serves `kubeagent tui`. Like gate, it declares its own small flag set
-// rather than inheriting scan's: three flags is the whole surface, and there is
-// no --output because a TUI seizes the terminal and is not redirectable.
-func runTUI(args []string) error {
-	fs := flag.NewFlagSet("tui", flag.ContinueOnError)
-	kubeconfig := fs.String("kubeconfig", "", "path to kubeconfig (default: $KUBECONFIG or ~/.kube/config)")
-	contextName := fs.String("context", "", "kubeconfig context to use (default: current-context)")
-	var namespace string
-	fs.StringVar(&namespace, "namespace", "", "namespace to browse (default: all namespaces)")
-	fs.StringVar(&namespace, "n", "", "namespace to browse (shorthand)")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
+// tuiOptions is `kubeagent tui`'s parsed command line. One field per flag, in
+// declaration order. It exists so flag wiring is testable without a cluster:
+// parseTUIFlags is pure, and runTUIOpts does the I/O.
+type tuiOptions struct {
+	kubeconfig  string
+	contextName string
+	namespace   string
+}
 
-	client, err := cluster.NewClient(*kubeconfig, *contextName)
+// parseTUIFlags parses `kubeagent tui`'s command line. Pure: it contacts no
+// cluster and writes nothing. Like gate, it declares its own small flag set
+// rather than inheriting scan's: three flags is the whole surface, and there
+// is no --output because a TUI seizes the terminal and is not redirectable.
+func parseTUIFlags(args []string) (tuiOptions, error) {
+	var o tuiOptions
+	fs := flag.NewFlagSet("tui", flag.ContinueOnError)
+	fs.StringVar(&o.kubeconfig, "kubeconfig", "", "path to kubeconfig (default: $KUBECONFIG or ~/.kube/config)")
+	fs.StringVar(&o.contextName, "context", "", "kubeconfig context to use (default: current-context)")
+	fs.StringVar(&o.namespace, "namespace", "", "namespace to browse (default: all namespaces)")
+	fs.StringVar(&o.namespace, "n", "", "namespace to browse (shorthand)")
+	if err := fs.Parse(args); err != nil {
+		return tuiOptions{}, err
+	}
+	return o, nil
+}
+
+// runTUIOpts serves `kubeagent tui`. o is the already-parsed command line, as
+// produced by parseTUIFlags.
+func runTUIOpts(o tuiOptions) error {
+	client, err := cluster.NewClient(o.kubeconfig, o.contextName)
 	if err != nil {
 		return err
 	}
 
 	scope := "all namespaces"
-	if namespace != "" {
-		scope = "namespace " + namespace
+	if o.namespace != "" {
+		scope = "namespace " + o.namespace
 	}
 
 	return tui.Run(context.Background(), tui.Options{
 		Version: version,
 		Scope:   scope,
 		Scan: func(ctx context.Context) (tui.ScanSnapshot, error) {
-			res, err := scan.Evaluate(ctx, client, tuiScanOptions(namespace))
+			res, err := scan.Evaluate(ctx, client, tuiScanOptions(o.namespace))
 			if err != nil {
 				return tui.ScanSnapshot{}, err
 			}
 			return tui.Snapshot(res, time.Now()), nil
 		},
 	})
+}
+
+func runTUI(args []string) error {
+	o, err := parseTUIFlags(args)
+	if err != nil {
+		return err
+	}
+	return runTUIOpts(o)
 }

@@ -2446,3 +2446,198 @@ func TestParseScanFlagsDefaults(t *testing.T) {
 		t.Errorf("nodeHeartbeatThreshold = %v, want 40s", opts.nodeHeartbeatThreshold)
 	}
 }
+
+func TestParseWatchFlagsCarriesEveryValue(t *testing.T) {
+	// Nine of watch's flags default from the environment (KUBEAGENT_CLUSTER_NAME,
+	// KUBEAGENT_INCLUDE_LOCAL, KUBEAGENT_METRICS_ADDR, KUBEAGENT_HEARTBEAT,
+	// KUBEAGENT_DEBOUNCE, KUBEAGENT_ALERT_FORMAT, KUBEAGENT_ALERT_REPEAT,
+	// KUBEAGENT_SLO_TARGET, KUBEAGENT_NAMESPACE and the three explain keys), so
+	// clear them: a developer's shell must not decide whether this passes.
+	for _, k := range []string{
+		"KUBEAGENT_CLUSTER_NAME", "KUBEAGENT_INCLUDE_LOCAL", "KUBEAGENT_METRICS_ADDR",
+		"KUBEAGENT_HEARTBEAT", "KUBEAGENT_DEBOUNCE", "KUBEAGENT_ALERT_FORMAT",
+		"KUBEAGENT_ALERT_REPEAT", "KUBEAGENT_SLO_TARGET", "KUBEAGENT_NAMESPACE",
+		"KUBEAGENT_EXPLAIN", "KUBEAGENT_EXPLAIN_COOLDOWN", "KUBEAGENT_EXPLAIN_BUDGET",
+	} {
+		t.Setenv(k, "")
+	}
+	o, err := parseWatchFlags([]string{
+		"--context", "ctx-a", "--context", "ctx-b",
+		"--cluster-name", "example-cluster",
+		"--include-local",
+		"--metrics-addr", "192.0.2.10:9090",
+		"--heartbeat", "30s",
+		"--debounce", "5s",
+		"--alert-format", "slack",
+		"--alert-repeat", "2h",
+		"--slo-target", "99.9",
+		"--explain-cooldown", "15m",
+		"--explain-budget", "7",
+		"--namespace", "example-ns",
+	})
+	if err != nil {
+		t.Fatalf("parseWatchFlags: %v", err)
+	}
+	if got := []string(o.contexts); !slices.Equal(got, []string{"ctx-a", "ctx-b"}) {
+		t.Errorf("contexts = %v, want [ctx-a ctx-b]", got)
+	}
+	if o.clusterName != "example-cluster" {
+		t.Errorf("clusterName = %q, want example-cluster", o.clusterName)
+	}
+	if !o.includeLocal {
+		t.Error("includeLocal = false, want true")
+	}
+	if o.metricsAddr != "192.0.2.10:9090" {
+		t.Errorf("metricsAddr = %q, want 192.0.2.10:9090", o.metricsAddr)
+	}
+	if o.heartbeat != 30*time.Second {
+		t.Errorf("heartbeat = %v, want 30s", o.heartbeat)
+	}
+	if o.debounce != 5*time.Second {
+		t.Errorf("debounce = %v, want 5s", o.debounce)
+	}
+	if o.alertFormat != "slack" {
+		t.Errorf("alertFormat = %q, want slack", o.alertFormat)
+	}
+	if o.alertRepeat != 2*time.Hour {
+		t.Errorf("alertRepeat = %v, want 2h", o.alertRepeat)
+	}
+	if o.sloTarget != 99.9 {
+		t.Errorf("sloTarget = %v, want 99.9", o.sloTarget)
+	}
+	if o.explainCooldown != 15*time.Minute {
+		t.Errorf("explainCooldown = %v, want 15m", o.explainCooldown)
+	}
+	if o.explainBudget != 7 {
+		t.Errorf("explainBudget = %d, want 7", o.explainBudget)
+	}
+	if o.namespace != "example-ns" {
+		t.Errorf("namespace = %q, want example-ns", o.namespace)
+	}
+}
+
+func TestParseWatchFlagsRejectsEmptyContext(t *testing.T) {
+	_, err := parseWatchFlags([]string{"--context", ""})
+	if err == nil {
+		t.Fatal("parseWatchFlags([--context \"\"]) = nil, want an error")
+	}
+	if !strings.Contains(err.Error(), "--context cannot be empty") {
+		t.Errorf("error = %q, want it to contain %q", err, "--context cannot be empty")
+	}
+}
+
+func TestParseGateFlagsCarriesEveryValue(t *testing.T) {
+	o, err := parseGateFlags([]string{
+		"--kubeconfig", "/nonexistent/kubeconfig",
+		"--context", "example-context",
+		"--output", "sarif",
+		"--fail-on", "warning",
+		"--wait-for", "deployment/example-api",
+		"--timeout", "90s",
+		"--poll-interval", "3s",
+		"--allow-partial-read", "leases",
+		"--allow-partial-read", "events",
+		"--namespace", "example-ns",
+	})
+	if err != nil {
+		t.Fatalf("parseGateFlags: %v", err)
+	}
+	if o.output != "sarif" {
+		t.Errorf("output = %q, want sarif", o.output)
+	}
+	if o.failOn != "warning" {
+		t.Errorf("failOn = %q, want warning", o.failOn)
+	}
+	if o.waitFor != "deployment/example-api" {
+		t.Errorf("waitFor = %q, want deployment/example-api", o.waitFor)
+	}
+	if o.timeout != 90*time.Second {
+		t.Errorf("timeout = %v, want 90s", o.timeout)
+	}
+	if o.pollInterval != 3*time.Second {
+		t.Errorf("pollInterval = %v, want 3s", o.pollInterval)
+	}
+	if got := []string(o.allowPartialRead); !slices.Equal(got, []string{"leases", "events"}) {
+		t.Errorf("allowPartialRead = %v, want [leases events]", got)
+	}
+	if o.namespace != "example-ns" {
+		t.Errorf("namespace = %q, want example-ns", o.namespace)
+	}
+}
+
+func TestParseGateFlagsDefaults(t *testing.T) {
+	o, err := parseGateFlags(nil)
+	if err != nil {
+		t.Fatalf("parseGateFlags: %v", err)
+	}
+	if o.output != "text" {
+		t.Errorf("output = %q, want text", o.output)
+	}
+	if o.failOn != "critical" {
+		t.Errorf("failOn = %q, want critical", o.failOn)
+	}
+	if o.timeout != 5*time.Minute {
+		t.Errorf("timeout = %v, want 5m", o.timeout)
+	}
+	if o.pollInterval != 2*time.Second {
+		t.Errorf("pollInterval = %v, want 2s", o.pollInterval)
+	}
+}
+
+func TestParseSmallCommandFlags(t *testing.T) {
+	m, err := parseMCPFlags([]string{
+		"--kubeconfig", "/nonexistent/kubeconfig",
+		"--context", "example-context",
+		"--allow-context-switch", "--logs",
+	})
+	if err != nil {
+		t.Fatalf("parseMCPFlags: %v", err)
+	}
+	if !m.allowContextSwitch || !m.logs || m.contextName != "example-context" {
+		t.Errorf("mcpOptions = %+v, want all three set", m)
+	}
+
+	u, err := parseTUIFlags([]string{"-n", "example-ns", "--context", "example-context"})
+	if err != nil {
+		t.Fatalf("parseTUIFlags: %v", err)
+	}
+	if u.namespace != "example-ns" || u.contextName != "example-context" {
+		t.Errorf("tuiOptions = %+v, want namespace and context set", u)
+	}
+
+	p, err := parseRBACPrintFlags([]string{
+		"--profile", "watch", "--features", "core,certs",
+		"--role-name", "example-role", "--output", "json",
+	})
+	if err != nil {
+		t.Fatalf("parseRBACPrintFlags: %v", err)
+	}
+	if p.profile != "watch" || p.features != "core,certs" || p.roleName != "example-role" || p.output != "json" {
+		t.Errorf("rbacPrintOptions = %+v, want all four set", p)
+	}
+
+	c, err := parseRBACCheckFlags([]string{"--profile", "scan", "--output", "json"})
+	if err != nil {
+		t.Fatalf("parseRBACCheckFlags: %v", err)
+	}
+	if c.profile != "scan" || c.output != "json" {
+		t.Errorf("rbacCheckOptions = %+v, want profile scan and output json", c)
+	}
+}
+
+func TestSmallCommandFlagDefaults(t *testing.T) {
+	p, err := parseRBACPrintFlags(nil)
+	if err != nil {
+		t.Fatalf("parseRBACPrintFlags: %v", err)
+	}
+	if p.profile != "scan" || p.roleName != "kubeagent" || p.output != "yaml" {
+		t.Errorf("rbac print defaults = %+v, want profile scan, role-name kubeagent, output yaml", p)
+	}
+	c, err := parseRBACCheckFlags(nil)
+	if err != nil {
+		t.Fatalf("parseRBACCheckFlags: %v", err)
+	}
+	if c.profile != "full" || c.output != "text" {
+		t.Errorf("rbac check defaults = %+v, want profile full, output text", c)
+	}
+}

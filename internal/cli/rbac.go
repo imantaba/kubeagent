@@ -74,56 +74,106 @@ func selectedRules(profile, features string) ([]rbacprofile.Rule, error) {
 	return rbacprofile.Resolve(p)
 }
 
-func runRBACPrint(args []string) error {
+// rbacPrintOptions is `kubeagent rbac print`'s parsed command line. One field
+// per flag, in declaration order. It exists so flag wiring is testable
+// without a cluster: parseRBACPrintFlags is pure, and runRBACPrintOpts does
+// the I/O. rbac print never touches a cluster at all — the ClusterRole it
+// renders comes entirely from internal/rbacprofile.
+type rbacPrintOptions struct {
+	profile  string
+	features string
+	roleName string
+	output   string
+}
+
+// parseRBACPrintFlags parses `kubeagent rbac print`'s command line. Pure: it
+// contacts no cluster and writes nothing.
+func parseRBACPrintFlags(args []string) (rbacPrintOptions, error) {
+	var o rbacPrintOptions
 	fs := flag.NewFlagSet("rbac print", flag.ContinueOnError)
-	profile := fs.String("profile", "scan", "permission profile: scan | watch | full")
-	features := fs.String("features", "", "comma-separated feature names, instead of a profile")
-	roleName := fs.String("role-name", "kubeagent", "metadata.name of the printed ClusterRole")
-	output := fs.String("output", "yaml", "output format: yaml | json")
+	fs.StringVar(&o.profile, "profile", "scan", "permission profile: scan | watch | full")
+	fs.StringVar(&o.features, "features", "", "comma-separated feature names, instead of a profile")
+	fs.StringVar(&o.roleName, "role-name", "kubeagent", "metadata.name of the printed ClusterRole")
+	fs.StringVar(&o.output, "output", "yaml", "output format: yaml | json")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return rbacPrintOptions{}, err
 	}
-	rules, err := selectedRules(*profile, *features)
+	return o, nil
+}
+
+// runRBACPrintOpts serves `kubeagent rbac print`. o is the already-parsed
+// command line, as produced by parseRBACPrintFlags.
+func runRBACPrintOpts(o rbacPrintOptions) error {
+	rules, err := selectedRules(o.profile, o.features)
 	if err != nil {
 		return err
 	}
-	switch *output {
+	switch o.output {
 	case "yaml":
-		fmt.Fprint(os.Stdout, rbacprofile.RenderClusterRole(*roleName, rules))
+		fmt.Fprint(os.Stdout, rbacprofile.RenderClusterRole(o.roleName, rules))
 	case "json":
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(rbacprofile.RulesDocument{
 			SchemaVersion: jsonschema.RBACVersion,
-			RoleName:      *roleName,
+			RoleName:      o.roleName,
 			Rules:         rules,
 		})
 	default:
-		return fmt.Errorf("unknown --output %q: want yaml or json", *output)
+		return fmt.Errorf("unknown --output %q: want yaml or json", o.output)
 	}
 	return nil
 }
 
-func runRBACCheck(args []string) error {
-	fs := flag.NewFlagSet("rbac check", flag.ContinueOnError)
-	kubeconfig := fs.String("kubeconfig", "", "path to kubeconfig (default: $KUBECONFIG or ~/.kube/config)")
-	contextName := fs.String("context", "", "kubeconfig context to use (default: current-context)")
-	profile := fs.String("profile", "full", "permission profile: scan | watch | full")
-	features := fs.String("features", "", "comma-separated feature names, instead of a profile")
-	output := fs.String("output", "text", "output format: text | json")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	// Validate up front, matching runRBACPrint: a typo in --output must fail
-	// immediately, not after connecting to a cluster.
-	if *output != "text" && *output != "json" {
-		return fmt.Errorf("unknown --output %q: want text or json", *output)
-	}
-	selected, err := selectedFeatures(*profile, *features)
+func runRBACPrint(args []string) error {
+	o, err := parseRBACPrintFlags(args)
 	if err != nil {
 		return err
 	}
-	client, err := cluster.NewClient(*kubeconfig, *contextName)
+	return runRBACPrintOpts(o)
+}
+
+// rbacCheckOptions is `kubeagent rbac check`'s parsed command line. One field
+// per flag, in declaration order. It exists so flag wiring is testable
+// without a cluster: parseRBACCheckFlags is pure, and runRBACCheckOpts does
+// the I/O.
+type rbacCheckOptions struct {
+	kubeconfig  string
+	contextName string
+	profile     string
+	features    string
+	output      string
+}
+
+// parseRBACCheckFlags parses `kubeagent rbac check`'s command line. Pure: it
+// contacts no cluster and writes nothing.
+func parseRBACCheckFlags(args []string) (rbacCheckOptions, error) {
+	var o rbacCheckOptions
+	fs := flag.NewFlagSet("rbac check", flag.ContinueOnError)
+	fs.StringVar(&o.kubeconfig, "kubeconfig", "", "path to kubeconfig (default: $KUBECONFIG or ~/.kube/config)")
+	fs.StringVar(&o.contextName, "context", "", "kubeconfig context to use (default: current-context)")
+	fs.StringVar(&o.profile, "profile", "full", "permission profile: scan | watch | full")
+	fs.StringVar(&o.features, "features", "", "comma-separated feature names, instead of a profile")
+	fs.StringVar(&o.output, "output", "text", "output format: text | json")
+	if err := fs.Parse(args); err != nil {
+		return rbacCheckOptions{}, err
+	}
+	return o, nil
+}
+
+// runRBACCheckOpts serves `kubeagent rbac check`. o is the already-parsed
+// command line, as produced by parseRBACCheckFlags.
+func runRBACCheckOpts(o rbacCheckOptions) error {
+	// Validate up front, matching runRBACPrint: a typo in --output must fail
+	// immediately, not after connecting to a cluster.
+	if o.output != "text" && o.output != "json" {
+		return fmt.Errorf("unknown --output %q: want text or json", o.output)
+	}
+	selected, err := selectedFeatures(o.profile, o.features)
+	if err != nil {
+		return err
+	}
+	client, err := cluster.NewClient(o.kubeconfig, o.contextName)
 	if err != nil {
 		return err
 	}
@@ -137,7 +187,7 @@ func runRBACCheck(args []string) error {
 			blocked++
 		}
 	}
-	if *output == "json" {
+	if o.output == "json" {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(rbacprofile.CheckDocument{
@@ -161,7 +211,7 @@ func runRBACCheck(args []string) error {
 		if blocked == 0 {
 			fmt.Fprintf(os.Stdout, "\nAll %d checked features are permitted.\n", len(statuses))
 		} else {
-			fmt.Fprintf(os.Stdout, "\n%d of %d features are blocked. Print the role they need:\n  %s rbac print --profile %s\n", blocked, len(statuses), invokedAs, *profile)
+			fmt.Fprintf(os.Stdout, "\n%d of %d features are blocked. Print the role they need:\n  %s rbac print --profile %s\n", blocked, len(statuses), invokedAs, o.profile)
 		}
 	}
 	if blocked > 0 {
@@ -174,4 +224,12 @@ func runRBACCheck(args []string) error {
 		return &exitError{code: 1}
 	}
 	return nil
+}
+
+func runRBACCheck(args []string) error {
+	o, err := parseRBACCheckFlags(args)
+	if err != nil {
+		return err
+	}
+	return runRBACCheckOpts(o)
 }

@@ -50,46 +50,66 @@ type stringList []string
 func (s *stringList) String() string     { return strings.Join(*s, ",") }
 func (s *stringList) Set(v string) error { *s = append(*s, v); return nil }
 
-// runGate is the CI/CD gate: scan once, judge, and exit with a code a pipeline
-// can branch on. Read-only, and it makes no LLM call — the whole point is a
-// deterministic verdict a build can depend on.
-//
-// Every flag error returns exit 4 rather than writing an empty SARIF document:
-// a valid, empty SARIF would upload as a clean scan, so a typo in a flag name
-// must never read as "no problems found".
-func runGate(args []string) error {
-	fs := flag.NewFlagSet("gate", flag.ContinueOnError)
-	kubeconfig := fs.String("kubeconfig", "", "path to kubeconfig (default: $KUBECONFIG or ~/.kube/config)")
-	contextName := fs.String("context", "", "kubeconfig context to use (default: current-context)")
-	output := fs.String("output", "text", "output format: text | json | sarif")
-	failOn := fs.String("fail-on", "critical", "fail the gate at this severity or above: critical | warning | info")
-	waitFor := fs.String("wait-for", "", "post-deploy verify: wait for this workload's rollout to settle, then judge only it (kind/name, e.g. deployment/api)")
-	timeout := fs.Duration("timeout", 5*time.Minute, "with --wait-for: give up waiting after this long (exit 3)")
-	interval := fs.Duration("poll-interval", 2*time.Second, "with --wait-for: how often to re-read the workload")
-	var allowPartial stringList
-	fs.Var(&allowPartial, "allow-partial-read", "accept that this resource cannot be read, instead of exiting 2 (repeatable, e.g. leases)")
-	var namespace string
-	fs.StringVar(&namespace, "namespace", "", "namespace to judge (default: all namespaces)")
-	fs.StringVar(&namespace, "n", "", "namespace to judge (shorthand)")
-	if err := fs.Parse(args); err != nil {
-		return &exitError{code: gate.CodeUsage, msg: err.Error()}
-	}
+// gateOptions is `kubeagent gate`'s parsed command line. One field per flag,
+// in declaration order. It exists so flag wiring is testable without a
+// cluster: parseGateFlags is pure, and runGateOpts does the I/O.
+type gateOptions struct {
+	kubeconfig       string
+	contextName      string
+	output           string
+	failOn           string
+	waitFor          string
+	timeout          time.Duration
+	pollInterval     time.Duration
+	allowPartialRead stringList
+	namespace        string
+}
 
-	if *output != "text" && *output != "json" && *output != "sarif" {
-		return &exitError{code: gate.CodeUsage,
-			msg: fmt.Sprintf("unknown output format %q (want text, json or sarif)", *output)}
+// parseGateFlags parses `kubeagent gate`'s command line. Pure: it contacts no
+// cluster and writes nothing. It returns a plain error rather than an
+// *exitError — the exit-4-on-parse-failure contract belongs to runGate, not
+// here, so this stays usable from a test that just wants the parsed values.
+func parseGateFlags(args []string) (gateOptions, error) {
+	var o gateOptions
+	fs := flag.NewFlagSet("gate", flag.ContinueOnError)
+	fs.StringVar(&o.kubeconfig, "kubeconfig", "", "path to kubeconfig (default: $KUBECONFIG or ~/.kube/config)")
+	fs.StringVar(&o.contextName, "context", "", "kubeconfig context to use (default: current-context)")
+	fs.StringVar(&o.output, "output", "text", "output format: text | json | sarif")
+	fs.StringVar(&o.failOn, "fail-on", "critical", "fail the gate at this severity or above: critical | warning | info")
+	fs.StringVar(&o.waitFor, "wait-for", "", "post-deploy verify: wait for this workload's rollout to settle, then judge only it (kind/name, e.g. deployment/api)")
+	fs.DurationVar(&o.timeout, "timeout", 5*time.Minute, "with --wait-for: give up waiting after this long (exit 3)")
+	fs.DurationVar(&o.pollInterval, "poll-interval", 2*time.Second, "with --wait-for: how often to re-read the workload")
+	fs.Var(&o.allowPartialRead, "allow-partial-read", "accept that this resource cannot be read, instead of exiting 2 (repeatable, e.g. leases)")
+	fs.StringVar(&o.namespace, "namespace", "", "namespace to judge (default: all namespaces)")
+	fs.StringVar(&o.namespace, "n", "", "namespace to judge (shorthand)")
+	if err := fs.Parse(args); err != nil {
+		return gateOptions{}, err
 	}
-	level, err := findings.Parse(*failOn)
+	return o, nil
+}
+
+// runGateOpts serves `kubeagent gate`. o is the already-parsed command line,
+// as produced by parseGateFlags.
+//
+// Every flag error returns exit 4 rather than writing an empty SARIF
+// document: a valid, empty SARIF would upload as a clean scan, so a typo in a
+// flag name must never read as "no problems found".
+func runGateOpts(o gateOptions) error {
+	if o.output != "text" && o.output != "json" && o.output != "sarif" {
+		return &exitError{code: gate.CodeUsage,
+			msg: fmt.Sprintf("unknown output format %q (want text, json or sarif)", o.output)}
+	}
+	level, err := findings.Parse(o.failOn)
 	if err != nil {
 		return &exitError{code: gate.CodeUsage, msg: err.Error()}
 	}
-	if *interval <= 0 {
+	if o.pollInterval <= 0 {
 		return &exitError{code: gate.CodeUsage,
-			msg: fmt.Sprintf("--poll-interval must be positive, got %s", *interval)}
+			msg: fmt.Sprintf("--poll-interval must be positive, got %s", o.pollInterval)}
 	}
 	var target rolloutwait.Target
-	if *waitFor != "" {
-		target, err = rolloutwait.ParseTarget(*waitFor, namespace)
+	if o.waitFor != "" {
+		target, err = rolloutwait.ParseTarget(o.waitFor, o.namespace)
 		if err != nil {
 			return &exitError{code: gate.CodeUsage, msg: err.Error()}
 		}
@@ -100,16 +120,16 @@ func runGate(args []string) error {
 	// or context — bad input, in the same class as a bad flag. Nothing was
 	// attempted against any cluster, and exit 1 would claim kubeagent looked
 	// and found problems.
-	client, err := cluster.NewClient(*kubeconfig, *contextName)
+	client, err := cluster.NewClient(o.kubeconfig, o.contextName)
 	if err != nil {
 		return &exitError{code: gate.CodeUsage, msg: err.Error()}
 	}
 	ctx := context.Background()
 
-	opts := gate.Options{FailOn: level, AllowPartialRead: allowPartial}
-	if *waitFor != "" {
+	opts := gate.Options{FailOn: level, AllowPartialRead: o.allowPartialRead}
+	if o.waitFor != "" {
 		opts = scopeTo(opts, target)
-		res, err := rolloutwait.Wait(ctx, client, target, *timeout, *interval, rolloutwait.Real{})
+		res, err := rolloutwait.Wait(ctx, client, target, o.timeout, o.pollInterval, rolloutwait.Real{})
 		if err != nil {
 			// Exit 2: the poll reached the cluster and could not read the
 			// workload — an RBAC denial or an unreachable API. That is the same
@@ -121,7 +141,7 @@ func runGate(args []string) error {
 			return &exitError{code: gate.CodeInconclusive, msg: err.Error()}
 		}
 		opts.TimedOut, opts.TimeoutDetail = !res.Settled, res.Detail
-		if *output == "text" {
+		if o.output == "text" {
 			fmt.Fprintf(os.Stdout, "%s/%s in %s: %s\n\n", target.Kind, target.Name, target.Namespace, res.Detail)
 		}
 	}
@@ -133,7 +153,7 @@ func runGate(args []string) error {
 	// sections are deliberately not exposed on gate in this slice: each one
 	// is extra API reads and its own gate tests, and adding them later is
 	// additive and breaks no contract.
-	scanRes, err := scan.Evaluate(ctx, client, gateScanOptions(namespace))
+	scanRes, err := scan.Evaluate(ctx, client, gateScanOptions(o.namespace))
 	if err != nil {
 		// Exit 2 for the same reason the wait uses it: the scan failed outright,
 		// so there is no verdict, and a gate that saw nothing must never report
@@ -151,7 +171,7 @@ func runGate(args []string) error {
 	// verdict exists but never reached the pipeline, so there is nothing for it
 	// to read. A half-written SARIF document on a closed pipe must not exit 1
 	// and claim kubeagent found problems.
-	switch *output {
+	switch o.output {
 	case "json":
 		b, err := json.MarshalIndent(verdict, "", "  ")
 		if err != nil {
@@ -180,4 +200,19 @@ func runGate(args []string) error {
 		return &exitError{code: verdict.Code}
 	}
 	return nil
+}
+
+// runGate is the CI/CD gate: scan once, judge, and exit with a code a
+// pipeline can branch on. Read-only, and it makes no LLM call — the whole
+// point is a deterministic verdict a build can depend on.
+//
+// A flag-parse failure still exits 4, exactly as before the parser and the
+// runner split apart: parseGateFlags returns a plain error, and this wrapper
+// gives it the same gate.CodeUsage wrapping every other usage error gets.
+func runGate(args []string) error {
+	o, err := parseGateFlags(args)
+	if err != nil {
+		return &exitError{code: gate.CodeUsage, msg: err.Error()}
+	}
+	return runGateOpts(o)
 }

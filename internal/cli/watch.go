@@ -62,41 +62,71 @@ func buildTargets(kubeconfig, clusterName string, contexts []string, includeLoca
 	return targets, nil
 }
 
-func runWatch(args []string) error {
-	fs := flag.NewFlagSet("watch", flag.ContinueOnError)
-	kubeconfig := fs.String("kubeconfig", "", "path to kubeconfig for local dev (ignored in-cluster)")
-	var contexts contextList
-	fs.Var(&contexts, "context", "kubeconfig context to watch; repeat the flag to watch several clusters from one daemon")
-	clusterName := fs.String("cluster-name", envOr("KUBEAGENT_CLUSTER_NAME", "local"), "name for the default cluster — the one watched when no --context is given; becomes its `cluster` metric label")
-	includeLocal := fs.Bool("include-local", envBool("KUBEAGENT_INCLUDE_LOCAL", false), "also watch the default cluster alongside every --context (no-op when no --context is given)")
-	metricsAddr := fs.String("metrics-addr", envOr("KUBEAGENT_METRICS_ADDR", ":8080"), "address for /metrics, /healthz, /readyz")
-	heartbeat := fs.Duration("heartbeat", envDur("KUBEAGENT_HEARTBEAT", 60*time.Second), "safety-net full re-evaluation interval")
-	debounce := fs.Duration("debounce", envDur("KUBEAGENT_DEBOUNCE", 2*time.Second), "coalescing window for change events")
-	includeCron := fs.Bool("include-cron", false, "include CronJobs in the evaluation")
-	includeRestarts := fs.Bool("include-restarts", false, "include workloads that are healthy now but have restarted")
-	alertFormat := fs.String("alert-format", envOr("KUBEAGENT_ALERT_FORMAT", "json"), "alert payload format: json, slack, or alertmanager")
-	alertRepeat := fs.Duration("alert-repeat", envDur("KUBEAGENT_ALERT_REPEAT", 0), "re-send interval for still-firing alerts (0 = the format default: 4h, or 60s for alertmanager)")
-	sloTarget := fs.Float64("slo-target", envFloat("KUBEAGENT_SLO_TARGET", 0), "availability SLO as a percentage, e.g. 99.9 (0 = SLO tracking off)")
-	explainFlag := fs.Bool("explain", envBool("KUBEAGENT_EXPLAIN", false), "explain new incidents via one LLM call each (needs ANTHROPIC_API_KEY, or KUBEAGENT_EXPLAIN_ENDPOINT for a local OpenAI-compatible model)")
-	explainCooldown := fs.Duration("explain-cooldown", envDur("KUBEAGENT_EXPLAIN_COOLDOWN", time.Hour), "minimum gap between explanations for the same object (0 = no per-object gap)")
-	explainBudget := fs.Int("explain-budget", envInt("KUBEAGENT_EXPLAIN_BUDGET", 20), "model calls per hour, and the burst capacity")
-	model := fs.String("model", "", "model for --explain (default: $KUBEAGENT_MODEL or claude-opus-4-8; the local model name when KUBEAGENT_EXPLAIN_ENDPOINT is set)")
-	var namespace string
-	fs.StringVar(&namespace, "namespace", envOr("KUBEAGENT_NAMESPACE", ""), "namespace to watch (default: all)")
-	fs.StringVar(&namespace, "n", envOr("KUBEAGENT_NAMESPACE", ""), "namespace to watch (shorthand)")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
+// watchOptions is `kubeagent watch`'s parsed command line. One field per flag,
+// in declaration order. It exists so flag wiring is testable without a
+// cluster: parseWatchFlags is pure, and runWatchOpts does the I/O.
+type watchOptions struct {
+	kubeconfig      string
+	contexts        contextList
+	clusterName     string
+	includeLocal    bool
+	metricsAddr     string
+	heartbeat       time.Duration
+	debounce        time.Duration
+	includeCron     bool
+	includeRestarts bool
+	alertFormat     string
+	alertRepeat     time.Duration
+	sloTarget       float64
+	explain         bool
+	explainCooldown time.Duration
+	explainBudget   int
+	model           string
+	namespace       string
+}
 
+// parseWatchFlags parses `kubeagent watch`'s command line. Pure: it reads the
+// environment for the nine env-defaulted flags and nothing else, contacts no
+// cluster, and writes nothing.
+func parseWatchFlags(args []string) (watchOptions, error) {
+	var o watchOptions
+	fs := flag.NewFlagSet("watch", flag.ContinueOnError)
+	fs.StringVar(&o.kubeconfig, "kubeconfig", "", "path to kubeconfig for local dev (ignored in-cluster)")
+	fs.Var(&o.contexts, "context", "kubeconfig context to watch; repeat the flag to watch several clusters from one daemon")
+	fs.StringVar(&o.clusterName, "cluster-name", envOr("KUBEAGENT_CLUSTER_NAME", "local"), "name for the default cluster — the one watched when no --context is given; becomes its `cluster` metric label")
+	fs.BoolVar(&o.includeLocal, "include-local", envBool("KUBEAGENT_INCLUDE_LOCAL", false), "also watch the default cluster alongside every --context (no-op when no --context is given)")
+	fs.StringVar(&o.metricsAddr, "metrics-addr", envOr("KUBEAGENT_METRICS_ADDR", ":8080"), "address for /metrics, /healthz, /readyz")
+	fs.DurationVar(&o.heartbeat, "heartbeat", envDur("KUBEAGENT_HEARTBEAT", 60*time.Second), "safety-net full re-evaluation interval")
+	fs.DurationVar(&o.debounce, "debounce", envDur("KUBEAGENT_DEBOUNCE", 2*time.Second), "coalescing window for change events")
+	fs.BoolVar(&o.includeCron, "include-cron", false, "include CronJobs in the evaluation")
+	fs.BoolVar(&o.includeRestarts, "include-restarts", false, "include workloads that are healthy now but have restarted")
+	fs.StringVar(&o.alertFormat, "alert-format", envOr("KUBEAGENT_ALERT_FORMAT", "json"), "alert payload format: json, slack, or alertmanager")
+	fs.DurationVar(&o.alertRepeat, "alert-repeat", envDur("KUBEAGENT_ALERT_REPEAT", 0), "re-send interval for still-firing alerts (0 = the format default: 4h, or 60s for alertmanager)")
+	fs.Float64Var(&o.sloTarget, "slo-target", envFloat("KUBEAGENT_SLO_TARGET", 0), "availability SLO as a percentage, e.g. 99.9 (0 = SLO tracking off)")
+	fs.BoolVar(&o.explain, "explain", envBool("KUBEAGENT_EXPLAIN", false), "explain new incidents via one LLM call each (needs ANTHROPIC_API_KEY, or KUBEAGENT_EXPLAIN_ENDPOINT for a local OpenAI-compatible model)")
+	fs.DurationVar(&o.explainCooldown, "explain-cooldown", envDur("KUBEAGENT_EXPLAIN_COOLDOWN", time.Hour), "minimum gap between explanations for the same object (0 = no per-object gap)")
+	fs.IntVar(&o.explainBudget, "explain-budget", envInt("KUBEAGENT_EXPLAIN_BUDGET", 20), "model calls per hour, and the burst capacity")
+	fs.StringVar(&o.model, "model", "", "model for --explain (default: $KUBEAGENT_MODEL or claude-opus-4-8; the local model name when KUBEAGENT_EXPLAIN_ENDPOINT is set)")
+	fs.StringVar(&o.namespace, "namespace", envOr("KUBEAGENT_NAMESPACE", ""), "namespace to watch (default: all)")
+	fs.StringVar(&o.namespace, "n", envOr("KUBEAGENT_NAMESPACE", ""), "namespace to watch (shorthand)")
+	if err := fs.Parse(args); err != nil {
+		return watchOptions{}, err
+	}
+	return o, nil
+}
+
+// runWatchOpts serves `kubeagent watch`. o is the already-parsed command
+// line, as produced by parseWatchFlags.
+func runWatchOpts(o watchOptions) error {
 	// The webhook URL is a credential (a Slack incoming-webhook URL is a bearer
 	// token in URL form), so it comes from the environment only — never a flag,
 	// which would put it in the pod spec's args and in `ps` output.
 	alertURL := os.Getenv("KUBEAGENT_ALERT_WEBHOOK")
-	repeat := *alertRepeat
+	repeat := o.alertRepeat
 	if repeat == 0 {
-		repeat = alert.DefaultRepeat(alert.Format(*alertFormat))
+		repeat = alert.DefaultRepeat(alert.Format(o.alertFormat))
 	}
-	if alertURL == "" && (*alertFormat != "json" || *alertRepeat != 0) {
+	if alertURL == "" && (o.alertFormat != "json" || o.alertRepeat != 0) {
 		// This line hardcodes "kubeagent" where every other warning uses invokedAs.
 		// Preserved verbatim through the Cobra migration, which freezes stderr; it
 		// is worth fixing separately, where the change is visible as its own diff.
@@ -108,17 +138,17 @@ func runWatch(args []string) error {
 	// looks up and then silently never explains anything.
 	explainEndpoint := os.Getenv("KUBEAGENT_EXPLAIN_ENDPOINT")
 	var explainModel string
-	if *explainFlag {
+	if o.explain {
 		if explainEndpoint == "" && os.Getenv("ANTHROPIC_API_KEY") == "" {
 			return fmt.Errorf("--explain needs ANTHROPIC_API_KEY, or set KUBEAGENT_EXPLAIN_ENDPOINT for a local OpenAI-compatible model")
 		}
 		if explainEndpoint != "" {
-			explainModel = firstNonEmpty(*model, os.Getenv("KUBEAGENT_MODEL")) // no Anthropic default for a local model
+			explainModel = firstNonEmpty(o.model, os.Getenv("KUBEAGENT_MODEL")) // no Anthropic default for a local model
 			if explainModel == "" {
 				return fmt.Errorf("--explain with KUBEAGENT_EXPLAIN_ENDPOINT needs --model (or KUBEAGENT_MODEL) set to the local model name")
 			}
 		} else {
-			explainModel = explain.ResolveModel(*model, os.Getenv("KUBEAGENT_MODEL"))
+			explainModel = explain.ResolveModel(o.model, os.Getenv("KUBEAGENT_MODEL"))
 		}
 	}
 
@@ -148,13 +178,13 @@ func runWatch(args []string) error {
 	// the fallback, and reaches validateSLOTarget unrounded, when the target
 	// is nonzero — which is exactly when validateSLOTarget needs to see it to
 	// reject it.)
-	exact := *sloTarget / 100
+	exact := o.sloTarget / 100
 	sloRatio := math.Round(exact*1e8) / 1e8
 	if (sloRatio == 0) != (exact == 0) || (sloRatio >= 1) != (exact >= 1) {
 		sloRatio = exact
 	}
 
-	targets, err := buildTargets(*kubeconfig, *clusterName, contexts, *includeLocal)
+	targets, err := buildTargets(o.kubeconfig, o.clusterName, o.contexts, o.includeLocal)
 	if err != nil {
 		return err
 	}
@@ -162,12 +192,12 @@ func runWatch(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return watchRun(ctx, targets, watch.Config{
-		Namespace:               namespace,
-		MetricsAddr:             *metricsAddr,
-		Heartbeat:               *heartbeat,
-		Debounce:                *debounce,
-		IncludeCron:             *includeCron,
-		IncludeRestarts:         *includeRestarts,
+		Namespace:               o.namespace,
+		MetricsAddr:             o.metricsAddr,
+		Heartbeat:               o.heartbeat,
+		Debounce:                o.debounce,
+		IncludeCron:             o.includeCron,
+		IncludeRestarts:         o.includeRestarts,
 		DiskUsage:               envBool("KUBEAGENT_DISK_USAGE", false),
 		DiskThreshold:           envFloat("KUBEAGENT_DISK_THRESHOLD", 0.80),
 		QuotaThreshold:          envFloat("KUBEAGENT_QUOTA_THRESHOLD", 0.90),
@@ -181,14 +211,22 @@ func runWatch(args []string) error {
 		CertWarnDays:            envInt("KUBEAGENT_CERT_WARN_DAYS", 30),
 		WebhookTimeoutThreshold: int32(envInt("KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS", 15)),
 		AlertURL:                alertURL,
-		AlertFormat:             *alertFormat,
+		AlertFormat:             o.alertFormat,
 		AlertRepeat:             repeat,
 		SLOTarget:               sloRatio,
-		Explain:                 *explainFlag,
+		Explain:                 o.explain,
 		ExplainModel:            explainModel,
 		ExplainEndpoint:         explainEndpoint,
 		ExplainAPIKey:           os.Getenv("KUBEAGENT_EXPLAIN_API_KEY"),
-		ExplainCooldown:         *explainCooldown,
-		ExplainBudget:           *explainBudget,
+		ExplainCooldown:         o.explainCooldown,
+		ExplainBudget:           o.explainBudget,
 	})
+}
+
+func runWatch(args []string) error {
+	o, err := parseWatchFlags(args)
+	if err != nil {
+		return err
+	}
+	return runWatchOpts(o)
 }

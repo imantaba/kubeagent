@@ -530,11 +530,13 @@ func TestNoPolicyRendersNoPolicySection(t *testing.T) {
 	if err := Render(&buf, in); err != nil {
 		t.Fatal(err)
 	}
-	// The stylesheet always carries a .policy rule, so match the section
-	// element and its content rather than the bare word.
+	// The .policy CSS rule is gated the same as the section: a nil-policy
+	// render must be byte-identical to the document rendered before this
+	// task's --policy support existed, and that document never carried this
+	// selector at all.
 	for _, absent := range []string{
 		`<section class="policy">`, "<h2>Policy</h2>", "rules evaluated",
-		"registry-allowlist", "storage-encrypted",
+		"registry-allowlist", "storage-encrypted", ".policy {",
 	} {
 		if strings.Contains(buf.String(), absent) {
 			t.Errorf("a scan with no --policy rendered %q", absent)

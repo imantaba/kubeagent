@@ -38,7 +38,9 @@
   .empty { color: var(--muted); }
   .blind { background: var(--panel); border-left: 3px solid var(--warning); padding: .75rem 1rem; }
   .blind p { color: var(--muted); margin: .25rem 0 .5rem; }
+{{- if .Policy}}
   .policy { background: var(--panel); border-left: 3px solid var(--muted); padding: .75rem 1rem; }
+{{- end}}
   ul { margin: .5rem 0; padding-left: 1.2rem; }
   details { border: 1px solid var(--line); border-radius: 4px; padding: .5rem .75rem; margin-bottom: .6rem; }
   summary { cursor: pointer; font-weight: 600; }

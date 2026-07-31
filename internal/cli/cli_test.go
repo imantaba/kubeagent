@@ -2377,3 +2377,72 @@ func TestRun_UsageMentionsSchemaCommand(t *testing.T) {
 		t.Errorf("usage does not mention the schema command: %v", err)
 	}
 }
+
+func TestParseScanFlagsCarriesEveryValue(t *testing.T) {
+	opts, err := parseScanFlags([]string{
+		"--kubeconfig", "/nonexistent/kubeconfig",
+		"--context", "example-context",
+		"--output", "json",
+		"--namespace", "example-ns",
+		"--disk-usage", "--disk-threshold", "0.42",
+		"--cert-warn-days", "7",
+		"--drift-age", "30m",
+		"--node-heartbeat-threshold", "90s",
+		"--expected-nodes", "node-a,node-b",
+	})
+	if err != nil {
+		t.Fatalf("parseScanFlags: %v", err)
+	}
+	if opts.kubeconfig != "/nonexistent/kubeconfig" {
+		t.Errorf("kubeconfig = %q, want /nonexistent/kubeconfig", opts.kubeconfig)
+	}
+	if opts.contextName != "example-context" {
+		t.Errorf("contextName = %q, want example-context", opts.contextName)
+	}
+	if opts.output != "json" {
+		t.Errorf("output = %q, want json", opts.output)
+	}
+	if opts.namespace != "example-ns" {
+		t.Errorf("namespace = %q, want example-ns", opts.namespace)
+	}
+	if !opts.diskUsage {
+		t.Error("diskUsage = false, want true")
+	}
+	if opts.diskThreshold != 0.42 {
+		t.Errorf("diskThreshold = %v, want 0.42", opts.diskThreshold)
+	}
+	if opts.certWarnDays != 7 {
+		t.Errorf("certWarnDays = %d, want 7", opts.certWarnDays)
+	}
+	if opts.driftAge != 30*time.Minute {
+		t.Errorf("driftAge = %v, want 30m", opts.driftAge)
+	}
+	if opts.nodeHeartbeatThreshold != 90*time.Second {
+		t.Errorf("nodeHeartbeatThreshold = %v, want 90s", opts.nodeHeartbeatThreshold)
+	}
+	if got := strings.Join(splitCSV(opts.expectedNodes), "|"); got != "node-a|node-b" {
+		t.Errorf("expectedNodes = %q, want node-a|node-b", got)
+	}
+}
+
+func TestParseScanFlagsDefaults(t *testing.T) {
+	opts, err := parseScanFlags(nil)
+	if err != nil {
+		t.Fatalf("parseScanFlags: %v", err)
+	}
+	if opts.output != "text" {
+		t.Errorf("output = %q, want text", opts.output)
+	}
+	if opts.diskThreshold != 0.80 {
+		t.Errorf("diskThreshold = %v, want 0.80", opts.diskThreshold)
+	}
+	if opts.certWarnDays != 30 {
+		t.Errorf("certWarnDays = %d, want 30", opts.certWarnDays)
+	}
+	if opts.driftAge != time.Hour {
+		t.Errorf("driftAge = %v, want 1h", opts.driftAge)
+	}
+	if opts.nodeHeartbeatThreshold != 40*time.Second {
+		t.Errorf("nodeHeartbeatThreshold = %v, want 40s", opts.nodeHeartbeatThreshold)
+	}
+}

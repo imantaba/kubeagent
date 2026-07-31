@@ -26,6 +26,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/operators"
 	"github.com/imantaba/kubeagent/internal/pdbhealth"
 	"github.com/imantaba/kubeagent/internal/platform"
+	"github.com/imantaba/kubeagent/internal/policy"
 	"github.com/imantaba/kubeagent/internal/pvchealth"
 	"github.com/imantaba/kubeagent/internal/pvcreclaim"
 	"github.com/imantaba/kubeagent/internal/quotahealth"
@@ -68,6 +69,7 @@ type ScanReport struct {
 	HPAIssues          []hpahealth.Issue           `json:"hpaIssues,omitempty"`
 	WebhookIssues      []webhookhealth.Issue       `json:"webhookIssues,omitempty"`
 	QuotaIssues        []quotahealth.Issue         `json:"quotaIssues,omitempty"`
+	Policy             *PolicyView                 `json:"policy,omitempty"`
 	BlindSpots         []scan.ReadFailure          `json:"blindSpots,omitempty"`
 	Explanation        string                      `json:"explanation,omitempty"`
 	Investigation      *InvestigationView          `json:"investigation,omitempty"`
@@ -77,6 +79,21 @@ type ScanReport struct {
 type InvestigationView struct {
 	Consulted []string `json:"consulted,omitempty"`
 	Narrative string   `json:"narrative"`
+}
+
+// PolicyView is the outcome of a policy run: how many rules ran, what they
+// found, and which of them could not run at all.
+//
+// NotEvaluated is not a footnote. A rule whose kind kubeagent may not read has
+// not passed — it has not been checked — and a document that renders the two
+// the same way is worse than one that omits the check entirely.
+//
+// There is deliberately no field for the file a rule came from: a filesystem
+// path is a credential, and this document is written to be forwarded.
+type PolicyView struct {
+	Rules        int                  `json:"rules"`
+	Violations   []policy.Violation   `json:"violations,omitempty"`
+	NotEvaluated []policy.Unevaluated `json:"notEvaluated,omitempty"`
 }
 
 // investigationOf builds the JSON view, or nil when no investigation ran.
@@ -143,7 +160,10 @@ type Input struct {
 	// Capacity is the advisory headroom and right-sizing view (opt-in --capacity).
 	// Nil when the flag is off, so a default scan's output is unchanged. No json
 	// tag: Input is never marshalled — the encoded struct is ScanReport.
-	Capacity         *capacity.Report
+	Capacity *capacity.Report
+	// Policy is the custom-check view (opt-in --policy). Nil when the flag is
+	// absent, so a default scan's text and JSON are unchanged.
+	Policy           *PolicyView
 	StuckTerminating []termhealth.Issue
 	PDBIssues        []pdbhealth.Issue
 	HPAIssues        []hpahealth.Issue
@@ -193,6 +213,7 @@ func PrintInventory(in Input, format string, w io.Writer) error {
 			HPAIssues:          in.HPAIssues,
 			WebhookIssues:      in.WebhookIssues,
 			QuotaIssues:        in.QuotaIssues,
+			Policy:             in.Policy,
 			BlindSpots:         in.Blind,
 			Explanation:        in.Explanation,
 			Investigation:      investigationOf(in),
@@ -303,6 +324,10 @@ func printInventoryText(in Input, w io.Writer) error {
 	}
 
 	if err := printCapacity(in.Capacity, w); err != nil {
+		return err
+	}
+
+	if err := printPolicy(in.Policy, w); err != nil {
 		return err
 	}
 
@@ -1484,6 +1509,80 @@ func printCapacity(rep *capacity.Report, w io.Writer) error {
 	}
 	_, err := fmt.Fprintln(w)
 	return err
+}
+
+// printPolicy renders the operator's own checks. Unlike the advisory sections
+// it prints even when it found nothing: the operator asked for these rules by
+// name, and silence would be indistinguishable from the flag not working.
+func printPolicy(v *PolicyView, w io.Writer) error {
+	if v == nil {
+		return nil
+	}
+
+	var critical, warning, info int
+	for _, vi := range v.Violations {
+		switch vi.Level {
+		case policy.LevelCritical:
+			critical++
+		case policy.LevelWarning:
+			warning++
+		case policy.LevelInfo:
+			info++
+		}
+	}
+
+	verdict := "no violations"
+	if len(v.Violations) > 0 {
+		parts := make([]string, 0, 3)
+		if critical > 0 {
+			parts = append(parts, fmt.Sprintf("%d critical", critical))
+		}
+		if warning > 0 {
+			parts = append(parts, fmt.Sprintf("%d warning", warning))
+		}
+		if info > 0 {
+			parts = append(parts, fmt.Sprintf("%d info", info))
+		}
+		verdict = strings.Join(parts, ", ")
+	}
+	if _, err := fmt.Fprintf(w, "POLICY  (%d %s, %s)\n",
+		v.Rules, plural(v.Rules, "rule", "rules"), verdict); err != nil {
+		return err
+	}
+
+	for _, vi := range v.Violations {
+		if _, err := fmt.Fprintf(w, "  ✗ %s  %s  %s\n", vi.Level, vi.RuleID, policyTarget(vi)); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(w, "      %s\n", vi.Message); err != nil {
+			return err
+		}
+		if vi.Evidence != "" {
+			if _, err := fmt.Fprintf(w, "      value: %s\n", vi.Evidence); err != nil {
+				return err
+			}
+		}
+	}
+	for _, u := range v.NotEvaluated {
+		if _, err := fmt.Fprintf(w, "  ⚠ not evaluated  %s  %s\n", u.RuleID, u.Kind); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(w, "      %s\n", u.Reason); err != nil {
+			return err
+		}
+	}
+
+	_, err := fmt.Fprintln(w)
+	return err
+}
+
+// policyTarget names the offending object. A cluster-scoped kind has no
+// namespace, so it gets no separator rather than an empty one.
+func policyTarget(v policy.Violation) string {
+	if v.Namespace == "" {
+		return v.Kind + " " + v.Name
+	}
+	return v.Kind + " " + v.Namespace + "/" + v.Name
 }
 
 func printHeadroomBlock(h *capacity.Headroom, w io.Writer) error {

@@ -21,6 +21,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/nodereserve"
 	"github.com/imantaba/kubeagent/internal/operators"
 	"github.com/imantaba/kubeagent/internal/pdbhealth"
+	"github.com/imantaba/kubeagent/internal/policy"
 	"github.com/imantaba/kubeagent/internal/pvchealth"
 	"github.com/imantaba/kubeagent/internal/pvcreclaim"
 	"github.com/imantaba/kubeagent/internal/quotahealth"
@@ -361,6 +362,67 @@ func firstDiff(want, got string) string {
 		}
 	}
 	return "(files differ only in trailing content)"
+}
+
+const goldenPolicyPath = "testdata/golden-scan-policy.txt"
+
+// goldenPolicyInput is the same broad snapshot with a policy run attached, so
+// the POLICY section is pinned byte-for-byte without touching golden-scan.txt.
+// A scan with no --policy renders the original, which is why that file stays
+// byte-identical through this whole sub-project.
+func goldenPolicyInput(now time.Time) Input {
+	in := goldenInput(now)
+	in.Policy = &PolicyView{
+		Rules: 4,
+		Violations: []policy.Violation{
+			{
+				RuleID: "images-come-from-the-allowlist", Level: policy.LevelCritical,
+				Kind: "Pod", Namespace: "shop", Name: "checkout-7d9f",
+				Message:  "image is not from an allowed registry",
+				Evidence: "docker.example.net/checkout:1.4.2",
+			},
+			{
+				RuleID: "nodes-carry-a-topology-label", Level: policy.LevelInfo,
+				Kind: "Node", Name: "worker-2",
+				Message: "no topology.kubernetes.io/zone label",
+			},
+			{
+				RuleID: "prod-deployments-need-a-pdb", Level: policy.LevelWarning,
+				Kind: "Deployment", Namespace: "shop", Name: "checkout",
+				Message: "no PodDisruptionBudget covers this Deployment",
+			},
+		},
+		NotEvaluated: []policy.Unevaluated{{
+			RuleID: "storage-classes-are-encrypted", Level: policy.LevelWarning,
+			Kind:   "StorageClass",
+			Reason: "kubeagent could not read this kind, so the rule was not evaluated",
+		}},
+	}
+	return in
+}
+
+func TestGoldenPolicyScanOutput(t *testing.T) {
+	var buf bytes.Buffer
+	if err := PrintInventory(goldenPolicyInput(goldenNow), "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	got := buf.Bytes()
+	if *update {
+		if err := os.WriteFile(goldenPolicyPath, got, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	want, err := os.ReadFile(goldenPolicyPath)
+	if err != nil {
+		t.Fatalf("read golden (run with -update to create it): %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("policy scan text output changed:\n%s\n\n"+
+			"If this change is intended, run:\n"+
+			"  go test ./internal/report -run TestGoldenPolicyScanOutput -update",
+			firstDiff(string(want), string(got)))
+	}
 }
 
 // TestGoldenInputCoversAllSections guards against the fixture silently losing a section,

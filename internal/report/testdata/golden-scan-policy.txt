@@ -1,0 +1,199 @@
+Cluster: Degraded — 2/4 nodes Ready
+  ✗ node worker-2 NotReady: KubeletNotReady — container runtime is down
+  ✗ node worker-3 SchedulingDisabled
+  ✗ node worker-1 kubelet not heartbeating (lease 95s stale)
+  ✗ node db-01 expected but absent from the cluster
+  ✗ system kube-system/coredns Degraded 1/2
+  Needs attention: 16 workloads failing (7 ⇐ 4 root causes) · 2 services without endpoints · 1 ingress route broken · 1 PVC failing to provision · 2 resources stuck terminating · 1 PodDisruptionBudget blocking drains · 1 HPA can't scale · 1 admission webhook failing · 1 slow admission webhook · 1 ResourceQuota near/over quota
+
+NEEDS ATTENTION
+✗ shop/web  Deployment  0/1 Degraded  · 8 restarts, last 205d ago
+    ↳ likely caused by node worker-1 (kubelet not heartbeating)
+    image busybox:1.36
+    ⚠ CrashLoopBackOff: Container repeatedly crashes after starting
+      ↳ container "web", restartCount=8
+      logs (previous container):
+        panic: runtime error: invalid memory address
+        → application panic (code bug)
+    web-5b8-2wplt  0/1  Running  restarts=8 (205d ago)  worker-1  10.244.2.2  20d
+✗ shop/api  Deployment  0/2 Degraded
+    ↳ likely caused by node worker-1 (kubelet not heartbeating)
+    image nginx:9.9.9-nope
+    ⚠ ImagePullBackOff: Bad image reference or registry authentication
+      ↳ container "api": Back-off pulling image "nginx:9.9.9-nope": not found
+    api-864-dxtdh  0/1  Pending  restarts=0  worker-1  10.244.2.4  6d
+✗ shop/frontend  Deployment  0/1 Degraded
+    ↳ likely caused by registry ghcr.io (2 workloads failing to pull) [medium]
+    image ghcr.io/shop/frontend:2.4
+    ⚠ ImagePullBackOff: Bad image reference or registry authentication
+      ↳ container "frontend": Back-off pulling image "ghcr.io/shop/frontend:2.4": 403 Forbidden
+    frontend-58d-x2vqp  0/1  Pending  restarts=0  worker-3  10.244.3.14  3h
+✗ shop/search  Deployment  0/1 Degraded
+    ↳ likely caused by registry ghcr.io (2 workloads failing to pull) [medium]
+    image ghcr.io/shop/search:1.9
+    ⚠ ErrImagePull: Bad image reference or registry authentication
+      ↳ container "search": pulling image "ghcr.io/shop/search:1.9": 403 Forbidden
+    search-7b4-mm1zq  0/1  Pending  restarts=0  worker-3  10.244.3.15  3h
+✗ shop/reports  Deployment  0/1 Pending
+    ↳ likely caused by PVC reports-data (ProvisioningFailed)
+    image busybox:1.36
+    reports-6c9-fk2vw  0/1  Pending  restarts=0  worker-3    2h
+✗ shop/billing-worker  Deployment  0/1 Degraded  · 6 restarts, last 205d ago
+    ↳ likely caused by node worker-2 (NotReady)
+    image polinux/stress
+    ⚠ CrashLoopBackOff: Container repeatedly crashes after starting
+      ↳ container "worker", restartCount=6
+    ⚠ OOMKilled: Container exceeded its memory limit and was killed
+      ↳ container "worker", exitCode=137
+      resources: memory req=32Mi limit=64Mi · cpu req= limit=
+    billing-7c7-vbgd7  0/1  Running  restarts=6 (205d ago)  worker-2  10.244.1.2  18d
+✗ shop/report-cron  Deployment  0/1 Pending
+    image busybox:1.36
+    ⚠ Unschedulable: No node can schedule this pod (resources, taints, or affinity)
+      ↳ 0/4 nodes are available: 1 node(s) had untolerated taint, 3 Insufficient cpu
+    report-cron-767-xghsp  0/1  Pending  restarts=0      20d
+✗ shop/cache  Deployment  1/1 Running  · 5 restarts, last 205d ago
+    image redis:7-alpine
+    ⚠ RestartLoop [medium]: Container keeps exiting with a non-OOM error and restarting
+      ↳ container "cache", restartCount=5 (still flapping)
+    cache-6d9-abcde  1/1  Running  restarts=5 (205d ago)  worker-3  10.244.3.7  12d
+✗ shop/data  StatefulSet  0/1 Degraded
+    ↳ likely caused by node worker-2 (NotReady)
+    image postgres:16
+    ⚠ VolumeAttachError: A ReadWriteOnce volume is still attached to another node (Multi-Attach)
+      ↳ Multi-Attach error for volume "pvc-data-0": volume is already used by pod(s) on node worker-1
+    data-0  0/1  Pending  restarts=0  worker-2    9d
+✗ shop/checkout  Deployment  0/1 Degraded
+    image checkout:2.1
+    ⚠ ProbeFailure [medium]: the readiness probe keeps failing — the pod is kept out of Service endpoints
+      ↳ container "checkout": readiness probe failed — HTTP 503
+    checkout-7f9-qk2mn  0/1  Running  restarts=0  worker-3  10.244.3.9  5d
+✗ shop/orders  Deployment  0/1 Degraded
+    image orders:3.0
+    ⚠ Init:CrashLoopBackOff: an init container is crash-looping — the pod cannot start its main containers
+      ↳ init container "wait-for-db" (1/2), restartCount=6
+    orders-6f9-qk2mn  0/1  Init:CrashLoopBackOff  restarts=0  worker-3  10.244.3.11  4m
+✗ shop/db-migrate  Job  Failed
+    ⚠ JobFailed: the Job failed — exhausted its retries (BackoffLimitExceeded)
+      ↳ Job has reached the specified backoff limit
+✗ shop/nightly-report  CronJob  Idle  (0 2 * * *)
+    ⚠ JobFailed: the most recent scheduled run failed — hit its deadline (DeadlineExceeded)
+      ↳ job "nightly-report-28901234": Job was active longer than specified deadline
+✗ shop/storefront  Deployment  0/3 Degraded
+    ⚠ FailedCreate: the controller cannot create pods — blocked by a ResourceQuota
+      ↳ pods "storefront-7c9f-" is forbidden: exceeded quota: compute, requested: requests.cpu=2, used: requests.cpu=4, limited: requests.cpu=4
+✗ shop/worker  Deployment  0/2 Degraded
+    ⚠ CreateContainerConfigError: a referenced ConfigMap or Secret is missing, or a required key is absent — the container cannot start
+      ↳ container "worker": configmap "worker-config" not found
+✗ shop/payments  Deployment  2/3 Degraded
+    ⚠ RolloutStuck: the Deployment's rollout cannot complete — the new pods are not becoming available
+      ↳ Progressing (ProgressDeadlineExceeded): ReplicaSet "payments-7f9c" has timed out progressing.
+  ✗ default/web  ClusterIP  no ready endpoints — 2 matching pods, 0 ready
+  ✗ default/api-lb  LoadBalancer  no external address · 19d ago
+  ✗ default/app-config  ConfigMap[DB_PASSWORD]  credential-like name with a literal value
+  ✗ default/web  Pod[app/AWS_SECRET]  AWS access key
+  ✗ ingress shop/storefront  shop.example.com/  backend Service payments:80 has no ready endpoints (likely 502/503) — 3 matching pods, 0 ready
+  ✗ shop/reports-data  PersistentVolumeClaim  Pending — references StorageClass "fast-ssd" which does not exist
+  ✗ legacy-ns  Namespace  Terminating 3h
+      ⚠ StuckTerminating: NamespaceFinalizersRemaining — some content has finalizers remaining: kubernetes
+  ✗ shop/api-7c9d5-x2v  Pod  Terminating 8m (past grace)
+      ⚠ StuckTerminating: finalizer example.com/cleanup-hook
+  ✗ shop/api-pdb  PodDisruptionBudget  minAvailable: 3
+      ⚠ PDBBlocked: covers all 3 pods — no voluntary eviction can ever proceed; every node drain will hang
+  ✗ shop/api-hpa  HorizontalPodAutoscaler  targets Deployment/api
+      ⚠ HPAStuck: can't fetch metrics — unable to get resource metric cpu: no metrics returned
+  ✗ policy-webhook  ValidatingWebhookConfiguration  webhook validate.policy.io
+      ⚠ WebhookDown: backend Service kube-system/policy-svc has no ready endpoints — failurePolicy Fail rejects every intercepted create/update
+  ✗ slow-validator  ValidatingWebhookConfiguration  webhook policy.example.com
+      ⚠ WebhookSlow: timeoutSeconds 30 ≥ 15s under failurePolicy Fail — a slow webhook blocks every intercepted create/update for up to 30s, then rejects it
+  ✗ shop/compute  ResourceQuota  requests.cpu
+      ⚠ QuotaExhausted: used 4 / hard 4 (100%)
+
+SECURITY  (advisory — does not affect the cluster verdict)
+  2 baseline · 1 exposed service · 18 restricted hardening gaps · 7 workloads
+
+  ✗ shop/legacy-agent  Deployment
+      [baseline] Privileged — container "agent" runs privileged (full host access)
+      [baseline] HostPath — mounts hostPath /var/run (writable host filesystem)
+  ✗ shop/payments  Service
+      [kubeagent] ExposedService — type NodePort exposes port(s) 80 externally
+
+  restricted (hardening gaps, near-universal): 18 across 6 workloads
+    RunAsRoot ×6 · AllowPrivilegeEscalation ×6 · CapabilitiesNotDropped ×6
+    → run with --security-verbose to list every finding per workload
+
+KUBELET HEALTH  (opt-in)
+  ✗ node worker-2 kubelet /healthz unhealthy: [-]syncloop failed
+CERTIFICATES  (advisory — public certificate metadata only)
+  ✗ shop/shop-tls  EXPIRED 3d ago  (CN shop.example.com)
+      — fronts ingress shop/storefront (shop.example.com)
+  ⚠ infra/api-tls  expires in 12d  (CN api.example.com)
+  · 3 certificates checked (warn window 30d)
+OPERATORS  (advisory — operator-reported state; no CR spec content)
+  cert-manager (cert-manager.io/v1)
+    Certificate     12 healthy, 1 unhealthy
+      ✗ shop/web-tls  Ready=False: IssuerNotFound
+    ClusterIssuer   1 healthy
+  Flux (kustomize.toolkit.fluxcd.io/v1, helm.toolkit.fluxcd.io/v2)
+    Kustomization   9 healthy, 1 suspended
+    HelmRelease     4 healthy
+  Prometheus operator (monitoring.coreos.com/v1)
+    Prometheus      1 healthy
+    ServiceMonitor  214 (not assessed)
+
+GITOPS DRIFT  (advisory — reconciler-reported; threshold 1h; no repo URLs)
+  Argo CD (argoproj.io/v1alpha1)
+    Application     14 synced, 1 pending, 1 blocked
+      ✗ prod/payments  OutOfSync a1b2c3d, last synced 6d ago (auto-sync off)
+      · staging/web  OutOfSync 9f8e7d6, last synced 4m ago
+  Flux (kustomize.toolkit.fluxcd.io/v1, helm.toolkit.fluxcd.io/v2)
+    Kustomization   9 synced, 1 stale, 1 blocked
+      ✗ apps/web  suspended
+      ✗ flux-system/infra  attempted a1b2c3d, applied 9f8e7d6, not ready 3d: BuildFailed
+    HelmRelease     4 synced
+
+CAPACITY  (advisory — resource arithmetic on requests; ignores affinity,
+           topology spread, PVC zoning, and PodDisruptionBudgets)
+  Headroom
+    schedulable        5.9 cores, 8Gi free across 2 of 3 nodes
+    largest pod fit    worker1  3.5 cores, 6Gi
+    tightest node      worker2  78% of memory requested
+    lose worker1       may not fit — first-fit could not place StatefulSet/prod/db (2.1 cores)
+    excluded           control-plane-1  (NoSchedule taint)
+  Right-sizing  (metrics-server: 11 of 12 pods reporting)
+    no requests set    Deployment/staging/web  · 0.0 cores observed
+                         — BestEffort: first evicted under pressure
+    limit, no request  Deployment/prod/cache  lim 256Mi  · 240Mi observed
+
+    one sample per pod, ~30s average — not a peak, not a history
+
+POLICY  (4 rules, 1 critical, 1 warning, 1 info)
+  ✗ critical  images-come-from-the-allowlist  Pod shop/checkout-7d9f
+      image is not from an allowed registry
+      value: docker.example.net/checkout:1.4.2
+  ✗ info  nodes-carry-a-topology-label  Node worker-2
+      no topology.kubernetes.io/zone label
+  ✗ warning  prod-deployments-need-a-pdb  Deployment shop/checkout
+      no PodDisruptionBudget covers this Deployment
+  ⚠ not evaluated  storage-classes-are-encrypted  StorageClass
+      kubeagent could not read this kind, so the rule was not evaluated
+
+NOTES
+  • 2 nodes reserve no memory: worker-1, worker-2
+      — OS/kubelet memory pressure can destabilize the node
+  • 2 nodes reserve no ephemeral-storage: worker-1, worker-2
+      — disk pressure can destabilize the node
+  • 1 PVC on Delete reclaim policy — standard ×1   [--pvc-reclaim]
+  • shop/internal-metrics  ClusterIP  no ready endpoints
+  • ingress shop/dashboard  dash.example.com/  backend Service grafana is intentionally empty (scaled to 0) — route parked
+
+CONTEXT
+Kubelet reservations (combined kube+system)
+  memory            2 of 2 nodes reserve none  ⚠
+  cpu               2 of 2 nodes reserve none
+  ephemeral-storage 2 of 2 nodes reserve none  ⚠
+Resources (cluster):
+  CPU     8.0 cores · req 2.0 (25%) · lim 4.0 (50%) · used 2.0 (25%)
+  Memory  16Gi · req 4Gi (25%) · lim 8Gi (50%) · used 4Gi (25%)
+
+Platform: Cilium CNI · Traefik ingress · Hetzner CSI (+NFS CSI) storage · Kubernetes v1.35 (RKE2) · containerd · Hetzner Cloud

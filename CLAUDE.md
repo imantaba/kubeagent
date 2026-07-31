@@ -216,4 +216,11 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   byte-identical: the reads write only their own destinations and a single
   sequential pass afterwards renders in a fixed order
   ([website/docs/features/tuning.md](website/docs/features/tuning.md)).
+  Slice 6 — the Cobra CLI — has shipped (v0.73.0): `internal/cli` replaces
+  main.go's hand-rolled dispatch over the standard-library `flag` package,
+  one file per command; `Normalize` rewrites the single-dash long-flag
+  spelling pflag would reject, so command lines written against v0.72 and
+  earlier keep working; and `kubeagent completion bash|zsh|fish|powershell`
+  generates a completion script from the command tree
+  ([website/docs/features/completion.md](website/docs/features/completion.md)).
   The rest of Theme H — the v1.0 production contract — remains ahead.

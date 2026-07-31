@@ -485,7 +485,7 @@ These are the north star; every item below is measured against them.
   preserved by construction: no read closure touches shared state, and a
   sequential block afterwards walks a fixed report order
   ([tuning](features/tuning.md)). Slice 6 — the CLI is a Cobra command tree —
-  has shipped: `internal/cli` is built on [Cobra](https://cobra.dev), one file
+  has shipped (v0.73.0): `internal/cli` is built on [Cobra](https://cobra.dev), one file
   per command, replacing the v1 standard-library `flag` package; a
   compatibility shim rewrites the single-dash long-flag spelling
   (`-kubeconfig path`) that pflag would otherwise reject, so command lines

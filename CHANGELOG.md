@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.73.0] - 2026-07-31
+
 ### Added
 
 - `kubeagent completion bash|zsh|fish|powershell` prints a shell completion
@@ -23,23 +25,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shipped with. Every subcommand, every flag, every kubeagent error message and
   every exit code is unchanged, and a compatibility shim preserves the
   single-dash long-flag form (`-kubeconfig path`) that pflag would otherwise
-  reject. Three details of the command line did change, all of them consequences
+  reject. Four details of the command line did change, all of them consequences
   of the flag library rather than choices about kubeagent's own behaviour:
-    - `--n` is no longer accepted as a spelling of `--namespace`. `-n` and
-      `--namespace` both work, as in every other kubectl-adjacent tool; the
-      standard library accepted `--n` only because it had to declare the
-      shorthand as a second full flag name.
-    - An unrecognized flag is now reported in pflag's words
-      (`unknown flag: --nonesuch`) rather than the standard library's
-      (`flag provided but not defined: -nonesuch`), and the command no longer
-      dumps its full flag list to stderr after the message. Exit codes are
-      unchanged, including `gate`'s `4` for a usage error.
-    - `kubeagent mcp` and `kubeagent tui` now reject a stray positional
-      argument instead of silently ignoring it.
-    - `<command> --help` exits 0. It used to exit 1 for every subcommand
-      except `version`, and 4 for `gate`, because the standard-library flag
-      set reported `--help` as a parse error. Asking for help is not an
-      error, and no other exit code changed.
+  - `--n` is no longer accepted as a spelling of `--namespace`. `-n` and
+    `--namespace` both work, as in every other kubectl-adjacent tool; the
+    standard library accepted `--n` only because it had to declare the
+    shorthand as a second full flag name.
+  - An unrecognized flag is now reported in pflag's words
+    (`unknown flag: --nonesuch`) rather than the standard library's
+    (`flag provided but not defined: -nonesuch`), and the command no longer
+    dumps its full flag list to stderr after the message. Exit codes are
+    unchanged, including `gate`'s `4` for a usage error.
+  - `kubeagent mcp` and `kubeagent tui` now reject a stray positional
+    argument instead of silently ignoring it.
+  - `<command> --help` exits 0. It used to exit 1 for every subcommand
+    except `version`, and 4 for `gate`, because the standard-library flag
+    set reported `--help` as a parse error. Asking for help is not an
+    error, and no other exit code changed.
 
 There is no `### Removed`. The four items above are the complete list of
 command-line changes: each was found by a review of the migration rather than
@@ -1285,7 +1287,8 @@ infrastructure (a documentation site and a pre-release chaos-test harness).
 - CI (vet/test/build on push & PR) and a release workflow publishing a
   linux/amd64 tarball + `SHA256SUMS` to a GitHub Release.
 
-[Unreleased]: https://github.com/imantaba/kubeagent/compare/v0.72.0...HEAD
+[Unreleased]: https://github.com/imantaba/kubeagent/compare/v0.73.0...HEAD
+[0.73.0]: https://github.com/imantaba/kubeagent/compare/v0.72.0...v0.73.0
 [0.72.0]: https://github.com/imantaba/kubeagent/compare/v0.71.0...v0.72.0
 [0.71.0]: https://github.com/imantaba/kubeagent/compare/v0.70.0...v0.71.0
 [0.70.0]: https://github.com/imantaba/kubeagent/compare/v0.69.0...v0.70.0

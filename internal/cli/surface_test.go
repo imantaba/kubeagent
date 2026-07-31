@@ -11,7 +11,7 @@ import (
 // implementation and must pass unchanged after the Cobra migration: a CLI
 // test that only passes once Cobra lands proves nothing about compatibility.
 //
-// The 86 flag declarations across seven commands are the migration's largest
+// The 79 flag declarations across seven commands are the migration's largest
 // failure mode — a mistyped default or a field bound to the wrong flag fails
 // silently, producing a scan that is subtly wrong rather than one that errors.
 // This table is the mitigation.
@@ -105,9 +105,10 @@ func TestCommandSurfaceScanDefaults(t *testing.T) {
 // TestCommandSurfaceWatch is TestCommandSurfaceScan's counterpart for
 // `kubeagent watch`.
 func TestCommandSurfaceWatch(t *testing.T) {
-	// Nine of watch's flags default from the environment, the same set
-	// TestParseWatchFlagsCarriesEveryValue clears: a developer's shell must
-	// not decide whether an explicit flag value lands.
+	// Thirteen of watch's flags default from the environment, reading the
+	// twelve keys below — --namespace and -n share KUBEAGENT_NAMESPACE. This
+	// is the same set TestParseWatchFlagsCarriesEveryValue clears: a
+	// developer's shell must not decide whether an explicit flag value lands.
 	for _, k := range []string{
 		"KUBEAGENT_CLUSTER_NAME", "KUBEAGENT_INCLUDE_LOCAL", "KUBEAGENT_METRICS_ADDR",
 		"KUBEAGENT_HEARTBEAT", "KUBEAGENT_DEBOUNCE", "KUBEAGENT_ALERT_FORMAT",

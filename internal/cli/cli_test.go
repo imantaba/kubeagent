@@ -2448,11 +2448,9 @@ func TestParseScanFlagsDefaults(t *testing.T) {
 }
 
 func TestParseWatchFlagsCarriesEveryValue(t *testing.T) {
-	// Nine of watch's flags default from the environment (KUBEAGENT_CLUSTER_NAME,
-	// KUBEAGENT_INCLUDE_LOCAL, KUBEAGENT_METRICS_ADDR, KUBEAGENT_HEARTBEAT,
-	// KUBEAGENT_DEBOUNCE, KUBEAGENT_ALERT_FORMAT, KUBEAGENT_ALERT_REPEAT,
-	// KUBEAGENT_SLO_TARGET, KUBEAGENT_NAMESPACE and the three explain keys), so
-	// clear them: a developer's shell must not decide whether this passes.
+	// Thirteen of watch's flags default from the environment, reading the twelve
+	// keys below — --namespace and -n both read KUBEAGENT_NAMESPACE. Clear them:
+	// a developer's shell must not decide whether this passes.
 	for _, k := range []string{
 		"KUBEAGENT_CLUSTER_NAME", "KUBEAGENT_INCLUDE_LOCAL", "KUBEAGENT_METRICS_ADDR",
 		"KUBEAGENT_HEARTBEAT", "KUBEAGENT_DEBOUNCE", "KUBEAGENT_ALERT_FORMAT",

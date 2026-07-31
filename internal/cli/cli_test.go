@@ -416,8 +416,12 @@ func captureStdout(t *testing.T, f func()) string {
 
 func TestRunWatch_AlertFlagsAreRecognized(t *testing.T) {
 	// --alert-format/--alert-repeat must be defined flags: with a kubeconfig path
-	// that fails to load, the error must be the kubeconfig-load error, not "flag
-	// provided but not defined", proving the flags parsed.
+	// that fails to load, the error must be the kubeconfig-load error, not
+	// pflag's "unknown flag: --x", proving the flags parsed. The old comparison
+	// against "flag provided but not defined" was the standard library's wording,
+	// not pflag's, so it could never fail here even if one of these flags were
+	// dropped from bindWatchFlags — the real signal is the positive assertion
+	// below, that this is specifically the kubeconfig-load error.
 	dir := t.TempDir()
 	bad := filepath.Join(dir, "nonexistent")
 	err := runWatch([]string{"--alert-format", "slack", "--alert-repeat", "10m", "--kubeconfig", bad})
@@ -426,6 +430,9 @@ func TestRunWatch_AlertFlagsAreRecognized(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "flag provided but not defined") {
 		t.Fatalf("expected --alert-format/--alert-repeat to be recognized flags, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "loading kubeconfig") {
+		t.Fatalf("expected the kubeconfig-load error (proving --alert-format/--alert-repeat parsed rather than being rejected), got: %v", err)
 	}
 }
 
@@ -606,7 +613,12 @@ func TestRunWatch_SLOTargetIsRecognized(t *testing.T) {
 	// cancel. So, as TestRunWatch_AlertFlagsAreRecognized does, this uses a
 	// nonexistent kubeconfig path to fail at cluster-connect, before Run is
 	// ever reached, and only asserts that the flag parsed and no validation
-	// error occurred.
+	// error occurred. As in TestRunWatch_AlertFlagsAreRecognized, the
+	// "flag provided but not defined" comparison below is the standard
+	// library's wording, not pflag's "unknown flag: --x" — it could never fail
+	// here even if --slo-target were dropped, so the positive assertion that
+	// this is specifically the kubeconfig-load error is what actually proves
+	// the flag parsed.
 	dir := t.TempDir()
 	bad := filepath.Join(dir, "nonexistent")
 	err := runWatch([]string{"--slo-target", "99.9", "--kubeconfig", bad})
@@ -618,6 +630,9 @@ func TestRunWatch_SLOTargetIsRecognized(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "invalid --slo-target") {
 		t.Fatalf("expected no validation error for --slo-target 99.9, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "loading kubeconfig") {
+		t.Fatalf("expected the kubeconfig-load error (proving --slo-target parsed rather than being rejected), got: %v", err)
 	}
 }
 
@@ -962,6 +977,12 @@ func TestRun_InvestigateSupersedesExplain(t *testing.T) {
 	// or a precondition error — --investigate supersedes --explain silently. The
 	// scan fails at cluster-connect (bogus kubeconfig), which is the expected
 	// outcome: it proves flags parsed and the investigate branch was selected.
+	//
+	// The "flag provided but not defined" comparison below is the standard
+	// library's wording, not pflag's "unknown flag: --x" — it could never fail
+	// here even if --investigate or --explain were dropped, so the positive
+	// assertion that this is specifically the kubeconfig-load error is what
+	// actually proves both flags parsed.
 	t.Setenv("ANTHROPIC_API_KEY", "test-key")
 	t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "")
 	err := Run([]string{"scan", "--investigate", "--explain", "--kubeconfig", "/nonexistent/path"})
@@ -974,6 +995,9 @@ func TestRun_InvestigateSupersedesExplain(t *testing.T) {
 	}
 	if strings.Contains(msg, "ANTHROPIC_API_KEY") || strings.Contains(msg, "KUBEAGENT_EXPLAIN_ENDPOINT") {
 		t.Errorf("got a precondition error; should have reached cluster-connect: %v", err)
+	}
+	if !strings.Contains(msg, "loading kubeconfig") {
+		t.Errorf("expected the kubeconfig-load error (proving --investigate/--explain parsed rather than being rejected), got: %v", err)
 	}
 }
 

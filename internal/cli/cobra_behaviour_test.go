@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"os"
 	"strings"
 	"testing"
 )
@@ -92,5 +93,45 @@ func TestNamespaceShorthandSpellings(t *testing.T) {
 func TestStrayPositionalArgumentIsRejected(t *testing.T) {
 	if err := Run([]string{"mcp", "stray"}); err == nil {
 		t.Error("mcp stray: want an error, got nil")
+	}
+}
+
+// TestCompletionScriptCarriesNoPathOrURL pins a project-wide rule onto the
+// one new command the Cobra migration adds: a generated completion script
+// must never carry a filesystem path from the machine it was built on.
+// Kubeconfig paths are treated as credentials in this project, and a
+// completion script is a file users commonly commit to dotfile repos or
+// paste into issues, so it must be as safe to share as the binary name it
+// embeds. Cobra's generators only ever embed the command tree — names,
+// flags, short descriptions — so this should hold for every shell; bash is
+// the representative check.
+//
+// This does not assert "no URL at all": Cobra's own bash-completion-v2
+// template embeds a static comment linking a public upstream GitHub issue
+// (https://github.com/spf13/cobra/issues/1508) to explain a shell quirk.
+// That line ships in every Cobra program's bash script; it names no
+// kubeagent build detail and is not a credential, so it is not the leak this
+// test guards against. What the test does assert — no occurrence of this
+// build's actual working directory or home directory — is a direct,
+// environment-derived check for "no absolute path from the build machine",
+// rather than a substring list that would have to special-case Cobra's own
+// boilerplate.
+func TestCompletionScriptCarriesNoPathOrURL(t *testing.T) {
+	root := newRootCommand()
+	var out strings.Builder
+	root.SetOut(&out)
+	root.SetArgs([]string{"completion", "bash"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("completion bash: %v", err)
+	}
+	script := out.String()
+	if strings.Contains(script, "/home/") {
+		t.Errorf("completion bash script contains %q, want none", "/home/")
+	}
+	if wd, err := os.Getwd(); err == nil && strings.Contains(script, wd) {
+		t.Errorf("completion bash script embeds the build machine's working directory %q", wd)
+	}
+	if home, err := os.UserHomeDir(); err == nil && strings.Contains(script, home) {
+		t.Errorf("completion bash script embeds the build machine's home directory %q", home)
 	}
 }

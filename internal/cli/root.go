@@ -116,7 +116,7 @@ func newRootCommand() *cobra.Command {
 		},
 	}
 	root.AddCommand(newVersionCommand(), newSchemaCommand(), newMCPCommand(), newTUICommand(), newScanCommand(),
-		newWatchCommand(), newGateCommand(), newRBACCommand())
+		newWatchCommand(), newGateCommand(), newRBACCommand(), newCompletionCommand())
 	return root
 }
 

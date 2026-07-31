@@ -8,6 +8,7 @@ package gate
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/imantaba/kubeagent/internal/findings"
 	"github.com/imantaba/kubeagent/internal/jsonschema"
@@ -94,10 +95,29 @@ type Verdict struct {
 	PolicyNotEvaluated []policy.Unevaluated `json:"policyNotEvaluated,omitempty"`
 }
 
+// policyIssuePrefix is the prefix findings.FromPolicy puts on every policy
+// finding's Issue. inScope uses it, together with an absent Name, to tell a
+// rule that never ran apart from a violation, without adding a field to
+// findings.Finding (which would widen the schema drift Task 16 already owns).
+const policyIssuePrefix = "policy/"
+
 // inScope reports whether a finding is attributable to the gate's --wait-for
 // workload. An unscoped gate judges everything.
 func (o Options) inScope(f findings.Finding) bool {
 	if o.ScopeKind == "" {
+		return true
+	}
+	// A policy rule that could not be evaluated is a statement about
+	// enforcement coverage, not about any object: findings.FromPolicy leaves
+	// Namespace, Name and Owner empty because none was examined, so it can
+	// satisfy neither branch below and a scoped gate would always drop it —
+	// silently turning "this rule never ran" into "this rollout is fine".
+	// Detect it by Issue's policy/ prefix plus the absent Name rather than by
+	// "empty Namespace and Name" alone: a policy violation's Name always
+	// comes from a real object's obj.GetName(), which the API server never
+	// leaves empty, so a violation keeps going through the normal scope check
+	// below exactly as before, and no other finding kind uses this prefix.
+	if strings.HasPrefix(f.Issue, policyIssuePrefix) && f.Name == "" {
 		return true
 	}
 	if f.Namespace != o.ScopeNamespace {

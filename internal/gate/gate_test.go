@@ -342,3 +342,114 @@ func TestNoPolicyLeavesTheVerdictUnchanged(t *testing.T) {
 		t.Errorf("a no-policy verdict encoded the new key:\n%s", out)
 	}
 }
+
+// An unevaluated rule has no object identity — FromPolicy leaves Namespace,
+// Name and Owner empty because no object was examined. It says something
+// about enforcement coverage, not about any workload, so --wait-for scoping
+// must not filter it out: a rule that never ran is not made to look like a
+// pass just because kubeagent was only asked about one Deployment.
+func TestUnevaluatedRuleFailsAScopedGate(t *testing.T) {
+	v := Decide(scan.Result{}, Options{
+		FailOn:    findings.Warning,
+		ScopeKind: "Deployment", ScopeName: "api", ScopeNamespace: "prod",
+		PolicyNotEvaluated: []policy.Unevaluated{{
+			RuleID: "storage-encrypted", Level: policy.LevelCritical, Kind: "StorageClass",
+			Reason: "kubeagent could not read this kind, so the rule was not evaluated",
+		}},
+	})
+	if v.Code != CodeFail {
+		t.Fatalf("exit code = %d, want %d — a scoped --wait-for gate must not let an unevaluated rule pass", v.Code, CodeFail)
+	}
+	if len(v.Failing) != 1 || v.Failing[0].Issue != "policy/storage-encrypted" {
+		t.Fatalf("failing = %#v", v.Failing)
+	}
+}
+
+// The companion to the test above: the fix must not go so far that every
+// policy/ finding becomes immune to scoping. A violation always names the
+// object it was raised against, so it stays scopable exactly as before.
+func TestUnevaluatedRuleFailsAScopedGateWhileAnUnrelatedPolicyViolationDoesNot(t *testing.T) {
+	v := Decide(scan.Result{}, Options{
+		FailOn:    findings.Warning,
+		ScopeKind: "Deployment", ScopeName: "api", ScopeNamespace: "prod",
+		PolicyViolations: []policy.Violation{{
+			RuleID: "registry-allowlist", Level: policy.LevelCritical, Kind: "Pod",
+			Namespace: "other", Name: "web", Message: "image is not from an allowed registry",
+		}},
+		PolicyNotEvaluated: []policy.Unevaluated{{
+			RuleID: "storage-encrypted", Level: policy.LevelCritical, Kind: "StorageClass",
+			Reason: "kubeagent could not read this kind, so the rule was not evaluated",
+		}},
+	})
+	if v.Code != CodeFail {
+		t.Fatalf("exit code = %d, want %d", v.Code, CodeFail)
+	}
+	if len(v.Failing) != 1 || v.Failing[0].Issue != "policy/storage-encrypted" {
+		t.Fatalf("failing = %#v, want only the unevaluated rule", v.Failing)
+	}
+	found := false
+	for _, f := range v.Reported {
+		if f.Issue == "policy/registry-allowlist" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("an out-of-scope violation must still be reported, not dropped: %#v", v.Reported)
+	}
+}
+
+// --allow-partial-read waives a scan.PartialReads blind spot the operator
+// named by resource. It has nothing to do with a policy rule that could not
+// run, and must not be able to waive one by coincidence of naming.
+func TestAllowPartialReadDoesNotWaiveAnUnevaluatedRule(t *testing.T) {
+	v := Decide(scan.Result{}, Options{
+		FailOn:           findings.Warning,
+		AllowPartialRead: []string{"StorageClass"},
+		PolicyNotEvaluated: []policy.Unevaluated{{
+			RuleID: "storage-encrypted", Level: policy.LevelCritical, Kind: "StorageClass",
+			Reason: "kubeagent could not read this kind, so the rule was not evaluated",
+		}},
+	})
+	if v.Code != CodeFail {
+		t.Fatalf("exit code = %d, want %d — --allow-partial-read waives a scan blind spot, not an unevaluated policy rule", v.Code, CodeFail)
+	}
+}
+
+// A waived blind spot elsewhere in the scan must not disturb the unevaluated
+// rule's own failure.
+func TestUnevaluatedRuleStaysFailingWithAWaivedUnrelatedBlindspot(t *testing.T) {
+	res := scan.Result{PartialReads: []scan.ReadFailure{{Resource: "Ingress", Reason: "forbidden"}}}
+	v := Decide(res, Options{
+		FailOn:           findings.Warning,
+		AllowPartialRead: []string{"Ingress"},
+		PolicyNotEvaluated: []policy.Unevaluated{{
+			RuleID: "storage-encrypted", Level: policy.LevelCritical, Kind: "StorageClass",
+			Reason: "kubeagent could not read this kind, so the rule was not evaluated",
+		}},
+	})
+	if v.Code != CodeFail {
+		t.Fatalf("exit code = %d, want %d", v.Code, CodeFail)
+	}
+}
+
+// An unwaived blind spot elsewhere still outranks the unevaluated rule's own
+// fail at the top level — "inconclusive beats fail" is pre-existing
+// precedence this fix must not change — but the rule must still be recorded
+// as Failing underneath, because it is still true independent of the verdict
+// string.
+func TestUnevaluatedRuleYieldsToAnUnwaivedUnrelatedBlindspot(t *testing.T) {
+	res := scan.Result{PartialReads: []scan.ReadFailure{{Resource: "Ingress", Reason: "forbidden"}}}
+	v := Decide(res, Options{
+		FailOn: findings.Warning,
+		PolicyNotEvaluated: []policy.Unevaluated{{
+			RuleID: "storage-encrypted", Level: policy.LevelCritical, Kind: "StorageClass",
+			Reason: "kubeagent could not read this kind, so the rule was not evaluated",
+		}},
+	})
+	if v.Code != CodeInconclusive {
+		t.Fatalf("exit code = %d, want %d — an unwaived blind spot elsewhere still beats fail", v.Code, CodeInconclusive)
+	}
+	if len(v.Failing) != 1 || v.Failing[0].Issue != "policy/storage-encrypted" {
+		t.Fatalf("failing = %#v, want the unevaluated rule still recorded", v.Failing)
+	}
+}

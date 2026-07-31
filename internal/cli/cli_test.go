@@ -2699,15 +2699,21 @@ func TestRootCommandNamesTheInvokedSpelling(t *testing.T) {
 	}
 }
 
-// TestSubcommandHelpExitsZero pins --help's exit status for the four
-// commands this task moved onto Cobra. Today the inner flag sets on the
-// commands that have NOT moved yet (scan, watch, gate, rbac) still return
-// flag.ErrHelp from parse<Command>Flags, which exitCodeFor maps to exit 1 —
-// that is unchanged and out of scope here; Tasks 7 and 8 give it the same
-// treatment when those commands migrate. Under Cobra, --help prints to
-// stdout and Run returns nil, which exitCodeFor maps to 0.
+// TestSubcommandHelpExitsZero pins --help's exit status for every command
+// that has moved onto Cobra so far: version, schema, mcp, tui, and — since
+// Task 7 — scan. Under Cobra, --help is a normal registered bool flag;
+// Command.execute checks it, ExecuteC intercepts the resulting flag.ErrHelp,
+// writes real help to stdout, and returns nil, which exitCodeFor maps to 0.
+//
+// watch and rbac stay on the standard-library flag package until Task 8:
+// their parse<Command>Flags still returns flag.ErrHelp as a plain error,
+// which exitCodeFor's default case maps to exit 1. gate is the exception —
+// runGate wraps every parse error, including flag.ErrHelp, in
+// &exitError{code: gate.CodeUsage}, so `gate --help` exits 4, not 1. Task 8
+// brings watch, gate and rbac onto the same Cobra footing as the commands
+// below.
 func TestSubcommandHelpExitsZero(t *testing.T) {
-	for _, args := range [][]string{{"version", "--help"}, {"schema", "--help"}, {"mcp", "--help"}, {"tui", "--help"}} {
+	for _, args := range [][]string{{"version", "--help"}, {"schema", "--help"}, {"mcp", "--help"}, {"tui", "--help"}, {"scan", "--help"}} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			err := Run(args)
 			if err != nil {

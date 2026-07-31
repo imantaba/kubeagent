@@ -108,9 +108,14 @@ func levelFor(l findings.Level) string {
 	}
 }
 
-// artifactURI names a cluster object. There is no file, so the scheme says so.
+// artifactURI names the object a finding is about. A finding with no object —
+// a policy rule that could not be evaluated against anything — names its kind
+// alone rather than a URI with a trailing empty segment.
 func artifactURI(f findings.Finding) string {
-	if f.Namespace == "" {
+	switch {
+	case f.Name == "":
+		return fmt.Sprintf("k8s://%s", f.Kind)
+	case f.Namespace == "":
 		return fmt.Sprintf("k8s://%s/%s", f.Kind, f.Name)
 	}
 	return fmt.Sprintf("k8s://%s/%s/%s", f.Namespace, f.Kind, f.Name)

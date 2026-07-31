@@ -9,6 +9,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/findings"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/jsonschema"
+	"github.com/imantaba/kubeagent/internal/policy"
 	"github.com/imantaba/kubeagent/internal/scan"
 )
 
@@ -245,5 +246,99 @@ func TestDecideStampsTheSchemaVersion(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), `"schemaVersion":"`+jsonschema.GateVersion+`"`) {
 		t.Errorf("verdict JSON has no schemaVersion:\n%s", raw)
+	}
+}
+
+func TestPolicyViolationFailsTheGate(t *testing.T) {
+	v := Decide(scan.Result{}, Options{
+		FailOn: findings.Warning,
+		PolicyViolations: []policy.Violation{{
+			RuleID: "registry-allowlist", Level: policy.LevelCritical, Kind: "Pod",
+			Namespace: "prod", Name: "web", Message: "image is not from an allowed registry",
+		}},
+	})
+	if v.Code != CodeFail {
+		t.Fatalf("exit code = %d, want %d", v.Code, CodeFail)
+	}
+	if len(v.Failing) != 1 || v.Failing[0].Issue != "policy/registry-allowlist" {
+		t.Fatalf("failing = %#v", v.Failing)
+	}
+}
+
+// Below --fail-on it is reported, not failed — the same contract every other
+// finding class has.
+func TestPolicyViolationBelowTheThresholdIsReportedOnly(t *testing.T) {
+	v := Decide(scan.Result{}, Options{
+		FailOn: findings.Critical,
+		PolicyViolations: []policy.Violation{{
+			RuleID: "zone-label", Level: policy.LevelInfo, Kind: "Node",
+			Name: "worker-1", Message: "no topology label",
+		}},
+	})
+	if v.Code != CodePass {
+		t.Fatalf("exit code = %d, want %d", v.Code, CodePass)
+	}
+	if len(v.Reported) != 1 {
+		t.Fatalf("reported = %#v", v.Reported)
+	}
+}
+
+// The whole reason the surface exists: a rule that could not run must not read
+// as a rule that passed.
+func TestUnevaluatedRuleFailsTheGate(t *testing.T) {
+	v := Decide(scan.Result{}, Options{
+		FailOn: findings.Warning,
+		PolicyNotEvaluated: []policy.Unevaluated{{
+			RuleID: "storage-encrypted", Level: policy.LevelCritical, Kind: "StorageClass",
+			Reason: "kubeagent could not read this kind, so the rule was not evaluated",
+		}},
+	})
+	if v.Code != CodeFail {
+		t.Fatalf("exit code = %d, want %d — an unevaluated rule is not a pass", v.Code, CodeFail)
+	}
+	if len(v.Failing) != 1 || v.Failing[0].Issue != "policy/storage-encrypted" {
+		t.Fatalf("failing = %#v", v.Failing)
+	}
+	// The verdict must also say it as data: a consumer cannot be asked to parse
+	// English out of a finding to learn that a rule never ran.
+	if len(v.PolicyNotEvaluated) != 1 || v.PolicyNotEvaluated[0].RuleID != "storage-encrypted" {
+		t.Fatalf("PolicyNotEvaluated = %#v", v.PolicyNotEvaluated)
+	}
+}
+
+// --wait-for narrows the gate to one rollout. A policy violation elsewhere in
+// the cluster is reported but must not fail that rollout's gate, exactly as a
+// detector finding elsewhere does not.
+func TestPolicyViolationOutOfScopeDoesNotFailAScopedGate(t *testing.T) {
+	v := Decide(scan.Result{}, Options{
+		FailOn:    findings.Warning,
+		ScopeKind: "Deployment", ScopeName: "api", ScopeNamespace: "prod",
+		PolicyViolations: []policy.Violation{{
+			RuleID: "registry-allowlist", Level: policy.LevelCritical, Kind: "Pod",
+			Namespace: "other", Name: "web", Message: "image is not from an allowed registry",
+		}},
+	})
+	if v.Code != CodePass {
+		t.Fatalf("exit code = %d, want %d", v.Code, CodePass)
+	}
+	if len(v.Reported) != 1 {
+		t.Fatalf("an out-of-scope violation must still be reported: %#v", v.Reported)
+	}
+}
+
+func TestNoPolicyLeavesTheVerdictUnchanged(t *testing.T) {
+	v := Decide(scan.Result{}, Options{FailOn: findings.Warning})
+	if v.Code != CodePass || len(v.Failing) != 0 || len(v.Reported) != 0 {
+		t.Fatalf("a gate with no policy changed: %#v", v)
+	}
+	if v.PolicyNotEvaluated != nil {
+		t.Errorf("PolicyNotEvaluated = %#v, want nil so the JSON key stays absent", v.PolicyNotEvaluated)
+	}
+	out, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "policyNotEvaluated") {
+		t.Errorf("a no-policy verdict encoded the new key:\n%s", out)
 	}
 }

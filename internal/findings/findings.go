@@ -20,6 +20,7 @@ import (
 
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/policy"
 	"github.com/imantaba/kubeagent/internal/scan"
 )
 
@@ -174,6 +175,54 @@ func Flatten(res scan.Result) []Finding {
 	}
 
 	Sort(out)
+	return out
+}
+
+// policyLevel maps a policy level onto the gate's severity ordering. The two
+// types stay separate on purpose: internal/policy may not import this package
+// (findings imports scan, scan imports policy), and a policy file's vocabulary
+// should not be a Go ordinal.
+func policyLevel(l policy.Level) Level {
+	switch l {
+	case policy.LevelCritical:
+		return Critical
+	case policy.LevelWarning:
+		return Warning
+	default:
+		return Info
+	}
+}
+
+// FromPolicy projects a policy run into findings.
+//
+// Issue is "policy/<ruleID>": internal/sarif uses Issue as the SARIF rule id
+// verbatim, and without the prefix an operator's rule named "OOMKilled" would
+// merge with the detector of that name in a code-scanning dashboard.
+//
+// A rule that could not be evaluated becomes a finding at its own level rather
+// than a Blindspot. --allow-partial-read exists to waive a blind spot the
+// operator accepted; an operator who wrote a rule did not accept not running
+// it. It carries no Name, because no object was examined.
+func FromPolicy(violations []policy.Violation, notEvaluated []policy.Unevaluated) []Finding {
+	out := make([]Finding, 0, len(violations)+len(notEvaluated))
+
+	for _, v := range violations {
+		reason := v.Message
+		if v.Evidence != "" {
+			reason = strings.TrimSpace(reason + " (" + v.Evidence + ")")
+		}
+		out = append(out, Finding{
+			Level: policyLevel(v.Level), Kind: v.Kind,
+			Namespace: v.Namespace, Name: v.Name,
+			Issue: "policy/" + v.RuleID, Reason: reason,
+		})
+	}
+	for _, u := range notEvaluated {
+		out = append(out, Finding{
+			Level: policyLevel(u.Level), Kind: u.Kind,
+			Issue: "policy/" + u.RuleID, Reason: u.Reason,
+		})
+	}
 	return out
 }
 

@@ -2,10 +2,12 @@ package findings
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/policy"
 	"github.com/imantaba/kubeagent/internal/pvchealth"
 	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/svchealth"
@@ -206,5 +208,76 @@ func TestFlattenIsDeterministic(t *testing.T) {
 		if first[i] != second[i] {
 			t.Fatalf("finding %d differs between calls: %+v vs %+v", i, first[i], second[i])
 		}
+	}
+}
+
+func TestFromPolicyMapsLevelsAndPrefixesTheIssue(t *testing.T) {
+	got := FromPolicy([]policy.Violation{
+		{RuleID: "registry-allowlist", Level: policy.LevelCritical, Kind: "Pod",
+			Namespace: "prod", Name: "web", Message: "image is not from an allowed registry",
+			Evidence: "docker.example.net/app:1.0"},
+		{RuleID: "pdb-required", Level: policy.LevelWarning, Kind: "Deployment",
+			Namespace: "prod", Name: "api", Message: "no PodDisruptionBudget covers this Deployment"},
+		{RuleID: "zone-label", Level: policy.LevelInfo, Kind: "Node",
+			Name: "worker-1", Message: "no topology label"},
+	}, nil)
+
+	if len(got) != 3 {
+		t.Fatalf("got %d findings, want 3", len(got))
+	}
+	wantLevels := []Level{Critical, Warning, Info}
+	for i, want := range wantLevels {
+		if got[i].Level != want {
+			t.Errorf("finding %d level = %v, want %v", i, got[i].Level, want)
+		}
+	}
+	if got[0].Issue != "policy/registry-allowlist" {
+		t.Errorf("Issue = %q, want the policy/ prefix", got[0].Issue)
+	}
+	if !strings.Contains(got[0].Reason, "image is not from an allowed registry") ||
+		!strings.Contains(got[0].Reason, "docker.example.net/app:1.0") {
+		t.Errorf("Reason = %q, want the message and the evidence", got[0].Reason)
+	}
+	if got[1].Reason != "no PodDisruptionBudget covers this Deployment" {
+		t.Errorf("a violation with no evidence gained a suffix: %q", got[1].Reason)
+	}
+	if got[2].Namespace != "" || got[2].Name != "worker-1" {
+		t.Errorf("cluster-scoped violation = %#v", got[2])
+	}
+}
+
+// A rule kubeagent could not run must reach the gate as a finding at the
+// rule's own level. Dropping it — or demoting it to info — would let a
+// refused read pass a build that the operator wrote a critical rule to stop.
+func TestFromPolicyTurnsAnUnevaluatedRuleIntoAFindingAtItsOwnLevel(t *testing.T) {
+	got := FromPolicy(nil, []policy.Unevaluated{{
+		RuleID: "storage-encrypted", Level: policy.LevelCritical, Kind: "StorageClass",
+		Reason: "kubeagent could not read this kind, so the rule was not evaluated",
+	}})
+
+	if len(got) != 1 {
+		t.Fatalf("got %d findings, want 1", len(got))
+	}
+	f := got[0]
+	if f.Level != Critical {
+		t.Errorf("Level = %v, want Critical — a blind rule keeps its own severity", f.Level)
+	}
+	if f.Issue != "policy/storage-encrypted" {
+		t.Errorf("Issue = %q", f.Issue)
+	}
+	if f.Kind != "StorageClass" {
+		t.Errorf("Kind = %q", f.Kind)
+	}
+	if f.Name != "" {
+		t.Errorf("Name = %q, want empty — no object was evaluated", f.Name)
+	}
+	if !strings.Contains(f.Reason, "not evaluated") {
+		t.Errorf("Reason = %q, want kubeagent's own words", f.Reason)
+	}
+}
+
+func TestFromPolicyWithNothingReturnsNothing(t *testing.T) {
+	if got := FromPolicy(nil, nil); len(got) != 0 {
+		t.Errorf("got %d findings from no policy results", len(got))
 	}
 }

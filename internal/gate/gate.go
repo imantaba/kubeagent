@@ -11,6 +11,7 @@ import (
 
 	"github.com/imantaba/kubeagent/internal/findings"
 	"github.com/imantaba/kubeagent/internal/jsonschema"
+	"github.com/imantaba/kubeagent/internal/policy"
 	"github.com/imantaba/kubeagent/internal/scan"
 )
 
@@ -44,6 +45,12 @@ type Options struct {
 	// its own, but "1/3 replicas updated, 2 unavailable" is.
 	TimedOut      bool
 	TimeoutDetail string
+
+	// PolicyViolations and PolicyNotEvaluated are the outcome of the --policy
+	// run, both empty when no policy file was given. They join the flattened
+	// findings, so --fail-on and --wait-for scoping apply to them unchanged.
+	PolicyViolations   []policy.Violation
+	PolicyNotEvaluated []policy.Unevaluated
 }
 
 // Blindspot is one failed collector call plus whether --allow-partial-read
@@ -76,6 +83,15 @@ type Verdict struct {
 	Failing      []findings.Finding `json:"failing"`
 	Reported     []findings.Finding `json:"reported"`
 	Inconclusive []Blindspot        `json:"inconclusive"`
+
+	// PolicyNotEvaluated lists the rules kubeagent could not run. Violations
+	// need no field of their own — they are findings, and they are already in
+	// Failing or Reported. A rule that never ran is different in kind: it is the
+	// one outcome where the verdict understates what the operator asked for, and
+	// a consumer must be able to see it as data rather than by reading English
+	// out of a finding's reason. Each also appears in Failing or Reported at its
+	// own level; this field says which of them never ran.
+	PolicyNotEvaluated []policy.Unevaluated `json:"policyNotEvaluated,omitempty"`
 }
 
 // inScope reports whether a finding is attributable to the gate's --wait-for
@@ -115,6 +131,7 @@ func Decide(res scan.Result, opts Options) Verdict {
 	if opts.ScopeKind != "" {
 		v.Scope = fmt.Sprintf("%s/%s in %s", opts.ScopeKind, opts.ScopeName, opts.ScopeNamespace)
 	}
+	v.PolicyNotEvaluated = opts.PolicyNotEvaluated
 
 	waived := make(map[string]bool, len(opts.AllowPartialRead))
 	for _, r := range opts.AllowPartialRead {
@@ -129,7 +146,11 @@ func Decide(res scan.Result, opts Options) Verdict {
 		v.Inconclusive = append(v.Inconclusive, b)
 	}
 
-	for _, f := range findings.Flatten(res) {
+	all := findings.Flatten(res)
+	all = append(all, findings.FromPolicy(opts.PolicyViolations, opts.PolicyNotEvaluated)...)
+	findings.Sort(all)
+
+	for _, f := range all {
 		if opts.inScope(f) && f.Level >= opts.FailOn {
 			v.Failing = append(v.Failing, f)
 			continue

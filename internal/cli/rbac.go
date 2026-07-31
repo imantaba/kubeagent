@@ -233,14 +233,6 @@ func runRBACCheckOpts(o rbacCheckOptions) error {
 	return nil
 }
 
-func runRBACCheck(args []string) error {
-	o, err := parseRBACCheckFlags(args)
-	if err != nil {
-		return err
-	}
-	return runRBACCheckOpts(o)
-}
-
 // newRBACPrintCommand builds `kubeagent rbac print`.
 func newRBACPrintCommand() *cobra.Command {
 	var o rbacPrintOptions

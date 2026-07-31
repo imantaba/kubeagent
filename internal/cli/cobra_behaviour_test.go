@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 )
@@ -37,8 +38,30 @@ func TestUnknownFlagIsAUsageErrorNotAFindingsExit(t *testing.T) {
 	if !strings.Contains(err.Error(), "unknown flag") {
 		t.Errorf("gate --nonesuch: error %q, want it to name the unknown flag", err)
 	}
-	if strings.Contains(err.Error(), "Usage:") || strings.Contains(err.Error(), "--namespace") {
-		t.Errorf("gate --nonesuch: error carries a usage dump, want the message alone:\n%s", err)
+}
+
+// TestParseErrorPrintsNoUsageDump pins the second half of the parse-error
+// contract: the message stands alone. Cobra never puts usage text into the
+// error value — it prints it separately in ExecuteC, and only when neither
+// the subcommand nor the root has SilenceUsage set — so the assertion has
+// to watch the command's writers rather than the returned error. Run does
+// not expose them, so the test drives the root it builds. Dropping
+// SilenceUsage from gate or from the root puts roughly a kilobyte of flag
+// listing on stdout after the message; today both are silent.
+func TestParseErrorPrintsNoUsageDump(t *testing.T) {
+	var out, errOut bytes.Buffer
+	root := newRootCommand()
+	root.SetOut(&out)
+	root.SetErr(&errOut)
+	root.SetArgs([]string{"gate", "--nonesuch"})
+	if err := root.Execute(); err == nil {
+		t.Fatal("gate --nonesuch: want an error, got nil")
+	}
+	if out.Len() != 0 {
+		t.Errorf("gate --nonesuch wrote %d bytes to stdout, want none:\n%s", out.Len(), out.String())
+	}
+	if errOut.Len() != 0 {
+		t.Errorf("gate --nonesuch wrote %d bytes to stderr, want none — Main owns the error message:\n%s", errOut.Len(), errOut.String())
 	}
 }
 

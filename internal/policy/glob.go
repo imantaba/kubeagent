@@ -16,9 +16,9 @@ package policy
 // linear: worst case is O(len(pattern) * len(s)), realized by a single star
 // followed by a long, almost-matching literal run, where each mismatch
 // re-scans nearly the whole literal. A caller must not hand this an unbounded
-// value — the matches/notMatches evaluation path caps the length of the
-// compared value before it reaches here; do not remove that cap on the
-// mistaken belief that this function is linear.
+// value — checkOp's matches/notMatches case caps the compared value at
+// maxMatchLen before it reaches here; do not remove that cap on the mistaken
+// belief that this function is linear.
 func globMatch(pattern, s string) bool {
 	var (
 		p, i  int // cursors into pattern and s

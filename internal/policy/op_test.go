@@ -2,6 +2,7 @@ package policy
 
 import (
 	"math"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -99,6 +100,32 @@ func TestCheckOpSkipsAValueTooLongToMatchSafely(t *testing.T) {
 	// nothing, so capping it would drop a comparison that was safe to make.
 	if _, skip := checkOp(OpIn, present(long), []string{long}); skip {
 		t.Error("in was skipped on a long value; only the glob operators are capped")
+	}
+}
+
+// A float64 carries 53 bits of integer precision. Above that two distinct
+// int64 values round to the same float, and a comparison that went through a
+// float would return a verdict rather than a skip — the one failure mode this
+// package must not have, because a wrong answer is worse than no answer.
+func TestCheckOpComparesLargeIntegersExactly(t *testing.T) {
+	// 2^53 and 2^53+1: distinct as int64, identical as float64.
+	const lo = int64(1) << 53
+	const hi = lo + 1
+
+	if ok, skip := checkOp(OpGt, present(hi), []string{strconv.FormatInt(lo, 10)}); !ok || skip {
+		t.Errorf("gt %d vs %d: ok=%v skip=%v, want ok=true skip=false", hi, lo, ok, skip)
+	}
+	if ok, skip := checkOp(OpLt, present(lo), []string{strconv.FormatInt(hi, 10)}); !ok || skip {
+		t.Errorf("lt %d vs %d: ok=%v skip=%v, want ok=true skip=false", lo, hi, ok, skip)
+	}
+	// Equality at the same magnitude must still hold.
+	if ok, skip := checkOp(OpGte, present(hi), []string{strconv.FormatInt(hi, 10)}); !ok || skip {
+		t.Errorf("gte %d vs itself: ok=%v skip=%v, want ok=true skip=false", hi, ok, skip)
+	}
+	// The int64 boundary itself, where ParseInt stops and the float path takes
+	// over: still a comparison, never a panic.
+	if _, skip := checkOp(OpGt, present(int64(math.MaxInt64)), []string{"9223372036854775806"}); skip {
+		t.Error("gt at MaxInt64 was skipped; both sides parse as integers")
 	}
 }
 

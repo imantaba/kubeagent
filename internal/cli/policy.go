@@ -13,9 +13,9 @@ import (
 	"github.com/imantaba/kubeagent/internal/policy"
 )
 
-// policyDocuments reads every --policy path into a document internal/policy can
-// load. The filesystem stops here: internal/policy takes bytes and a name, which
-// is what keeps it importable by gate and mcp.
+// namedPolicyDocuments reads every path into a document internal/policy can
+// load. The filesystem stops here: internal/policy takes bytes and a name,
+// which is what keeps it importable by gate and mcp.
 //
 // A path may be a file or a directory. A named file is read whatever it is
 // called — the operator typed the name. A directory contributes its .yaml and
@@ -26,15 +26,21 @@ import (
 // The walk is not recursive. A nested directory is a structure kubeagent would
 // have to invent a meaning for, and "the files I can see in this directory" is
 // the meaning an operator already has.
-func policyDocuments(paths []string) ([]policy.Document, error) {
+//
+// label names how the path reached this call, for the error: "--policy" for
+// the flag Task 15 adds to scan and gate, or "" for a positional argument
+// that already names itself. One walk, two callers, two wordings — inventing
+// a second implementation to get the wording right would risk the two
+// drifting apart on everything else.
+func namedPolicyDocuments(paths []string, label string) ([]policy.Document, error) {
 	var out []policy.Document
 	for _, p := range paths {
 		info, err := os.Stat(p)
 		if err != nil {
-			return nil, fmt.Errorf("--policy %s: %w", p, err)
+			return nil, fmt.Errorf("%s: %w", namePath(label, p), err)
 		}
 		if !info.IsDir() {
-			doc, err := readPolicyFile(p)
+			doc, err := readPolicyFile(p, label)
 			if err != nil {
 				return nil, err
 			}
@@ -43,7 +49,7 @@ func policyDocuments(paths []string) ([]policy.Document, error) {
 		}
 		entries, err := os.ReadDir(p)
 		if err != nil {
-			return nil, fmt.Errorf("--policy %s: %w", p, err)
+			return nil, fmt.Errorf("%s: %w", namePath(label, p), err)
 		}
 		var names []string
 		for _, e := range entries {
@@ -56,13 +62,13 @@ func policyDocuments(paths []string) ([]policy.Document, error) {
 			}
 		}
 		if len(names) == 0 {
-			return nil, fmt.Errorf("--policy %s: no .yaml or .yml files in this directory", p)
+			return nil, fmt.Errorf("%s: no .yaml or .yml files in this directory", namePath(label, p))
 		}
 		// Name order, so the rule order — and the report — does not depend on
 		// what the filesystem happens to return.
 		sort.Strings(names)
 		for _, n := range names {
-			doc, err := readPolicyFile(filepath.Join(p, n))
+			doc, err := readPolicyFile(filepath.Join(p, n), label)
 			if err != nil {
 				return nil, err
 			}
@@ -72,19 +78,38 @@ func policyDocuments(paths []string) ([]policy.Document, error) {
 	return out, nil
 }
 
+// namePath formats a path for an error message: "--policy <path>" when label
+// names the flag the path arrived through, or the bare path when it does not
+// — a positional argument already names itself, so prefixing it with a flag
+// the operator never typed would point at the wrong thing.
+func namePath(label, path string) string {
+	if label == "" {
+		return path
+	}
+	return label + " " + path
+}
+
 // readPolicyFile reads one file into a document. Source is the path as the
 // operator wrote it, because it reaches only an error on stderr, where naming
-// the file is the whole point.
-func readPolicyFile(path string) (policy.Document, error) {
+// the file is the whole point. label is passed straight through to namePath.
+func readPolicyFile(path, label string) (policy.Document, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return policy.Document{}, fmt.Errorf("--policy %s: %w", path, err)
+		return policy.Document{}, fmt.Errorf("%s: %w", namePath(label, path), err)
 	}
 	return policy.Document{Source: path, Data: data}, nil
 }
 
-// loadPolicy reads and validates the files named by --policy. Both scan and
-// gate call it, so neither can load a policy the other would reject.
+// policyDocuments reads every --policy path into a document internal/policy
+// can load. It is a thin wrapper over namedPolicyDocuments naming the flag
+// this signature is reached through — the one Task 15 adds to scan and gate.
+func policyDocuments(paths []string) ([]policy.Document, error) {
+	return namedPolicyDocuments(paths, "--policy")
+}
+
+// loadPolicy reads and validates the files the --policy flag Task 15 adds to
+// scan and gate will name. It goes through policyDocuments, so a rejected
+// path is reported the same way the flag itself reports it.
 func loadPolicy(paths []string) ([]policy.Rule, error) {
 	docs, err := policyDocuments(paths)
 	if err != nil {
@@ -96,11 +121,20 @@ func loadPolicy(paths []string) ([]policy.Rule, error) {
 // runPolicyValidate checks policy files and prints a count. It contacts
 // nothing: no cluster, no kubeconfig, no LLM. The count is all stdout gets —
 // the paths stay in the error, which Main writes to stderr.
+//
+// Its argument is a positional file, not the --policy flag — that flag does
+// not exist until Task 15 — so it goes through namedPolicyDocuments directly
+// with an empty label rather than through policyDocuments/loadPolicy, whose
+// wording names a flag this command does not have.
 func runPolicyValidate(args []string, w io.Writer) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: %s policy validate <file>…", invokedAs)
 	}
-	rules, err := loadPolicy(args)
+	docs, err := namedPolicyDocuments(args, "")
+	if err != nil {
+		return err
+	}
+	rules, err := policy.Load(docs)
 	if err != nil {
 		return err
 	}

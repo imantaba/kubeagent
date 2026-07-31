@@ -129,3 +129,97 @@ func TestUnknownRelationNeverHolds(t *testing.T) {
 		t.Error("an unknown relation must not hold")
 	}
 }
+
+// TestRelationHoldsSurvivesMalformedCandidates asserts that relationHolds
+// never panics on a hostile or malformed candidate object, and never treats
+// a malformed shape as evidence of coverage. Values under a PDB or HPA come
+// from a cluster (or, in internal/fuzzgen's case, from a fuzz-generated Go
+// object) and are not guaranteed to be well-typed: a bare Go int where an
+// int64/float64 is expected, a string where a map is expected, and so on
+// must all fall through to "does not cover" rather than crash the process.
+func TestRelationHoldsSurvivesMalformedCandidates(t *testing.T) {
+	dep := workload("Deployment", "prod", "web", map[string]string{"app": "web"})
+
+	cases := []struct {
+		name string
+		rel  Relation
+		in   Inputs
+	}{
+		{
+			name: "nil PDB entry in the slice",
+			rel:  RelationHasPDB,
+			in:   Inputs{PDBs: []*unstructured.Unstructured{nil}},
+		},
+		{
+			name: "nil HPA entry in the slice",
+			rel:  RelationHasHPA,
+			in:   Inputs{HPAs: []*unstructured.Unstructured{nil}},
+		},
+		{
+			name: "PDB spec is a string, not a map",
+			rel:  RelationHasPDB,
+			in: Inputs{PDBs: []*unstructured.Unstructured{{Object: map[string]any{
+				"kind":     "PodDisruptionBudget",
+				"metadata": map[string]any{"name": "pdb", "namespace": "prod"},
+				"spec":     "not-a-map",
+			}}}},
+		},
+		{
+			name: "PDB spec.selector is a list, not a map",
+			rel:  RelationHasPDB,
+			in: Inputs{PDBs: []*unstructured.Unstructured{{Object: map[string]any{
+				"kind":     "PodDisruptionBudget",
+				"metadata": map[string]any{"name": "pdb", "namespace": "prod"},
+				"spec": map[string]any{
+					"selector": []any{"not", "a", "map"},
+				},
+			}}}},
+		},
+		{
+			name: "PDB matchLabels value is a number",
+			rel:  RelationHasPDB,
+			in: Inputs{PDBs: []*unstructured.Unstructured{
+				pdb("prod", map[string]any{"matchLabels": map[string]any{"app": 5.0}}),
+			}},
+		},
+		{
+			name: "PDB matchLabels value is a nested map",
+			rel:  RelationHasPDB,
+			in: Inputs{PDBs: []*unstructured.Unstructured{
+				pdb("prod", map[string]any{"matchLabels": map[string]any{"app": map[string]any{"nested": "value"}}}),
+			}},
+		},
+		{
+			name: "PDB matchLabels value is nil",
+			rel:  RelationHasPDB,
+			in: Inputs{PDBs: []*unstructured.Unstructured{
+				pdb("prod", map[string]any{"matchLabels": map[string]any{"app": nil}}),
+			}},
+		},
+		{
+			name: "PDB matchLabels value is a bare Go int, the exact shape that panics today",
+			rel:  RelationHasPDB,
+			in: Inputs{PDBs: []*unstructured.Unstructured{
+				pdb("prod", map[string]any{"matchLabels": map[string]any{"app": int(5)}}),
+			}},
+		},
+		{
+			name: "HPA spec.scaleTargetRef is a list, not a map",
+			rel:  RelationHasHPA,
+			in: Inputs{HPAs: []*unstructured.Unstructured{{Object: map[string]any{
+				"kind":     "HorizontalPodAutoscaler",
+				"metadata": map[string]any{"name": "hpa", "namespace": "prod"},
+				"spec": map[string]any{
+					"scaleTargetRef": []any{"not", "a", "map"},
+				},
+			}}}},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := relationHolds(c.rel, dep, c.in); got {
+				t.Errorf("relationHolds = %v, want false: a malformed candidate must never count as coverage", got)
+			}
+		})
+	}
+}

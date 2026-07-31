@@ -30,6 +30,15 @@ func relationHolds(rel Relation, obj *unstructured.Unstructured, in Inputs) bool
 // matchExpressions does not cover the workload — kubeagent says "no PDB
 // covers this" rather than guessing at set-based semantics it does not
 // implement.
+//
+// The selector is read with unstructured.NestedFieldNoCopy, not NestedMap:
+// NestedMap deep-copies the whole subtree via runtime.DeepCopyJSON, which
+// panics on any value it does not recognize as valid decoded JSON — a bare
+// Go int, for instance, as opposed to the int64 the API server's own decoder
+// produces. p.Object came from a caller kubeagent does not control (and, in
+// a fuzz test, from a generator that is free to place a plain int anywhere),
+// so a hostile or malformed selector must fall through to "does not cover",
+// never panic.
 func coveredByPDB(obj *unstructured.Unstructured, pdbs []*unstructured.Unstructured) bool {
 	ns := obj.GetNamespace()
 	labels := podTemplateLabels(obj)
@@ -37,10 +46,15 @@ func coveredByPDB(obj *unstructured.Unstructured, pdbs []*unstructured.Unstructu
 		if p == nil || p.GetNamespace() != ns {
 			continue
 		}
-		selector, found, err := unstructured.NestedMap(p.Object, "spec", "selector")
+		sel, found, err := unstructured.NestedFieldNoCopy(p.Object, "spec", "selector")
 		if err != nil || !found {
 			// A PDB with no selector selects nothing kubeagent can reason
 			// about; ignore it rather than treat it as universal.
+			continue
+		}
+		selector, ok := sel.(map[string]any)
+		if !ok {
+			// spec.selector is present but not an object — nothing to match.
 			continue
 		}
 		if exprs, ok := selector["matchExpressions"].([]any); ok && len(exprs) > 0 {
@@ -60,6 +74,15 @@ func coveredByPDB(obj *unstructured.Unstructured, pdbs []*unstructured.Unstructu
 
 // targetedByHPA reports whether any HorizontalPodAutoscaler in the workload's
 // namespace scales it.
+//
+// Only scaleTargetRef.kind and .name are compared; apiVersion is not read at
+// all. An HPA targeting {apiVersion: "custom.example.com/v1", kind:
+// "Deployment", name: "web"} would therefore be reported as covering an
+// apps/v1 Deployment named "web", even though its scaleTargetRef names a
+// different API group. That is acceptable here because RelationValidForKind
+// restricts this relation to Deployment, StatefulSet and ReplicaSet — three
+// fixed, built-in apps/v1 kinds a rule can select — so there is no other API
+// group in play for kubeagent to disambiguate against in practice.
 func targetedByHPA(obj *unstructured.Unstructured, hpas []*unstructured.Unstructured) bool {
 	ns, kind, name := obj.GetNamespace(), obj.GetKind(), obj.GetName()
 	for _, h := range hpas {

@@ -6139,7 +6139,7 @@ the rules the operator asked for would read as 'your rules are satisfied'."
 
 **The `policy` feature ships no manifest and no new grant.** The 23 selectable
 kinds are exactly the kinds `rbacprofile.coreRules` already grants (Task 1's
-`TestSelectableKindsMatchCoreRules` pins that), so a policy needs nothing core
+`TestSelectableKindsMatchesRBACProfileCore` pins that), so a policy needs nothing core
 does not already have. The entry exists so `kubeagent rbac print` and
 `rbac check` name the feature at all — a feature absent from the table is a
 feature an operator cannot ask about.
@@ -6615,7 +6615,7 @@ Two edits, both in the **Invariants** section:
 ```markdown
   A policy can never require a grant beyond `core`: the kinds a rule may select
   are exactly the kinds `rbacprofile.coreRules` already grants, pinned by
-  `TestSelectableKindsMatchCoreRules`, so `--policy` changes no RBAC manifest.
+  `TestSelectableKindsMatchesRBACProfileCore`, so `--policy` changes no RBAC manifest.
   `Secret` is not a selectable kind and a `ConfigMap` path beginning `data` or
   `binaryData` is a load error — a violation carries its evidence into a report
   designed to be forwarded.

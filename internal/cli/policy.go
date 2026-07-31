@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -10,7 +11,11 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/imantaba/kubeagent/internal/cluster"
+	"github.com/imantaba/kubeagent/internal/collect"
 	"github.com/imantaba/kubeagent/internal/policy"
+	"github.com/imantaba/kubeagent/internal/report"
+	"github.com/imantaba/kubeagent/internal/scan"
 )
 
 // namedPolicyDocuments reads every path into a document internal/policy can
@@ -176,4 +181,35 @@ func plural(n int, one, many string) string {
 		return fmt.Sprintf("%d %s", n, one)
 	}
 	return fmt.Sprintf("%d %s", n, many)
+}
+
+// evaluatePolicy is the whole --policy path, and the only one. scan and gate
+// both call it, so neither can load a policy the other would reject, and
+// neither can drop the unreadable set — which is the difference between "the
+// rule passed" and "the rule never ran".
+//
+// Returns nil when no --policy was given, so a run without the flag renders
+// exactly the bytes it rendered before the flag existed.
+//
+// Read-only toward the cluster: ReadPlan names the kinds, collect.PolicyObjects
+// lists them, and nothing here writes. There is no --fix path from a policy.
+func evaluatePolicy(ctx context.Context, paths []string, kubeconfig, contextName, namespace string) (*report.PolicyView, error) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	rules, err := loadPolicy(paths)
+	if err != nil {
+		return nil, err
+	}
+	// A dynamic client, because a policy selects kinds the typed collectors do
+	// not cover. Same construction scan already uses for the advisory reads.
+	dyn, _, err := cluster.NewDynamicClients(kubeconfig, contextName)
+	if err != nil {
+		return nil, err
+	}
+	objects, unreadable := collect.PolicyObjects(ctx, dyn, policy.ReadPlan(rules), namespace, scan.Workers())
+	violations, notEvaluated := policy.Evaluate(rules, policy.InputsFrom(objects, unreadable))
+	return &report.PolicyView{
+		Rules: len(rules), Violations: violations, NotEvaluated: notEvaluated,
+	}, nil
 }

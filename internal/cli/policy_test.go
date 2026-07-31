@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -205,5 +206,26 @@ func TestPolicyValidateRejectsADuplicateRuleIDAcrossFiles(t *testing.T) {
 	}
 	if out.Len() != 0 {
 		t.Errorf("a failed validation printed to stdout: %q", out.String())
+	}
+}
+
+func TestEvaluatePolicyWithNoPathsReturnsNil(t *testing.T) {
+	got, err := evaluatePolicy(context.Background(), nil, "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != nil {
+		t.Errorf("got %#v, want nil so no section renders and no JSON key appears", got)
+	}
+}
+
+// A file that will not load must stop the command. A scan that printed a
+// report with no policy section would read as "your rules are satisfied".
+func TestEvaluatePolicyFailsOnABadFile(t *testing.T) {
+	dir := t.TempDir()
+	p := writeFile(t, dir, "broken.yaml", "- id: no-level\n  match:\n    kind: Pod\n")
+
+	if _, err := evaluatePolicy(context.Background(), []string{p}, "", "", ""); err == nil {
+		t.Fatal("a bad policy file did not stop the command")
 	}
 }

@@ -54,6 +54,7 @@ type scanOptions struct {
 	drift                  bool
 	driftAge               time.Duration
 	capacity               bool
+	policyPaths            []string
 	logs                   bool
 	nodeHeartbeatThreshold time.Duration
 	expectedNodes          string
@@ -100,6 +101,7 @@ func bindScanFlags(cmd *cobra.Command, o *scanOptions) {
 	f.BoolVar(&o.drift, "drift", envBool("KUBEAGENT_DRIFT", false), "report GitOps convergence for Argo CD and Flux (advisory, needs deploy/rbac-gitops.yaml on a restricted context)")
 	f.DurationVar(&o.driftAge, "drift-age", envDuration("KUBEAGENT_DRIFT_AGE", time.Hour), "how long an object may differ from Git before --drift calls it stale (e.g. 30m, 2h)")
 	f.BoolVar(&o.capacity, "capacity", envBool("KUBEAGENT_CAPACITY", false), "report scheduling headroom and structurally wrong workload shapes (advisory; uses metrics-server for context when present)")
+	f.StringArrayVar(&o.policyPaths, "policy", nil, "evaluate organization-specific checks from this policy file or directory (repeatable)")
 	f.BoolVar(&o.logs, "logs", false, "read each crashing container's previous logs and classify the failure (needs the pods/log grant)")
 	f.DurationVar(&o.nodeHeartbeatThreshold, "node-heartbeat-threshold", 40*time.Second, "flag a Ready node whose kubelet lease is stale beyond this (0 disables)")
 	f.StringVar(&o.expectedNodes, "expected-nodes", "", "names of nodes expected in the cluster; a declared name with no Node object is flagged Degraded (comma-separated)")
@@ -242,6 +244,11 @@ func runScan(o scanOptions) error {
 	}
 	res.PartialReads = append(res.PartialReads, advisoryBlindSpots(advRes.Degradations)...)
 
+	policyView, err := evaluatePolicy(context.Background(), o.policyPaths, o.kubeconfig, o.contextName, o.namespace)
+	if err != nil {
+		return err
+	}
+
 	operatorRep := advRes.Operators
 	gitopsRep := advRes.GitOps
 	capacityRep := advRes.Capacity
@@ -313,6 +320,7 @@ func runScan(o scanOptions) error {
 	in.Operators = operatorRep
 	in.GitOps = gitopsRep
 	in.Capacity = capacityRep
+	in.Policy = policyView
 	in.SecurityVerbose = o.securityVerbose
 	in.Suggest = o.suggest
 	in.Explanation = explanation

@@ -27,14 +27,19 @@ func globMatch(pattern, s string) bool {
 	)
 	for i < len(s) {
 		switch {
-		case p < len(pattern) && (pattern[p] == '?' || pattern[p] == s[i]):
-			p++
-			i++
 		case p < len(pattern) && pattern[p] == '*':
 			// Remember where the star was, try matching zero bytes first.
+			// This must be checked before the literal-equality case below:
+			// s[i] can itself be the byte '*' (an input that happens to
+			// contain a literal asterisk), and if the equality check ran
+			// first it would consume the pattern's wildcard as a one-byte
+			// literal match instead of opening it as a star.
 			starP = p
 			starI = i
 			p++
+		case p < len(pattern) && (pattern[p] == '?' || pattern[p] == s[i]):
+			p++
+			i++
 		case starP >= 0:
 			// Mismatch after a star: let the star swallow one more byte.
 			p = starP + 1

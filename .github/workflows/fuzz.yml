@@ -40,6 +40,14 @@ jobs:
             target: FuzzParseReadyz
           - package: ./internal/certhealth
             target: FuzzCertAssess
+          - package: ./internal/policy
+            target: FuzzLoadPolicy
+          - package: ./internal/policy
+            target: FuzzEvaluatePolicy
+          - package: ./internal/policy
+            target: FuzzResolvePath
+          - package: ./internal/policy
+            target: FuzzGlob
     name: ${{ matrix.target }}
     steps:
       - uses: actions/checkout@v4

@@ -94,10 +94,26 @@ func TestNamespaceShorthandSpellings(t *testing.T) {
 // TestStrayPositionalArgumentIsRejected pins Task 6's Args: cobra.NoArgs. The
 // standard-library dispatch ignored a trailing word; Cobra reports it. mcp is
 // the case that matters, because a client that passes junk should be told
-// rather than served.
+// rather than served; tui is the other command whose behaviour changed here,
+// and the CHANGELOG names both, so both are pinned.
+//
+// The assertion is on the message, not merely on err != nil, because both
+// commands fail for their own reasons in a test environment: without the
+// NoArgs guard, tui still errors with "tui needs an interactive terminal",
+// which would let a non-discriminating test pass with the guard removed.
+// Naming the stray word is what proves the guard, not the environment,
+// produced the error.
 func TestStrayPositionalArgumentIsRejected(t *testing.T) {
-	if err := Run([]string{"mcp", "stray"}); err == nil {
-		t.Error("mcp stray: want an error, got nil")
+	for _, command := range []string{"mcp", "tui"} {
+		t.Run(command, func(t *testing.T) {
+			err := Run([]string{command, "stray"})
+			if err == nil {
+				t.Fatalf("%s stray: want an error, got nil", command)
+			}
+			if !strings.Contains(err.Error(), `"stray"`) {
+				t.Errorf("%s stray: error does not name the stray argument: %v", command, err)
+			}
+		})
 	}
 }
 

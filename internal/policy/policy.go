@@ -224,3 +224,58 @@ func ValidRelation(r Relation) bool { _, ok := relationKinds[r]; return ok }
 func ValidLevel(l Level) bool {
 	return l == LevelCritical || l == LevelWarning || l == LevelInfo
 }
+
+// ReadPlan returns every kind an evaluation of these rules must read: the
+// kinds the rules select, plus the supporting lists their matches and
+// relations compare against. Sorted and deduplicated, so the read order — and
+// with it the report — does not depend on the order rules were written in.
+//
+// Nothing is read speculatively. A rule set with no relations and no
+// namespaceLabels plans exactly the kinds it selects, which is also the RBAC
+// it needs.
+func ReadPlan(rules []Rule) []string {
+	seen := map[string]bool{}
+	for _, k := range Kinds(rules) {
+		seen[k] = true
+	}
+	aux := Needs(rules)
+	if aux.Namespaces {
+		seen["Namespace"] = true
+	}
+	if aux.PDBs {
+		seen["PodDisruptionBudget"] = true
+	}
+	if aux.HPAs {
+		seen["HorizontalPodAutoscaler"] = true
+	}
+
+	out := make([]string, 0, len(seen))
+	for k := range seen {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// InputsFrom assembles Inputs from what the caller read. The supporting lists
+// are looked up by kind rather than passed separately, so a caller cannot
+// populate Objects and forget PDBs — and cannot drop the unreadable set, which
+// is the difference between "no violations" and "not checked".
+//
+// A supporting kind stays in Objects as well: a rule may legitimately select
+// PodDisruptionBudget and assert something about it.
+func InputsFrom(objects map[string][]*unstructured.Unstructured, unreadable map[string]bool) Inputs {
+	if objects == nil {
+		objects = map[string][]*unstructured.Unstructured{}
+	}
+	if unreadable == nil {
+		unreadable = map[string]bool{}
+	}
+	return Inputs{
+		Objects:    objects,
+		Namespaces: objects["Namespace"],
+		PDBs:       objects["PodDisruptionBudget"],
+		HPAs:       objects["HorizontalPodAutoscaler"],
+		Unreadable: unreadable,
+	}
+}

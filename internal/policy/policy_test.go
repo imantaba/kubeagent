@@ -2,7 +2,10 @@ package policy
 
 import (
 	"sort"
+	"strings"
 	"testing"
+
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/imantaba/kubeagent/internal/rbacprofile"
 )
@@ -189,5 +192,82 @@ func TestValidatorsRejectUnknownValues(t *testing.T) {
 	}
 	if ValidRelation(Relation("hasNetworkPolicy")) {
 		t.Error("hasNetworkPolicy is not a relation")
+	}
+}
+
+func TestReadPlanCoversSelectedAndSupportingKinds(t *testing.T) {
+	rules := []Rule{
+		{ID: "a", Match: Match{Kind: "Pod"}, Assert: Assert{Path: "metadata.name", Op: OpExists}},
+		{ID: "b", Match: Match{Kind: "Deployment"}, Assert: Assert{Relation: RelationHasPDB}},
+		{ID: "c", Match: Match{Kind: "Deployment"}, Assert: Assert{Relation: RelationHasHPA}},
+		{ID: "d", Match: Match{Kind: "Pod", NamespaceLabels: map[string]string{"tier": "prod"}},
+			Assert: Assert{Path: "metadata.name", Op: OpExists}},
+	}
+	got := ReadPlan(rules)
+	want := []string{"Deployment", "HorizontalPodAutoscaler", "Namespace", "Pod", "PodDisruptionBudget"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("ReadPlan = %v, want %v", got, want)
+	}
+}
+
+// A rule set that needs no supporting list must not make kubeagent ask for
+// one. Reading a PDB list nothing looks at is a permission kubeagent did not
+// need and an API call it did not have to make.
+func TestReadPlanAsksForNothingItDoesNotNeed(t *testing.T) {
+	rules := []Rule{{ID: "a", Match: Match{Kind: "Pod"}, Assert: Assert{Path: "metadata.name", Op: OpExists}}}
+	got := ReadPlan(rules)
+	if strings.Join(got, ",") != "Pod" {
+		t.Errorf("ReadPlan = %v, want just Pod", got)
+	}
+	if len(ReadPlan(nil)) != 0 {
+		t.Error("no rules must plan no reads")
+	}
+}
+
+// A kind that is both selected and supporting is read once.
+func TestReadPlanDeduplicatesASelectedSupportingKind(t *testing.T) {
+	rules := []Rule{
+		{ID: "a", Match: Match{Kind: "PodDisruptionBudget"}, Assert: Assert{Path: "spec.minAvailable", Op: OpExists}},
+		{ID: "b", Match: Match{Kind: "Deployment"}, Assert: Assert{Relation: RelationHasPDB}},
+	}
+	got := ReadPlan(rules)
+	want := []string{"Deployment", "PodDisruptionBudget"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("ReadPlan = %v, want %v", got, want)
+	}
+}
+
+func TestInputsFromRoutesTheSupportingLists(t *testing.T) {
+	ns := namespaceObj("prod", map[string]string{"tier": "prod"})
+	p := pdb("prod", map[string]any{"matchLabels": map[string]any{"app": "web"}})
+	h := hpa("prod", "Deployment", "web")
+	objects := map[string][]*unstructured.Unstructured{
+		"Namespace":               {ns},
+		"PodDisruptionBudget":     {p},
+		"HorizontalPodAutoscaler": {h},
+		"Pod":                     {pod("prod", "a", nil, "docker.example.net/x:1.0")},
+	}
+	in := InputsFrom(objects, map[string]bool{"Node": true})
+
+	if len(in.Namespaces) != 1 || len(in.PDBs) != 1 || len(in.HPAs) != 1 {
+		t.Fatalf("supporting lists not routed: %d namespaces, %d pdbs, %d hpas",
+			len(in.Namespaces), len(in.PDBs), len(in.HPAs))
+	}
+	if len(in.Objects["Pod"]) != 1 {
+		t.Error("selected objects did not survive")
+	}
+	if !in.Unreadable["Node"] {
+		t.Error("the unreadable set did not survive — a refused read would render as a pass")
+	}
+	// The supporting kinds stay in Objects too: a rule may select them.
+	if len(in.Objects["PodDisruptionBudget"]) != 1 {
+		t.Error("a supporting kind must remain selectable")
+	}
+}
+
+func TestInputsFromToleratesNilMaps(t *testing.T) {
+	in := InputsFrom(nil, nil)
+	if len(in.Objects) != 0 || len(in.Unreadable) != 0 {
+		t.Error("nil inputs must produce empty ones, not a panic")
 	}
 }

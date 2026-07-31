@@ -8,6 +8,8 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
+
+	"github.com/imantaba/kubeagent/internal/parallel"
 )
 
 // kindGVRs maps every kind a policy rule may select to the resource to list and
@@ -110,4 +112,42 @@ func ByKind(ctx context.Context, dyn dynamic.Interface, kind, namespace string) 
 		out = append(out, &list.Items[i])
 	}
 	return out, nil
+}
+
+// PolicyObjects reads every kind in the plan, concurrently and bounded by
+// workers, and returns the objects keyed by kind alongside the set of kinds
+// that could not be read.
+//
+// Each read writes only its own slot and returns only its own error, so the
+// result is a function of the cluster and not of which read answered first —
+// the same construction the scan's phase-1 reads use.
+//
+// A kind that could not be read is absent from the map AND present in the
+// unreadable set. That distinction is the point: an empty list means "read it,
+// found none", and an absent kind means "did not find out". Rendering the
+// second as the first turns a blind spot into a clean bill of health.
+//
+// The error itself is deliberately discarded. Any failure — refused,
+// unreachable, timed out — means the same thing to a policy run, and an API
+// error can carry a request URL, which is a credential.
+func PolicyObjects(ctx context.Context, dyn dynamic.Interface, kinds []string,
+	namespace string, workers int) (map[string][]*unstructured.Unstructured, map[string]bool) {
+
+	read := make([][]*unstructured.Unstructured, len(kinds))
+	errs := parallel.Do(ctx, workers, len(kinds), func(ctx context.Context, i int) error {
+		var err error
+		read[i], err = ByKind(ctx, dyn, kinds[i], namespace)
+		return err
+	})
+
+	objects := make(map[string][]*unstructured.Unstructured, len(kinds))
+	unreadable := map[string]bool{}
+	for i, kind := range kinds {
+		if errs[i] != nil {
+			unreadable[kind] = true
+			continue
+		}
+		objects[kind] = read[i]
+	}
+	return objects, unreadable
 }

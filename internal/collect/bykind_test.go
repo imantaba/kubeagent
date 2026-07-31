@@ -137,3 +137,80 @@ func TestGVRTableMatchesTheSelectableKinds(t *testing.T) {
 		t.Errorf("table sizes differ: collect has %d, policy has %d", len(kindGVRs), len(policy.SelectableKinds()))
 	}
 }
+
+func TestPolicyObjectsReadsEveryKindItIsGiven(t *testing.T) {
+	dep := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "apps/v1", "kind": "Deployment",
+		"metadata": map[string]any{"namespace": "prod", "name": "web"},
+	}}
+	dyn := dynamicForKinds(unstructuredPod("prod", "web"), dep)
+
+	objs, unreadable := PolicyObjects(context.Background(), dyn,
+		[]string{"Deployment", "Pod"}, "", 8)
+
+	if len(unreadable) != 0 {
+		t.Errorf("nothing was refused, got %v", unreadable)
+	}
+	if len(objs["Pod"]) != 1 || len(objs["Deployment"]) != 1 {
+		t.Fatalf("got %d pods and %d deployments, want 1 each",
+			len(objs["Pod"]), len(objs["Deployment"]))
+	}
+}
+
+// A refused kind must land in the unreadable set and must NOT appear in the
+// object map with an empty list. An empty list evaluates to "no violations",
+// which is the silent pass this whole surface exists to avoid.
+func TestPolicyObjectsSeparatesARefusedKindFromAnEmptyOne(t *testing.T) {
+	dyn := dynamicForKinds()
+	dyn.PrependReactor("list", "networkpolicies", func(clienttesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewForbidden(
+			schema.GroupResource{Group: "networking.k8s.io", Resource: "networkpolicies"}, "", nil)
+	})
+
+	objs, unreadable := PolicyObjects(context.Background(), dyn,
+		[]string{"NetworkPolicy", "Pod"}, "", 8)
+
+	if !unreadable["NetworkPolicy"] {
+		t.Error("a refused read was not recorded as unreadable")
+	}
+	if _, present := objs["NetworkPolicy"]; present {
+		t.Error("a refused kind must be absent from the object map, not empty in it")
+	}
+	if unreadable["Pod"] {
+		t.Error("one refusal marked an unrelated kind unreadable")
+	}
+	if _, present := objs["Pod"]; !present {
+		t.Error("an empty but readable kind must be present with an empty list")
+	}
+}
+
+// The reads overlap, so the result must not depend on which one answered
+// first. One worker and eight must produce the same map.
+func TestPolicyObjectsIsIndependentOfTheSchedule(t *testing.T) {
+	kinds := []string{"Deployment", "NetworkPolicy", "Pod", "Service"}
+	objects := []runtime.Object{unstructuredPod("prod", "web"), unstructuredPod("dev", "api")}
+
+	one, unreadableOne := PolicyObjects(context.Background(), dynamicForKinds(objects...), kinds, "", 1)
+	many, unreadableMany := PolicyObjects(context.Background(), dynamicForKinds(objects...), kinds, "", 8)
+
+	if len(one) != len(many) || len(unreadableOne) != len(unreadableMany) {
+		t.Fatalf("worker count changed the result: %d/%d vs %d/%d",
+			len(one), len(unreadableOne), len(many), len(unreadableMany))
+	}
+	for kind := range one {
+		if len(one[kind]) != len(many[kind]) {
+			t.Errorf("%s: %d objects with one worker, %d with eight", kind, len(one[kind]), len(many[kind]))
+		}
+	}
+}
+
+func TestPolicyObjectsWithNoKindsReadsNothing(t *testing.T) {
+	dyn := dynamicForKinds()
+	objs, unreadable := PolicyObjects(context.Background(), dyn, nil, "", 8)
+	if len(objs) != 0 || len(unreadable) != 0 {
+		t.Errorf("got %d kinds and %d refusals for an empty plan", len(objs), len(unreadable))
+	}
+	if len(dyn.Actions()) != 0 {
+		t.Errorf("an empty plan issued %d API calls", len(dyn.Actions()))
+	}
+}

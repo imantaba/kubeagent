@@ -38,6 +38,7 @@
   .empty { color: var(--muted); }
   .blind { background: var(--panel); border-left: 3px solid var(--warning); padding: .75rem 1rem; }
   .blind p { color: var(--muted); margin: .25rem 0 .5rem; }
+  .policy { background: var(--panel); border-left: 3px solid var(--muted); padding: .75rem 1rem; }
   ul { margin: .5rem 0; padding-left: 1.2rem; }
   details { border: 1px solid var(--line); border-radius: 4px; padding: .5rem .75rem; margin-bottom: .6rem; }
   summary { cursor: pointer; font-weight: 600; }
@@ -82,6 +83,33 @@
     <li><span class="mono">{{.Resource}}</span> &mdash; {{.Reason}}</li>
 {{- end}}
   </ul>
+</section>
+{{- end}}
+
+{{- if .Policy}}
+<section class="policy">
+  <h2>Policy</h2>
+  <p>{{.Policy.Rules}} rules evaluated from the policy files given on the command line.</p>
+{{- if .Policy.Violations}}
+  <table>
+    <thead><tr><th>Level</th><th>Rule</th><th>Kind</th><th>Object</th><th>Message</th><th>Evidence</th></tr></thead>
+    <tbody>
+{{- range .Policy.Violations}}
+      <tr class="{{.Level}}"><td class="sev">{{.Level}}</td><td class="mono">{{.RuleID}}</td><td>{{.Kind}}</td><td class="mono">{{.Target}}</td><td>{{.Message}}</td><td class="mono">{{.Evidence}}</td></tr>
+{{- end}}
+    </tbody>
+  </table>
+{{- else}}
+  <p class="empty">No violations.</p>
+{{- end}}
+{{- if .Policy.NotEvaluated}}
+  <p>The following rules were <strong>not evaluated</strong>, so nothing here says whether the cluster satisfies them.</p>
+  <ul>
+{{- range .Policy.NotEvaluated}}
+    <li><span class="mono">{{.RuleID}}</span> ({{.Level}}, {{.Kind}}) &mdash; {{.Message}}</li>
+{{- end}}
+  </ul>
+{{- end}}
 </section>
 {{- end}}
 

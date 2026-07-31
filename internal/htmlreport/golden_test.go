@@ -12,6 +12,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/findings"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/policy"
 	"github.com/imantaba/kubeagent/internal/report"
 	"github.com/imantaba/kubeagent/internal/scan"
 )
@@ -33,6 +34,22 @@ func goldenInput() Input {
 		Namespace: "shop",
 		Report: report.Input{
 			Now: goldenNow,
+			Policy: &report.PolicyView{
+				Rules: 3,
+				Violations: []policy.Violation{
+					{RuleID: "registry-allowlist", Level: policy.LevelCritical, Kind: "Pod",
+						Namespace: "shop", Name: "checkout-7d9f",
+						Message:  "image is not from an allowed registry",
+						Evidence: "docker.example.net/checkout:2.1"},
+					{RuleID: "pdb-required", Level: policy.LevelWarning, Kind: "Deployment",
+						Namespace: "shop", Name: "checkout",
+						Message: "no PodDisruptionBudget covers this Deployment"},
+				},
+				NotEvaluated: []policy.Unevaluated{{
+					RuleID: "storage-encrypted", Level: policy.LevelCritical, Kind: "StorageClass",
+					Reason: "kubeagent could not read this kind, so the rule was not evaluated",
+				}},
+			},
 			Cluster: clusterhealth.ClusterHealth{
 				Verdict: "Degraded", NodesTotal: 4, NodesReady: 2,
 				NodeIssues: []string{
@@ -105,6 +122,10 @@ func TestGoldenInputCoversEverySection(t *testing.T) {
 		len(in.Report.Cluster.SystemIssues) == 0 || in.Report.Cluster.ScopeNote == "" ||
 		len(in.Report.Result.Workloads) == 0 || in.Report.Explanation == "" {
 		t.Fatal("goldenInput must populate every section so the golden stays comprehensive")
+	}
+	if in.Report.Policy == nil || len(in.Report.Policy.Violations) == 0 ||
+		len(in.Report.Policy.NotEvaluated) == 0 {
+		t.Fatal("goldenInput must populate the policy section, violations and unevaluated rules")
 	}
 	levels := map[findings.Level]bool{}
 	for _, f := range in.Findings {

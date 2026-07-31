@@ -76,6 +76,9 @@ type view struct {
 	Cluster     clusterhealth.ClusterHealth
 	Workloads   []inventory.Workload
 	Explanation string
+	// Policy is nil unless --policy was given, so a scan without it renders the
+	// same bytes it rendered before the flag existed.
+	Policy *policyView
 }
 
 // counts is the header tally, and also labels the severity filter controls.
@@ -102,6 +105,21 @@ type findingRow struct {
 // blindSpot is one unreadable resource as the document shows it: the resource
 // named in full, the reason only when safeReason clears it.
 type blindSpot struct{ Resource, Reason string }
+
+// policyView is the POLICY section. It is separate from Findings on purpose: a
+// violation is a statement about an organization's rules, not about cluster
+// health, and the header pills tally cluster health.
+type policyView struct {
+	Rules        int
+	Violations   []policyRow
+	NotEvaluated []policyRow
+}
+
+// policyRow is one line of the section. Target is the object for a violation
+// and empty for an unevaluated rule, which examined no object at all.
+type policyRow struct {
+	RuleID, Level, Kind, Target, Message, Evidence string
+}
 
 // The blind-spots block prints one of these three phrases and never the cluster's own
 // words. They are kubeagent's, so nothing a cluster or a policy webhook can put in an
@@ -138,6 +156,23 @@ func safeReason(reason string) string {
 	}
 }
 
+// pathLike is what this document will not print. A filesystem path identifies
+// the machine kubeagent ran on, and this file is written to be forwarded.
+const pathLike = "the value was withheld: it looks like a filesystem path"
+
+// noPath drops evidence that looks like a path. Evidence is cluster text, so in
+// practice it never is one; the check is here because the cost of being wrong
+// is a leak in the one artifact designed to leave the operator's control, and
+// the cost of being right is one line of a report a reader can also get from
+// --output text.
+func noPath(evidence string) string {
+	if strings.HasPrefix(evidence, "/") || strings.HasPrefix(evidence, "~") ||
+		strings.Contains(evidence, "kubeconfig") {
+		return pathLike
+	}
+	return evidence
+}
+
 // Render writes the complete HTML document to w. It performs no cluster calls:
 // everything it needs was collected by the scan that produced in.
 func Render(w io.Writer, in Input) error {
@@ -168,6 +203,25 @@ func newView(in Input) view {
 		Cluster:     in.Report.Cluster,
 		Workloads:   in.Report.Result.Workloads,
 		Explanation: in.Report.Explanation,
+	}
+	if p := in.Report.Policy; p != nil {
+		pv := &policyView{Rules: p.Rules}
+		for _, x := range p.Violations {
+			target := x.Name
+			if x.Namespace != "" {
+				target = x.Namespace + "/" + x.Name
+			}
+			pv.Violations = append(pv.Violations, policyRow{
+				RuleID: x.RuleID, Level: string(x.Level), Kind: x.Kind,
+				Target: target, Message: x.Message, Evidence: noPath(x.Evidence),
+			})
+		}
+		for _, x := range p.NotEvaluated {
+			pv.NotEvaluated = append(pv.NotEvaluated, policyRow{
+				RuleID: x.RuleID, Level: string(x.Level), Kind: x.Kind, Message: x.Reason,
+			})
+		}
+		v.Policy = pv
 	}
 	for _, f := range in.Findings {
 		v.Findings = append(v.Findings, findingRow{

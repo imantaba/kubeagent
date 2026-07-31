@@ -1,11 +1,10 @@
-package main
+package cli
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -16,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	appsv1 "k8s.io/api/apps/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -123,20 +123,20 @@ func TestEnvInt_WebhookTimeoutDefault(t *testing.T) {
 }
 
 func TestRun_NoArgsReturnsUsage(t *testing.T) {
-	if err := run(nil); err == nil {
+	if err := Run(nil); err == nil {
 		t.Fatal("expected a usage error with no args")
 	}
 }
 
 func TestRun_RejectsUnknownSubcommand(t *testing.T) {
-	if err := run([]string{"explode"}); err == nil {
+	if err := Run([]string{"explode"}); err == nil {
 		t.Fatal("expected an error for an unknown subcommand")
 	}
 }
 
 func TestRun_RejectsBadOutputFormat(t *testing.T) {
 	// This must fail on validation BEFORE any cluster connection is attempted.
-	if err := run([]string{"scan", "--output", "bogus"}); err == nil {
+	if err := Run([]string{"scan", "--output", "bogus"}); err == nil {
 		t.Fatal("expected an error for a bad --output value")
 	}
 }
@@ -145,7 +145,7 @@ func TestRun_ExplainRequiresAPIKey(t *testing.T) {
 	// --explain without a key (and without a local endpoint) must fail fast, before any cluster connection.
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "")
-	err := run([]string{"scan", "--explain"})
+	err := Run([]string{"scan", "--explain"})
 	if err == nil {
 		t.Fatal("expected an error when --explain is set without ANTHROPIC_API_KEY")
 	}
@@ -157,7 +157,7 @@ func TestRun_ExplainRequiresAPIKey(t *testing.T) {
 func TestRun_ExplainNeedsKeyOrEndpoint(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "")
-	err := run([]string{"scan", "--explain"})
+	err := Run([]string{"scan", "--explain"})
 	if err == nil || !strings.Contains(err.Error(), "KUBEAGENT_EXPLAIN_ENDPOINT") {
 		t.Fatalf("want the key-or-endpoint error, got %v", err)
 	}
@@ -167,7 +167,7 @@ func TestRun_ExplainLocalNeedsModel(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "http://localhost:11434/v1")
 	t.Setenv("KUBEAGENT_MODEL", "")
-	err := run([]string{"scan", "--explain"})
+	err := Run([]string{"scan", "--explain"})
 	if err == nil || !strings.Contains(err.Error(), "needs --model") {
 		t.Fatalf("want the needs-model error, got %v", err)
 	}
@@ -178,7 +178,7 @@ func TestRun_ModelFlagIsRecognized(t *testing.T) {
 	// the fail-fast key error, NOT "flag provided but not defined".
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "")
-	err := run([]string{"scan", "--explain", "--model", "claude-sonnet-4-6"})
+	err := Run([]string{"scan", "--explain", "--model", "claude-sonnet-4-6"})
 	if err == nil {
 		t.Fatal("expected the fail-fast API-key error")
 	}
@@ -192,7 +192,7 @@ func TestRun_IncludeFlagsAreRecognized(t *testing.T) {
 	// no key, the error is the fail-fast key error, not "flag not defined".
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "")
-	err := run([]string{"scan", "--explain", "--include-cron", "--include-restarts"})
+	err := Run([]string{"scan", "--explain", "--include-cron", "--include-restarts"})
 	if err == nil {
 		t.Fatal("expected the fail-fast API-key error")
 	}
@@ -209,7 +209,7 @@ func TestVersionLine(t *testing.T) {
 }
 
 func TestRun_Version(t *testing.T) {
-	if err := run([]string{"version"}); err != nil {
+	if err := Run([]string{"version"}); err != nil {
 		t.Errorf("run([version]) returned error: %v", err)
 	}
 }
@@ -218,7 +218,7 @@ func TestRun_LintSecretsFlagAccepted(t *testing.T) {
 	// --lint-secrets must be a defined flag: this fails on output-format
 	// validation (which happens before any cluster connection), proving the flag
 	// parsed rather than erroring with "flag provided but not defined".
-	err := run([]string{"scan", "--lint-secrets", "--output", "bogus"})
+	err := Run([]string{"scan", "--lint-secrets", "--output", "bogus"})
 	if err == nil || !strings.Contains(err.Error(), "unknown output format") {
 		t.Fatalf("expected the output-format error (flag accepted), got: %v", err)
 	}
@@ -248,7 +248,7 @@ users:
 	if err := os.WriteFile(kc, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	err := run([]string{"scan", "--kubeconfig", kc})
+	err := Run([]string{"scan", "--kubeconfig", kc})
 	if err == nil {
 		t.Fatal("expected an error for an unreachable API server")
 	}
@@ -285,7 +285,7 @@ users:
 	if err := os.WriteFile(kc, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	err := run([]string{"scan", "--kubeconfig", kc})
+	err := Run([]string{"scan", "--kubeconfig", kc})
 	if err == nil {
 		t.Fatal("expected an error for an unreachable API server")
 	}
@@ -297,7 +297,7 @@ users:
 func TestRun_FixFlagsAccepted(t *testing.T) {
 	// --fix/--dry-run/--yes must be defined flags: this fails on output-format
 	// validation (before any cluster call), proving they parsed.
-	err := run([]string{"scan", "--fix", "--dry-run", "--yes", "--output", "bogus"})
+	err := Run([]string{"scan", "--fix", "--dry-run", "--yes", "--output", "bogus"})
 	if err == nil || !strings.Contains(err.Error(), "unknown output format") {
 		t.Fatalf("expected output-format error (flags accepted), got: %v", err)
 	}
@@ -306,21 +306,21 @@ func TestRun_FixFlagsAccepted(t *testing.T) {
 func TestRun_SuggestFlagAccepted(t *testing.T) {
 	// --suggest must be a defined flag: this fails on output-format validation
 	// (before any cluster call), proving the flag parsed.
-	err := run([]string{"scan", "--suggest", "--output", "bogus"})
+	err := Run([]string{"scan", "--suggest", "--output", "bogus"})
 	if err == nil || !strings.Contains(err.Error(), "unknown output format") {
 		t.Fatalf("expected the output-format error (flag accepted), got: %v", err)
 	}
 }
 
 func TestRun_ControlPlaneHealthFlagAccepted(t *testing.T) {
-	err := run([]string{"scan", "--control-plane-health", "--output", "bogus"})
+	err := Run([]string{"scan", "--control-plane-health", "--output", "bogus"})
 	if err == nil || !strings.Contains(err.Error(), "unknown output format") {
 		t.Fatalf("want unknown-output-format error (proving the flag parsed), got %v", err)
 	}
 }
 
 func TestRun_DNSHealthFlagAccepted(t *testing.T) {
-	err := run([]string{"scan", "--dns-health", "--output", "bogus"})
+	err := Run([]string{"scan", "--dns-health", "--output", "bogus"})
 	if err == nil || !strings.Contains(err.Error(), "unknown output format") {
 		t.Fatalf("want unknown-output-format error (proving the flag parsed), got %v", err)
 	}
@@ -330,7 +330,7 @@ func TestRun_OperatorsFlagAccepted(t *testing.T) {
 	// --operators must be a defined flag: this fails on output-format validation
 	// (before any cluster or discovery call), proving the flag parsed rather
 	// than erroring with "flag provided but not defined".
-	err := run([]string{"scan", "--operators", "--output", "bogus"})
+	err := Run([]string{"scan", "--operators", "--output", "bogus"})
 	if err == nil || !strings.Contains(err.Error(), "unknown output format") {
 		t.Fatalf("want unknown-output-format error (proving the flag parsed), got %v", err)
 	}
@@ -340,7 +340,7 @@ func TestRun_DriftFlagAccepted(t *testing.T) {
 	// --drift and --drift-age must be defined flags: this fails on output-format
 	// validation (before any cluster or discovery call), proving the flags parsed
 	// rather than erroring with "flag provided but not defined".
-	err := run([]string{"scan", "--drift", "--drift-age", "5m", "--output", "bogus"})
+	err := Run([]string{"scan", "--drift", "--drift-age", "5m", "--output", "bogus"})
 	if err == nil || !strings.Contains(err.Error(), "unknown output format") {
 		t.Fatalf("want unknown-output-format error (proving the flags parsed), got %v", err)
 	}
@@ -350,14 +350,14 @@ func TestRun_CapacityFlagAccepted(t *testing.T) {
 	// --capacity must be a defined flag: this fails on output-format validation
 	// (before any cluster call), proving the flag parsed rather than erroring with
 	// "flag provided but not defined".
-	err := run([]string{"scan", "--capacity", "--output", "bogus"})
+	err := Run([]string{"scan", "--capacity", "--output", "bogus"})
 	if err == nil || !strings.Contains(err.Error(), "unknown output format") {
 		t.Fatalf("want unknown-output-format error (proving the flag parsed), got %v", err)
 	}
 }
 
 func TestRun_UsageMentionsCapacityFlag(t *testing.T) {
-	err := run(nil)
+	err := Run(nil)
 	if err == nil {
 		t.Fatal("expected a usage error with no args")
 	}
@@ -416,8 +416,12 @@ func captureStdout(t *testing.T, f func()) string {
 
 func TestRunWatch_AlertFlagsAreRecognized(t *testing.T) {
 	// --alert-format/--alert-repeat must be defined flags: with a kubeconfig path
-	// that fails to load, the error must be the kubeconfig-load error, not "flag
-	// provided but not defined", proving the flags parsed.
+	// that fails to load, the error must be the kubeconfig-load error, not
+	// pflag's "unknown flag: --x", proving the flags parsed. The old comparison
+	// against "flag provided but not defined" was the standard library's wording,
+	// not pflag's, so it could never fail here even if one of these flags were
+	// dropped from bindWatchFlags — the real signal is the positive assertion
+	// below, that this is specifically the kubeconfig-load error.
 	dir := t.TempDir()
 	bad := filepath.Join(dir, "nonexistent")
 	err := runWatch([]string{"--alert-format", "slack", "--alert-repeat", "10m", "--kubeconfig", bad})
@@ -426,6 +430,9 @@ func TestRunWatch_AlertFlagsAreRecognized(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "flag provided but not defined") {
 		t.Fatalf("expected --alert-format/--alert-repeat to be recognized flags, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "loading kubeconfig") {
+		t.Fatalf("expected the kubeconfig-load error (proving --alert-format/--alert-repeat parsed rather than being rejected), got: %v", err)
 	}
 }
 
@@ -437,7 +444,7 @@ func TestRunWatch_NoAlertWebhookFlag(t *testing.T) {
 	dir := t.TempDir()
 	bad := filepath.Join(dir, "nonexistent")
 	err := runWatch([]string{"--alert-webhook", "http://example.invalid/hook", "--kubeconfig", bad})
-	if err == nil || !strings.Contains(err.Error(), "flag provided but not defined") {
+	if err == nil || !strings.Contains(err.Error(), "unknown flag") {
 		t.Fatalf("expected no --alert-webhook flag to exist, got: %v", err)
 	}
 }
@@ -482,7 +489,7 @@ func TestRunWatch_NoWarningWithDefaultAlertFlags(t *testing.T) {
 }
 
 func TestRun_UsageMentionsWatchAlertFlags(t *testing.T) {
-	err := run(nil)
+	err := Run(nil)
 	if err == nil {
 		t.Fatal("expected a usage error with no args")
 	}
@@ -492,7 +499,7 @@ func TestRun_UsageMentionsWatchAlertFlags(t *testing.T) {
 }
 
 func TestRun_UsageMentionsOperatorsFlag(t *testing.T) {
-	err := run(nil)
+	err := Run(nil)
 	if err == nil {
 		t.Fatal("expected a usage error with no args")
 	}
@@ -502,7 +509,7 @@ func TestRun_UsageMentionsOperatorsFlag(t *testing.T) {
 }
 
 func TestRun_UsageMentionsDriftFlag(t *testing.T) {
-	err := run(nil)
+	err := Run(nil)
 	if err == nil {
 		t.Fatal("expected a usage error with no args")
 	}
@@ -606,7 +613,12 @@ func TestRunWatch_SLOTargetIsRecognized(t *testing.T) {
 	// cancel. So, as TestRunWatch_AlertFlagsAreRecognized does, this uses a
 	// nonexistent kubeconfig path to fail at cluster-connect, before Run is
 	// ever reached, and only asserts that the flag parsed and no validation
-	// error occurred.
+	// error occurred. As in TestRunWatch_AlertFlagsAreRecognized, the
+	// "flag provided but not defined" comparison below is the standard
+	// library's wording, not pflag's "unknown flag: --x" — it could never fail
+	// here even if --slo-target were dropped, so the positive assertion that
+	// this is specifically the kubeconfig-load error is what actually proves
+	// the flag parsed.
 	dir := t.TempDir()
 	bad := filepath.Join(dir, "nonexistent")
 	err := runWatch([]string{"--slo-target", "99.9", "--kubeconfig", bad})
@@ -618,6 +630,9 @@ func TestRunWatch_SLOTargetIsRecognized(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "invalid --slo-target") {
 		t.Fatalf("expected no validation error for --slo-target 99.9, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "loading kubeconfig") {
+		t.Fatalf("expected the kubeconfig-load error (proving --slo-target parsed rather than being rejected), got: %v", err)
 	}
 }
 
@@ -644,36 +659,30 @@ func TestRunWatch_SLOTargetDefaultsToOff(t *testing.T) {
 	// be a valid target — it would pass validation and silently turn SLO
 	// tracking on for every operator who upgrades without touching the flag.
 	//
-	// --help is the only way to observe a flag.Float64 default without either
-	// starting the daemon (which requires a live target that has since fallen
-	// through validation) or reaching into the flag.FlagSet's internals. Go's
-	// flag.PrintDefaults appends a literal " (default X)" suffix to a flag's
-	// usage line only when the default is NOT the type's zero value; at the
-	// zero value it prints just the usage text. So the trailing "\n" right
-	// after the usage string is exactly what discriminates "off by default"
-	// from "on by default": with a non-zero default (e.g. 50), this same line
-	// would instead read '...(0 = SLO tracking off) (default 50)\n'. A future
-	// maintainer must not loosen this to a substring/Contains check without
-	// the terminator — this branch has already shipped three prefix-matching
-	// assertions that passed for the wrong reason.
+	// Under the standard library this scraped --help's stderr output, because
+	// that was the only way to observe a registered flag.Float64 default
+	// without starting the daemon. Under Cobra/pflag, a throwaway command
+	// built by parseWatchFlags never has --help registered (Cobra only wires
+	// it up inside Execute, which parseWatchFlags never calls), so --help
+	// falls through to pflag's own fallback instead of exercising the
+	// registered default. Reading the default straight off the registered
+	// flag is direct and does not depend on either flag package's --help
+	// formatting.
 	t.Setenv("KUBEAGENT_SLO_TARGET", "")
-	stderr := captureStderr(t, func() {
-		err := runWatch([]string{"--help"})
-		if !errors.Is(err, flag.ErrHelp) {
-			t.Fatalf("runWatch([--help]) error = %v, want flag.ErrHelp", err)
-		}
-	})
-	if !strings.Contains(stderr, "-slo-target float") {
-		t.Fatalf("expected --help output to describe -slo-target as a float flag, got: %q", stderr)
+	var o watchOptions
+	cmd := &cobra.Command{Use: "watch", SilenceErrors: true, SilenceUsage: true}
+	bindWatchFlags(cmd, &o)
+	f := cmd.Flags().Lookup("slo-target")
+	if f == nil {
+		t.Fatal("no --slo-target flag registered")
 	}
-	want := "availability SLO as a percentage, e.g. 99.9 (0 = SLO tracking off)\n"
-	if !strings.Contains(stderr, want) {
-		t.Fatalf("expected --help output to show --slo-target defaulting to off (no non-zero default suffix), got: %q", stderr)
+	if f.DefValue != "0" {
+		t.Fatalf("--slo-target default = %q, want %q (SLO tracking off)", f.DefValue, "0")
 	}
 }
 
 func TestRun_UsageMentionsSLOTarget(t *testing.T) {
-	err := run(nil)
+	err := Run(nil)
 	if err == nil {
 		t.Fatal("expected a usage error with no args")
 	}
@@ -948,7 +957,7 @@ func fixRS() []appsv1.ReplicaSet {
 func TestRun_InvestigateNeedsAPIKey(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "")
-	err := run([]string{"scan", "--investigate"})
+	err := Run([]string{"scan", "--investigate"})
 	if err == nil || !strings.Contains(err.Error(), "ANTHROPIC_API_KEY") {
 		t.Errorf("expected an ANTHROPIC_API_KEY error, got %v", err)
 	}
@@ -957,7 +966,7 @@ func TestRun_InvestigateNeedsAPIKey(t *testing.T) {
 func TestRun_InvestigateRejectsLocalOnlyEndpoint(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "http://localhost:11434/v1")
-	err := run([]string{"scan", "--investigate"})
+	err := Run([]string{"scan", "--investigate"})
 	if err == nil || !strings.Contains(err.Error(), "ANTHROPIC_API_KEY") {
 		t.Errorf("investigate must require an Anthropic key even when a local endpoint is set, got %v", err)
 	}
@@ -968,9 +977,15 @@ func TestRun_InvestigateSupersedesExplain(t *testing.T) {
 	// or a precondition error — --investigate supersedes --explain silently. The
 	// scan fails at cluster-connect (bogus kubeconfig), which is the expected
 	// outcome: it proves flags parsed and the investigate branch was selected.
+	//
+	// The "flag provided but not defined" comparison below is the standard
+	// library's wording, not pflag's "unknown flag: --x" — it could never fail
+	// here even if --investigate or --explain were dropped, so the positive
+	// assertion that this is specifically the kubeconfig-load error is what
+	// actually proves both flags parsed.
 	t.Setenv("ANTHROPIC_API_KEY", "test-key")
 	t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "")
-	err := run([]string{"scan", "--investigate", "--explain", "--kubeconfig", "/nonexistent/path"})
+	err := Run([]string{"scan", "--investigate", "--explain", "--kubeconfig", "/nonexistent/path"})
 	if err == nil {
 		t.Fatal("expected a cluster-connect error for a nonexistent kubeconfig")
 	}
@@ -980,6 +995,9 @@ func TestRun_InvestigateSupersedesExplain(t *testing.T) {
 	}
 	if strings.Contains(msg, "ANTHROPIC_API_KEY") || strings.Contains(msg, "KUBEAGENT_EXPLAIN_ENDPOINT") {
 		t.Errorf("got a precondition error; should have reached cluster-connect: %v", err)
+	}
+	if !strings.Contains(msg, "loading kubeconfig") {
+		t.Errorf("expected the kubeconfig-load error (proving --investigate/--explain parsed rather than being rejected), got: %v", err)
 	}
 }
 
@@ -1232,14 +1250,14 @@ func TestRunRollback_DeclinedWritesNothing(t *testing.T) {
 }
 
 func TestRun_RollbackNeedsAuditLog(t *testing.T) {
-	err := run([]string{"scan", "--rollback"})
+	err := Run([]string{"scan", "--rollback"})
 	if err == nil || !strings.Contains(err.Error(), "--audit-log") {
 		t.Errorf("expected an --audit-log requirement error, got %v", err)
 	}
 }
 
 func TestRun_RollbackAndFixAreExclusive(t *testing.T) {
-	err := run([]string{"scan", "--rollback", "--fix", "--audit-log", "/tmp/x.log"})
+	err := Run([]string{"scan", "--rollback", "--fix", "--audit-log", "/tmp/x.log"})
 	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
 		t.Errorf("expected a mutual-exclusion error, got %v", err)
 	}
@@ -1519,7 +1537,7 @@ func TestRunWatchLocalEndpointNeedsAModelName(t *testing.T) {
 }
 
 func TestUsageMentionsTheExplainFlags(t *testing.T) {
-	err := run(nil)
+	err := Run(nil)
 	if err == nil {
 		t.Fatal("want the usage error")
 	}
@@ -1527,24 +1545,6 @@ func TestUsageMentionsTheExplainFlags(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("usage does not mention %s", want)
 		}
-	}
-}
-
-// TestContextListCollectsRepeats pins the flag type: --context is repeatable,
-// and each occurrence names one cluster to watch.
-func TestContextListCollectsRepeats(t *testing.T) {
-	var got contextList
-	fs := flag.NewFlagSet("watch", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Var(&got, "context", "")
-	if err := fs.Parse([]string{"--context", "a", "--context", "b"}); err != nil {
-		t.Fatalf("Parse: %v", err)
-	}
-	if len(got) != 2 || got[0] != "a" || got[1] != "b" {
-		t.Errorf("contextList = %v, want [a b]", got)
-	}
-	if err := fs.Parse([]string{"--context", ""}); err == nil {
-		t.Error("an empty --context must be rejected")
 	}
 }
 
@@ -1629,7 +1629,7 @@ users:
 }
 
 func TestUsage_MentionsTheMCPSubcommand(t *testing.T) {
-	err := run([]string{"kubeagent"})
+	err := Run([]string{"kubeagent"})
 	if err == nil {
 		t.Fatal("run() with no subcommand error = nil, want the usage error")
 	}
@@ -1642,17 +1642,19 @@ func TestUsage_MentionsTheMCPSubcommand(t *testing.T) {
 // protocol owns stdout on the stdio transport, so a single stray write from
 // any reachable failure path in runMCP corrupts the protocol stream for
 // every caller. This is exercised over the failure paths reachable without a
-// cluster: -h, an undefined flag, and a connection failure against a
-// nonexistent kubeconfig.
+// cluster: an undefined flag, and a connection failure against a nonexistent
+// kubeconfig. (-h used to be a third row here; see TestMCPHelpGoesToStdout for
+// why it moved out.)
 //
-// runMCP builds its flag.FlagSet with flag.ContinueOnError and never calls
-// SetOutput, so on the two flag-parsing failures the flag package's own
-// usage/error text goes to os.Stderr only because that is flag.Output's
-// default target — invisible in this file, and one SetOutput(os.Stdout) call
-// away from silently breaking. The connection failure is a different kind of
-// path: runMCP does not print anything itself there, it only returns an
-// error for the caller to report (main() does that at the top level), so
-// that case is checked via the returned error rather than captured stderr.
+// parseMCPFlags builds a throwaway *cobra.Command and calls its pflag.FlagSet
+// directly — it never goes through Cobra's own Execute()/ExecuteC(), which is
+// the only layer that ever copies a flag-parsing error to a real,
+// process-level stderr. pflag's FlagSet.Parse, constructed by Cobra with
+// ContinueOnError, returns a parse error without writing anywhere in that
+// case (unlike the standard library's flag package, which always printed via
+// failf regardless of ErrorHandling). So neither case here writes to os.Stderr
+// any more; both are checked via the returned error instead, the same way the
+// connection failure already was.
 func TestRunMCP_StdoutStaysEmptyOnFailurePaths(t *testing.T) {
 	dir := t.TempDir()
 	bad := filepath.Join(dir, "mcp-purity-nonexistent-kubeconfig")
@@ -1664,8 +1666,7 @@ func TestRunMCP_StdoutStaysEmptyOnFailurePaths(t *testing.T) {
 		// written directly to os.Stderr for this case.
 		wantStderr bool
 	}{
-		{name: "help", args: []string{"-h"}, wantStderr: true},
-		{name: "undefined flag", args: []string{"--bogus"}, wantStderr: true},
+		{name: "undefined flag", args: []string{"--bogus"}, wantStderr: false},
 		{name: "connection failure", args: []string{"--kubeconfig", bad}, wantStderr: false},
 	}
 
@@ -1695,6 +1696,28 @@ func TestRunMCP_StdoutStaysEmptyOnFailurePaths(t *testing.T) {
 					"here would mean the connection failure was silenced entirely")
 			}
 		})
+	}
+}
+
+// TestMCPHelpGoesToStdout documents a deliberate change. Under the standard
+// library, `mcp -h` wrote usage to stderr; Cobra writes help to stdout. That
+// is safe here even though the MCP protocol owns stdout: --help returns
+// before Serve is ever called, so there is no stream to corrupt, and a client
+// speaking protocol never passes --help. The stdout-purity invariant for the
+// paths that DO fail is unchanged and still asserted next door.
+func TestMCPHelpGoesToStdout(t *testing.T) {
+	var err error
+	stdout := captureStdout(t, func() {
+		stderr := captureStderr(t, func() { err = Run([]string{"mcp", "--help"}) })
+		if stderr != "" {
+			t.Errorf("stderr = %q, want empty", stderr)
+		}
+	})
+	if err != nil {
+		t.Fatalf("Run([mcp --help]) = %v, want nil", err)
+	}
+	if stdout == "" {
+		t.Error("stdout is empty, want the help text")
 	}
 }
 
@@ -1733,7 +1756,7 @@ func TestRun_DispatchesMCPWithFlagsIntact(t *testing.T) {
 	// exact nonexistent kubeconfig path that was passed.
 	dir := t.TempDir()
 	bad := filepath.Join(dir, "mcp-dispatch-nonexistent-kubeconfig")
-	err := run([]string{"mcp", "--kubeconfig", bad})
+	err := Run([]string{"mcp", "--kubeconfig", bad})
 	if err == nil {
 		t.Fatal("expected a cluster-connection error")
 	}
@@ -1799,7 +1822,7 @@ func TestRun_UsageNamesThePlainBinaryByDefault(t *testing.T) {
 	if invokedAs != "kubeagent" {
 		t.Fatalf("invokedAs = %q under go test, want %q", invokedAs, "kubeagent")
 	}
-	err := run(nil)
+	err := Run(nil)
 	if err == nil {
 		t.Fatal("run(nil) = nil, want the usage error")
 	}
@@ -1813,7 +1836,7 @@ func TestRun_UsageNamesTheKubectlPluginInvocation(t *testing.T) {
 	invokedAs = "kubectl kubeagent"
 	defer func() { invokedAs = saved }()
 
-	err := run(nil)
+	err := Run(nil)
 	if err == nil {
 		t.Fatal("run(nil) = nil, want the usage error")
 	}
@@ -1898,7 +1921,7 @@ func TestExitCodeForExitErrorIsItsCode(t *testing.T) {
 }
 
 func TestGateRejectsUnknownFailOn(t *testing.T) {
-	err := run([]string{"gate", "--fail-on", "fatal"})
+	err := Run([]string{"gate", "--fail-on", "fatal"})
 	if err == nil {
 		t.Fatal("want an error for an unknown --fail-on level, got nil")
 	}
@@ -1911,7 +1934,7 @@ func TestGateRejectsUnknownFailOn(t *testing.T) {
 }
 
 func TestGateRejectsUnknownOutputFormat(t *testing.T) {
-	err := run([]string{"gate", "--output", "yaml"})
+	err := Run([]string{"gate", "--output", "yaml"})
 	if err == nil {
 		t.Fatal("want an error for an unknown --output format, got nil")
 	}
@@ -1921,7 +1944,7 @@ func TestGateRejectsUnknownOutputFormat(t *testing.T) {
 }
 
 func TestGateRejectsUnknownFlag(t *testing.T) {
-	err := run([]string{"gate", "--nonexistent"})
+	err := Run([]string{"gate", "--nonexistent"})
 	if err == nil {
 		t.Fatal("want an error for an unknown flag, got nil")
 	}
@@ -1931,7 +1954,7 @@ func TestGateRejectsUnknownFlag(t *testing.T) {
 }
 
 func TestGateRejectsUnsupportedWaitForKind(t *testing.T) {
-	err := run([]string{"gate", "--wait-for", "pod/api", "-n", "prod"})
+	err := Run([]string{"gate", "--wait-for", "pod/api", "-n", "prod"})
 	if err == nil {
 		t.Fatal("want an error for an unsupported --wait-for kind, got nil")
 	}
@@ -1941,7 +1964,7 @@ func TestGateRejectsUnsupportedWaitForKind(t *testing.T) {
 }
 
 func TestGateRejectsWaitForWithoutNamespace(t *testing.T) {
-	err := run([]string{"gate", "--wait-for", "deployment/api"})
+	err := Run([]string{"gate", "--wait-for", "deployment/api"})
 	if err == nil {
 		t.Fatal("want an error when --wait-for has no namespace, got nil")
 	}
@@ -1951,7 +1974,7 @@ func TestGateRejectsWaitForWithoutNamespace(t *testing.T) {
 }
 
 func TestUsageMentionsGate(t *testing.T) {
-	err := run([]string{"nonsense"})
+	err := Run([]string{"nonsense"})
 	if err == nil {
 		t.Fatal("want a usage error, got nil")
 	}
@@ -2033,14 +2056,14 @@ func TestRunGateNeverExitsOneWithoutAVerdict(t *testing.T) {
 func TestScanAcceptsTheHTMLOutputFormat(t *testing.T) {
 	// An unknown format is rejected before any cluster connection, so the error
 	// text is reachable without a cluster. "html" must not be rejected there.
-	err := run([]string{"scan", "--output", "html", "--kubeconfig", filepath.Join(t.TempDir(), "nope")})
+	err := Run([]string{"scan", "--output", "html", "--kubeconfig", filepath.Join(t.TempDir(), "nope")})
 	if err != nil && strings.Contains(err.Error(), "unknown output format") {
 		t.Fatalf("--output html was rejected as an unknown format: %v", err)
 	}
 }
 
 func TestScanRejectsAnUnknownOutputFormatAndNamesHTML(t *testing.T) {
-	err := run([]string{"scan", "--output", "bogus"})
+	err := Run([]string{"scan", "--output", "bogus"})
 	if err == nil {
 		t.Fatal("want an error for an unknown --output format, got nil")
 	}
@@ -2050,7 +2073,7 @@ func TestScanRejectsAnUnknownOutputFormatAndNamesHTML(t *testing.T) {
 }
 
 func TestUsageMentionsTheHTMLOutputFormat(t *testing.T) {
-	err := run([]string{"bogus-subcommand"})
+	err := Run([]string{"bogus-subcommand"})
 	if err == nil {
 		t.Fatal("want a usage error, got nil")
 	}
@@ -2124,7 +2147,7 @@ func TestRenderScanLeavesTextAndJSONOnTheOldPath(t *testing.T) {
 }
 
 func TestRun_UsageMentionsTUI(t *testing.T) {
-	err := run([]string{})
+	err := Run([]string{})
 	if err == nil {
 		t.Fatal("no error")
 	}
@@ -2134,7 +2157,7 @@ func TestRun_UsageMentionsTUI(t *testing.T) {
 }
 
 func TestRunTUI_RejectsUnknownFlag(t *testing.T) {
-	err := run([]string{"tui", "--bogus"})
+	err := Run([]string{"tui", "--bogus"})
 	if err == nil {
 		t.Fatal("no error for an unknown flag")
 	}
@@ -2146,7 +2169,7 @@ func TestRunTUI_RejectsUnknownFlag(t *testing.T) {
 // --output is deliberately absent: a TUI seizes the terminal and is not
 // redirectable, so it is not an output format.
 func TestRunTUI_RejectsOutputFlag(t *testing.T) {
-	err := run([]string{"tui", "--output", "json"})
+	err := Run([]string{"tui", "--output", "json"})
 	if err == nil {
 		t.Fatal("no error for --output")
 	}
@@ -2159,7 +2182,7 @@ func TestRunTUI_RejectsOutputFlag(t *testing.T) {
 // would ask for one.
 func TestRunTUI_RejectsExplainAndInvestigate(t *testing.T) {
 	for _, flag := range []string{"--explain", "--investigate"} {
-		if err := run([]string{"tui", flag}); err == nil {
+		if err := Run([]string{"tui", flag}); err == nil {
 			t.Errorf("%s was accepted", flag)
 		}
 	}
@@ -2323,6 +2346,14 @@ func TestRunSchema_PrintsAValidDocument(t *testing.T) {
 	}
 }
 
+// repoPath resolves a repository-relative path from this package's directory.
+// Mirrors internal/schemadoc/schemadoc_test.go's helper of the same name:
+// internal/cli sits at the same depth below the repo root.
+func repoPath(t *testing.T, rel string) string {
+	t.Helper()
+	return filepath.Join("..", "..", rel)
+}
+
 // What the binary prints must be what the binary's types are: the committed
 // file and the runtime output come from one code path, and this proves it.
 func TestRunSchema_MatchesTheCommittedFile(t *testing.T) {
@@ -2330,7 +2361,7 @@ func TestRunSchema_MatchesTheCommittedFile(t *testing.T) {
 	if err := runSchema([]string{"gate"}, &out); err != nil {
 		t.Fatalf("runSchema: %v", err)
 	}
-	want, err := os.ReadFile(filepath.Join("website", "docs", "schemas", "gate-v1.json"))
+	want, err := os.ReadFile(repoPath(t, filepath.Join("website", "docs", "schemas", "gate-v1.json")))
 	if err != nil {
 		t.Fatalf("read the committed file: %v", err)
 	}
@@ -2358,14 +2389,357 @@ func TestRunSchema_RejectsExtraArguments(t *testing.T) {
 // The command reads Go types: no kubeconfig, no cluster, no LLM call.
 func TestRun_SchemaNeedsNoKubeconfig(t *testing.T) {
 	t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "does-not-exist"))
-	if err := run([]string{"schema", "scan"}); err != nil {
+	if err := Run([]string{"schema", "scan"}); err != nil {
 		t.Errorf("schema must not need a cluster: %v", err)
 	}
 }
 
 func TestRun_UsageMentionsSchemaCommand(t *testing.T) {
-	err := run(nil)
+	err := Run(nil)
 	if err == nil || !strings.Contains(err.Error(), "schema") {
 		t.Errorf("usage does not mention the schema command: %v", err)
+	}
+}
+
+func TestParseScanFlagsCarriesEveryValue(t *testing.T) {
+	opts, err := parseScanFlags([]string{
+		"--kubeconfig", "/nonexistent/kubeconfig",
+		"--context", "example-context",
+		"--output", "json",
+		"--namespace", "example-ns",
+		"--disk-usage", "--disk-threshold", "0.42",
+		"--cert-warn-days", "7",
+		"--drift-age", "30m",
+		"--node-heartbeat-threshold", "90s",
+		"--expected-nodes", "node-a,node-b",
+	})
+	if err != nil {
+		t.Fatalf("parseScanFlags: %v", err)
+	}
+	if opts.kubeconfig != "/nonexistent/kubeconfig" {
+		t.Errorf("kubeconfig = %q, want /nonexistent/kubeconfig", opts.kubeconfig)
+	}
+	if opts.contextName != "example-context" {
+		t.Errorf("contextName = %q, want example-context", opts.contextName)
+	}
+	if opts.output != "json" {
+		t.Errorf("output = %q, want json", opts.output)
+	}
+	if opts.namespace != "example-ns" {
+		t.Errorf("namespace = %q, want example-ns", opts.namespace)
+	}
+	if !opts.diskUsage {
+		t.Error("diskUsage = false, want true")
+	}
+	if opts.diskThreshold != 0.42 {
+		t.Errorf("diskThreshold = %v, want 0.42", opts.diskThreshold)
+	}
+	if opts.certWarnDays != 7 {
+		t.Errorf("certWarnDays = %d, want 7", opts.certWarnDays)
+	}
+	if opts.driftAge != 30*time.Minute {
+		t.Errorf("driftAge = %v, want 30m", opts.driftAge)
+	}
+	if opts.nodeHeartbeatThreshold != 90*time.Second {
+		t.Errorf("nodeHeartbeatThreshold = %v, want 90s", opts.nodeHeartbeatThreshold)
+	}
+	if got := strings.Join(splitCSV(opts.expectedNodes), "|"); got != "node-a|node-b" {
+		t.Errorf("expectedNodes = %q, want node-a|node-b", got)
+	}
+}
+
+func TestParseScanFlagsDefaults(t *testing.T) {
+	opts, err := parseScanFlags(nil)
+	if err != nil {
+		t.Fatalf("parseScanFlags: %v", err)
+	}
+	if opts.output != "text" {
+		t.Errorf("output = %q, want text", opts.output)
+	}
+	if opts.diskThreshold != 0.80 {
+		t.Errorf("diskThreshold = %v, want 0.80", opts.diskThreshold)
+	}
+	if opts.certWarnDays != 30 {
+		t.Errorf("certWarnDays = %d, want 30", opts.certWarnDays)
+	}
+	if opts.driftAge != time.Hour {
+		t.Errorf("driftAge = %v, want 1h", opts.driftAge)
+	}
+	if opts.nodeHeartbeatThreshold != 40*time.Second {
+		t.Errorf("nodeHeartbeatThreshold = %v, want 40s", opts.nodeHeartbeatThreshold)
+	}
+}
+
+func TestParseWatchFlagsCarriesEveryValue(t *testing.T) {
+	// Thirteen of watch's flags default from the environment, reading the twelve
+	// keys below — --namespace and -n both read KUBEAGENT_NAMESPACE. Clear them:
+	// a developer's shell must not decide whether this passes.
+	for _, k := range []string{
+		"KUBEAGENT_CLUSTER_NAME", "KUBEAGENT_INCLUDE_LOCAL", "KUBEAGENT_METRICS_ADDR",
+		"KUBEAGENT_HEARTBEAT", "KUBEAGENT_DEBOUNCE", "KUBEAGENT_ALERT_FORMAT",
+		"KUBEAGENT_ALERT_REPEAT", "KUBEAGENT_SLO_TARGET", "KUBEAGENT_NAMESPACE",
+		"KUBEAGENT_EXPLAIN", "KUBEAGENT_EXPLAIN_COOLDOWN", "KUBEAGENT_EXPLAIN_BUDGET",
+	} {
+		t.Setenv(k, "")
+	}
+	o, err := parseWatchFlags([]string{
+		"--context", "ctx-a", "--context", "ctx-b",
+		"--cluster-name", "example-cluster",
+		"--include-local",
+		"--metrics-addr", "192.0.2.10:9090",
+		"--heartbeat", "30s",
+		"--debounce", "5s",
+		"--alert-format", "slack",
+		"--alert-repeat", "2h",
+		"--slo-target", "99.9",
+		"--explain-cooldown", "15m",
+		"--explain-budget", "7",
+		"--namespace", "example-ns",
+	})
+	if err != nil {
+		t.Fatalf("parseWatchFlags: %v", err)
+	}
+	if got := []string(o.contexts); !slices.Equal(got, []string{"ctx-a", "ctx-b"}) {
+		t.Errorf("contexts = %v, want [ctx-a ctx-b]", got)
+	}
+	if o.clusterName != "example-cluster" {
+		t.Errorf("clusterName = %q, want example-cluster", o.clusterName)
+	}
+	if !o.includeLocal {
+		t.Error("includeLocal = false, want true")
+	}
+	if o.metricsAddr != "192.0.2.10:9090" {
+		t.Errorf("metricsAddr = %q, want 192.0.2.10:9090", o.metricsAddr)
+	}
+	if o.heartbeat != 30*time.Second {
+		t.Errorf("heartbeat = %v, want 30s", o.heartbeat)
+	}
+	if o.debounce != 5*time.Second {
+		t.Errorf("debounce = %v, want 5s", o.debounce)
+	}
+	if o.alertFormat != "slack" {
+		t.Errorf("alertFormat = %q, want slack", o.alertFormat)
+	}
+	if o.alertRepeat != 2*time.Hour {
+		t.Errorf("alertRepeat = %v, want 2h", o.alertRepeat)
+	}
+	if o.sloTarget != 99.9 {
+		t.Errorf("sloTarget = %v, want 99.9", o.sloTarget)
+	}
+	if o.explainCooldown != 15*time.Minute {
+		t.Errorf("explainCooldown = %v, want 15m", o.explainCooldown)
+	}
+	if o.explainBudget != 7 {
+		t.Errorf("explainBudget = %d, want 7", o.explainBudget)
+	}
+	if o.namespace != "example-ns" {
+		t.Errorf("namespace = %q, want example-ns", o.namespace)
+	}
+}
+
+func TestParseWatchFlagsRejectsEmptyContext(t *testing.T) {
+	_, err := parseWatchFlags([]string{"--context", ""})
+	if err == nil {
+		t.Fatal("parseWatchFlags([--context \"\"]) = nil, want an error")
+	}
+	if !strings.Contains(err.Error(), "--context cannot be empty") {
+		t.Errorf("error = %q, want it to contain %q", err, "--context cannot be empty")
+	}
+}
+
+func TestParseGateFlagsCarriesEveryValue(t *testing.T) {
+	o, err := parseGateFlags([]string{
+		"--kubeconfig", "/nonexistent/kubeconfig",
+		"--context", "example-context",
+		"--output", "sarif",
+		"--fail-on", "warning",
+		"--wait-for", "deployment/example-api",
+		"--timeout", "90s",
+		"--poll-interval", "3s",
+		"--allow-partial-read", "leases",
+		"--allow-partial-read", "events",
+		"--namespace", "example-ns",
+	})
+	if err != nil {
+		t.Fatalf("parseGateFlags: %v", err)
+	}
+	if o.output != "sarif" {
+		t.Errorf("output = %q, want sarif", o.output)
+	}
+	if o.failOn != "warning" {
+		t.Errorf("failOn = %q, want warning", o.failOn)
+	}
+	if o.waitFor != "deployment/example-api" {
+		t.Errorf("waitFor = %q, want deployment/example-api", o.waitFor)
+	}
+	if o.timeout != 90*time.Second {
+		t.Errorf("timeout = %v, want 90s", o.timeout)
+	}
+	if o.pollInterval != 3*time.Second {
+		t.Errorf("pollInterval = %v, want 3s", o.pollInterval)
+	}
+	if got := []string(o.allowPartialRead); !slices.Equal(got, []string{"leases", "events"}) {
+		t.Errorf("allowPartialRead = %v, want [leases events]", got)
+	}
+	if o.namespace != "example-ns" {
+		t.Errorf("namespace = %q, want example-ns", o.namespace)
+	}
+}
+
+func TestParseGateFlagsDefaults(t *testing.T) {
+	o, err := parseGateFlags(nil)
+	if err != nil {
+		t.Fatalf("parseGateFlags: %v", err)
+	}
+	if o.output != "text" {
+		t.Errorf("output = %q, want text", o.output)
+	}
+	if o.failOn != "critical" {
+		t.Errorf("failOn = %q, want critical", o.failOn)
+	}
+	if o.timeout != 5*time.Minute {
+		t.Errorf("timeout = %v, want 5m", o.timeout)
+	}
+	if o.pollInterval != 2*time.Second {
+		t.Errorf("pollInterval = %v, want 2s", o.pollInterval)
+	}
+}
+
+func TestParseSmallCommandFlags(t *testing.T) {
+	m, err := parseMCPFlags([]string{
+		"--kubeconfig", "/nonexistent/kubeconfig",
+		"--context", "example-context",
+		"--allow-context-switch", "--logs",
+	})
+	if err != nil {
+		t.Fatalf("parseMCPFlags: %v", err)
+	}
+	if !m.allowContextSwitch || !m.logs || m.contextName != "example-context" {
+		t.Errorf("mcpOptions = %+v, want all three set", m)
+	}
+
+	u, err := parseTUIFlags([]string{"-n", "example-ns", "--context", "example-context"})
+	if err != nil {
+		t.Fatalf("parseTUIFlags: %v", err)
+	}
+	if u.namespace != "example-ns" || u.contextName != "example-context" {
+		t.Errorf("tuiOptions = %+v, want namespace and context set", u)
+	}
+
+	p, err := parseRBACPrintFlags([]string{
+		"--profile", "watch", "--features", "core,certs",
+		"--role-name", "example-role", "--output", "json",
+	})
+	if err != nil {
+		t.Fatalf("parseRBACPrintFlags: %v", err)
+	}
+	if p.profile != "watch" || p.features != "core,certs" || p.roleName != "example-role" || p.output != "json" {
+		t.Errorf("rbacPrintOptions = %+v, want all four set", p)
+	}
+
+	c, err := parseRBACCheckFlags([]string{"--profile", "scan", "--output", "json"})
+	if err != nil {
+		t.Fatalf("parseRBACCheckFlags: %v", err)
+	}
+	if c.profile != "scan" || c.output != "json" {
+		t.Errorf("rbacCheckOptions = %+v, want profile scan and output json", c)
+	}
+}
+
+func TestSmallCommandFlagDefaults(t *testing.T) {
+	p, err := parseRBACPrintFlags(nil)
+	if err != nil {
+		t.Fatalf("parseRBACPrintFlags: %v", err)
+	}
+	if p.profile != "scan" || p.roleName != "kubeagent" || p.output != "yaml" {
+		t.Errorf("rbac print defaults = %+v, want profile scan, role-name kubeagent, output yaml", p)
+	}
+	c, err := parseRBACCheckFlags(nil)
+	if err != nil {
+		t.Fatalf("parseRBACCheckFlags: %v", err)
+	}
+	if c.profile != "full" || c.output != "text" {
+		t.Errorf("rbac check defaults = %+v, want profile full, output text", c)
+	}
+}
+
+func TestRootCommandTreeIsSilent(t *testing.T) {
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		if !c.SilenceErrors {
+			t.Errorf("%s: SilenceErrors = false, want true", c.CommandPath())
+		}
+		if !c.SilenceUsage {
+			t.Errorf("%s: SilenceUsage = false, want true", c.CommandPath())
+		}
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+	}
+	walk(newRootCommand())
+}
+
+func TestRootCommandNamesTheInvokedSpelling(t *testing.T) {
+	old := invokedAs
+	invokedAs = "kubectl kubeagent"
+	defer func() { invokedAs = old }()
+
+	root := newRootCommand()
+	if got := root.CommandPath(); got != "kubectl kubeagent" {
+		t.Errorf("root.CommandPath() = %q, want %q", got, "kubectl kubeagent")
+	}
+	for _, sub := range root.Commands() {
+		if sub.Name() != "mcp" {
+			continue
+		}
+		if got := sub.CommandPath(); got != "kubectl kubeagent mcp" {
+			t.Errorf("mcp.CommandPath() = %q, want %q", got, "kubectl kubeagent mcp")
+		}
+	}
+}
+
+// TestSubcommandHelpExitsZero pins --help's exit status for every command:
+// version, schema, mcp, tui, scan, watch, gate and rbac. Under Cobra, --help
+// is a normal registered bool flag; Command.execute checks it, ExecuteC
+// intercepts the resulting flag.ErrHelp, writes real help to stdout, and
+// returns nil, which exitCodeFor maps to 0.
+//
+// gate is the notable change: before its migration, runGate wrapped every
+// parse error, including flag.ErrHelp, in &exitError{code: gate.CodeUsage},
+// so `gate --help` exited 4, not 0. Cobra's own --help handling now runs
+// before newGateCommand's RunE (and before its SetFlagErrorFunc, which only
+// sees flag *errors*, not the help request), so `gate --help` exits 0 like
+// every other command — a human running it by hand sees help and a clean
+// exit; CI never runs it with --help.
+func TestSubcommandHelpExitsZero(t *testing.T) {
+	for _, args := range [][]string{{"version", "--help"}, {"schema", "--help"}, {"mcp", "--help"}, {"tui", "--help"}, {"scan", "--help"}, {"watch", "--help"}, {"gate", "--help"}, {"rbac", "--help"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			err := Run(args)
+			if err != nil {
+				t.Errorf("Run(%v) = %v, want nil", args, err)
+			}
+			if got := exitCodeFor(err); got != 0 {
+				t.Errorf("exit code = %d, want 0", got)
+			}
+		})
+	}
+}
+
+// TestRootHelpKeepsTheUsageError pins the one help path that is NOT exit 0.
+// `kubeagent --help` has always fallen through to the usage error — stderr,
+// exit 1 — because the standard-library dispatch only recognised a
+// subcommand as the first argument. That is arguably a wart, but exit codes
+// are frozen for this migration, so it stays. Fix it in its own change,
+// where it is visible as its own diff.
+func TestRootHelpKeepsTheUsageError(t *testing.T) {
+	err := Run([]string{"--help"})
+	if err == nil {
+		t.Fatal("Run([--help]) = nil, want the usage error")
+	}
+	if !strings.Contains(err.Error(), "usage: ") {
+		t.Errorf("error = %q, want the usage error", err)
+	}
+	if got := exitCodeFor(err); got != 1 {
+		t.Errorf("exit code = %d, want 1", got)
 	}
 }

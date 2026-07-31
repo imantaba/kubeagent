@@ -484,8 +484,18 @@ These are the north star; every item below is measured against them.
   a further 2× on top and nothing at all underneath the limiter. Ordering is
   preserved by construction: no read closure touches shared state, and a
   sequential block afterwards walks a fixed report order
-  ([tuning](features/tuning.md)). The rest of Theme H — the v1.0 production
-  contract — remains ahead.
+  ([tuning](features/tuning.md)). Slice 6 — the CLI is a Cobra command tree —
+  has shipped: `internal/cli` is built on [Cobra](https://cobra.dev), one file
+  per command, replacing the v1 standard-library `flag` package; a
+  compatibility shim rewrites the single-dash long-flag spelling
+  (`-kubeconfig path`) that pflag would otherwise reject, so command lines
+  written against v0.72 and earlier keep working; every subcommand now has its
+  own `--help` text (`kubeagent scan --help` describes `scan`, not every
+  command at once) and exits `0` rather than the old flag package's `1` (`4`
+  for `gate`); and `kubeagent completion bash|zsh|fish|powershell` prints a
+  completion script generated from the command tree itself, so it cannot drift
+  from the flags it describes — see [Shell completion](features/completion.md).
+  The rest of Theme H — the v1.0 production contract — remains ahead.
 
 ### Milestones
 

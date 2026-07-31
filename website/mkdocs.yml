@@ -73,6 +73,7 @@ nav:
       - Least-privilege RBAC: features/rbac.md
       - JSON schema contract: features/json-schema.md
       - Performance tuning: features/tuning.md
+      - Shell completion: features/completion.md
   - Install: install.md
   - Verifying a release: verify.md
   - Roadmap: roadmap.md

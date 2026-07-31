@@ -15,7 +15,7 @@ regression here is a regression everywhere at once.
 
 `main.go` is 1286 lines. It dispatches subcommands with a chain of
 `if len(args) > 0 && args[0] == "…"` tests, builds seven `flag.FlagSet`s
-carrying 86 flag definitions between them, and documents the whole surface in a
+carrying 79 flag definitions between them, and documents the whole surface in a
 single 1900-character `usage:` string that no one reads to the end.
 
 ```go
@@ -31,7 +31,7 @@ Three things follow from that shape:
 
 - **No shell completion.** kubeagent ships as a `kubectl` krew plugin, where tab
   completion is the norm for every neighbouring plugin. Writing a completion
-  script by hand for 86 flags across 8 commands is not a serious proposal.
+  script by hand for 79 flags across 8 commands is not a serious proposal.
 - **No per-command help.** `kubeagent gate --help` prints the same wall of text
   as `kubeagent scan --help`, because there is only one wall.
 - **The dispatch chain is where new commands go wrong.** Adding a subcommand
@@ -332,7 +332,7 @@ Three new tables, all in `main_test.go` first and moving to
   non-default value, asserting the value reaches the command's options struct.
   A dropped flag becomes a failing case rather than a silently defaulted scan.
   This is the table that catches the mechanical transcription errors that a
-  86-flag migration invites.
+  79-flag migration invites.
 - **Error strings.** Every validation path that returns an error today, keyed
   by the command line that triggers it, asserting the exact message and the
   exit code `exitCodeFor` derives from it.
@@ -361,7 +361,7 @@ supply-chain event, and worth stating plainly rather than assuming:
 | Module | Status now | Status after |
 |---|---|---|
 | `github.com/spf13/cobra` | absent | direct require |
-| `github.com/spf13/pflag` | indirect (via client-go) | direct require |
+| `github.com/spf13/pflag` | indirect (via client-go) | indirect (now also via cobra) |
 | `github.com/inconshreveable/mousetrap` | absent | indirect (cobra, Windows-only) |
 
 One genuinely new module in the build graph, plus one promotion of a module
@@ -425,12 +425,13 @@ Copied verbatim into the implementation plan:
 - URLs are credentials — no log line, error, or generated script carries more
   than `scheme://host`.
 - Kubeconfig paths are credentials.
-- `go.mod` / `go.sum` change is expected here and only here: `cobra` added,
-  `pflag` promoted. No other dependency.
+- `go.mod` / `go.sum` change is expected here and only here: `cobra` added
+  direct, `mousetrap` added indirect. No other dependency, and `pflag` stays
+  indirect.
 
 ## Risks
 
-**The 86-flag transcription.** The single largest failure mode is a flag whose
+**The 79-flag transcription.** The single largest failure mode is a flag whose
 default, type, or destination is mistyped in the move — `--disk-threshold`
 defaulting to 0 instead of 0.80, `--cert-warn-days` bound to the wrong field.
 Nothing about the program fails loudly when that happens; a scan just reports

@@ -35,6 +35,19 @@ func TestNormalize(t *testing.T) {
 		{"non-flag argument", []string{"print", "-profile"}, []string{"print", "-profile"}},
 		{"empty", nil, nil},
 		{"value that looks like a flag", []string{"--context", "-kubeconfig"}, []string{"--context", "-kubeconfig"}},
+
+		// A -- immediately after a value-expecting flag is that flag's value to
+		// pflag, not a terminator: pflag only treats -- as a terminator when it
+		// appears where a flag name would be expected, and here a value is
+		// expected instead. Rewriting must resume on whatever follows, so the
+		// expectValue case has to stay ordered before the a == "--" case. Do
+		// not reorder them.
+		{"terminator as a flag's value does not stop rewriting", []string{"-context", "--", "-output", "json"}, []string{"--context", "--", "--output", "json"}},
+
+		{"standalone terminator", []string{"--"}, []string{"--"}},
+		{"empty string element", []string{""}, []string{""}},
+		{"registered flag with explicit empty value", []string{"-kubeconfig="}, []string{"--kubeconfig="}},
+		{"already double dash with explicit empty value", []string{"--kubeconfig="}, []string{"--kubeconfig="}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := Normalize(tc.in, known)

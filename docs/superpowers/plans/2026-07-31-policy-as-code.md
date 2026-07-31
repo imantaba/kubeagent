@@ -1233,6 +1233,32 @@ func TestCheckOpSkipsAValueTooLongToMatchSafely(t *testing.T) {
 	}
 }
 
+// A float64 carries 53 bits of integer precision. Above that two distinct
+// int64 values round to the same float, and a comparison that went through a
+// float would return a verdict rather than a skip — the one failure mode this
+// package must not have, because a wrong answer is worse than no answer.
+func TestCheckOpComparesLargeIntegersExactly(t *testing.T) {
+	// 2^53 and 2^53+1: distinct as int64, identical as float64.
+	const lo = int64(1) << 53
+	const hi = lo + 1
+
+	if ok, skip := checkOp(OpGt, present(hi), []string{strconv.FormatInt(lo, 10)}); !ok || skip {
+		t.Errorf("gt %d vs %d: ok=%v skip=%v, want ok=true skip=false", hi, lo, ok, skip)
+	}
+	if ok, skip := checkOp(OpLt, present(lo), []string{strconv.FormatInt(hi, 10)}); !ok || skip {
+		t.Errorf("lt %d vs %d: ok=%v skip=%v, want ok=true skip=false", lo, hi, ok, skip)
+	}
+	// Equality at the same magnitude must still hold.
+	if ok, skip := checkOp(OpGte, present(hi), []string{strconv.FormatInt(hi, 10)}); !ok || skip {
+		t.Errorf("gte %d vs itself: ok=%v skip=%v, want ok=true skip=false", hi, ok, skip)
+	}
+	// The int64 boundary itself, where ParseInt stops and the float path takes
+	// over: still a comparison, never a panic.
+	if _, skip := checkOp(OpGt, present(int64(math.MaxInt64)), []string{"9223372036854775806"}); skip {
+		t.Error("gt at MaxInt64 was skipped; both sides parse as integers")
+	}
+}
+
 func TestCheckOpNumericAndQuantityComparison(t *testing.T) {
 	cases := []struct {
 		op       Op
@@ -1335,6 +1361,13 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 
+// maxMatchLen bounds what the glob operators will look at. Every value a
+// policy realistically matches on — an image reference, a label value, a
+// storage class name — is far below this; the cap exists for the annotation
+// nobody expected. Do not remove it on the belief that globMatch is linear:
+// it is not, and glob.go says so.
+const maxMatchLen = 4096
+
 // checkOp applies one operator to one slot.
 //
 // ok reports whether the slot satisfies the assertion. skip reports that the
@@ -1343,13 +1376,6 @@ import (
 // parses as a number or a Kubernetes quantity. A skipped slot is not a
 // violation: a policy must never turn a field it cannot read into an
 // accusation.
-// maxMatchLen bounds what the glob operators will look at. Every value a
-// policy realistically matches on — an image reference, a label value, a
-// storage class name — is far below this; the cap exists for the annotation
-// nobody expected. Do not remove it on the belief that globMatch is linear:
-// it is not, and glob.go says so.
-const maxMatchLen = 4096
-
 func checkOp(op Op, s Slot, values []string) (ok, skip bool) {
 	// exists and notExists are the only operators that have an opinion about
 	// absence itself.
@@ -1453,10 +1479,27 @@ func stringOf(v any) (string, bool) {
 // compareNumeric compares two textual values, returning -1, 0 or 1, and
 // whether the comparison was possible at all.
 //
-// Plain numbers first, so 3 vs 2 does not need a quantity round-trip; then
-// Kubernetes quantities, so 500m vs 1 and 8Gi vs 4Gi compare correctly. If
-// either side fails both, the caller skips.
+// Whole integers first, compared exactly. Past 2^53 a float64 can no longer
+// represent every integer, so 9007199254740993 and 9007199254740992 round to
+// the same value and gt would answer "no" — a confident wrong verdict, which
+// is worse than the skip an unreadable value gets. Then plain numbers, so 3.5
+// vs 2 does not need a quantity round-trip; then Kubernetes quantities, so
+// 500m vs 1 and 8Gi vs 4Gi compare correctly. If either side fails all three,
+// the caller skips.
 func compareNumeric(a, b string) (int, bool) {
+	if ai, err := strconv.ParseInt(a, 10, 64); err == nil {
+		if bi, err := strconv.ParseInt(b, 10, 64); err == nil {
+			switch {
+			case ai < bi:
+				return -1, true
+			case ai > bi:
+				return 1, true
+			default:
+				return 0, true
+			}
+		}
+	}
+
 	af, aErr := strconv.ParseFloat(a, 64)
 	bf, bErr := strconv.ParseFloat(b, 64)
 	if aErr == nil && bErr == nil {

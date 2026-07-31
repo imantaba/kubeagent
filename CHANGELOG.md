@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `kubeagent completion bash|zsh|fish|powershell` prints a shell completion
+  script, generated from the command tree so it stays correct as flags change.
+  It contacts no cluster and reads no kubeconfig. Under krew, `kubectl`
+  completion additionally needs a `kubectl_complete-kubeagent` shim — see
+  [Shell completion](https://k8sproject.top/features/completion/).
+- Per-command help: `kubeagent scan --help` now describes `scan`, not every
+  command at once.
+
+### Changed
+
+- The CLI is built on Cobra, retiring the standard-library `flag` package v1
+  shipped with. Every subcommand, every flag, every kubeagent error message and
+  every exit code is unchanged, and a compatibility shim preserves the
+  single-dash long-flag form (`-kubeconfig path`) that pflag would otherwise
+  reject. Three details of the command line did change, all of them consequences
+  of the flag library rather than choices about kubeagent's own behaviour:
+    - `--n` is no longer accepted as a spelling of `--namespace`. `-n` and
+      `--namespace` both work, as in every other kubectl-adjacent tool; the
+      standard library accepted `--n` only because it had to declare the
+      shorthand as a second full flag name.
+    - An unrecognized flag is now reported in pflag's words
+      (`unknown flag: --nonesuch`) rather than the standard library's
+      (`flag provided but not defined: -nonesuch`), and the command no longer
+      dumps its full flag list to stderr after the message. Exit codes are
+      unchanged, including `gate`'s `4` for a usage error.
+    - `kubeagent mcp` and `kubeagent tui` now reject a stray positional
+      argument instead of silently ignoring it.
+    - `<command> --help` exits 0. It used to exit 1 for every subcommand
+      except `version`, and 4 for `gate`, because the standard-library flag
+      set reported `--help` as a parse error. Asking for help is not an
+      error, and no other exit code changed.
+
+There is no `### Removed`. The four items above are the complete list of
+command-line changes: each was found by a review of the migration rather than
+chosen, each is recorded here rather than left for a user to discover, and none
+of them touches a kubeagent-authored error string or an exit code.
+
 ## [0.72.0] - 2026-07-31
 
 ### Added

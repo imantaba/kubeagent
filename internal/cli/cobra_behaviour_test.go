@@ -228,3 +228,21 @@ func TestCompletionScriptCarriesNoPathOrURL(t *testing.T) {
 		}
 	}
 }
+
+// TestUsageErrorNamesEveryCommand pins the top-level usage error against the
+// command tree itself. It exists because completion shipped without being
+// added to the list: the string is hand-maintained, nothing derives it from
+// the tree, and no test compared the two. Adding a command to the root now
+// fails here until the usage error mentions it.
+func TestUsageErrorNamesEveryCommand(t *testing.T) {
+	text := usageError().Error()
+	for _, cmd := range newRootCommand().Commands() {
+		name := cmd.Name()
+		if name == "help" || cmd.Hidden {
+			continue
+		}
+		if !strings.Contains(text, name) {
+			t.Errorf("usage error does not mention the %q command:\n%s", name, text)
+		}
+	}
+}

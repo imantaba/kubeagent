@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"bytes"
@@ -123,20 +123,20 @@ func TestEnvInt_WebhookTimeoutDefault(t *testing.T) {
 }
 
 func TestRun_NoArgsReturnsUsage(t *testing.T) {
-	if err := run(nil); err == nil {
+	if err := Run(nil); err == nil {
 		t.Fatal("expected a usage error with no args")
 	}
 }
 
 func TestRun_RejectsUnknownSubcommand(t *testing.T) {
-	if err := run([]string{"explode"}); err == nil {
+	if err := Run([]string{"explode"}); err == nil {
 		t.Fatal("expected an error for an unknown subcommand")
 	}
 }
 
 func TestRun_RejectsBadOutputFormat(t *testing.T) {
 	// This must fail on validation BEFORE any cluster connection is attempted.
-	if err := run([]string{"scan", "--output", "bogus"}); err == nil {
+	if err := Run([]string{"scan", "--output", "bogus"}); err == nil {
 		t.Fatal("expected an error for a bad --output value")
 	}
 }
@@ -145,7 +145,7 @@ func TestRun_ExplainRequiresAPIKey(t *testing.T) {
 	// --explain without a key (and without a local endpoint) must fail fast, before any cluster connection.
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "")
-	err := run([]string{"scan", "--explain"})
+	err := Run([]string{"scan", "--explain"})
 	if err == nil {
 		t.Fatal("expected an error when --explain is set without ANTHROPIC_API_KEY")
 	}
@@ -157,7 +157,7 @@ func TestRun_ExplainRequiresAPIKey(t *testing.T) {
 func TestRun_ExplainNeedsKeyOrEndpoint(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "")
-	err := run([]string{"scan", "--explain"})
+	err := Run([]string{"scan", "--explain"})
 	if err == nil || !strings.Contains(err.Error(), "KUBEAGENT_EXPLAIN_ENDPOINT") {
 		t.Fatalf("want the key-or-endpoint error, got %v", err)
 	}
@@ -167,7 +167,7 @@ func TestRun_ExplainLocalNeedsModel(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "http://localhost:11434/v1")
 	t.Setenv("KUBEAGENT_MODEL", "")
-	err := run([]string{"scan", "--explain"})
+	err := Run([]string{"scan", "--explain"})
 	if err == nil || !strings.Contains(err.Error(), "needs --model") {
 		t.Fatalf("want the needs-model error, got %v", err)
 	}
@@ -178,7 +178,7 @@ func TestRun_ModelFlagIsRecognized(t *testing.T) {
 	// the fail-fast key error, NOT "flag provided but not defined".
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "")
-	err := run([]string{"scan", "--explain", "--model", "claude-sonnet-4-6"})
+	err := Run([]string{"scan", "--explain", "--model", "claude-sonnet-4-6"})
 	if err == nil {
 		t.Fatal("expected the fail-fast API-key error")
 	}
@@ -192,7 +192,7 @@ func TestRun_IncludeFlagsAreRecognized(t *testing.T) {
 	// no key, the error is the fail-fast key error, not "flag not defined".
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "")
-	err := run([]string{"scan", "--explain", "--include-cron", "--include-restarts"})
+	err := Run([]string{"scan", "--explain", "--include-cron", "--include-restarts"})
 	if err == nil {
 		t.Fatal("expected the fail-fast API-key error")
 	}
@@ -209,7 +209,7 @@ func TestVersionLine(t *testing.T) {
 }
 
 func TestRun_Version(t *testing.T) {
-	if err := run([]string{"version"}); err != nil {
+	if err := Run([]string{"version"}); err != nil {
 		t.Errorf("run([version]) returned error: %v", err)
 	}
 }
@@ -218,7 +218,7 @@ func TestRun_LintSecretsFlagAccepted(t *testing.T) {
 	// --lint-secrets must be a defined flag: this fails on output-format
 	// validation (which happens before any cluster connection), proving the flag
 	// parsed rather than erroring with "flag provided but not defined".
-	err := run([]string{"scan", "--lint-secrets", "--output", "bogus"})
+	err := Run([]string{"scan", "--lint-secrets", "--output", "bogus"})
 	if err == nil || !strings.Contains(err.Error(), "unknown output format") {
 		t.Fatalf("expected the output-format error (flag accepted), got: %v", err)
 	}
@@ -248,7 +248,7 @@ users:
 	if err := os.WriteFile(kc, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	err := run([]string{"scan", "--kubeconfig", kc})
+	err := Run([]string{"scan", "--kubeconfig", kc})
 	if err == nil {
 		t.Fatal("expected an error for an unreachable API server")
 	}
@@ -285,7 +285,7 @@ users:
 	if err := os.WriteFile(kc, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	err := run([]string{"scan", "--kubeconfig", kc})
+	err := Run([]string{"scan", "--kubeconfig", kc})
 	if err == nil {
 		t.Fatal("expected an error for an unreachable API server")
 	}
@@ -297,7 +297,7 @@ users:
 func TestRun_FixFlagsAccepted(t *testing.T) {
 	// --fix/--dry-run/--yes must be defined flags: this fails on output-format
 	// validation (before any cluster call), proving they parsed.
-	err := run([]string{"scan", "--fix", "--dry-run", "--yes", "--output", "bogus"})
+	err := Run([]string{"scan", "--fix", "--dry-run", "--yes", "--output", "bogus"})
 	if err == nil || !strings.Contains(err.Error(), "unknown output format") {
 		t.Fatalf("expected output-format error (flags accepted), got: %v", err)
 	}
@@ -306,21 +306,21 @@ func TestRun_FixFlagsAccepted(t *testing.T) {
 func TestRun_SuggestFlagAccepted(t *testing.T) {
 	// --suggest must be a defined flag: this fails on output-format validation
 	// (before any cluster call), proving the flag parsed.
-	err := run([]string{"scan", "--suggest", "--output", "bogus"})
+	err := Run([]string{"scan", "--suggest", "--output", "bogus"})
 	if err == nil || !strings.Contains(err.Error(), "unknown output format") {
 		t.Fatalf("expected the output-format error (flag accepted), got: %v", err)
 	}
 }
 
 func TestRun_ControlPlaneHealthFlagAccepted(t *testing.T) {
-	err := run([]string{"scan", "--control-plane-health", "--output", "bogus"})
+	err := Run([]string{"scan", "--control-plane-health", "--output", "bogus"})
 	if err == nil || !strings.Contains(err.Error(), "unknown output format") {
 		t.Fatalf("want unknown-output-format error (proving the flag parsed), got %v", err)
 	}
 }
 
 func TestRun_DNSHealthFlagAccepted(t *testing.T) {
-	err := run([]string{"scan", "--dns-health", "--output", "bogus"})
+	err := Run([]string{"scan", "--dns-health", "--output", "bogus"})
 	if err == nil || !strings.Contains(err.Error(), "unknown output format") {
 		t.Fatalf("want unknown-output-format error (proving the flag parsed), got %v", err)
 	}
@@ -330,7 +330,7 @@ func TestRun_OperatorsFlagAccepted(t *testing.T) {
 	// --operators must be a defined flag: this fails on output-format validation
 	// (before any cluster or discovery call), proving the flag parsed rather
 	// than erroring with "flag provided but not defined".
-	err := run([]string{"scan", "--operators", "--output", "bogus"})
+	err := Run([]string{"scan", "--operators", "--output", "bogus"})
 	if err == nil || !strings.Contains(err.Error(), "unknown output format") {
 		t.Fatalf("want unknown-output-format error (proving the flag parsed), got %v", err)
 	}
@@ -340,7 +340,7 @@ func TestRun_DriftFlagAccepted(t *testing.T) {
 	// --drift and --drift-age must be defined flags: this fails on output-format
 	// validation (before any cluster or discovery call), proving the flags parsed
 	// rather than erroring with "flag provided but not defined".
-	err := run([]string{"scan", "--drift", "--drift-age", "5m", "--output", "bogus"})
+	err := Run([]string{"scan", "--drift", "--drift-age", "5m", "--output", "bogus"})
 	if err == nil || !strings.Contains(err.Error(), "unknown output format") {
 		t.Fatalf("want unknown-output-format error (proving the flags parsed), got %v", err)
 	}
@@ -350,14 +350,14 @@ func TestRun_CapacityFlagAccepted(t *testing.T) {
 	// --capacity must be a defined flag: this fails on output-format validation
 	// (before any cluster call), proving the flag parsed rather than erroring with
 	// "flag provided but not defined".
-	err := run([]string{"scan", "--capacity", "--output", "bogus"})
+	err := Run([]string{"scan", "--capacity", "--output", "bogus"})
 	if err == nil || !strings.Contains(err.Error(), "unknown output format") {
 		t.Fatalf("want unknown-output-format error (proving the flag parsed), got %v", err)
 	}
 }
 
 func TestRun_UsageMentionsCapacityFlag(t *testing.T) {
-	err := run(nil)
+	err := Run(nil)
 	if err == nil {
 		t.Fatal("expected a usage error with no args")
 	}
@@ -482,7 +482,7 @@ func TestRunWatch_NoWarningWithDefaultAlertFlags(t *testing.T) {
 }
 
 func TestRun_UsageMentionsWatchAlertFlags(t *testing.T) {
-	err := run(nil)
+	err := Run(nil)
 	if err == nil {
 		t.Fatal("expected a usage error with no args")
 	}
@@ -492,7 +492,7 @@ func TestRun_UsageMentionsWatchAlertFlags(t *testing.T) {
 }
 
 func TestRun_UsageMentionsOperatorsFlag(t *testing.T) {
-	err := run(nil)
+	err := Run(nil)
 	if err == nil {
 		t.Fatal("expected a usage error with no args")
 	}
@@ -502,7 +502,7 @@ func TestRun_UsageMentionsOperatorsFlag(t *testing.T) {
 }
 
 func TestRun_UsageMentionsDriftFlag(t *testing.T) {
-	err := run(nil)
+	err := Run(nil)
 	if err == nil {
 		t.Fatal("expected a usage error with no args")
 	}
@@ -673,7 +673,7 @@ func TestRunWatch_SLOTargetDefaultsToOff(t *testing.T) {
 }
 
 func TestRun_UsageMentionsSLOTarget(t *testing.T) {
-	err := run(nil)
+	err := Run(nil)
 	if err == nil {
 		t.Fatal("expected a usage error with no args")
 	}
@@ -948,7 +948,7 @@ func fixRS() []appsv1.ReplicaSet {
 func TestRun_InvestigateNeedsAPIKey(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "")
-	err := run([]string{"scan", "--investigate"})
+	err := Run([]string{"scan", "--investigate"})
 	if err == nil || !strings.Contains(err.Error(), "ANTHROPIC_API_KEY") {
 		t.Errorf("expected an ANTHROPIC_API_KEY error, got %v", err)
 	}
@@ -957,7 +957,7 @@ func TestRun_InvestigateNeedsAPIKey(t *testing.T) {
 func TestRun_InvestigateRejectsLocalOnlyEndpoint(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "http://localhost:11434/v1")
-	err := run([]string{"scan", "--investigate"})
+	err := Run([]string{"scan", "--investigate"})
 	if err == nil || !strings.Contains(err.Error(), "ANTHROPIC_API_KEY") {
 		t.Errorf("investigate must require an Anthropic key even when a local endpoint is set, got %v", err)
 	}
@@ -970,7 +970,7 @@ func TestRun_InvestigateSupersedesExplain(t *testing.T) {
 	// outcome: it proves flags parsed and the investigate branch was selected.
 	t.Setenv("ANTHROPIC_API_KEY", "test-key")
 	t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "")
-	err := run([]string{"scan", "--investigate", "--explain", "--kubeconfig", "/nonexistent/path"})
+	err := Run([]string{"scan", "--investigate", "--explain", "--kubeconfig", "/nonexistent/path"})
 	if err == nil {
 		t.Fatal("expected a cluster-connect error for a nonexistent kubeconfig")
 	}
@@ -1232,14 +1232,14 @@ func TestRunRollback_DeclinedWritesNothing(t *testing.T) {
 }
 
 func TestRun_RollbackNeedsAuditLog(t *testing.T) {
-	err := run([]string{"scan", "--rollback"})
+	err := Run([]string{"scan", "--rollback"})
 	if err == nil || !strings.Contains(err.Error(), "--audit-log") {
 		t.Errorf("expected an --audit-log requirement error, got %v", err)
 	}
 }
 
 func TestRun_RollbackAndFixAreExclusive(t *testing.T) {
-	err := run([]string{"scan", "--rollback", "--fix", "--audit-log", "/tmp/x.log"})
+	err := Run([]string{"scan", "--rollback", "--fix", "--audit-log", "/tmp/x.log"})
 	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
 		t.Errorf("expected a mutual-exclusion error, got %v", err)
 	}
@@ -1519,7 +1519,7 @@ func TestRunWatchLocalEndpointNeedsAModelName(t *testing.T) {
 }
 
 func TestUsageMentionsTheExplainFlags(t *testing.T) {
-	err := run(nil)
+	err := Run(nil)
 	if err == nil {
 		t.Fatal("want the usage error")
 	}
@@ -1629,7 +1629,7 @@ users:
 }
 
 func TestUsage_MentionsTheMCPSubcommand(t *testing.T) {
-	err := run([]string{"kubeagent"})
+	err := Run([]string{"kubeagent"})
 	if err == nil {
 		t.Fatal("run() with no subcommand error = nil, want the usage error")
 	}
@@ -1733,7 +1733,7 @@ func TestRun_DispatchesMCPWithFlagsIntact(t *testing.T) {
 	// exact nonexistent kubeconfig path that was passed.
 	dir := t.TempDir()
 	bad := filepath.Join(dir, "mcp-dispatch-nonexistent-kubeconfig")
-	err := run([]string{"mcp", "--kubeconfig", bad})
+	err := Run([]string{"mcp", "--kubeconfig", bad})
 	if err == nil {
 		t.Fatal("expected a cluster-connection error")
 	}
@@ -1799,7 +1799,7 @@ func TestRun_UsageNamesThePlainBinaryByDefault(t *testing.T) {
 	if invokedAs != "kubeagent" {
 		t.Fatalf("invokedAs = %q under go test, want %q", invokedAs, "kubeagent")
 	}
-	err := run(nil)
+	err := Run(nil)
 	if err == nil {
 		t.Fatal("run(nil) = nil, want the usage error")
 	}
@@ -1813,7 +1813,7 @@ func TestRun_UsageNamesTheKubectlPluginInvocation(t *testing.T) {
 	invokedAs = "kubectl kubeagent"
 	defer func() { invokedAs = saved }()
 
-	err := run(nil)
+	err := Run(nil)
 	if err == nil {
 		t.Fatal("run(nil) = nil, want the usage error")
 	}
@@ -1898,7 +1898,7 @@ func TestExitCodeForExitErrorIsItsCode(t *testing.T) {
 }
 
 func TestGateRejectsUnknownFailOn(t *testing.T) {
-	err := run([]string{"gate", "--fail-on", "fatal"})
+	err := Run([]string{"gate", "--fail-on", "fatal"})
 	if err == nil {
 		t.Fatal("want an error for an unknown --fail-on level, got nil")
 	}
@@ -1911,7 +1911,7 @@ func TestGateRejectsUnknownFailOn(t *testing.T) {
 }
 
 func TestGateRejectsUnknownOutputFormat(t *testing.T) {
-	err := run([]string{"gate", "--output", "yaml"})
+	err := Run([]string{"gate", "--output", "yaml"})
 	if err == nil {
 		t.Fatal("want an error for an unknown --output format, got nil")
 	}
@@ -1921,7 +1921,7 @@ func TestGateRejectsUnknownOutputFormat(t *testing.T) {
 }
 
 func TestGateRejectsUnknownFlag(t *testing.T) {
-	err := run([]string{"gate", "--nonexistent"})
+	err := Run([]string{"gate", "--nonexistent"})
 	if err == nil {
 		t.Fatal("want an error for an unknown flag, got nil")
 	}
@@ -1931,7 +1931,7 @@ func TestGateRejectsUnknownFlag(t *testing.T) {
 }
 
 func TestGateRejectsUnsupportedWaitForKind(t *testing.T) {
-	err := run([]string{"gate", "--wait-for", "pod/api", "-n", "prod"})
+	err := Run([]string{"gate", "--wait-for", "pod/api", "-n", "prod"})
 	if err == nil {
 		t.Fatal("want an error for an unsupported --wait-for kind, got nil")
 	}
@@ -1941,7 +1941,7 @@ func TestGateRejectsUnsupportedWaitForKind(t *testing.T) {
 }
 
 func TestGateRejectsWaitForWithoutNamespace(t *testing.T) {
-	err := run([]string{"gate", "--wait-for", "deployment/api"})
+	err := Run([]string{"gate", "--wait-for", "deployment/api"})
 	if err == nil {
 		t.Fatal("want an error when --wait-for has no namespace, got nil")
 	}
@@ -1951,7 +1951,7 @@ func TestGateRejectsWaitForWithoutNamespace(t *testing.T) {
 }
 
 func TestUsageMentionsGate(t *testing.T) {
-	err := run([]string{"nonsense"})
+	err := Run([]string{"nonsense"})
 	if err == nil {
 		t.Fatal("want a usage error, got nil")
 	}
@@ -2033,14 +2033,14 @@ func TestRunGateNeverExitsOneWithoutAVerdict(t *testing.T) {
 func TestScanAcceptsTheHTMLOutputFormat(t *testing.T) {
 	// An unknown format is rejected before any cluster connection, so the error
 	// text is reachable without a cluster. "html" must not be rejected there.
-	err := run([]string{"scan", "--output", "html", "--kubeconfig", filepath.Join(t.TempDir(), "nope")})
+	err := Run([]string{"scan", "--output", "html", "--kubeconfig", filepath.Join(t.TempDir(), "nope")})
 	if err != nil && strings.Contains(err.Error(), "unknown output format") {
 		t.Fatalf("--output html was rejected as an unknown format: %v", err)
 	}
 }
 
 func TestScanRejectsAnUnknownOutputFormatAndNamesHTML(t *testing.T) {
-	err := run([]string{"scan", "--output", "bogus"})
+	err := Run([]string{"scan", "--output", "bogus"})
 	if err == nil {
 		t.Fatal("want an error for an unknown --output format, got nil")
 	}
@@ -2050,7 +2050,7 @@ func TestScanRejectsAnUnknownOutputFormatAndNamesHTML(t *testing.T) {
 }
 
 func TestUsageMentionsTheHTMLOutputFormat(t *testing.T) {
-	err := run([]string{"bogus-subcommand"})
+	err := Run([]string{"bogus-subcommand"})
 	if err == nil {
 		t.Fatal("want a usage error, got nil")
 	}
@@ -2124,7 +2124,7 @@ func TestRenderScanLeavesTextAndJSONOnTheOldPath(t *testing.T) {
 }
 
 func TestRun_UsageMentionsTUI(t *testing.T) {
-	err := run([]string{})
+	err := Run([]string{})
 	if err == nil {
 		t.Fatal("no error")
 	}
@@ -2134,7 +2134,7 @@ func TestRun_UsageMentionsTUI(t *testing.T) {
 }
 
 func TestRunTUI_RejectsUnknownFlag(t *testing.T) {
-	err := run([]string{"tui", "--bogus"})
+	err := Run([]string{"tui", "--bogus"})
 	if err == nil {
 		t.Fatal("no error for an unknown flag")
 	}
@@ -2146,7 +2146,7 @@ func TestRunTUI_RejectsUnknownFlag(t *testing.T) {
 // --output is deliberately absent: a TUI seizes the terminal and is not
 // redirectable, so it is not an output format.
 func TestRunTUI_RejectsOutputFlag(t *testing.T) {
-	err := run([]string{"tui", "--output", "json"})
+	err := Run([]string{"tui", "--output", "json"})
 	if err == nil {
 		t.Fatal("no error for --output")
 	}
@@ -2159,7 +2159,7 @@ func TestRunTUI_RejectsOutputFlag(t *testing.T) {
 // would ask for one.
 func TestRunTUI_RejectsExplainAndInvestigate(t *testing.T) {
 	for _, flag := range []string{"--explain", "--investigate"} {
-		if err := run([]string{"tui", flag}); err == nil {
+		if err := Run([]string{"tui", flag}); err == nil {
 			t.Errorf("%s was accepted", flag)
 		}
 	}
@@ -2323,6 +2323,14 @@ func TestRunSchema_PrintsAValidDocument(t *testing.T) {
 	}
 }
 
+// repoPath resolves a repository-relative path from this package's directory.
+// Mirrors internal/schemadoc/schemadoc_test.go's helper of the same name:
+// internal/cli sits at the same depth below the repo root.
+func repoPath(t *testing.T, rel string) string {
+	t.Helper()
+	return filepath.Join("..", "..", rel)
+}
+
 // What the binary prints must be what the binary's types are: the committed
 // file and the runtime output come from one code path, and this proves it.
 func TestRunSchema_MatchesTheCommittedFile(t *testing.T) {
@@ -2330,7 +2338,7 @@ func TestRunSchema_MatchesTheCommittedFile(t *testing.T) {
 	if err := runSchema([]string{"gate"}, &out); err != nil {
 		t.Fatalf("runSchema: %v", err)
 	}
-	want, err := os.ReadFile(filepath.Join("website", "docs", "schemas", "gate-v1.json"))
+	want, err := os.ReadFile(repoPath(t, filepath.Join("website", "docs", "schemas", "gate-v1.json")))
 	if err != nil {
 		t.Fatalf("read the committed file: %v", err)
 	}
@@ -2358,13 +2366,13 @@ func TestRunSchema_RejectsExtraArguments(t *testing.T) {
 // The command reads Go types: no kubeconfig, no cluster, no LLM call.
 func TestRun_SchemaNeedsNoKubeconfig(t *testing.T) {
 	t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "does-not-exist"))
-	if err := run([]string{"schema", "scan"}); err != nil {
+	if err := Run([]string{"schema", "scan"}); err != nil {
 		t.Errorf("schema must not need a cluster: %v", err)
 	}
 }
 
 func TestRun_UsageMentionsSchemaCommand(t *testing.T) {
-	err := run(nil)
+	err := Run(nil)
 	if err == nil || !strings.Contains(err.Error(), "schema") {
 		t.Errorf("usage does not mention the schema command: %v", err)
 	}

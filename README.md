@@ -485,8 +485,7 @@ ever run on it.
 ### Cutting a release
 
 **Pre-release chaos test.** On a machine with Docker, run the chaos suite on a
-disposable Kind cluster and review the report for detection regressions before
-tagging (see [chaos/README.md](chaos/README.md)):
+disposable Kind cluster before tagging (see [chaos/README.md](chaos/README.md)):
 
 ```bash
 ./chaos/run.sh --recreate --teardown          # deterministic
@@ -494,8 +493,12 @@ tagging (see [chaos/README.md](chaos/README.md)):
 ANTHROPIC_API_KEY=sk-ant-... ./chaos/run.sh --recreate --teardown
 ```
 
-Review the generated `docs/testing/*-chaos-results.md` (git-ignored): confirm
-each scenario's expected signal still appears, then proceed.
+The harness's exit code is the gate: it asserts each scenario's expected
+signal itself and exits non-zero the moment one doesn't hold. A zero exit
+means proceed. A non-zero exit names the failures on the console and in the
+generated `docs/testing/*-chaos-results.md` (git-ignored) under its
+`## Assertion summary` — read that to understand a failure, not to detect
+one.
 
 Push a version tag — or run the **Release** workflow manually from the Actions
 tab with a `version` input:

@@ -2,7 +2,12 @@
 
 A repeatable, **pre-release** chaos test. It spins up a disposable **Kind**
 cluster, injects the most common production outages, runs `kubeagent scan`
-against each, and writes a results report you review before tagging a release.
+against each, and asserts — with the `expect_eq` / `expect_ge` /
+`expect_contains` / `expect_absent` helpers in `chaos/assert.sh` — that
+kubeagent's own contract held for each one. It is a **gate**, not just a
+report: `./chaos/run.sh` exits non-zero the moment any assertion fails, so a
+regression stops a release instead of waiting for someone to notice it while
+reading the whole thing.
 
 It is read-only with respect to any real cluster: it creates and targets only
 its own `kind-kubeagent-chaos` context and never reads your current kubecontext.
@@ -38,6 +43,50 @@ ANTHROPIC_API_KEY=sk-ant-... ./chaos/run.sh --recreate
 ```
 
 The key is read from the environment only; it is never written to the report.
+
+## Assertions
+
+Every scenario captures a value it already computed from the scan — an exit
+code, a substring of the output, a count — and checks it with one of four
+helpers from `chaos/assert.sh`: `expect_eq`, `expect_ge`, `expect_contains`,
+`expect_absent`. Each one prints a `PASS:` or `FAIL:` line; every scenario
+runs its `expect_*` calls inside a `{ ...; } | record ...` block, so that line
+goes into the report, not the console — inside every scenario's `## <name>`
+section, the raw scan output is followed by a `--- assertions ---` block
+naming exactly what was checked and whether it held. A `FAIL` additionally
+writes a differently-worded line straight to the console, on stderr, outside
+that pipe: `ASSERTION FAILED: <label> <detail>` — a `PASS` writes nothing to
+the console. That is what an operator watching a 35–40 minute run actually
+sees scroll by.
+
+`main` finishes with `assert_summary`, which appends an `## Assertion summary`
+to the end of the report naming every `FAIL`, prints `assertions: N run, M
+failed` to the console, and returns non-zero when `M > 0` — that return status
+is what makes `./chaos/run.sh` itself exit non-zero. The baseline and all 20
+scenarios are asserted except one: scenario 2 (expired certificates) runs no
+scan and computes nothing, so it carries no assertion by design — the TLS
+branch it would otherwise cover is unit-tested in `internal/connectivity`
+instead.
+
+These assertions are written at kubeagent's contract level — a finding
+kubeagent reported, a counter kubeagent computed, kubeagent's own exit code —
+never at the Kubernetes API server's wording, which can change between minor
+versions without kubeagent being wrong. Twenty specific injected outages
+passing proves kubeagent kept its side of the contract on those twenty; it is
+not a general correctness proof.
+
+When a `FAIL:` line shows up, the report is what you read to understand it,
+not what you read to detect it: each scenario's section opens with a
+`_Verdict: ...` line — the rationale for why the scenario exists and what the
+checked value is supposed to mean — before the `--- assertions ---` block that
+names what actually happened. The cluster is usually still up (`run.sh` leaves
+it up unless `--teardown` is passed), so `./chaos/run.sh --only NN --out
+/tmp/scratch.md` re-runs just the failing scenario against it.
+
+`bash chaos/assert-selftest.sh` exercises `expect_eq`, `expect_ge`,
+`expect_contains`, and `expect_absent` on their own — no Kind cluster, no
+scenarios — proving each helper both passes and fails correctly, in under a
+second.
 
 ## Scenarios
 

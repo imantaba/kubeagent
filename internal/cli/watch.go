@@ -146,10 +146,7 @@ func runWatchOpts(o watchOptions) error {
 		repeat = alert.DefaultRepeat(alert.Format(o.alertFormat))
 	}
 	if alertURL == "" && (o.alertFormat != "json" || o.alertRepeat != 0) {
-		// This line hardcodes "kubeagent" where every other warning uses invokedAs.
-		// Preserved verbatim through the Cobra migration, which freezes stderr; it
-		// is worth fixing separately, where the change is visible as its own diff.
-		fmt.Fprintln(os.Stderr, "kubeagent: --alert-* flags ignored: KUBEAGENT_ALERT_WEBHOOK is not set, so alerting is off")
+		warnf(os.Stderr, "--alert-* flags ignored: KUBEAGENT_ALERT_WEBHOOK is not set, so alerting is off")
 	}
 
 	// --explain needs Anthropic, or a local OpenAI-compatible endpoint. Check

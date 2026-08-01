@@ -474,6 +474,25 @@ func TestRunWatch_WarnsWhenAlertRepeatSetWithoutWebhook(t *testing.T) {
 	}
 }
 
+func TestRunWatch_AlertWarningNamesTheKubectlPluginInvocation(t *testing.T) {
+	// The one warning kubeagent writes before it has a cluster is still a
+	// warning: a kubectl-plugin user must not be told to look for a "kubeagent"
+	// that is not on their PATH.
+	saved := invokedAs
+	invokedAs = "kubectl kubeagent"
+	defer func() { invokedAs = saved }()
+
+	t.Setenv("KUBEAGENT_ALERT_WEBHOOK", "")
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "nonexistent")
+	stderr := captureStderr(t, func() {
+		_ = runWatch([]string{"--alert-format", "slack", "--kubeconfig", bad})
+	})
+	if !strings.Contains(stderr, "kubectl kubeagent: warning: --alert-* flags ignored") {
+		t.Fatalf("expected the warning to name the kubectl-plugin invocation, got: %q", stderr)
+	}
+}
+
 func TestRunWatch_NoWarningWithDefaultAlertFlags(t *testing.T) {
 	t.Setenv("KUBEAGENT_ALERT_WEBHOOK", "")
 	t.Setenv("KUBEAGENT_ALERT_FORMAT", "")

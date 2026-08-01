@@ -10,7 +10,7 @@ CTX=kind-$CLUSTER
 COREDNS_BACKUP=/tmp/kubeagent-chaos-coredns.yaml   # pristine Corefile, captured while healthy
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
-TEARDOWN=0; RECREATE=0; ONLY=""; OUT=""
+TEARDOWN=0; RECREATE=0; ONLY=""; OUT=""; K8S_VERSION=""; KIND_IMAGE=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -18,6 +18,7 @@ while [ $# -gt 0 ]; do
     --recreate) RECREATE=1 ;;
     --only) ONLY="$2"; shift ;;
     --out) OUT="$2"; shift ;;
+    --k8s-version) K8S_VERSION="$2"; shift ;;
     *) echo "unknown flag: $1" >&2; exit 2 ;;
   esac; shift
 done
@@ -26,6 +27,32 @@ done
 # 10# forces base 10: printf reads a leading-zero numeral as octal, so a plain
 # --only 08 or --only 09 errored and normalized to 00, silently matching nothing.
 if [ -n "$ONLY" ] && printf '%s' "$ONLY" | grep -qE '^[0-9]+$'; then ONLY=$(printf '%02d' "$((10#$ONLY))"); fi
+
+# Kubernetes version axis: chaos_versions / chaos_image / chaos_suffix, backed by
+# the digest-pinned set in chaos/versions.env.
+# shellcheck source=chaos/versions.sh
+. "$ROOT/chaos/versions.sh"
+
+# The version axis. Omitting --k8s-version keeps the historical names and lets
+# kind pick its own default image, so the release skill's documented command and
+# an operator's muscle memory keep working byte-for-byte.
+#
+# Everything cluster-shaped is derived from one place: two minors run on one
+# machine otherwise collide on the cluster, the context, the report and the
+# CoreDNS scratch file — and a collision on the last one is the nastiest,
+# because it silently restores the wrong Corefile.
+#
+# chaos_image runs FIRST because it is the call that validates: an unsupported or
+# malformed minor is refused here, before any name is derived from it and before
+# preflight has touched docker. chaos_suffix therefore cannot fail below.
+if [ -n "$K8S_VERSION" ]; then
+  KIND_IMAGE="$(chaos_image "$K8S_VERSION")" || exit 2
+  suffix="$(chaos_suffix "$K8S_VERSION")"
+  CLUSTER="$CLUSTER$suffix"
+  CTX="kind-$CLUSTER"
+  COREDNS_BACKUP="/tmp/$CLUSTER-coredns.yaml"
+  : "${OUT:=docs/testing/chaos-results-$K8S_VERSION.md}"
+fi
 
 : "${OUT:=docs/testing/chaos-results.md}"
 
@@ -50,8 +77,13 @@ create_cluster() {
     if [ "$RECREATE" = 1 ]; then kind delete cluster --name "$CLUSTER"; else
       echo "cluster $CLUSTER already exists (use --recreate to rebuild)"; return 0; fi
   fi
-  log "create kind cluster $CLUSTER"
-  kind create cluster --name "$CLUSTER" --config chaos/kind-config.yaml --wait 120s
+  log "create kind cluster $CLUSTER${KIND_IMAGE:+ (image $KIND_IMAGE)}"
+  # ${KIND_IMAGE:+--image "$KIND_IMAGE"} is deliberately unquoted: it must expand
+  # to either two words (--image and the value) or nothing at all, so the no-flag
+  # path runs the exact `kind create cluster` command it always has.
+  # shellcheck disable=SC2086
+  kind create cluster --name "$CLUSTER" --config chaos/kind-config.yaml --wait 120s \
+    ${KIND_IMAGE:+--image "$KIND_IMAGE"}
 }
 
 # preload_calico_images side-loads the Calico images into the Kind nodes before we
@@ -728,7 +760,10 @@ scenario_14() {   # on-incident explanations: budget throttle, /explanations, lo
   calls_n="$(wc -l < "$calls" 2>/dev/null | tr -d ' ')"
   expl_n="$(grep -c '"reason":"explanation"' "$alerts" 2>/dev/null || true)"
   firing_n="$(grep -c '"reason":"new"' "$alerts" 2>/dev/null || true)"
-  leaks="$(grep -cE '"prompt":[^\n]*(10\.[0-9]+\.[0-9]+\.[0-9]+|web-[0-9a-z]{6,}|kubeagent-chaos-worker)' "$calls" 2>/dev/null || true)"
+  # The node name is derived, not hardcoded: on a versioned cluster the nodes are
+  # named after that cluster, and a stale literal here would quietly match nothing
+  # and report every run leak-free.
+  leaks="$(grep -cE '"prompt":[^\n]*(10\.[0-9]+\.[0-9]+\.[0-9]+|web-[0-9a-z]{6,}|'"$CLUSTER"'-worker)' "$calls" 2>/dev/null || true)"
   path_lines="$(grep -c "127.0.0.1:$sport/v1" "$wlog" || true)"
   write_verbs="$(grep -icE '\b(create|update|patch|delete)d?\b' "$wlog" || true)"
   allowed="$(printf '%s\n' "$metrics"   | awk '/^kubeagent_explain_allowed_total/{print $2}')"

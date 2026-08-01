@@ -72,6 +72,22 @@ deadline` flake (slow serial in-node pulls). If it still flakes on a cold cluste
 above passes no `--teardown`) — that's what lets `./chaos/run.sh --only NN --out
 PATH` re-run a single scenario against the same cluster afterward.
 
+The command above pins no Kubernetes version, so kind picks its own node image — the
+release gate has always run that way and still does. To gate a release on more than one
+minor, add `--k8s-version` and run them **one at a time**, since two Kind clusters on one
+machine need inotify limits most workstations do not have (`chaos/README.md` has the two
+`sysctl` commands, and the harness's preflight prints them):
+
+```bash
+for v in v1.32 v1.33 v1.34; do
+  ./chaos/run.sh --k8s-version "$v" --recreate --teardown || echo "GATE FAILED on $v"
+done
+```
+
+Each minor gets its own cluster, context and report (`docs/testing/chaos-results-$v.md`),
+so nothing collides. The supported minors and their digest-pinned images live in
+`chaos/versions.env`; an unsupported value is refused before docker is touched.
+
 **Detector / report / docs-only changes** fully covered by unit tests + the fake
 clientset (a new pure detector, an output-format tweak) don't need the full outage suite —
 a **lightweight real-cluster smoke** confirms the change renders on live nodes:

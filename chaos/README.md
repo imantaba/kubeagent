@@ -10,7 +10,8 @@ regression stops a release instead of waiting for someone to notice it while
 reading the whole thing.
 
 It is read-only with respect to any real cluster: it creates and targets only
-its own `kind-kubeagent-chaos` context and never reads your current kubecontext.
+its own `kind-kubeagent-chaos` context — `kind-kubeagent-chaos-v1-33` and the
+like when `--k8s-version` is given — and never reads your current kubecontext.
 
 ## Prerequisites
 
@@ -18,6 +19,23 @@ its own `kind-kubeagent-chaos` context and never reads your current kubecontext.
 - **kind** ≥ v0.30 — install:
   `curl -sSLo kind https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-amd64 && chmod +x kind && sudo mv kind /usr/local/bin/`
 - **kubectl**, **helm**, **go**, **python3**
+- **inotify headroom.** Every kubelet, kube-proxy and controller inside a Kind
+  node draws inotify instances from a **host-wide** budget — containers do not
+  get their own. Below kind's recommended limits one cluster usually still
+  boots, so the machine looks fine, and the *second* one starves: kube-proxy
+  dies with `too many open files`, the kubelet never reaches healthy, and
+  kubeadm gives up four minutes later with a Go stack trace naming none of it.
+  Raise them once:
+
+  ```bash
+  sudo sysctl -w fs.inotify.max_user_instances=512
+  sudo sysctl -w fs.inotify.max_user_watches=524288
+  ```
+
+  `run.sh`'s preflight checks both values and prints exactly those two commands
+  when they are low. It only *refuses* to start when they are low **and** another
+  Kind cluster is already running, because that pair is what actually breaks —
+  running one cluster at a time needs no host change.
 
 ## Run
 
@@ -27,10 +45,63 @@ its own `kind-kubeagent-chaos` context and never reads your current kubecontext.
 ./chaos/run.sh --teardown      # delete the cluster when finished
 ./chaos/run.sh --only 7        # run a single scenario (1..20) for debugging
 ./chaos/run.sh --out path.md   # write the report somewhere specific
+./chaos/run.sh --k8s-version v1.33   # pin the Kubernetes minor (see below)
 ```
 
 The report is written to `docs/testing/chaos-results.md` by default (the
 `docs/testing/` directory is git-ignored, so reports stay local).
+
+### Kubernetes versions
+
+Omitting `--k8s-version` lets kind pick its own node image, which is what the
+release gate has always run — the command in the release skill keeps working
+byte-for-byte. Passing the flag pins a specific minor instead:
+
+```bash
+./chaos/run.sh --k8s-version v1.33 --recreate --teardown
+```
+
+The supported minors and the node image for each live in
+[`versions.env`](versions.env), read only by `chaos/versions.sh`, so the harness
+and the nightly workflow can never disagree about what "supported" means. An
+unsupported or malformed value is refused before anything touches docker, with
+the supported set named on stderr and nothing on stdout — a caller that ignored
+the status would otherwise hand `kind create cluster` an empty `--image` and
+silently boot whatever kind defaults to.
+
+The images are pinned **by digest**, not by tag. A tag can be retagged upstream,
+and a nightly that goes red because someone else moved a tag teaches everyone to
+ignore the nightly. With a digest, a red cell is always a kubeagent change.
+
+Everything cluster-shaped is derived from the minor, so two of them coexist on
+one machine without colliding — including the CoreDNS scratch file, where a
+collision is the nastiest, because it silently restores the wrong Corefile:
+
+| Derived from | default | `--k8s-version v1.33` |
+| ------------ | ------- | --------------------- |
+| cluster | `kubeagent-chaos` | `kubeagent-chaos-v1-33` |
+| context | `kind-kubeagent-chaos` | `kind-kubeagent-chaos-v1-33` |
+| report | `docs/testing/chaos-results.md` | `docs/testing/chaos-results-v1.33.md` |
+| CoreDNS backup | `/tmp/kubeagent-chaos-coredns.yaml` | `/tmp/kubeagent-chaos-v1-33-coredns.yaml` |
+| node image | kind's default | pinned in `versions.env` |
+
+Coexisting is what the inotify prerequisite above pays for; one minor at a time
+needs nothing.
+
+To add or move a minor, resolve its digest from the kind release that ships it —
+kind's release notes are the authority, not whatever the tag happens to resolve
+to today — and edit `versions.env` in one reviewed commit:
+
+```bash
+gh release view v0.30.0 --repo kubernetes-sigs/kind |
+  grep -oE 'kindest/node:v[0-9.]+@sha256:[0-9a-f]{64}'
+```
+
+`bash chaos/version-selftest.sh` then checks the result with no cluster and no
+docker, in under a second: every listed minor resolves to a digest-pinned
+`kindest/node` reference naming that minor, and an unsupported, malformed, or
+merely prefix-matching value (`v1.3` against `v1.33`) is refused with nothing on
+stdout.
 
 ### `--explain`
 
@@ -166,7 +237,9 @@ vendor a pinned `pod-memory-hog` ChaosExperiment + ChaosEngine and swap it into
 
 ## Safety
 
-- Targets only `kind-kubeagent-chaos`; refuses to touch any other cluster.
+- Targets only the context it created — `kind-kubeagent-chaos`, or
+  `kind-kubeagent-chaos-v1-33` and the like under `--k8s-version`. It never
+  reads your current kubecontext, so it cannot touch another cluster.
 - The credential-leak scenario uses the documentation value
   `AKIAIOSFODNN7EXAMPLE` — never a real secret.
 - `ANTHROPIC_API_KEY` is read from the environment and never logged or committed.

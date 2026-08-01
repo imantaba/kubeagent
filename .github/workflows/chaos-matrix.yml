@@ -10,15 +10,16 @@ name: chaos-matrix
 # a cancelled sibling job teaches nothing.
 #
 # No secrets are needed and none are granted. ANTHROPIC_API_KEY is never set,
-# so the --explain scenarios skip by design — the deterministic core is what a
-# nightly gate is for.
+# so every ordinary scenario's scan runs without --explain — the deterministic
+# core is what a nightly gate is for. Scenario 14 is the one exception: it
+# does pass --explain, but to a local Python stub that never leaves the
+# runner and needs no key, so it proves the transport and redaction path, not
+# real model output (see chaos/README.md for detail).
 on:
-  # Temporary during slice 7c: a workflow file that has never been on the
-  # default branch cannot be dispatched, and this cell has to be measured on a
-  # real runner before the cron is enabled. Removed in the same commit that
-  # adds `schedule`.
-  push:
-    branches: [chaos-matrix]
+  schedule:
+    # Offset from fuzz.yml's 03:17 so the two nightlies do not contend for
+    # runners.
+    - cron: '41 2 * * *'
   workflow_dispatch:
     inputs:
       versions:
@@ -44,9 +45,9 @@ jobs:
           # A `${{ }}` expression is substituted into the script text before bash
           # ever sees it, so a dispatch input containing shell metacharacters would
           # be executed rather than assigned. Routing it through `env:` keeps it an
-          # ordinary string. The input only exists on workflow_dispatch — on the
-          # (temporary) push trigger there are no inputs at all, so `set -u` needs
-          # the `:-` below rather than a bare `$INPUT_VERSIONS`.
+          # ordinary string. The input only exists on workflow_dispatch — on a
+          # scheduled run there are no inputs at all, so `set -u` needs the `:-`
+          # below rather than a bare `$INPUT_VERSIONS`.
           INPUT_VERSIONS: ${{ inputs.versions }}
         run: |
           set -euo pipefail

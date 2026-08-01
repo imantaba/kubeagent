@@ -704,9 +704,21 @@ scenario_14() {   # on-incident explanations: budget throttle, /explanations, lo
   kill "$apid" >/dev/null 2>&1 || true; wait "$apid" >/dev/null 2>&1 || true
   kill "$spid" >/dev/null 2>&1 || true; wait "$spid" >/dev/null 2>&1 || true
 
+  # Hoist every counter, and pull the two explain metrics out of $metrics, so
+  # the report and the assertions below read the same values.
+  local calls_n expl_n firing_n leaks path_lines write_verbs allowed throttled
+  calls_n="$(wc -l < "$calls" 2>/dev/null | tr -d ' ')"
+  expl_n="$(grep -c '"reason":"explanation"' "$alerts" 2>/dev/null || true)"
+  firing_n="$(grep -c '"reason":"new"' "$alerts" 2>/dev/null || true)"
+  leaks="$(grep -cE '"prompt":[^\n]*(10\.[0-9]+\.[0-9]+\.[0-9]+|web-[0-9a-z]{6,}|kubeagent-chaos-worker)' "$calls" 2>/dev/null || true)"
+  path_lines="$(grep -c "127.0.0.1:$sport/v1" "$wlog" || true)"
+  write_verbs="$(grep -icE '\b(create|update|patch|delete)d?\b' "$wlog" || true)"
+  allowed="$(printf '%s\n' "$metrics"   | awk '/^kubeagent_explain_allowed_total/{print $2}')"
+  throttled="$(printf '%s\n' "$metrics" | awk '/^kubeagent_explain_throttled_total/{print $2}')"
+
   {
     echo '--- model calls the daemon actually made (one line per call) ---'
-    printf 'calls: %s\n' "$(wc -l <"$calls" 2>/dev/null || echo 0)"
+    printf 'calls: %s\n' "$calls_n"
     echo
     echo '--- /explanations ---'
     printf '%s\n' "$expl" | python3 -m json.tool 2>/dev/null || printf '%s\n' "$expl"
@@ -715,18 +727,28 @@ scenario_14() {   # on-incident explanations: budget throttle, /explanations, lo
     { grep -E '^kubeagent_explain_' <<<"$metrics" || echo '<no explain series>'; }
     echo
     echo '--- explanation notifications delivered ---'
-    { grep -c '"reason":"explanation"' "$alerts" 2>/dev/null || echo 0; } | sed 's/^/explanation notifications: /'
-    { grep -c '"reason":"new"' "$alerts" 2>/dev/null || echo 0; } | sed 's/^/plain firing notifications: /'
+    printf 'explanation notifications: %s\n' "$expl_n"
+    printf 'plain firing notifications: %s\n' "$firing_n"
     echo
     echo '--- egress check: no pod name, pod IP or node name in any prompt ---'
-    { grep -cE '"prompt":[^\n]*(10\.[0-9]+\.[0-9]+\.[0-9]+|web-[0-9a-z]{6,}|kubeagent-chaos-worker)' "$calls" 2>/dev/null || true; } \
-      | sed 's/^/prompts leaking pod or node detail: /'
+    printf 'prompts leaking pod or node detail: %s\n' "$leaks"
     echo
     echo '--- endpoint redaction check (only scheme://host may appear in logs) ---'
-    { grep -c "127.0.0.1:$sport/v1" "$wlog" || true; } | sed 's/^/log lines naming the endpoint path: /'
+    printf 'log lines naming the endpoint path: %s\n' "$path_lines"
     echo
     echo '--- write-path check: the daemon issued no mutating calls ---'
-    { grep -icE '\b(create|update|patch|delete)d?\b' "$wlog" || true; } | sed 's/^/log lines mentioning a write verb: /'
+    printf 'log lines mentioning a write verb: %s\n' "$write_verbs"
+    echo
+    echo '--- assertions ---'
+    expect_eq "model calls made (budget 1)"          "$calls_n"   1
+    expect_eq "explanation notifications delivered"  "$expl_n"    1
+    expect_ge "plain firing notifications unaffected" "$firing_n" 1
+    expect_eq "explain budget admitted one"          "$allowed"   1
+    expect_ge "explain budget throttled the rest"    "$throttled" 1
+    expect_eq "no prompt leaks pod or node detail"   "$leaks"     0
+    expect_eq "no log line carries the endpoint path" "$path_lines" 0
+    expect_eq "daemon log mentions no write verb"    "$write_verbs" 0
+    expect_contains "the explanation names the stub model" "$expl" "chaos-stub"
   } | record "14. On-incident explanations (budget 1, two objects break)" "expect: exactly 1 model call and exactly 1 explanation notification (reason=explanation) even though two objects break — Deployment/$ns/web and its Service — because --explain-budget 1 admits one and throttles the rest. kubeagent_explain_allowed_total must be 1 and kubeagent_explain_throttled_total at least 1; /explanations must carry one entry with non-empty text and model=chaos-stub, alongside the plain firing notifications which are unaffected. No prompt may contain a pod name, pod IP or node name, no log line may carry the endpoint's path, and no write verb may appear. This scenario uses a local stub endpoint, so it proves the transport, the throttle, the notification shape and the egress discipline — it does not exercise the Anthropic backend, which is covered by unit tests only."
 
   rm -f "$wlog" "$alerts" "$calls"
@@ -779,6 +801,19 @@ scenario_15_multicluster() {   # one daemon, three targets: two names for this c
 
   kill "$wpid" >/dev/null 2>&1 || true; wait "$wpid" >/dev/null 2>&1 || true
 
+  # Hoist the per-cluster readings out of the grep pipelines, so the report
+  # and the assertions below read the same values.
+  local clusters_total up_ctx up_alias up_dead issue_ctx issue_alias issue_dead kubeconfig_material write_verbs
+  clusters_total="$(printf '%s\n' "$metrics" | awk '/^kubeagent_clusters_total/{print $2}')"
+  up_ctx="$(printf   '%s\n' "$metrics" | awk -v c="cluster=\"$CTX\""      '$0 ~ /^kubeagent_cluster_up/ && index($0,c){print $2}')"
+  up_alias="$(printf '%s\n' "$metrics" | awk '$0 ~ /^kubeagent_cluster_up/ && index($0,"cluster=\"alias-b\""){print $2}')"
+  up_dead="$(printf  '%s\n' "$metrics" | awk '$0 ~ /^kubeagent_cluster_up/ && index($0,"cluster=\"dead\""){print $2}')"
+  issue_ctx="$(printf   '%s\n' "$metrics" | grep -c "^kubeagent_issue_active{cluster=\"$CTX\"" || true)"
+  issue_alias="$(printf '%s\n' "$metrics" | grep -c '^kubeagent_issue_active{cluster="alias-b"' || true)"
+  issue_dead="$(printf  '%s\n' "$metrics" | grep -c '^kubeagent_issue_active{cluster="dead"' || true)"
+  kubeconfig_material="$(grep -cE 'BEGIN CERTIFICATE|client-key-data|client-certificate-data|token:' "$wlog" || true)"
+  write_verbs="$(grep -icE '\b(create|update|patch|delete)d?\b' "$wlog" || true)"
+
   {
     echo "--- /readyz status code with one target permanently dead ---"
     printf 'HTTP %s\n' "$ready_code"
@@ -798,14 +833,25 @@ scenario_15_multicluster() {   # one daemon, three targets: two names for this c
       || echo '<could not parse /issues>'
     echo
     echo '--- credential check: no kubeconfig material in any log line ---'
-    { grep -cE 'BEGIN CERTIFICATE|client-key-data|client-certificate-data|token:' "$wlog" || true; } \
-      | sed 's/^/log lines carrying kubeconfig material: /'
+    printf 'log lines carrying kubeconfig material: %s\n' "$kubeconfig_material"
     echo
     echo '--- write-path check: the daemon issued no mutating calls ---'
-    { grep -icE '\b(create|update|patch|delete)d?\b' "$wlog" || true; } | sed 's/^/log lines mentioning a write verb: /'
+    printf 'log lines mentioning a write verb: %s\n' "$write_verbs"
     echo
     echo '--- daemon log tail (last 15 lines) ---'
     tail -n 15 "$wlog" 2>/dev/null || echo '<no daemon log captured>'
+    echo
+    echo '--- assertions ---'
+    expect_eq "readyz stays 200 with one target dead" "$ready_code" 200
+    expect_eq "cluster roster size"                   "$clusters_total" 3
+    expect_eq "the real cluster is up"                "$up_ctx"   1
+    expect_eq "its second label is up"                "$up_alias" 1
+    expect_eq "the unreachable target is down"        "$up_dead"  0
+    expect_ge "the broken workload is seen under the real cluster label" "$issue_ctx"   1
+    expect_ge "and again under its second label"                         "$issue_alias" 1
+    expect_eq "no issue is attributed to the unreachable target"         "$issue_dead"  0
+    expect_eq "no log line carries kubeconfig material" "$kubeconfig_material" 0
+    expect_eq "daemon log mentions no write verb"       "$write_verbs" 0
   } | record "15. Multi-cluster hub (three targets, one dead)" "expect: /readyz returns HTTP 200 even though the 'dead' target never reaches its API server — readiness means every cluster finished a first attempt, because a NotReady pod leaves its Service endpoints and Prometheus would then stop scraping the clusters that ARE working. kubeagent_clusters_total is 3; kubeagent_cluster_up is 1 for both $CTX and alias-b and 0 for dead. The broken workload appears in kubeagent_issue_active once per healthy cluster label — four lines in all: the Deployment's ErrImagePull and its same-named Service's NoEndpoints (the container-name coupling scenario 12 documents), each under cluster=\"$CTX\" and again under cluster=\"alias-b\" — and the /issues cluster roster lists all three with dead carrying a non-empty error. No log line may carry kubeconfig material, and no write verb may appear. Scope: alias-b is a second NAME for the same cluster, so this proves labelling, the cross-cluster merge and the degradation path — the parts most likely to regress — but it does not exercise genuinely divergent cluster state, which would need a second Kind cluster and is covered by unit tests with independent fake clientsets instead. Every daemon log line must also carry a [<cluster>] prefix; with three interleaved reconcile loops an unprefixed line is a bug."
 
   rm -f "$wlog" "$kc"

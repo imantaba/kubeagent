@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-08-01
+
+**1.0 is a commitment, not a feature.** Nothing about how kubeagent behaves
+changes at this version; what changes is that its surfaces are now covered by a
+written contract, and that the Kubernetes versions it claims to support are ones
+a nightly matrix actually proves. From here a MAJOR release is the only one that
+may break a stable surface. See
+[Compatibility and support](https://k8sproject.top/compatibility/) for what that
+covers and — equally deliberately — what it does not.
+
+Theme H, the production-contract track, is complete: supply-chain integrity
+(0.68), least-privilege RBAC (0.69), fuzzed detectors (0.70), versioned JSON
+schemas (0.71), bounded scan concurrency (0.72), the Cobra CLI (0.73), policy as
+code (0.74), and now the cross-version chaos matrix and the contract itself.
+
 ### Added
 
 - **The chaos harness is a gate, not a report.** Its checks are now
@@ -37,6 +52,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   secret is granted: `ANTHROPIC_API_KEY` is never set, so the nightly gates
   kubeagent's deterministic core, not the `--explain` path. See
   `chaos/README.md` for what the matrix does and does not cover.
+- **A written compatibility and support contract**
+  ([website/docs/compatibility.md](https://k8sproject.top/compatibility/)).
+  It names the surfaces that are stable within 1.x — the command line
+  (including the single-dash long-flag shim that keeps pre-v0.73 invocations
+  working), `gate`'s exit codes, the documented `KUBEAGENT_*` variables, the
+  Helm chart's values, and the six JSON documents by reference to their own
+  schema contract — and, just as deliberately, the ones that are not: the text
+  report's wording, the HTML markup, every `internal/` package, and any
+  model-generated prose. It states the supported Kubernetes window as an
+  *evidenced* one — v1.32, v1.33 and v1.34 are listed because the nightly
+  chaos matrix passes 105 assertions against each — and it sets a deprecation
+  policy: one full MINOR of continued operation, a warning on stderr only so a
+  JSON pipeline is never corrupted, removal no earlier than the next MAJOR.
 
 ### Fixed
 
@@ -1355,7 +1383,8 @@ infrastructure (a documentation site and a pre-release chaos-test harness).
 - CI (vet/test/build on push & PR) and a release workflow publishing a
   linux/amd64 tarball + `SHA256SUMS` to a GitHub Release.
 
-[Unreleased]: https://github.com/imantaba/kubeagent/compare/v0.74.0...HEAD
+[Unreleased]: https://github.com/imantaba/kubeagent/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/imantaba/kubeagent/compare/v0.74.0...v1.0.0
 [0.74.0]: https://github.com/imantaba/kubeagent/compare/v0.73.0...v0.74.0
 [0.73.0]: https://github.com/imantaba/kubeagent/compare/v0.72.0...v0.73.0
 [0.72.0]: https://github.com/imantaba/kubeagent/compare/v0.71.0...v0.72.0

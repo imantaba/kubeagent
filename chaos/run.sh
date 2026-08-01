@@ -217,7 +217,7 @@ scenario_05_coredns() {   # bad Corefile -> CoreDNS CrashLoop
 
 scenario_04_networkpolicy() {   # Calico-enforced deny-all as the *cause* of a degraded app
   log "scenario 4: NetworkPolicy blocking traffic"
-  local ns=chaos-np i baseline broken recovered blocked_scan recovery_scan probe_event blocked_lines recovery_lines
+  local ns=chaos-np i baseline broken recovered blocked_scan recovery_scan probe_event blocked_lines recovery_lines blocked_rc recovery_rc
   kubectl --context "$CTX" create ns "$ns" --dry-run=client -o yaml | kubectl --context "$CTX" apply -f - >/dev/null
   # The probe must be *pod-sourced* for the policy to matter. Calico permits the
   # kubelet's own probe traffic to a local pod even under a deny-all Ingress

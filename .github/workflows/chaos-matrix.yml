@@ -124,6 +124,7 @@ jobs:
       # `if: always()` because a FAILED run's report is the one worth reading,
       # and a failed run is exactly when nobody is watching the scan.
       - name: Scan the report for credential material
+        id: scan
         if: always()
         run: |
           set -uo pipefail
@@ -159,8 +160,19 @@ jobs:
           fi
           echo "report is clean — safe to upload"
 
+      # `always()` on the scan step above means it runs whether the chaos
+      # suite passed or failed, but `always()` here would be wrong: it
+      # ignores the scan's own result and would publish a report the scan
+      # just refused. Gate on the scan step's `outcome` — the step's result
+      # before any `continue-on-error` is applied, so a later
+      # `continue-on-error` added to the scan step could never quietly
+      # un-gate this upload the way checking `conclusion` could (this step
+      # sets no `continue-on-error` today, so the two agree for now, but
+      # `outcome` is the one that stays correct if that ever changes) — and
+      # skip entirely on cancellation, so a cancelled run uploads nothing
+      # rather than whatever happened to be on disk when the signal arrived.
       - name: Upload the report
-        if: always()
+        if: ${{ !cancelled() && steps.scan.outcome != 'failure' }}
         uses: actions/upload-artifact@v4
         with:
           name: chaos-report-${{ matrix.version }}

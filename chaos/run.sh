@@ -162,7 +162,18 @@ scenario_03_diskfull() {   # cordon stand-in for DiskPressure/SchedulingDisabled
   kubectl --context "$CTX" -n chaos-diskfull patch deploy toobig --type=json \
     -p='[{"op":"add","path":"/spec/template/spec/containers/0/resources","value":{"requests":{"cpu":"1000"}}}]' >/dev/null
   sleep 12
-  { scan 2>&1 || true; } | record "3. Disk full on control plane (node cordon + unschedulable pod)" "detected: SchedulingDisabled + Unschedulable"
+  local out rc body
+  out="$(scan 2>&1)" && rc=0 || rc=$?
+  body="$(scan_body "$out")"
+  {
+    printf '%s\n' "$out"
+    printf '\n--- assertions ---\n'
+    expect_eq       "scan exit code"              "$rc" 0
+    expect_contains "cluster verdict"             "$body" "Cluster: Degraded"
+    expect_contains "cordoned node named"         "$body" "$node"
+    expect_contains "cordon reported"             "$body" "SchedulingDisabled"
+    expect_contains "unschedulable pod reported"  "$body" "Unschedulable"
+  } | record "3. Disk full on control plane (node cordon + unschedulable pod)" "detected: SchedulingDisabled + Unschedulable"
   kubectl --context "$CTX" uncordon "$node" >/dev/null
   kubectl --context "$CTX" delete ns chaos-diskfull --wait=true --timeout=120s >/dev/null 2>&1 || true
 }
@@ -770,6 +781,9 @@ WIDGET
 
 scenario_02_certs() {   # documented skip (can't force cert expiry on Kind)
   log "scenario 2: expired certificates (skipped)"
+  # No assertion here on purpose: this scenario runs no scan and computes no
+  # value, so any expect_* call could only compare the skip text with itself.
+  # The TLS branch is asserted in internal/connectivity's unit tests instead.
   printf 'Skipped on Kind: control-plane certificate expiry cannot be forced quickly or safely.\nkubeagent TLS / expired-certificate handling is covered by internal/connectivity unit tests\n(x509 UnknownAuthority / CertificateInvalid / Hostname errors, plus "x509:" / "certificate" / "tls: " substrings).\n' \
     | record "2. Expired certificates" "skipped (documented; TLS branch unit-tested)"
 }
@@ -1230,7 +1244,16 @@ main() {
   wait_system_ready
 
   log "baseline healthy scan"
-  { scan 2>&1 || true; } | record "Baseline (healthy cluster)" "baseline"
+  local bout brc bbody
+  bout="$(scan 2>&1)" && brc=0 || brc=$?
+  bbody="$(scan_body "$bout")"
+  {
+    printf '%s\n' "$bout"
+    printf '\n--- assertions ---\n'
+    expect_eq       "baseline scan exit code"          "$brc" 0
+    expect_contains "baseline cluster verdict"         "$bbody" "Cluster: Healthy"
+    expect_contains "baseline reports nothing to fix"  "$bbody" "No issues found."
+  } | record "Baseline (healthy cluster)" "baseline"
 
   run_scenarios
 

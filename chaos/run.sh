@@ -328,7 +328,16 @@ scenario_06_lb() {   # LoadBalancer Service with no provider -> pending (no exte
   kubectl --context "$CTX" -n chaos-lb rollout status deploy web --timeout=90s >/dev/null 2>&1 || true
   kubectl --context "$CTX" -n chaos-lb patch svc web -p '{"spec":{"type":"LoadBalancer"}}' >/dev/null
   sleep 10
-  { scan 2>&1 || true; } | record "6. Cloud load balancer failure (LoadBalancer pending)" "detected: Service issues - no external address"
+  local out rc body
+  out="$(scan 2>&1)" && rc=0 || rc=$?
+  body="$(scan_body "$out")"
+  {
+    printf '%s\n' "$out"
+    printf '\n--- assertions ---\n'
+    expect_eq       "scan exit code"            "$rc" 0
+    expect_contains "pending Service named"     "$body" "chaos-lb/web"
+    expect_contains "no external address flagged" "$body" "no external address"
+  } | record "6. Cloud load balancer failure (LoadBalancer pending)" "detected: Service issues - no external address"
   kubectl --context "$CTX" delete ns chaos-lb --wait=true --timeout=120s >/dev/null 2>&1 || true
 }
 
@@ -338,7 +347,17 @@ scenario_08_nsdelete() {   # stateless blind spot
   kubectl --context "$CTX" -n chaos-doomed apply -f chaos/manifests/app.yaml >/dev/null
   kubectl --context "$CTX" -n chaos-doomed rollout status deploy web --timeout=90s >/dev/null 2>&1 || true
   kubectl --context "$CTX" delete ns chaos-doomed --wait=true >/dev/null 2>&1 || true
-  { scan 2>&1 || true; } | record "8. Accidental namespace deletion" "boundary: stateless scanner reports no issues (no expected-state tracking)"
+  local out rc body
+  out="$(scan 2>&1)" && rc=0 || rc=$?
+  body="$(scan_body "$out")"
+  {
+    printf '%s\n' "$out"
+    printf '\n--- assertions ---\n'
+    expect_eq       "scan exit code"                    "$rc" 0
+    expect_contains "cluster verdict"                   "$body" "Cluster: Healthy"
+    expect_contains "stateless scanner reports nothing" "$body" "No issues found."
+    expect_absent   "the deleted namespace is not reported" "$body" "chaos-doomed"
+  } | record "8. Accidental namespace deletion" "boundary: stateless scanner reports no issues (no expected-state tracking)"
 }
 
 scenario_09_rollout() {   # bad image -> ImagePullBackOff
@@ -825,7 +844,16 @@ spec:
           args: ["--vm", "1", "--vm-bytes", "200M", "--vm-hang", "1"]  # touch >limit so the kernel OOM-kills it (reason OOMKilled, not malloc Error)
 OOM
   sleep 35
-  { scan 2>&1 || true; } | record "7. OOMKilled critical workload (memory-hog, 64Mi limit)" "detected: OOMKilled + container requests/limits"
+  local out rc body
+  out="$(scan 2>&1)" && rc=0 || rc=$?
+  body="$(scan_body "$out")"
+  {
+    printf '%s\n' "$out"
+    printf '\n--- assertions ---\n'
+    expect_eq       "scan exit code"           "$rc" 0
+    expect_contains "OOM workload named"       "$body" "chaos-oom/oom-target"
+    expect_contains "OOMKilled diagnosed"      "$body" "OOMKilled"
+  } | record "7. OOMKilled critical workload (memory-hog, 64Mi limit)" "detected: OOMKilled + container requests/limits"
   kubectl --context "$CTX" delete ns chaos-oom --wait=true --timeout=120s >/dev/null 2>&1 || true
 }
 

@@ -1,0 +1,99 @@
+name: chaos-matrix
+
+# The chaos suite is a 35-40 minute gate that needs a real Kubernetes cluster,
+# so it belongs on a schedule and on demand — never on a pull request. What
+# defends a pull request is CI's fast job, which runs the harness's own
+# cluster-free self-tests.
+#
+# One job per supported Kubernetes minor. fail-fast is off on purpose: the
+# whole point of a matrix is to learn that v1.32 broke while v1.34 is fine, and
+# a cancelled sibling job teaches nothing.
+#
+# No secrets are needed and none are granted. ANTHROPIC_API_KEY is never set,
+# so the --explain scenarios skip by design — the deterministic core is what a
+# nightly gate is for.
+on:
+  # Temporary during slice 7c: a workflow file that has never been on the
+  # default branch cannot be dispatched, and this cell has to be measured on a
+  # real runner before the cron is enabled. Removed in the same commit that
+  # adds `schedule`.
+  push:
+    branches: [chaos-matrix]
+  workflow_dispatch:
+    inputs:
+      versions:
+        description: 'Space-separated minors to run, or empty for every supported minor'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  # The minor list lives in exactly one place, chaos/versions.env, so the
+  # harness and this workflow can never disagree about what "supported" means.
+  # A hardcoded second copy here is the bug this job exists to prevent.
+  versions:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.resolve.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: resolve
+        run: |
+          set -euo pipefail
+          . chaos/versions.sh
+          picked="${{ inputs.versions }}"
+          [ -n "$picked" ] || picked="$(chaos_versions)"
+          # Validate every requested minor through the same resolver the
+          # harness uses, so a typo in a dispatch input fails here — in
+          # seconds — instead of after a cluster has been built.
+          for v in $picked; do chaos_image "$v" >/dev/null; done
+          json="$(printf '%s\n' $picked | jq -R . | jq -sc .)"
+          printf 'matrix=%s\n' "$json" >> "$GITHUB_OUTPUT"
+          printf 'running: %s\n' "$picked"
+
+  chaos:
+    needs: versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ${{ fromJson(needs.versions.outputs.matrix) }}
+    name: chaos (${{ matrix.version }})
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install kind
+        run: |
+          set -euo pipefail
+          curl -sSLo /tmp/kind https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-amd64
+          chmod +x /tmp/kind
+          sudo mv /tmp/kind /usr/local/bin/kind
+          kind version
+
+      # A kind node's kubelet, kube-proxy and controllers all draw inotify
+      # instances from a host-wide budget, and a runner ships with kind's
+      # pre-recommendation defaults. One cluster usually still boots at those
+      # values, which is exactly what makes the failure intermittent rather
+      # than obvious. Raise them before anything is created.
+      - name: Raise inotify limits for kind
+        run: |
+          sudo sysctl -w fs.inotify.max_user_instances=512
+          sudo sysctl -w fs.inotify.max_user_watches=524288
+
+      - name: Preflight tools
+        run: |
+          for b in docker kind kubectl helm go curl python3; do
+            command -v "$b" >/dev/null || { echo "missing required tool: $b" >&2; exit 1; }
+          done
+          docker info >/dev/null
+
+      - name: Run the chaos suite on ${{ matrix.version }}
+        run: ./chaos/run.sh --k8s-version '${{ matrix.version }}' --recreate --teardown

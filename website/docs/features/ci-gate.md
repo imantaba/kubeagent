@@ -82,6 +82,14 @@ A waived resource still appears in the output (`RenderText` prints it,
 should still see what they chose not to be told about, even though it no
 longer forces exit `2`.
 
+One carve-out: a `--policy` rule kubeagent could not evaluate is exit `1`, not
+`2`, even when the read failure behind it also shows up as a blind spot (see
+[Policy as code](policy.md#a-rule-that-could-not-be-evaluated-is-not-a-pass)).
+The `kubeagent gate || [ $? -eq 2 ]` pattern above is for soldiering on
+through a partial read — it is not meant to also soldier on through a rule
+that never ran, so an unevaluated rule at or above `--fail-on` keeps the exit
+code at `1` regardless of `--allow-partial-read`.
+
 ## A preflight check for missing grants
 
 `kubeagent gate` fails closed on a resource it cannot read — that is exit

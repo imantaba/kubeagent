@@ -178,10 +178,18 @@ SARIF, the rule id is `policy/<id>`.
 If kubeagent cannot read a kind a rule selects — an RBAC denial, a resource the
 cluster does not serve — the rule is reported as **not evaluated**, never as
 satisfied. In `gate`, an unevaluated rule at or above `--fail-on` **fails the
-build**. The same applies when the supporting list a relation compares against
-cannot be read: without the PodDisruptionBudget list, `hasPodDisruptionBudget`
-would report every workload as uncovered, which is a fabricated violation
-rather than a silent pass, and equally wrong.
+build: exit `1`**, the same code an ordinary failing finding gets. That stays
+true even when the read failure behind it also shows up as a blind spot in
+`--output json`'s `inconclusive` list — a policy grants no new RBAC, so the
+kind a rule could not read is often a kind the scan itself could not read
+either, and `--allow-partial-read` does not change the exit code here: waiving
+the read failure cannot turn a rule that never ran into anything less than a
+failure. See [Why exit 2 exists, and is not
+opt-in](ci-gate.md#why-exit-2-exists-and-is-not-opt-in). The same applies when
+the supporting list a relation compares against cannot be read: without the
+PodDisruptionBudget list, `hasPodDisruptionBudget` would report every workload
+as uncovered, which is a fabricated violation rather than a silent pass, and
+equally wrong.
 
 ## What a rule may not do
 

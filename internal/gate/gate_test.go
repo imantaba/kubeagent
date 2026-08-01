@@ -432,12 +432,17 @@ func TestUnevaluatedRuleStaysFailingWithAWaivedUnrelatedBlindspot(t *testing.T) 
 	}
 }
 
-// An unwaived blind spot elsewhere still outranks the unevaluated rule's own
-// fail at the top level — "inconclusive beats fail" is pre-existing
-// precedence this fix must not change — but the rule must still be recorded
-// as Failing underneath, because it is still true independent of the verdict
-// string.
-func TestUnevaluatedRuleYieldsToAnUnwaivedUnrelatedBlindspot(t *testing.T) {
+// An unwaived blind spot elsewhere used to outrank the unevaluated rule's own
+// fail at the top level. That was the bug the whole-branch review found: an
+// unevaluated rule and an unrelated read failure both being present must not
+// read any differently than an unevaluated rule on its own, because a policy
+// grants no new RBAC — a real blind spot and an unevaluated rule are usually
+// the *same* RBAC denial by coincidence of scope, and treating "elsewhere" as
+// special would make that coincidence do the work instead of the rule.
+// TestUnevaluatedRuleFailsEvenWhenTheSameReadIsABlindSpot below pins the
+// same-resource case directly; this one keeps the unrelated-resource case
+// covered now that both resolve to fail.
+func TestUnevaluatedRuleStillFailsWithAnUnwaivedUnrelatedBlindspot(t *testing.T) {
 	res := scan.Result{PartialReads: []scan.ReadFailure{{Resource: "Ingress", Reason: "forbidden"}}}
 	v := Decide(res, Options{
 		FailOn: findings.Warning,
@@ -446,10 +451,143 @@ func TestUnevaluatedRuleYieldsToAnUnwaivedUnrelatedBlindspot(t *testing.T) {
 			Reason: "kubeagent could not read this kind, so the rule was not evaluated",
 		}},
 	})
-	if v.Code != CodeInconclusive {
-		t.Fatalf("exit code = %d, want %d — an unwaived blind spot elsewhere still beats fail", v.Code, CodeInconclusive)
+	if v.Code != CodeFail {
+		t.Fatalf("exit code = %d, want %d — an unevaluated rule fails the gate regardless of an unrelated blind spot", v.Code, CodeFail)
+	}
+	if v.Verdict != "fail" {
+		t.Errorf("Verdict = %q, want fail", v.Verdict)
 	}
 	if len(v.Failing) != 1 || v.Failing[0].Issue != "policy/storage-encrypted" {
 		t.Fatalf("failing = %#v, want the unevaluated rule still recorded", v.Failing)
+	}
+	// The blind spot itself must still be visible as data, even though it no
+	// longer decides the top-level verdict.
+	if len(v.Inconclusive) != 1 || v.Inconclusive[0].Waived {
+		t.Errorf("Inconclusive = %+v, want the unwaived blind spot still listed", v.Inconclusive)
+	}
+}
+
+// The bug the whole-branch review reproduced live: a policy grants no new
+// RBAC, so the resource a rule could not evaluate is also the resource that
+// shows up in scan.Result.PartialReads — the same RBAC denial populates both
+// lists. Before the fix, the blind spot silently downgraded the verdict from
+// fail/1 to inconclusive/2, which meant a rule that never ran could read as
+// merely "inconclusive" rather than a failure.
+func TestUnevaluatedRuleFailsEvenWhenTheSameReadIsABlindSpot(t *testing.T) {
+	res := scan.Result{PartialReads: []scan.ReadFailure{{
+		Resource: "storageclasses", Reason: "forbidden",
+	}}}
+	v := Decide(res, Options{
+		FailOn: findings.Warning,
+		PolicyNotEvaluated: []policy.Unevaluated{{
+			RuleID: "no-storageclasses-allowed", Level: policy.LevelCritical, Kind: "StorageClass",
+			Reason: "kubeagent could not read this kind, so the rule was not evaluated",
+		}},
+	})
+	if v.Code != CodeFail {
+		t.Fatalf("exit code = %d, want %d — the unevaluated rule must fail the gate even though the same read is a blind spot", v.Code, CodeFail)
+	}
+	if v.Verdict != "fail" {
+		t.Errorf("Verdict = %q, want fail", v.Verdict)
+	}
+	if len(v.Inconclusive) != 1 || v.Inconclusive[0].Waived {
+		t.Errorf("Inconclusive = %+v, want the blind spot still listed, unwaived", v.Inconclusive)
+	}
+}
+
+// Before the fix, waiving the colliding blind spot flipped the exit code from
+// 2 to 1 — waiving made the outcome stricter, which was the clearest sign the
+// old precedence was a bug rather than a design choice. After the fix, both
+// the waived and unwaived cases already agree on fail/1, so the waiver must
+// not change the outcome at all.
+func TestWaivingTheBlindSpotNoLongerChangesTheVerdictsDirection(t *testing.T) {
+	res := scan.Result{PartialReads: []scan.ReadFailure{{
+		Resource: "storageclasses", Reason: "forbidden",
+	}}}
+	v := Decide(res, Options{
+		FailOn:           findings.Warning,
+		AllowPartialRead: []string{"storageclasses"},
+		PolicyNotEvaluated: []policy.Unevaluated{{
+			RuleID: "no-storageclasses-allowed", Level: policy.LevelCritical, Kind: "StorageClass",
+			Reason: "kubeagent could not read this kind, so the rule was not evaluated",
+		}},
+	})
+	if v.Code != CodeFail {
+		t.Fatalf("exit code = %d, want %d — waiving the blind spot must not change the verdict's direction", v.Code, CodeFail)
+	}
+	if len(v.Inconclusive) != 1 || !v.Inconclusive[0].Waived {
+		t.Errorf("Inconclusive = %+v, want the waiver recorded, not dropped", v.Inconclusive)
+	}
+}
+
+// A policy violation (a rule that ran and found a problem) is an ordinary
+// finding, not an unevaluated rule, so it must keep losing to an unwaived
+// blind spot exactly as any other detector finding does. Only an unevaluated
+// rule gets the new carve-out — this pins the part of the old behaviour that
+// must not move.
+func TestBlindSpotStillBeatsAnOrdinaryPolicyViolation(t *testing.T) {
+	res := scan.Result{PartialReads: []scan.ReadFailure{{Resource: "events", Reason: "forbidden"}}}
+	v := Decide(res, Options{
+		FailOn: findings.Warning,
+		PolicyViolations: []policy.Violation{{
+			RuleID: "registry-allowlist", Level: policy.LevelCritical, Kind: "Pod",
+			Namespace: "prod", Name: "web", Message: "image is not from an allowed registry",
+		}},
+	})
+	if v.Code != CodeInconclusive {
+		t.Fatalf("exit code = %d, want %d — an unwaived blind spot still beats an ordinary policy violation", v.Code, CodeInconclusive)
+	}
+	if v.Verdict != "inconclusive" {
+		t.Errorf("Verdict = %q, want inconclusive", v.Verdict)
+	}
+}
+
+// --timeout still wins over everything, including the new unevaluated-rule
+// carve-out.
+func TestTimeoutBeatsAnUnevaluatedRuleAndABlindSpot(t *testing.T) {
+	res := scan.Result{PartialReads: []scan.ReadFailure{{
+		Resource: "storageclasses", Reason: "forbidden",
+	}}}
+	v := Decide(res, Options{
+		FailOn: findings.Warning, TimedOut: true,
+		PolicyNotEvaluated: []policy.Unevaluated{{
+			RuleID: "no-storageclasses-allowed", Level: policy.LevelCritical, Kind: "StorageClass",
+			Reason: "kubeagent could not read this kind, so the rule was not evaluated",
+		}},
+	})
+	if v.Code != CodeTimeout {
+		t.Fatalf("exit code = %d, want %d", v.Code, CodeTimeout)
+	}
+	if v.Verdict != "timeout" {
+		t.Errorf("Verdict = %q, want timeout", v.Verdict)
+	}
+}
+
+// An unevaluated rule below --fail-on lands in Reported, not Failing, so it
+// must not flip an unwaived blind spot's verdict to fail — only a rule that
+// crosses the threshold gets the carve-out.
+func TestUnevaluatedRuleBelowThresholdDoesNotOverrideABlindSpot(t *testing.T) {
+	res := scan.Result{PartialReads: []scan.ReadFailure{{Resource: "events", Reason: "forbidden"}}}
+	v := Decide(res, Options{
+		FailOn: findings.Critical,
+		PolicyNotEvaluated: []policy.Unevaluated{{
+			RuleID: "zone-label", Level: policy.LevelInfo, Kind: "Node",
+			Reason: "kubeagent could not read this kind, so the rule was not evaluated",
+		}},
+	})
+	if v.Code != CodeInconclusive {
+		t.Fatalf("exit code = %d, want %d — a below-threshold unevaluated rule must not override the blind spot", v.Code, CodeInconclusive)
+	}
+	foundInReported := false
+	for _, f := range v.Reported {
+		if f.Issue == "policy/zone-label" {
+			foundInReported = true
+		}
+	}
+	if !foundInReported {
+		t.Errorf("Reported = %#v, want the below-threshold unevaluated rule reported", v.Reported)
+	}
+	if len(v.Failing) != 0 {
+		t.Errorf("Failing = %#v, want empty — the unevaluated rule is below --fail-on", v.Failing)
 	}
 }

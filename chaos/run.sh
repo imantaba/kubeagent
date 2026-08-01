@@ -862,6 +862,33 @@ scenario_16_operators() {   # real cert-manager CRDs -> --operators; an unadapte
   log "scenario 16: operator/CRD adapters (--operators)"
   local ns=chaos-operators
   local cmurl="https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml"
+  # cert-manager's three leader-election Leases (cert-manager-controller,
+  # cert-manager-cainjector-leader-election, and its sibling -core, one each
+  # for the main controller and the two injector loops cainjector runs) all
+  # live in kube-system — nothing the cert-manager release manifest declares,
+  # so `kubectl delete -f "$cmurl"` at the end of a previous run (below) never
+  # removes them, and they survive to the next run. client-go's
+  # leader-election library waits a full LeaseDuration (60s, cert-manager's
+  # default) from the moment a FRESH process first observes ANY existing lease
+  # record before it will steal leadership — it distrusts the record's own
+  # renewTime and times the wait from its own first observation instead, no
+  # matter how stale that renewTime already is. Until cainjector wins its
+  # leases it injects no caBundle into the webhook configuration, so on a warm
+  # cluster the ValidatingWebhookConfiguration's caBundle stays empty for
+  # about a minute after every reapply and any Certificate admitted in that
+  # window is rejected with "x509: certificate signed by unknown authority"
+  # (the API server has no CA to validate the webhook's serving certificate
+  # against); separately, until the controller wins its lease it processes no
+  # Certificate at all, so Ready stays Unknown instead of settling to False.
+  # Confirmed live: caBundle took ~88s to populate and Ready took over 90s to
+  # settle with the stale leases left in place; both were near-immediate with
+  # them deleted first. Deleting all three here lets the incoming pods win
+  # leadership immediately, every run.
+  kubectl --context "$CTX" -n kube-system delete lease \
+    cert-manager-controller \
+    cert-manager-cainjector-leader-election \
+    cert-manager-cainjector-leader-election-core \
+    --ignore-not-found >/dev/null 2>&1 || true
   kubectl --context "$CTX" apply -f "$cmurl" >/dev/null 2>&1 || true
   kubectl --context "$CTX" -n cert-manager rollout status deploy/cert-manager --timeout=180s >/dev/null 2>&1 || true
   kubectl --context "$CTX" -n cert-manager rollout status deploy/cert-manager-cainjector --timeout=180s >/dev/null 2>&1 || true
@@ -876,15 +903,26 @@ scenario_16_operators() {   # real cert-manager CRDs -> --operators; an unadapte
       -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null | grep -q . && break
     sleep 5
   done
+  # A live endpoint is necessary but not sufficient: the API server also
+  # refuses the webhook's serving certificate with "x509: certificate signed
+  # by unknown authority" until cainjector has patched its CA into the
+  # ValidatingWebhookConfiguration's caBundle (see the leader-election comment
+  # above). Wait for that directly — it is the precondition the API server
+  # actually enforces — instead of retrying the Certificate apply blind.
+  for i in $(seq 24); do
+    kubectl --context "$CTX" get validatingwebhookconfiguration cert-manager-webhook \
+      -o jsonpath='{.webhooks[0].clientConfig.caBundle}' 2>/dev/null | grep -q . && break
+    sleep 5
+  done
   kubectl --context "$CTX" create ns "$ns" --dry-run=client -o yaml | kubectl --context "$CTX" apply -f - >/dev/null
 
   # A Certificate pointing at an Issuer that does not exist: cert-manager sets
   # Ready=False (observed reason: DoesNotExist, cert-manager v1.16.2) within
   # seconds, with no ACME round trip and no outbound network. The distinctive
   # secretName and commonName are the spec-leak probe below — neither may
-  # appear anywhere in the report. Retried: even once the webhook endpoint
-  # exists, the admission server itself can take a few more seconds to start
-  # accepting connections.
+  # appear anywhere in the report. Retried as a safety margin: even once the
+  # webhook is reachable and its caBundle is populated, the admission server
+  # can take another moment to settle.
   for i in $(seq 6); do
     kubectl --context "$CTX" -n "$ns" apply -f - >/dev/null 2>&1 <<'CERT' && break
 apiVersion: cert-manager.io/v1

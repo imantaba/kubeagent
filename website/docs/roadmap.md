@@ -495,7 +495,7 @@ These are the north star; every item below is measured against them.
   for `gate`); and `kubeagent completion bash|zsh|fish|powershell` prints a
   completion script generated from the command tree itself, so it cannot drift
   from the flags it describes — see [Shell completion](features/completion.md).
-  Slice 7 — policy as code — has shipped: `scan --policy` and `gate --policy`
+  Slice 7 — policy as code — has shipped (v0.74.0): `scan --policy` and `gate --policy`
   evaluate organization-specific checks from a YAML file, so an operator no
   longer has to fork kubeagent to add a check its detectors do not make. A
   rule names one kind and asserts one thing; a wildcard path yields one slot

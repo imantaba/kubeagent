@@ -511,6 +511,22 @@ scenario_12_watch() {   # stateful watch daemon: NEW on outage, RESOLVED on repa
   kill "$apid" >/dev/null 2>&1 || true
   wait "$apid" >/dev/null 2>&1 || true
 
+  # Hoist the transition log and the counters into variables so the report and
+  # the assertions below read the same values. The `|| true` guards are load-
+  # bearing under `set -euo pipefail`: grep (and, via pipefail, a pipe ending
+  # in one) exits 1 on zero matches, and a bare `var=$(...)` assignment that
+  # fails would abort the whole scenario mid-function under `set -e` — before
+  # the namespace cleanup at the bottom ever ran. A `|| true` here does not
+  # coerce the value itself: a failed extraction still yields an empty (or, for
+  # the wc-l-terminated pipe, zero) capture, so a broken pipeline is still
+  # caught by the expect_* calls below rather than being silently swallowed.
+  local transitions firing_n resolved_n distinct_n write_verbs
+  transitions="$(grep -E 'kubeagent: (\[[^]]*\] )?(NEW|RESOLVED|FLAPPING) ' "$wlog" || true)"
+  firing_n="$(grep -c '"status":"firing"' "$alerts" 2>/dev/null || true)"
+  resolved_n="$(grep -c '"status":"resolved"' "$alerts" 2>/dev/null || true)"
+  distinct_n="$(grep -o '"kind":"[^"]*","namespace":"[^"]*","name":"[^"]*"' "$alerts" 2>/dev/null | sort -u | wc -l || true)"
+  write_verbs="$(grep -icE '\b(create|update|patch|delete)d?\b' "$wlog" || true)"
+
   {
     echo '--- daemon transition log (NEW / RESOLVED / FLAPPING lines only) ---'
     # The cluster name is bracketed into every daemon line by clusterLogf
@@ -518,7 +534,7 @@ scenario_12_watch() {   # stateful watch daemon: NEW on outage, RESOLVED on repa
     # optional bracket this grep silently matched nothing from e5ef861 onward and
     # the section read '<no transition lines logged>' on every run — a missing
     # transition and a stale pattern looked identical.
-    { grep -E 'kubeagent: (\[[^]]*\] )?(NEW|RESOLVED|FLAPPING) ' "$wlog" || echo '<no transition lines logged>'; }
+    printf '%s\n' "${transitions:-<no transition lines logged>}"
     echo
     echo '--- /issues while the outage was firing ---'
     printf '%s\n' "$firing" | python3 -m json.tool 2>/dev/null || printf '%s\n' "$firing"
@@ -529,13 +545,13 @@ scenario_12_watch() {   # stateful watch daemon: NEW on outage, RESOLVED on repa
     echo '--- alerts delivered to the webhook receiver ---'
     { grep -o '"status":"[a-z]*","reason":"[a-z]*"' "$alerts" || echo '<no alerts delivered>'; }
     echo
-    printf 'firing notifications: %s\n' "$(grep -c '"status":"firing"' "$alerts" 2>/dev/null || echo 0)"
-    printf 'resolved notifications: %s\n' "$(grep -c '"status":"resolved"' "$alerts" 2>/dev/null || echo 0)"
+    printf 'firing notifications: %s\n' "$firing_n"
+    printf 'resolved notifications: %s\n' "$resolved_n"
     # Key on kind+namespace+name, not name alone: the Deployment and the Service in
     # this scenario are both called "web", so a name-only count collapses two objects
     # into one and cannot tell "two objects resolved once each" from "one object
     # resolved twice" — the exact regression the per-object rollup exists to prevent.
-    printf 'distinct objects alerted: %s\n' "$(grep -o '"kind":"[^"]*","namespace":"[^"]*","name":"[^"]*"' "$alerts" 2>/dev/null | sort -u | wc -l)"
+    printf 'distinct objects alerted: %s\n' "$distinct_n"
     echo
     echo '--- resolved alerts per object (must be exactly one each) ---'
     { grep '"status":"resolved"' "$alerts" 2>/dev/null \
@@ -546,7 +562,15 @@ scenario_12_watch() {   # stateful watch daemon: NEW on outage, RESOLVED on repa
     { grep -c '127.0.0.1:'"$aport" "$wlog" || true; } | sed 's/^/log lines naming the endpoint host: /'
     echo
     echo '--- write-path check: the daemon issued no mutating calls ---'
-    { grep -icE '\b(create|update|patch|delete)d?\b' "$wlog" || true; } | sed 's/^/log lines mentioning a write verb: /'
+    printf 'log lines mentioning a write verb: %s\n' "$write_verbs"
+    echo
+    echo '--- assertions ---'
+    expect_contains "NEW transition for the broken Deployment" "$transitions" "NEW Deployment/$ns/web"
+    expect_contains "RESOLVED transition after the repair"     "$transitions" "RESOLVED Deployment/$ns/web"
+    expect_ge "firing notifications delivered"      "$firing_n"   1
+    expect_eq "distinct objects alerted"            "$distinct_n" 2
+    expect_eq "resolved notifications (one per object)" "$resolved_n" 2
+    expect_eq "daemon log mentions no write verb"   "$write_verbs" 0
   } | record "12. Stateful watch daemon (NEW on outage, RESOLVED on repair, /issues)" "expect: one NEW line naming Deployment/$ns/web, one RESOLVED line with the firing duration, the incident listed under /issues while firing and under resolved afterwards, and exactly one resolved alert per broken object — two objects break here (Deployment/$ns/web and its Service), so two objects alert and each resolves once. The Deployment's firing alert must survive the whole Degraded -> ErrImagePull -> ImagePullBackOff walk without a resolved notification, even though the per-issue transition log reports RESOLVED for each superseded mode."
 
   rm -f "$wlog" "$alerts"
@@ -555,7 +579,7 @@ scenario_12_watch() {   # stateful watch daemon: NEW on outage, RESOLVED on repa
 
 scenario_13_slo() {   # SLO burn rate: series track real breakage, and a cold daemon does NOT page
   log "scenario 13: SLO burn-rate signals (cold daemon must not page)"
-  local ns=chaos-slo port=18082 aport=18083 wlog wpid i alerts apid healthy broken n
+  local ns=chaos-slo port=18082 aport=18083 wlog wpid i alerts apid healthy broken
   wlog="$(mktemp)"
   alerts="$(mktemp)"
   python3 chaos/alert-receiver.py "$aport" "$alerts" >/dev/null 2>&1 &
@@ -589,6 +613,17 @@ scenario_13_slo() {   # SLO burn rate: series track real breakage, and a cold da
   kill "$apid" >/dev/null 2>&1 || true
   wait "$apid" >/dev/null 2>&1 || true
 
+  # Hoist the counters and the one exact metric into variables so the report
+  # and the assertions below read the same values. No `|| echo 0` fallback: a
+  # scrape or extraction that failed must surface as an empty (or, for the
+  # wc-l-terminated pipe, a genuinely zero) value that expect_eq/expect_ge can
+  # catch, not a coerced pass.
+  local slo_alerts dep_alerts total_lines target
+  slo_alerts="$(grep -c '"kind":"SLO"' "$alerts" 2>/dev/null || true)"
+  dep_alerts="$(grep -c '"kind":"Deployment"' "$alerts" 2>/dev/null || true)"
+  total_lines="$(wc -l < "$alerts" 2>/dev/null | tr -d ' ')"
+  target="$(printf '%s\n' "$broken" | awk '/^kubeagent_slo_target_ratio/{print $2}')"
+
   {
     echo '--- SLO series while the workload was healthy ---'
     printf '%s\n' "$healthy"
@@ -597,20 +632,23 @@ scenario_13_slo() {   # SLO burn rate: series track real breakage, and a cold da
     printf '%s\n' "$broken"
     echo
     echo '--- SLO notifications delivered to the webhook receiver ---'
-    n=$(grep -c '"kind":"SLO"' "$alerts" 2>/dev/null) || true
-    printf 'SLO alerts delivered: %s\n' "${n:-0}"
+    printf 'SLO alerts delivered: %s\n' "$slo_alerts"
     echo '(must be 0 because the coverage gate held, not because nothing arrived — cross-check against the total below)'
     echo
     echo '--- object alerts still work in the same daemon (proves the SLO suppression is not a dead pipe) ---'
-    n=$(grep -c '"kind":"Deployment"' "$alerts" 2>/dev/null) || true
-    printf 'Deployment alerts delivered: %s\n' "${n:-0}"
+    printf 'Deployment alerts delivered: %s\n' "$dep_alerts"
     echo
     echo '--- total notification lines received (0 here is a scenario FAILURE: the receiver never got anything) ---'
-    n=$(wc -l 2>/dev/null < "$alerts") || true
-    printf 'total notification lines: %s\n' "${n:-0}"
+    printf 'total notification lines: %s\n' "$total_lines"
     echo
     echo '--- daemon log tail (last 15 lines; diagnoses a failed start without re-running the suite) ---'
     tail -n 15 "$wlog" 2>/dev/null || echo '<no daemon log captured>'
+    echo
+    echo '--- assertions ---'
+    expect_eq "SLO target ratio"                        "$target"      "0.999"
+    expect_eq "SLO pages suppressed by the coverage gate" "$slo_alerts"  0
+    expect_ge "object alerts still delivered"           "$dep_alerts"  1
+    expect_ge "the webhook pipe delivered something"    "$total_lines" 1
   } | record "13. SLO burn-rate signals (cold daemon must not page)" \
     "expect: the five kubeagent_slo_* series render in both snapshots, with kubeagent_slo_target_ratio exactly 0.999 (the one exact value here). kubeagent_slo_availability_ratio falls materially from the healthy snapshot toward the broken one but must NOT reach 0: Availability is accumulated as time-weighted workload-seconds across the WHOLE window, not read from the latest sample, and this run holds only ~30 healthy seconds against ~45 broken ones, so expect something near 0.4 — not 0, and not an exact value (pod-scheduling and image-pull timing shift it). kubeagent_slo_burn_rate rises far past both thresholds (14.4x fast, 6x slow) — near (1-0.4)/(1-0.999) = 600x, not the theoretical maximum, and again not exact. kubeagent_slo_window_coverage_ratio stays far below the 0.6 gate on both windows: the daemon has covered on the order of a minute against a 1h fast window and a 6h slow window. Despite that burn rate, SLO notifications delivered must be 0 — the coverage gate suppresses the page regardless of how hot the burn is — while Deployment alerts delivered must be NON-zero (the object-alert path fires normally) and total notification lines must also be NON-zero: a 0 total would mean the webhook pipe never worked at all, which is a scenario FAILURE, not the same thing as a correctly-suppressed 0 SLO count. This scenario deliberately does NOT cover a real full-window breach: filling the 6h slow window takes six hours; shortening it would need a test-only production flag, and claiming a breach after ninety seconds would be asserting a lie. The threshold arithmetic and the firing transition are unit-tested with an injected clock instead, where six hours costs nothing."
 

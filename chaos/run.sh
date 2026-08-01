@@ -763,7 +763,13 @@ scenario_14() {   # on-incident explanations: budget throttle, /explanations, lo
   # The node name is derived, not hardcoded: on a versioned cluster the nodes are
   # named after that cluster, and a stale literal here would quietly match nothing
   # and report every run leak-free.
-  leaks="$(grep -cE '"prompt":[^\n]*(10\.[0-9]+\.[0-9]+\.[0-9]+|web-[0-9a-z]{6,}|'"$CLUSTER"'-worker)' "$calls" 2>/dev/null || true)"
+  #
+  # `.*`, not `[^\n]*`. In a POSIX ERE bracket expression a backslash is literal,
+  # so `[^\n]` means "any character except a backslash and except the letter n" —
+  # and a prompt reading "pod on node …" carries an n long before the leaked
+  # token, so the match failed and the count came back 0 no matter what leaked.
+  # grep is line-oriented anyway, which is what `[^\n]*` was reaching for.
+  leaks="$(grep -cE '"prompt":.*(10\.[0-9]+\.[0-9]+\.[0-9]+|web-[0-9a-z]{6,}|'"$CLUSTER"'-worker)' "$calls" 2>/dev/null || true)"
   path_lines="$(grep -c "127.0.0.1:$sport/v1" "$wlog" || true)"
   write_verbs="$(grep -icE '\b(create|update|patch|delete)d?\b' "$wlog" || true)"
   allowed="$(printf '%s\n' "$metrics"   | awk '/^kubeagent_explain_allowed_total/{print $2}')"

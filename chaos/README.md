@@ -146,7 +146,7 @@ mistaken for covering:
   tests only.
 
 Each cell runs 105 assertions. On a GitHub-hosted runner a cell takes roughly
-17 minutes; locally (see the estimate above) it's 35-40. All three supported
+17 minutes; locally it's 35-40. All three supported
 minors have gone green on real runners.
 
 ### `--explain`

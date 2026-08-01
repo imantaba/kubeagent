@@ -62,3 +62,44 @@ func TestError_PlainErrorPassesThrough(t *testing.T) {
 		t.Errorf("Error() = %q, want %q", got, "boom")
 	}
 }
+
+func TestAddresses_RedactsWhatALogCanCarry(t *testing.T) {
+	// The inputs are the shapes internal/logscan's conn-refused signature can
+	// capture, because Go's dialer formats its error as "dial tcp <host:port>".
+	cases := []struct{ name, in, want string }{
+		{"ipv4 with port", "cannot reach a dependency (10.96.14.203:80) — connection refused",
+			"cannot reach a dependency (<redacted>) — connection refused"},
+		{"bare ipv4", "cannot reach a dependency (192.0.2.7) — connection refused",
+			"cannot reach a dependency (<redacted>) — connection refused"},
+		{"ipv6 in brackets with port", "cannot reach a dependency ([fd00::1]:5432) — connection refused",
+			"cannot reach a dependency (<redacted>) — connection refused"},
+		{"cluster dns name with port", "cannot reach a dependency (db.chaos.svc.cluster.local:5432) — connection refused",
+			"cannot reach a dependency (<redacted>) — connection refused"},
+		{"two addresses in one line", "tried 10.0.0.1:80 then 10.0.0.2:80",
+			"tried <redacted> then <redacted>"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := Addresses(c.in); got != c.want {
+				t.Errorf("Addresses(%q) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+func TestAddresses_LeavesOrdinaryDiagnosticProseAlone(t *testing.T) {
+	// Over-redaction costs the model the signal it needs, so the negative cases
+	// matter as much as the positive ones. None of these carries an address.
+	for _, s := range []string{
+		"application panic (code bug)",
+		"DNS resolution failed (name lookup)",
+		"ran out of memory in-process",
+		"0/2 ready, status CrashLoopBackOff, 5 restarts",
+		"permission denied — check securityContext / file permissions",
+		"back-off 5m0s restarting failed container",
+	} {
+		if got := Addresses(s); got != s {
+			t.Errorf("Addresses(%q) = %q, want it unchanged", s, got)
+		}
+	}
+}

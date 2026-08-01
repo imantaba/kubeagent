@@ -1,0 +1,183 @@
+name: chaos-matrix
+
+# The chaos suite is a 35-40 minute gate that needs a real Kubernetes cluster,
+# so it belongs on a schedule and on demand — never on a pull request. What
+# defends a pull request is CI's fast job, which runs the harness's own
+# cluster-free self-tests.
+#
+# One job per supported Kubernetes minor. fail-fast is off on purpose: the
+# whole point of a matrix is to learn that v1.32 broke while v1.34 is fine, and
+# a cancelled sibling job teaches nothing.
+#
+# No secrets are needed and none are granted. ANTHROPIC_API_KEY is never set,
+# so every ordinary scenario's scan runs without --explain — the deterministic
+# core is what a nightly gate is for. Scenario 14 is the one exception: it
+# does pass --explain, but to a local Python stub that never leaves the
+# runner and needs no key, so it proves the transport and redaction path, not
+# real model output (see chaos/README.md for detail).
+on:
+  schedule:
+    # Offset from fuzz.yml's 03:17 so the two nightlies do not contend for
+    # runners.
+    - cron: '41 2 * * *'
+  workflow_dispatch:
+    inputs:
+      versions:
+        description: 'Space-separated minors to run, or empty for every supported minor'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  # The minor list lives in exactly one place, chaos/versions.env, so the
+  # harness and this workflow can never disagree about what "supported" means.
+  # A hardcoded second copy here is the bug this job exists to prevent.
+  versions:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.resolve.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: resolve
+        env:
+          # A `${{ }}` expression is substituted into the script text before bash
+          # ever sees it, so a dispatch input containing shell metacharacters would
+          # be executed rather than assigned. Routing it through `env:` keeps it an
+          # ordinary string. This mapping always sets the variable: on a scheduled
+          # run `inputs` is null and the expression renders as the empty string,
+          # so `${INPUT_VERSIONS:-}` below is defaulting an empty value, not
+          # guarding an unset one — the full minor list is what an empty value
+          # means.
+          INPUT_VERSIONS: ${{ inputs.versions }}
+        run: |
+          set -euo pipefail
+          . chaos/versions.sh
+          picked="${INPUT_VERSIONS:-}"
+          [ -n "$picked" ] || picked="$(chaos_versions)"
+          # Validate every requested minor through the same resolver the
+          # harness uses, so a typo in a dispatch input fails here — in
+          # seconds — instead of after a cluster has been built.
+          for v in $picked; do chaos_image "$v" >/dev/null; done
+          json="$(printf '%s\n' $picked | jq -R . | jq -sc .)"
+          printf 'matrix=%s\n' "$json" >> "$GITHUB_OUTPUT"
+          printf 'running: %s\n' "$picked"
+
+  chaos:
+    needs: versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ${{ fromJson(needs.versions.outputs.matrix) }}
+    name: chaos (${{ matrix.version }})
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install kind
+        env:
+          # kind-linux-amd64.sha256sum, the kubernetes-sigs/kind v0.30.0 release
+          # asset (https://github.com/kubernetes-sigs/kind/releases/tag/v0.30.0).
+          # Bumping the kind version means re-fetching that asset and updating
+          # this value alongside it — never dropping the check.
+          KIND_SHA256: 517ab7fc89ddeed5fa65abf71530d90648d9638ef0c4cde22c2c11f8097b8889
+        run: |
+          set -euo pipefail
+          curl -sSLo /tmp/kind https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-amd64
+          printf '%s  /tmp/kind\n' "$KIND_SHA256" | sha256sum -c -
+          chmod +x /tmp/kind
+          sudo mv /tmp/kind /usr/local/bin/kind
+          kind version
+
+      # A kind node's kubelet, kube-proxy and controllers all draw inotify
+      # instances from a host-wide budget, and a runner ships with kind's
+      # pre-recommendation defaults. One cluster usually still boots at those
+      # values, which is exactly what makes the failure intermittent rather
+      # than obvious. Raise them before anything is created.
+      - name: Raise inotify limits for kind
+        run: |
+          sudo sysctl -w fs.inotify.max_user_instances=512
+          sudo sysctl -w fs.inotify.max_user_watches=524288
+
+      - name: Preflight tools
+        run: |
+          for b in docker kind kubectl helm go curl python3; do
+            command -v "$b" >/dev/null || { echo "missing required tool: $b" >&2; exit 1; }
+          done
+          docker info >/dev/null
+
+      - name: Run the chaos suite on ${{ matrix.version }}
+        run: ./chaos/run.sh --k8s-version '${{ matrix.version }}' --recreate --teardown
+
+      # Locally these reports are gitignored; uploaded, they leave the machine.
+      # Scenario 20 already asserts that a refused read is reported in
+      # kubeagent's own words and never carries the ServiceAccount's bearer
+      # token or certificate material the way the raw API server message would.
+      # This is the independent second check on the one artifact that actually
+      # travels — belt and braces, because a report is worth publishing only if
+      # publishing it is safe.
+      #
+      # `if: always()` because a FAILED run's report is the one worth reading,
+      # and a failed run is exactly when nobody is watching the scan.
+      - name: Scan the report for credential material
+        id: scan
+        if: always()
+        run: |
+          set -uo pipefail
+          rep="docs/testing/chaos-results-${{ matrix.version }}.md"
+          [ -f "$rep" ] || { echo "no report at $rep — nothing to scan"; exit 0; }
+          hits=0
+          scan() {   # scan <what> <extended-regexp>
+            local n
+            # `--` stops option parsing: the PEM pattern below begins with a
+            # literal `-`, which grep would otherwise read as an option string
+            # and refuse to run at all.
+            n="$(grep -acE -- "$2" "$rep" || true)"
+            printf '%-34s %s\n' "$1" "$n"
+            [ "$n" = 0 ] || hits=$((hits + 1))
+          }
+          # A JWT's three dot-separated base64url segments: what a mounted
+          # ServiceAccount token looks like on the wire.
+          scan 'bearer-token shapes'   'eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.'
+          scan 'PEM blocks'            '-----BEGIN [A-Z ]*(PRIVATE KEY|CERTIFICATE)-----'
+          scan 'Authorization headers' '[Aa]uthorization: *[Bb]earer'
+          scan 'kubeconfig fields'     'client-key-data|client-certificate-data|token: '
+          # The documentation value scenario 10 injects on purpose is the only
+          # AKIA that may appear; any other one is a real finding. Two steps,
+          # not one negative lookahead: POSIX ERE has no lookahead, and
+          # `grep -E 'AKIA(?!...)'` does not fail loudly — it warns, matches
+          # nothing, and would report a genuinely leaked key as 0.
+          n="$(grep -aoE 'AKIA[A-Z0-9]{16}' "$rep" | grep -vxF 'AKIAIOSFODNN7EXAMPLE' | grep -ac . || true)"
+          printf '%-34s %s\n' 'unexpected AWS keys' "$n"
+          [ "$n" = 0 ] || hits=$((hits + 1))
+          if [ "$hits" -ne 0 ]; then
+            echo "refusing to upload: the report matched $hits credential pattern(s)" >&2
+            exit 1
+          fi
+          echo "report is clean — safe to upload"
+
+      # `always()` on the scan step above means it runs whether the chaos
+      # suite passed or failed, but `always()` here would be wrong: it
+      # ignores the scan's own result and would publish a report the scan
+      # just refused. Gate on the scan step's `outcome` — the step's result
+      # before any `continue-on-error` is applied, so a later
+      # `continue-on-error` added to the scan step could never quietly
+      # un-gate this upload the way checking `conclusion` could (this step
+      # sets no `continue-on-error` today, so the two agree for now, but
+      # `outcome` is the one that stays correct if that ever changes) — and
+      # skip entirely on cancellation, so a cancelled run uploads nothing
+      # rather than whatever happened to be on disk when the signal arrived.
+      - name: Upload the report
+        if: ${{ !cancelled() && steps.scan.outcome != 'failure' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaos-report-${{ matrix.version }}
+          path: docs/testing/chaos-results-${{ matrix.version }}.md
+          if-no-files-found: warn

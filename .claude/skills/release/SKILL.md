@@ -61,11 +61,34 @@ unset ANTHROPIC_API_KEY          # keep keys out of the shell; --explain scenari
 ./chaos/run.sh --recreate        # long-running; run in background and watch the log
 ```
 
-Review the results report — every scenario should be green. The harness now **preloads
-the Calico images into the Kind nodes** (`preload_calico_images`), which fixes the old
-`calico-node exceeded its progress deadline` flake (slow serial in-node pulls). If it
-still flakes on a cold cluster, re-run `./chaos/run.sh --recreate`. It tears its cluster
-down on exit.
+The harness's exit code is the gate, not your eyes: it asserts each scenario's expected
+signal itself (`chaos/assert.sh`) and returns non-zero the moment one doesn't hold. A
+zero exit means every assertion passed. A non-zero exit names the failures on the
+console and in the report's `## Assertion summary` — that's what you read to understand
+a failure, not to detect one. The harness now **preloads the Calico images into the Kind
+nodes** (`preload_calico_images`), which fixes the old `calico-node exceeded its progress
+deadline` flake (slow serial in-node pulls). If it still flakes on a cold cluster, re-run
+`./chaos/run.sh --recreate`. By default it leaves its cluster up on exit (`--recreate`
+above passes no `--teardown`) — that's what lets `./chaos/run.sh --only NN --out
+PATH` re-run a single scenario against the same cluster afterward.
+
+The command above pins no Kubernetes version, so kind picks its own node image — the
+release gate has always run that way and still does. To gate a release on more than one
+minor, add `--k8s-version` and run them **one at a time**, since two Kind clusters on one
+machine need inotify limits most workstations do not have (`chaos/README.md` has the two
+`sysctl` commands, and the harness's preflight prints them):
+
+```bash
+for v in $(. chaos/versions.sh && chaos_versions); do
+  ./chaos/run.sh --k8s-version "$v" --recreate --teardown || echo "GATE FAILED on $v"
+done
+```
+
+The minor list is read from `chaos/versions.env` rather than typed here, so this
+command cannot go stale when the supported set changes. Each minor gets its own
+cluster, context and report (`docs/testing/chaos-results-$v.md`), so nothing collides;
+the images are digest-pinned, and an unsupported value is refused before docker is
+touched.
 
 **Detector / report / docs-only changes** fully covered by unit tests + the fake
 clientset (a new pure detector, an output-format tweak) don't need the full outage suite —

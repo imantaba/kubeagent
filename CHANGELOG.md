@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The chaos harness is a gate, not a report.** Its checks are now
+  machine-checked assertions (`chaos/assert.sh`: `expect_eq`, `expect_ge`,
+  `expect_contains`, `expect_absent`) instead of prose an operator had to
+  read closely. `./chaos/run.sh` now exits non-zero the moment any assertion
+  fails, and ends with an `## Assertion summary` naming every failure and an
+  `assertions: N run, M failed` line. All 20 scenarios carry an assertion
+  except scenario 2 (expired certificates, out of scope on Kind), which runs
+  no scan by design.
+- **`chaos/run.sh --k8s-version <minor>`** pins the harness to a specific
+  Kubernetes minor's digest-pinned kind node image, instead of letting kind
+  pick its own. The supported minors and their images live in one place,
+  `chaos/versions.env`; everything the harness derives from the cluster — its
+  name, context, report path, CoreDNS backup — takes that minor's suffix, so
+  two coexist on one machine without colliding. `bash
+  chaos/version-selftest.sh` checks the resolver with no cluster and no
+  docker. See `chaos/README.md`.
+- **Nightly cross-version chaos matrix.** `.github/workflows/chaos-matrix.yml`
+  runs the full 20-scenario suite once per Kubernetes minor kubeagent
+  supports (v1.32, v1.33, v1.34 today), each on its own disposable kind
+  cluster, `fail-fast` off so one minor's outage never cancels another's; a
+  `workflow_dispatch` input reruns the same matrix, or a chosen subset, on
+  demand. Every report is scanned for credential material before it is
+  uploaded as an artifact — a flagged report fails the job and is never
+  published, while a failed suite with a clean report still uploads, because
+  a failed nightly is exactly the run that needs to stay diagnosable. No
+  secret is granted: `ANTHROPIC_API_KEY` is never set, so the nightly gates
+  kubeagent's deterministic core, not the `--explain` path. See
+  `chaos/README.md` for what the matrix does and does not cover.
+
+### Fixed
+
+- Log-derived network addresses (a Service's ClusterIP, a Pod's IP, an
+  in-cluster hostname) no longer reach a model prompt. `internal/logscan`'s
+  conn-refused signature deliberately captures the dial target for the
+  operator's text report, but both prompt builders — the watch daemon's
+  incident prompt and `scan --explain`'s inventory prompt — wrote that same
+  string into the outgoing payload verbatim. A new `redact.Addresses` strips
+  it at egress; the text report is unchanged. Found by the cross-version
+  chaos matrix on a real runner: scenario 14's egress assertion went red on
+  v1.32 and v1.33.
+
 ## [0.74.0] - 2026-08-01
 
 ### Added

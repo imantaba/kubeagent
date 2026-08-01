@@ -184,7 +184,16 @@ scenario_05_coredns() {   # bad Corefile -> CoreDNS CrashLoop
     -p='{"data":{"Corefile":".:53 {\n    this_is_an_invalid_plugin\n}\n"}}' >/dev/null
   kubectl --context "$CTX" -n kube-system rollout restart deploy coredns >/dev/null
   sleep 30
-  { scan 2>&1 || true; } | record "5. Broken DNS (CoreDNS crash)" \
+  local out rc body
+  out="$(scan 2>&1)" && rc=0 || rc=$?
+  body="$(scan_body "$out")"
+  {
+    printf '%s\n' "$out"
+    printf '\n--- assertions ---\n'
+    expect_eq       "scan exit code"            "$rc" 0
+    expect_contains "cluster verdict"           "$body" "Cluster: Degraded"
+    expect_contains "coredns named as degraded" "$body" "kube-system/coredns"
+  } | record "5. Broken DNS (CoreDNS crash)" \
     "expect: the cluster line reads Degraded and kube-system/coredns is listed under NEEDS ATTENTION, under-replicated (1/2 or 0/2) with a non-zero restart count. That much is invariant. The specific finding is NOT: whether a CrashLoopBackOff line appears depends on where the scan lands in the kubelet's restart-backoff cycle — caught between restarts the pods read 0/1 Running with a restart count and no CrashLoopBackOff finding at all, which is a pass, not a miss. Assert on Degraded plus restarts; treat the named finding as timing-dependent."
   # Restore the pristine Corefile (captured in main()) via a clean merge-patch.
   local patch; patch=$(python3 -c 'import json,sys; print(json.dumps({"data":{"Corefile":open(sys.argv[1]).read()}}))' "$COREDNS_BACKUP")
@@ -195,7 +204,7 @@ scenario_05_coredns() {   # bad Corefile -> CoreDNS CrashLoop
 
 scenario_04_networkpolicy() {   # Calico-enforced deny-all as the *cause* of a degraded app
   log "scenario 4: NetworkPolicy blocking traffic"
-  local ns=chaos-np i baseline broken recovered blocked_scan recovery_scan probe_event
+  local ns=chaos-np i baseline broken recovered blocked_scan recovery_scan probe_event blocked_lines recovery_lines
   kubectl --context "$CTX" create ns "$ns" --dry-run=client -o yaml | kubectl --context "$CTX" apply -f - >/dev/null
   # The probe must be *pod-sourced* for the policy to matter. Calico permits the
   # kubelet's own probe traffic to a local pod even under a deny-all Ingress
@@ -276,6 +285,8 @@ NP
   done
   recovered="$(ready_replicas "$ns" blocked)"
   recovery_scan="$(scan 2>&1 || true)"
+  blocked_lines="$(scan_body "$blocked_scan"  | grep -c 'chaos-np/blocked' || true)"
+  recovery_lines="$(scan_body "$recovery_scan" | grep -c 'chaos-np/blocked' || true)"
 
   {
     printf 'blocked ready replicas before the policy: %s (must be 1)\n' "$baseline"
@@ -292,14 +303,19 @@ NP
     echo '--- scan WITH deny-all in force ---'
     printf '%s\n' "$blocked_scan"
     echo
-    printf 'chaos-np/blocked lines in that scan: %s\n' \
-      "$(scan_body "$blocked_scan" | grep -c 'chaos-np/blocked' || true)"
+    printf 'chaos-np/blocked lines in that scan: %s\n' "$blocked_lines"
     echo
     echo '--- scan after deleting ONLY the NetworkPolicy ---'
     printf '%s\n' "$recovery_scan"
     echo
-    printf 'chaos-np/blocked lines in the recovery scan: %s\n' \
-      "$(scan_body "$recovery_scan" | grep -c 'chaos-np/blocked' || true)"
+    printf 'chaos-np/blocked lines in the recovery scan: %s\n' "$recovery_lines"
+    echo
+    echo '--- assertions ---'
+    expect_eq "blocked ready replicas before the policy" "$baseline"  1
+    expect_eq "blocked ready replicas under deny-all"    "$broken"    0
+    expect_eq "blocked ready replicas after deletion"    "$recovered" 1
+    expect_ge "chaos-np/blocked reported under deny-all" "$blocked_lines"  1
+    expect_eq "chaos-np/blocked gone from the recovery scan" "$recovery_lines" 0
   } | record "4. NetworkPolicy blocking traffic (Calico deny-all, causal)" \
     "expect: the three replica counts read 1 / 0 / 1 (a \"?\" means the query itself failed — a harness fault, not a reading). That triple is the whole point of this scenario — the workload is healthy before the policy, degraded while it is in force, and healthy again once it is deleted with nothing else changed, so the policy is demonstrably the cause rather than merely present. The Unhealthy event must show the wget call timing out; the old version of this scenario used an exec probe of \"false\", which failed identically with or without the policy and therefore proved nothing. In the scan taken under deny-all, chaos-np/blocked is reported 0/1 Degraded with a ProbeFailure finding and NO NetworkPolicy hint. The absent hint is correct, not a miss: netpolicy.Annotate (internal/netpolicy/netpolicy.go) attaches policy names only to a workload that is Flagged() with zero detector findings, because the hint exists to explain a degraded workload nothing else accounts for. A failing readiness probe already accounts for this one, so the hint is suppressed by design. In the recovery scan, chaos-np/blocked must not appear at all: its line count must be 0 while the count in the first scan is non-zero. Note the CNI subtlety this scenario encodes: Calico still lets the kubelet probe a local pod under a deny-all Ingress policy, so a network-dependent probe here has to be pod-sourced (exec) and blocked by the Egress half."
   kubectl --context "$CTX" delete ns "$ns" --wait=true --timeout=120s >/dev/null 2>&1 || true

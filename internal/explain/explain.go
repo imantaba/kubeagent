@@ -14,6 +14,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/platform"
+	"github.com/imantaba/kubeagent/internal/redact"
 	"github.com/imantaba/kubeagent/internal/remediation"
 	"github.com/imantaba/kubeagent/internal/resources"
 	"github.com/imantaba/kubeagent/internal/svchealth"
@@ -146,8 +147,11 @@ func BuildInventoryPrompt(cluster clusterhealth.ClusterHealth, summary *resource
 				w.Namespace, w.Name, w.Kind, w.Ready, w.Desired, w.Status, w.Restarts)
 			for _, f := range w.Findings {
 				fmt.Fprintf(&b, "    issue: %s — %s (%s)\n", f.Issue, f.Reason, f.Evidence)
+				// LogCause is built from the container's own log, so it can
+				// carry an in-cluster address. The report may show it; a
+				// prompt leaves the process, so redact it here.
 				if f.LogCause != "" {
-					fmt.Fprintf(&b, "      log cause: %s\n", f.LogCause)
+					fmt.Fprintf(&b, "      log cause: %s\n", redact.Addresses(f.LogCause))
 				}
 				if f.Resources != nil {
 					r := f.Resources

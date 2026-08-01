@@ -81,9 +81,11 @@ house style, and it is what review will ask about.
 
   Then refresh the README demo GIF and the quickstart example output in
   `website/docs/quickstart.md` in the same pull request.
-- **Fuzzing.** Seven native fuzz targets cover the parsers and the detector set
-  (`FuzzDetectors`, `FuzzClassify`, `FuzzRedactURL`, `FuzzRedactError`,
-  `FuzzParseResponses`, `FuzzParseReadyz`, `FuzzCertAssess`). Their seed corpora
+- **Fuzzing.** Twelve native fuzz targets cover the parsers, the policy loader,
+  the text sanitizer and the detector set (`FuzzDetectors`, `FuzzClassify`,
+  `FuzzRedactURL`, `FuzzRedactError`, `FuzzParseResponses`, `FuzzParseReadyz`,
+  `FuzzCertAssess`, `FuzzLoadPolicy`, `FuzzEvaluatePolicy`, `FuzzResolvePath`,
+  `FuzzGlob`, `FuzzLine`). Their seed corpora
   replay on a plain `go test ./...`, so a regression a past campaign found fails
   your pull request immediately — no fuzzing budget needed. A real campaign runs
   nightly in `.github/workflows/fuzz.yml`, one job per target, because

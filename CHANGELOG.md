@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `internal/safetext.Line` now bounds combining marks: a character keeps at most
+  four, and a mark that opens a line or follows a space is dropped because it has
+  no base character to sit on. Real text is unaffected — decomposed Vietnamese,
+  Arabic, Devanagari, Hebrew and Thai stack at most three or four — but an
+  unbounded stack in a container log can no longer paint over the terminal rows
+  above and below its own line. A twelfth fuzz target, `FuzzLine`, asserts the
+  bound and the sanitizer's idempotence on arbitrary bytes.
+
 ## [1.0.0] - 2026-08-01
 
 **1.0 is a commitment, not a feature.** Nothing about how kubeagent behaves

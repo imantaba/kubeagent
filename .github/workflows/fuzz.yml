@@ -48,6 +48,8 @@ jobs:
             target: FuzzResolvePath
           - package: ./internal/policy
             target: FuzzGlob
+          - package: ./internal/safetext
+            target: FuzzLine
     name: ${{ matrix.target }}
     steps:
       - uses: actions/checkout@v4

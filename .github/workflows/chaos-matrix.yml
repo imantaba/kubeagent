@@ -45,9 +45,11 @@ jobs:
           # A `${{ }}` expression is substituted into the script text before bash
           # ever sees it, so a dispatch input containing shell metacharacters would
           # be executed rather than assigned. Routing it through `env:` keeps it an
-          # ordinary string. The input only exists on workflow_dispatch — on a
-          # scheduled run there are no inputs at all, so `set -u` needs the `:-`
-          # below rather than a bare `$INPUT_VERSIONS`.
+          # ordinary string. This mapping always sets the variable: on a scheduled
+          # run `inputs` is null and the expression renders as the empty string,
+          # so `${INPUT_VERSIONS:-}` below is defaulting an empty value, not
+          # guarding an unset one — the full minor list is what an empty value
+          # means.
           INPUT_VERSIONS: ${{ inputs.versions }}
         run: |
           set -euo pipefail

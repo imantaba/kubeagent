@@ -118,21 +118,31 @@ func check(r Rule, segs []segment, obj *unstructured.Unstructured, in Inputs) (V
 		return violationFor(r, obj, ""), true
 	}
 
-	slots := resolve(obj.Object, segs)
-	if len(slots) == 0 {
-		// Nothing to assert about. `exists` still violates — something was
-		// required and there is nowhere it could be.
-		if r.Assert.Op == OpExists {
-			return violationFor(r, obj, ""), true
-		}
-		return Violation{}, false
-	}
-	for _, s := range slots {
+	// walk rather than resolve: the answer is the FIRST slot that violates, so
+	// the traversal stops there. A wildcard over a large object names one slot
+	// per element, and materializing all of them to read one is work no
+	// verdict depends on.
+	var (
+		anySlot   bool
+		violation Violation
+		violated  bool
+	)
+	walk(obj.Object, segs, func(s Slot) bool {
+		anySlot = true
 		ok, skip := checkOp(r.Assert.Op, s, r.Assert.Values)
 		if skip || ok {
-			continue
+			return true
 		}
-		return violationFor(r, obj, evidence(s)), true
+		violation, violated = violationFor(r, obj, evidence(s)), true
+		return false
+	})
+	if violated {
+		return violation, true
+	}
+	if !anySlot && r.Assert.Op == OpExists {
+		// Nothing to assert about. `exists` still violates — something was
+		// required and there is nowhere it could be.
+		return violationFor(r, obj, ""), true
 	}
 	return Violation{}, false
 }

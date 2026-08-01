@@ -1,6 +1,10 @@
 package policy
 
-import "testing"
+import (
+	"testing"
+
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+)
 
 // podWithContainers builds the unstructured shape
 // runtime.DefaultUnstructuredConverter produces for a Pod: every container is
@@ -20,6 +24,19 @@ func podWithContainers(cpuLimits ...string) map[string]any {
 		"metadata": map[string]any{"name": "web", "namespace": "prod"},
 		"spec":     map[string]any{"containers": containers},
 	}
+}
+
+// resolve collects every slot walk yields. The tests below read as claims
+// about the full ordered slot list a path names — arity, order, which
+// positions are absent — so they collect first and assert on the list. Nothing
+// in production wants every slot: check stops at the first that violates.
+func resolve(obj map[string]any, segs []segment) []Slot {
+	var out []Slot
+	walk(obj, segs, func(s Slot) bool {
+		out = append(out, s)
+		return true
+	})
+	return out
 }
 
 func mustParse(t *testing.T, path string) []segment {
@@ -226,5 +243,66 @@ func TestParsePathRejectsMalformedPaths(t *testing.T) {
 		if _, err := parsePath(p); err == nil {
 			t.Errorf("parsePath(%q) = nil error, want a rejection", p)
 		}
+	}
+}
+
+// TestWalkStopsAtTheFirstSlotTheVisitorRejects is why walk exists. check only
+// ever needs the first slot that violates; materializing the rest is work the
+// answer does not depend on. A visitor returning false must end the traversal
+// there — not merely have its later calls ignored.
+func TestWalkStopsAtTheFirstSlotTheVisitorRejects(t *testing.T) {
+	obj := podWithContainers("100m", "200m", "300m")
+	segs := mustParse(t, "spec.containers[*].resources.limits.cpu")
+
+	var seen []any
+	walk(obj, segs, func(s Slot) bool {
+		seen = append(seen, s.Value)
+		return s.Value != "200m" // stop on the second container
+	})
+
+	want := []any{"100m", "200m"}
+	if len(seen) != len(want) {
+		t.Fatalf("visitor saw %d slots (%#v), want %d: traversal did not stop", len(seen), seen, len(want))
+	}
+	for i := range want {
+		if seen[i] != want[i] {
+			t.Errorf("slot %d = %#v, want %#v", i, seen[i], want[i])
+		}
+	}
+}
+
+// TestCheckDoesNotMaterializeEverySlot is the regression guard for the cost
+// that motivated walk: check must not build a slot list proportional to the
+// object. Evaluating one rule against a 40 000-element object used to allocate
+// 40 224 times and 17 MB, and a cluster's worth of objects times a policy's
+// worth of rules multiplies both. The bound is generous — the point is the
+// difference between "a few allocations" and "one per element", not a precise
+// count that a Go release could move. Early exit is pinned separately, by
+// TestWalkStopsAtTheFirstSlotTheVisitorRejects.
+func TestCheckDoesNotMaterializeEverySlot(t *testing.T) {
+	containers := make([]any, 0, 200)
+	for i := 0; i < 200; i++ {
+		ports := make([]any, 0, 200)
+		for j := 0; j < 200; j++ {
+			ports = append(ports, map[string]any{"containerPort": int64(8000 + j)})
+		}
+		containers = append(containers, map[string]any{"name": "c", "ports": ports})
+	}
+	obj := &unstructured.Unstructured{Object: map[string]any{
+		"kind":     "Pod",
+		"metadata": map[string]any{"name": "web", "namespace": "prod"},
+		"spec":     map[string]any{"containers": containers},
+	}}
+	segs := mustParse(t, "spec.containers[*].ports[*].containerPort")
+	r := Rule{ID: "ports-exist", Assert: Assert{Op: OpExists}}
+
+	allocs := testing.AllocsPerRun(3, func() {
+		if _, violated := check(r, segs, obj, Inputs{}); violated {
+			t.Fatal("exists must hold: every port sets containerPort")
+		}
+	})
+	if allocs > 1000 {
+		t.Errorf("check allocated %.0f times on a 40000-slot object; want < 1000 "+
+			"(one allocation per element means the traversal is materializing the whole slot list again)", allocs)
 	}
 }

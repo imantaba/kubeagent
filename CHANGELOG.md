@@ -23,6 +23,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Policy evaluation no longer builds a slot list proportional to the object it
+  is checking. A path with a wildcard names one slot per list element, and a
+  rule's verdict is decided by the first slot that violates, so the traversal
+  now yields slots one at a time and stops there. Evaluating one rule against a
+  Pod with 40 000 wildcard positions dropped from 40 224 allocations and 17 MB
+  to none, and a cluster's worth of objects times a policy's worth of rules
+  multiplied both. No verdict changes: the slots, their order, and the arity
+  rule that an absent element still contributes an absent slot are all
+  unchanged, and a differential fuzz run over 819 000 paths found no divergence
+  from the previous resolver.
 - `internal/safetext.Line` now bounds combining marks: a character keeps at most
   four, and a mark that opens a line or follows a space is dropped because it has
   no base character to sit on. Real text is unaffected — decomposed Vietnamese,

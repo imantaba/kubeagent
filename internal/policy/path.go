@@ -115,51 +115,59 @@ func parseQuotedKey(path string, i int) (string, int, error) {
 // absent is the zero slot. Named so the propagation rules below read as rules.
 var absent = Slot{}
 
-// resolve walks segs over obj and returns the ordered slots the path names.
+// walk yields, in order, the slots segs names in obj, and stops as soon as
+// visit returns false.
 //
 // Arity is the invariant: an absent cursor propagates as exactly one absent
 // successor, a plain segment maps one cursor to one successor, and a wildcard
 // maps one cursor to one successor per list element (zero for an empty list).
-func resolve(obj map[string]any, segs []segment) []Slot {
-	cur := []Slot{{Present: true, Value: any(obj)}}
-	for _, seg := range segs {
-		next := make([]Slot, 0, len(cur))
-		for _, s := range cur {
-			next = append(next, step(s, seg)...)
-		}
-		cur = next
-	}
-	return cur
+//
+// Why a visitor rather than a returned slice: a caller almost never needs
+// every slot. check returns on the first one that violates, and a wildcard
+// over a large object names one slot per element — tens of thousands on an
+// object near the API server's size limit — so building the whole list is
+// work the answer does not depend on. resolve is the wrapper for the callers
+// that do want it all.
+func walk(obj map[string]any, segs []segment, visit func(Slot) bool) {
+	walkFrom(Slot{Present: true, Value: any(obj)}, segs, visit)
 }
 
-// step maps one cursor slot to its successors for one segment.
-func step(s Slot, seg segment) []Slot {
+// walkFrom yields the slots reachable from s through segs. It reports whether
+// the traversal should continue: once the visitor answers false, every frame
+// above unwinds without visiting a sibling.
+func walkFrom(s Slot, segs []segment, visit func(Slot) bool) bool {
+	if len(segs) == 0 {
+		return visit(s)
+	}
+	seg, rest := segs[0], segs[1:]
+
 	if !s.Present {
 		// An absent slot stays exactly one absent slot, wildcard or not.
 		// Collapsing it here would lose the arity the caller depends on.
-		return []Slot{absent}
+		return walkFrom(absent, rest, visit)
 	}
 	m, ok := s.Value.(map[string]any)
 	if !ok {
-		return []Slot{absent}
+		return walkFrom(absent, rest, visit)
 	}
 	v, ok := m[seg.key]
 	if !ok || v == nil {
 		// A key present with an explicit null holds nothing; `exists` must
 		// not pass on it.
-		return []Slot{absent}
+		return walkFrom(absent, rest, visit)
 	}
 	if !seg.wildcard {
-		return []Slot{{Present: true, Value: v}}
+		return walkFrom(Slot{Present: true, Value: v}, rest, visit)
 	}
 	list, ok := v.([]any)
 	if !ok {
-		return []Slot{absent}
-	}
-	out := make([]Slot, 0, len(list))
-	for _, e := range list {
-		out = append(out, Slot{Present: true, Value: e})
+		return walkFrom(absent, rest, visit)
 	}
 	// An empty list yields zero slots: there is nothing to assert about.
-	return out
+	for _, e := range list {
+		if !walkFrom(Slot{Present: true, Value: e}, rest, visit) {
+			return false
+		}
+	}
+	return true
 }

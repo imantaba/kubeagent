@@ -194,6 +194,28 @@ ready_replicas() {
 # objects freely and would break a "must be 0" check whenever a key is set.
 scan_body() { printf '%s\n' "$1" | awk '/── Explanation ──/ { exit } { print }'; }
 
+# worker_node — the name of the first worker node.
+#
+# Two scenarios cordon or docker-exec into a worker by name. Reading it with a
+# bare `kubectl get nodes | grep worker` fails badly when nothing matches: under
+# `set -o pipefail` the unmatched grep aborts the run at the assignment, with no
+# message and no assertion summary, so a single-node or renamed cluster looks
+# like a harness crash. Diagnose it instead — this is an environment problem, in
+# the same class as a missing binary, not a kubeagent finding.
+worker_node() {
+  local n
+  n="$(kubectl --context "$CTX" get nodes -o name | grep -m1 worker | cut -d/ -f2)" || true
+  if [ -z "$n" ]; then
+    {
+      printf 'no worker node found in context %s.\n' "$CTX"
+      printf 'The harness creates 1 control-plane + 2 workers; scenarios 3 and 11 need one.\n'
+      printf 'Re-create the cluster with: %s --recreate\n' "$0"
+    } >&2
+    exit 1
+  fi
+  printf '%s\n' "$n"
+}
+
 # record <title> <verdict> ; reads scan (and optional --explain) output from stdin.
 # Scan output is wrapped in a code fence; any --explain markdown (after the
 # "── Explanation ──" marker kubeagent prints) is emitted raw so its own code
@@ -245,7 +267,7 @@ scenario_01_etcd() {   # control-plane / etcd down -> API unreachable
 
 scenario_03_diskfull() {   # cordon stand-in for DiskPressure/SchedulingDisabled
   log "scenario 3: disk full on control plane (node cordon stand-in)"
-  local node; node="$(kubectl --context "$CTX" get nodes -o name | grep worker | head -1 | cut -d/ -f2)"
+  local node; node="$(worker_node)"
   kubectl --context "$CTX" cordon "$node" >/dev/null
   kubectl --context "$CTX" create ns chaos-diskfull --dry-run=client -o yaml | kubectl --context "$CTX" apply -f - >/dev/null
   kubectl --context "$CTX" -n chaos-diskfull create deploy toobig --image=registry.k8s.io/pause:3.10 >/dev/null 2>&1 || true
@@ -522,7 +544,7 @@ scenario_10_credleak() {   # ConfigMap with a fake AWS key -> --lint-secrets
 
 scenario_11_kubelet() {   # runtime outage: node NotReady, kubelet /healthz still ok -> --kubelet-health abstains
   log "scenario 11: kubelet health probe via nodes/proxy (--kubelet-health)"
-  local node; node="$(kubectl --context "$CTX" get nodes -o name | grep -m1 worker | cut -d/ -f2)"
+  local node; node="$(worker_node)"
   # Stop the container runtime on a worker (its Kubernetes node name equals its Kind
   # container name, so `docker exec` reaches it). The kubelet marks the node NotReady
   # — the container-runtime health feeds the node's Ready condition, which the base

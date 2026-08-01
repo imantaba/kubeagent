@@ -374,17 +374,32 @@ scenario_09_rollout() {   # bad image -> ImagePullBackOff
     -p '{"spec":{"strategy":{"rollingUpdate":{"maxUnavailable":"100%"}}}}' >/dev/null
   kubectl --context "$CTX" -n chaos-rollout set image deploy/web web=nginx:does-not-exist-9999 >/dev/null
   sleep 18
-  { scan 2>&1 || true; } | record "9. Faulty rolling deployment (bad image)" "detected: ImagePullBackOff"
+  local out rc body
+  out="$(scan 2>&1)" && rc=0 || rc=$?
+  body="$(scan_body "$out")"
+  {
+    printf '%s\n' "$out"
+    printf '\n--- assertions ---\n'
+    expect_eq       "scan exit code"          "$rc" 0
+    expect_contains "bad-image workload named" "$body" "chaos-rollout/web"
+    expect_contains "image pull failure diagnosed" "$body" "ImagePullBackOff"
+  } | record "9. Faulty rolling deployment (bad image)" "detected: ImagePullBackOff"
   # slice-4: apply the fix with an audit log, then roll it back and confirm the image returns
   local alog; alog="$(mktemp)"
   ./kubeagent scan --context "$CTX" -n chaos-rollout --fix --yes --audit-log "$alog" >/dev/null 2>&1 || true
   local after_fix; after_fix="$(kubectl --context "$CTX" -n chaos-rollout get deploy web -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null)"
   ./kubeagent scan --context "$CTX" -n chaos-rollout --rollback --yes --audit-log "$alog" >/dev/null 2>&1 || true
   local after_rollback; after_rollback="$(kubectl --context "$CTX" -n chaos-rollout get deploy web -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null)"
+  local rollback_records
+  rollback_records="$(grep -c '"disposition":"rollback"' "$alog" 2>/dev/null || true)"
   {
     echo "after --fix:      $after_fix"
     echo "after --rollback: $after_rollback"
-    { grep -c '"disposition":"rollback"' "$alog" 2>/dev/null || true; } | sed 's/^/rollback audit records: /'
+    printf 'rollback audit records: %s\n' "$rollback_records"
+    printf '\n--- assertions ---\n'
+    expect_eq "--fix restored a working image"      "$after_fix"      "nginx:1.27-alpine"
+    expect_eq "--rollback restored the pre-fix image" "$after_rollback" "nginx:does-not-exist-9999"
+    expect_ge "rollback recorded in the audit log"  "$rollback_records" 1
   } | record "9b. Fix then rollback (audit-log round trip)" "rollback restores the pre-fix image"
   rm -f "$alog"
   kubectl --context "$CTX" delete ns chaos-rollout --wait=true --timeout=120s >/dev/null 2>&1 || true
@@ -396,7 +411,17 @@ scenario_10_credleak() {   # ConfigMap with a fake AWS key -> --lint-secrets
   kubectl --context "$CTX" -n chaos-cred create cm app-config \
     --from-literal=AWS_SECRET_ACCESS_KEY=AKIAIOSFODNN7EXAMPLE >/dev/null
   sleep 3
-  { scan --lint-secrets 2>&1 || true; } | record "10. Security credential leak (--lint-secrets)" "detected: credential warning (location+pattern only)"
+  local out rc body
+  out="$(scan --lint-secrets 2>&1)" && rc=0 || rc=$?
+  body="$(scan_body "$out")"
+  {
+    printf '%s\n' "$out"
+    printf '\n--- assertions ---\n'
+    expect_eq       "scan exit code"                "$rc" 0
+    expect_contains "leak location named"           "$body" "chaos-cred/app-config"
+    expect_contains "credential pattern named"      "$body" "AWS access key"
+    expect_absent   "the credential value is never printed" "$body" "AKIAIOSFODNN7EXAMPLE"
+  } | record "10. Security credential leak (--lint-secrets)" "detected: credential warning (location+pattern only)"
   kubectl --context "$CTX" delete ns chaos-cred --wait=true --timeout=120s >/dev/null 2>&1 || true
 }
 
@@ -417,7 +442,26 @@ scenario_11_kubelet() {   # runtime outage: node NotReady, kubelet /healthz stil
   docker exec "$node" systemctl stop containerd >/dev/null 2>&1 || true
   kubectl --context "$CTX" wait --for='condition=Ready=false' node/"$node" --timeout=120s >/dev/null 2>&1 || true
   local h; h="$(kubectl --context "$CTX" get --raw "/api/v1/nodes/$node/proxy/healthz" 2>/dev/null || echo '<unreachable>')"
-  { scan --kubelet-health 2>&1 || true; } | record "11. Kubelet health probe via nodes/proxy (worker runtime down, --kubelet-health)" "boundary: node NotReady flagged by the base scan; kubelet /healthz reports '$h', so --kubelet-health probes every node and does not double-flag it (no false positive)"
+  local out rc body
+  out="$(scan --kubelet-health 2>&1)" && rc=0 || rc=$?
+  body="$(scan_body "$out")"
+  {
+    printf '%s\n' "$out"
+    printf '\n--- assertions ---\n'
+    # A precondition, not a kubeagent claim: if the kubelet stopped self-reporting
+    # "ok" the no-double-flag assertion below would pass for the wrong reason.
+    expect_eq       "precondition: kubelet /healthz still reports ok" "$h" "ok"
+    expect_eq       "scan exit code"        "$rc" 0
+    expect_contains "cluster verdict"       "$body" "Cluster: Degraded"
+    expect_contains "runtime-down node flagged NotReady" "$body" "NotReady"
+    expect_contains "the affected node is named"         "$body" "$node"
+    # No-double-flag boundary: every kubelet self-reports healthy on /healthz (the
+    # precondition above), so kubeletHealthRenders (internal/report/report.go) has
+    # nothing to print and the whole KUBELET HEALTH section is omitted — there is no
+    # section to extract the node name out of. If a future kubelet regressed
+    # unhealthy, the heading itself would appear and this assertion would catch it.
+    expect_absent  "no kubelet-health section renders (every kubelet self-reports healthy)" "$body" "KUBELET HEALTH"
+  } | record "11. Kubelet health probe via nodes/proxy (worker runtime down, --kubelet-health)" "boundary: node NotReady flagged by the base scan; kubelet /healthz reports '$h', so --kubelet-health probes every node and does not double-flag it (no false positive)"
   # Revert: bring the runtime back and let the node settle Ready before the next scenario.
   docker exec "$node" systemctl start containerd >/dev/null 2>&1 || true
   kubectl --context "$CTX" wait --for=condition=Ready node/"$node" --timeout=180s >/dev/null 2>&1 || true

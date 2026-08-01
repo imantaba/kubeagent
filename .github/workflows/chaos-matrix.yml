@@ -112,3 +112,57 @@ jobs:
 
       - name: Run the chaos suite on ${{ matrix.version }}
         run: ./chaos/run.sh --k8s-version '${{ matrix.version }}' --recreate --teardown
+
+      # Locally these reports are gitignored; uploaded, they leave the machine.
+      # Scenario 20 already asserts that a refused read is reported in
+      # kubeagent's own words and never carries the ServiceAccount's bearer
+      # token or certificate material the way the raw API server message would.
+      # This is the independent second check on the one artifact that actually
+      # travels — belt and braces, because a report is worth publishing only if
+      # publishing it is safe.
+      #
+      # `if: always()` because a FAILED run's report is the one worth reading,
+      # and a failed run is exactly when nobody is watching the scan.
+      - name: Scan the report for credential material
+        if: always()
+        run: |
+          set -uo pipefail
+          rep="docs/testing/chaos-results-${{ matrix.version }}.md"
+          [ -f "$rep" ] || { echo "no report at $rep — nothing to scan"; exit 0; }
+          hits=0
+          scan() {   # scan <what> <extended-regexp>
+            local n
+            # `--` stops option parsing: the PEM pattern below begins with a
+            # literal `-`, which grep would otherwise read as an option string
+            # and refuse to run at all.
+            n="$(grep -acE -- "$2" "$rep" || true)"
+            printf '%-34s %s\n' "$1" "$n"
+            [ "$n" = 0 ] || hits=$((hits + 1))
+          }
+          # A JWT's three dot-separated base64url segments: what a mounted
+          # ServiceAccount token looks like on the wire.
+          scan 'bearer-token shapes'   'eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.'
+          scan 'PEM blocks'            '-----BEGIN [A-Z ]*(PRIVATE KEY|CERTIFICATE)-----'
+          scan 'Authorization headers' '[Aa]uthorization: *[Bb]earer'
+          scan 'kubeconfig fields'     'client-key-data|client-certificate-data|token: '
+          # The documentation value scenario 10 injects on purpose is the only
+          # AKIA that may appear; any other one is a real finding. Two steps,
+          # not one negative lookahead: POSIX ERE has no lookahead, and
+          # `grep -E 'AKIA(?!...)'` does not fail loudly — it warns, matches
+          # nothing, and would report a genuinely leaked key as 0.
+          n="$(grep -aoE 'AKIA[A-Z0-9]{16}' "$rep" | grep -vxF 'AKIAIOSFODNN7EXAMPLE' | grep -ac . || true)"
+          printf '%-34s %s\n' 'unexpected AWS keys' "$n"
+          [ "$n" = 0 ] || hits=$((hits + 1))
+          if [ "$hits" -ne 0 ]; then
+            echo "refusing to upload: the report matched $hits credential pattern(s)" >&2
+            exit 1
+          fi
+          echo "report is clean — safe to upload"
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaos-report-${{ matrix.version }}
+          path: docs/testing/chaos-results-${{ matrix.version }}.md
+          if-no-files-found: warn

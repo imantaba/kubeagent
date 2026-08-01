@@ -927,16 +927,26 @@ metadata: { name: unadapted }
 WIDGET
 
   sleep 20
-  local out body
-  out="$(scan --operators 2>&1 || true)"
+  local out rc body
+  out="$(scan --operators 2>&1)" && rc=0 || rc=$?
   body="$(scan_body "$out")"
+  local widget_n spec_n cert_line
+  widget_n="$(printf '%s\n' "$body" | grep -c 'Widget' || true)"
+  spec_n="$(printf '%s\n' "$body" | grep -cE 'chaosonlytoken|doomed\.chaos\.invalid' || true)"
+  cert_line="$(printf '%s\n' "$body" | grep -m1 'Certificate' || true)"
   {
     printf '%s\n' "$out"
     printf '\n--- gate checks ---\n'
-    printf 'unadapted Widget kind in report: %s\n' "$(printf '%s\n' "$body" | grep -c 'Widget' || true)"
-    printf 'CR spec content in report:       %s\n' "$(printf '%s\n' "$body" | grep -cE 'chaosonlytoken|doomed\.chaos\.invalid' || true)"
-    printf 'Certificate line:                %s\n' "$(printf '%s\n' "$body" | grep -m1 'Certificate' || true)"
+    printf 'unadapted Widget kind in report: %s\n' "$widget_n"
+    printf 'CR spec content in report:       %s\n' "$spec_n"
+    printf 'Certificate line:                %s\n' "$cert_line"
     printf 'cluster verdict:                 %s\n' "$(printf '%s\n' "$body" | grep -m1 '^Cluster:' || true)"
+    printf '\n--- assertions ---\n'
+    expect_eq       "scan exit code" "$rc" 0
+    expect_eq       "unadapted CRD stays out of the report" "$widget_n" 0
+    expect_eq       "no custom-resource spec content in the report" "$spec_n" 0
+    expect_contains "cert-manager Certificate adapter fired" "$cert_line" "Certificate"
+    expect_contains "the failing Certificate is counted unhealthy" "$cert_line" "unhealthy"
   } | record "16. Operator/CRD adapters (--operators)" "detected: cert-manager Certificate Ready=False; unadapted CRD absent (0); no CR spec content (0)"
 
   kubectl --context "$CTX" delete ns "$ns" --wait=true --timeout=120s >/dev/null 2>&1 || true
@@ -1045,21 +1055,34 @@ spec:
 KS
 
   sleep 45
-  local out body
+  local out rc body
   # --drift-age 10s so the 45s-old failure classifies as stale rather than as a
   # deploy that is still converging: this exercises the threshold, not just the
   # parser.
-  out="$(scan --drift --drift-age 10s 2>&1 || true)"
+  out="$(scan --drift --drift-age 10s 2>&1)" && rc=0 || rc=$?
   body="$(scan_body "$out")"
+  local drift_line ks_line doomed_n parked_n leak_n
+  drift_line="$(printf '%s\n' "$body" | grep -m1 'GITOPS DRIFT' || true)"
+  ks_line="$(printf '%s\n' "$body" | grep -m1 'Kustomization' || true)"
+  doomed_n="$(printf '%s\n' "$body" | grep -c "$ns/doomed" || true)"
+  parked_n="$(printf '%s\n' "$body" | grep -cE "$ns/parked +suspended" || true)"
+  leak_n="$(printf '%s\n' "$body" | grep -cE 'chaosonlytoken|git\.chaos\.invalid' || true)"
   {
     printf '%s\n' "$out"
     printf '\n--- gate checks ---\n'
-    printf 'GITOPS DRIFT section:            %s\n' "$(printf '%s\n' "$body" | grep -m1 'GITOPS DRIFT' || true)"
-    printf 'Kustomization line:              %s\n' "$(printf '%s\n' "$body" | grep -m1 'Kustomization' || true)"
-    printf 'doomed enumerated:               %s\n' "$(printf '%s\n' "$body" | grep -c "$ns/doomed" || true)"
-    printf 'parked enumerated as suspended:  %s\n' "$(printf '%s\n' "$body" | grep -cE "$ns/parked +suspended" || true)"
-    printf 'repo URL or token in report:     %s\n' "$(printf '%s\n' "$body" | grep -cE 'chaosonlytoken|git\.chaos\.invalid' || true)"
+    printf 'GITOPS DRIFT section:            %s\n' "$drift_line"
+    printf 'Kustomization line:              %s\n' "$ks_line"
+    printf 'doomed enumerated:               %s\n' "$doomed_n"
+    printf 'parked enumerated as suspended:  %s\n' "$parked_n"
+    printf 'repo URL or token in report:     %s\n' "$leak_n"
     printf 'cluster verdict:                 %s\n' "$(printf '%s\n' "$body" | grep -m1 '^Cluster:' || true)"
+    printf '\n--- assertions ---\n'
+    expect_eq       "scan exit code" "$rc" 0
+    expect_contains "GitOps drift section rendered"   "$drift_line" "GITOPS DRIFT"
+    expect_contains "the stale Kustomization is counted" "$ks_line" "stale"
+    expect_ge "the failing Kustomization is named"    "$doomed_n" 1
+    expect_ge "the suspended Kustomization is named suspended" "$parked_n" 1
+    expect_eq "no repo URL or token reaches the report" "$leak_n" 0
   } | record "17. GitOps drift (--drift)" "detected: Flux Kustomization not ready + one suspended; no repo URL or token (0)"
 
   kubectl --context "$CTX" delete ns "$ns" --wait=true --timeout=120s >/dev/null 2>&1 || true
@@ -1129,27 +1152,49 @@ SHAPES
   local out body
   out="$(scan --capacity 2>&1 || true)"
   body="$(scan_body "$out")"
+  local cap_line cp_n besteffort_n limitonly_n trainer_n nometrics_n banned_n
+  cap_line="$(printf '%s\n' "$body" | grep -m1 'CAPACITY' || true)"
+  cp_n="$(printf '%s\n' "$body" | grep -cE 'control-plane.*NoSchedule taint' || true)"
+  besteffort_n="$(printf '%s\n' "$body" | grep -c "Deployment/$ns/besteffort" || true)"
+  limitonly_n="$(printf '%s\n' "$body" | grep -c "Deployment/$ns/limitonly" || true)"
+  trainer_n="$(printf '%s\n' "$body" | grep -c "Job/$ns/trainer" || true)"
+  nometrics_n="$(printf '%s\n' "$body" | grep -c 'metrics-server unavailable' || true)"
+  banned_n="$(printf '%s\n' "$body" | grep -ciE 'peak|over-requested|oversized|waste' || true)"
   {
     printf '%s\n' "$out"
     printf '\n--- gate checks ---\n'
-    printf 'CAPACITY section:              %s\n' "$(printf '%s\n' "$body" | grep -m1 'CAPACITY' || true)"
-    printf 'headroom schedulable:          %s\n' "$(printf '%s\n' "$body" | grep -m1 'schedulable' || true)"
-    printf 'control-plane excluded:        %s\n' "$(printf '%s\n' "$body" | grep -cE 'control-plane.*NoSchedule taint' || true)"
-    printf 'no requests set (besteffort):  %s\n' "$(printf '%s\n' "$body" | grep -c "Deployment/$ns/besteffort" || true)"
-    printf 'limit, no request (limitonly): %s\n' "$(printf '%s\n' "$body" | grep -c "Deployment/$ns/limitonly" || true)"
-    printf 'never schedulable (trainer):   %s\n' "$(printf '%s\n' "$body" | grep -c "Job/$ns/trainer" || true)"
-    printf 'metrics-server unavailable:    %s\n' "$(printf '%s\n' "$body" | grep -c 'metrics-server unavailable' || true)"
+    printf 'CAPACITY section:              %s\n' "$cap_line"
+    # The old "headroom schedulable" read here used a bare `grep -m1
+    # 'schedulable'`, which is a substring of "Unschedulable" and so matched
+    # whichever line came first in the report — usually the unrelated
+    # Pending/Unschedulable finding for the 40-core Job, not the CAPACITY
+    # section's own headroom summary. "control-plane excluded" below, asserted
+    # against the precise 'control-plane.*NoSchedule taint' pattern, is the
+    # accurate evidence for the same Headroom subsection and replaces it.
+    printf 'control-plane excluded:        %s\n' "$cp_n"
+    printf 'no requests set (besteffort):  %s\n' "$besteffort_n"
+    printf 'limit, no request (limitonly): %s\n' "$limitonly_n"
+    printf 'never schedulable (trainer):   %s\n' "$trainer_n"
+    printf 'metrics-server unavailable:    %s\n' "$nometrics_n"
     # The "not a peak, not a history" footer only renders when MetricsAvailable is
     # true; with no metrics-server on this cluster that footer never prints, so the
     # only remaining route for any of these words is the structural-rules output
     # itself. 0 here means the rules stayed within the section's own vocabulary
     # rules, not that a peak-shaped phrase happened to be filtered out.
-    printf 'no banned vocabulary:          %s\n' "$(printf '%s\n' "$body" | grep -ciE 'peak|over-requested|oversized|waste' || true)"
+    printf 'no banned vocabulary:          %s\n' "$banned_n"
     # Informational only: the Job's request is genuinely unschedulable on this
     # cluster, so the existing Pending/Unschedulable detector fires a real Finding
     # and the verdict below is expected to read Degraded. CAPACITY is advisory and
     # never itself contributes to this line — that is what this gate is checking.
     printf 'cluster verdict:               %s\n' "$(printf '%s\n' "$body" | grep -m1 '^Cluster:' || true)"
+    printf '\n--- assertions ---\n'
+    expect_contains "capacity section rendered"        "$cap_line" "CAPACITY"
+    expect_ge "control-plane excluded from headroom"   "$cp_n"          1
+    expect_ge "no-requests rule fired (besteffort)"    "$besteffort_n"  1
+    expect_ge "limit-without-request rule fired (limitonly)" "$limitonly_n" 1
+    expect_ge "never-schedulable rule fired (trainer)" "$trainer_n"     1
+    expect_ge "absent metrics-server is stated"        "$nometrics_n"   1
+    expect_eq "capacity output stays inside its vocabulary" "$banned_n" 0
   } | record "18. Capacity hints (--capacity)" "detected: all three structural rules; metrics-server absent path; banned vocabulary absent (0); CAPACITY itself never drives the verdict (the Pending/Unschedulable finding from the 40-core Job does)"
 
   kubectl --context "$CTX" delete ns "$ns" --wait=true --timeout=120s >/dev/null 2>&1 || true

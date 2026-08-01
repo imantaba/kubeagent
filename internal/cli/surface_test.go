@@ -437,6 +437,22 @@ func TestErrorStrings(t *testing.T) {
 			wantCode: 1,
 		},
 		{
+			// --output is the flag the user can see is wrong from the message
+			// alone; --profile's set is longer and its error is the one to keep
+			// for when --output is fine. Both commands validate --output first,
+			// so the two verbs cannot disagree about which error comes out.
+			name:     "rbac print reports a bad output before a bad profile",
+			args:     []string{"rbac", "print", "--output", "xml", "--profile", "nonesuch"},
+			wantErr:  `unknown --output "xml": want yaml or json`,
+			wantCode: 1,
+		},
+		{
+			name:     "rbac check reports a bad output before a bad profile",
+			args:     []string{"rbac", "check", "--output", "xml", "--profile", "nonesuch"},
+			wantErr:  `unknown --output "xml": want text or json`,
+			wantCode: 1,
+		},
+		{
 			name:     "rbac check unknown output",
 			args:     []string{"rbac", "check", "--output", "xml"},
 			wantErr:  `unknown --output "xml": want text or json`,

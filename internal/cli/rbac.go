@@ -102,14 +102,16 @@ func parseRBACPrintFlags(args []string) (rbacPrintOptions, error) {
 // runRBACPrintOpts serves `kubeagent rbac print`. o is the already-parsed
 // command line, as produced by parseRBACPrintFlags.
 func runRBACPrintOpts(o rbacPrintOptions) error {
+	// Validate up front, matching rbac check: with two flags wrong, the two
+	// verbs must not disagree about which one they name.
+	if o.output != "yaml" && o.output != "json" {
+		return fmt.Errorf("unknown --output %q: want yaml or json", o.output)
+	}
 	rules, err := selectedRules(o.profile, o.features)
 	if err != nil {
 		return err
 	}
-	switch o.output {
-	case "yaml":
-		fmt.Fprint(os.Stdout, rbacprofile.RenderClusterRole(o.roleName, rules))
-	case "json":
+	if o.output == "json" {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(rbacprofile.RulesDocument{
@@ -117,9 +119,8 @@ func runRBACPrintOpts(o rbacPrintOptions) error {
 			RoleName:      o.roleName,
 			Rules:         rules,
 		})
-	default:
-		return fmt.Errorf("unknown --output %q: want yaml or json", o.output)
 	}
+	fmt.Fprint(os.Stdout, rbacprofile.RenderClusterRole(o.roleName, rules))
 	return nil
 }
 
@@ -171,7 +172,7 @@ func parseRBACCheckFlags(args []string) (rbacCheckOptions, error) {
 // runRBACCheckOpts serves `kubeagent rbac check`. o is the already-parsed
 // command line, as produced by parseRBACCheckFlags.
 func runRBACCheckOpts(o rbacCheckOptions) error {
-	// Validate up front, matching runRBACPrint: a typo in --output must fail
+	// Validate up front, matching rbac print: a typo in --output must fail
 	// immediately, not after connecting to a cluster.
 	if o.output != "text" && o.output != "json" {
 		return fmt.Errorf("unknown --output %q: want text or json", o.output)

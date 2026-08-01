@@ -133,7 +133,10 @@ record() {
   } >> "$OUT"
 }
 
-teardown() { log "teardown"; kind delete cluster --name "$CLUSTER"; }
+# A failed teardown must not abort main before assert_summary runs: the exit
+# code callers read is the assertion gate's, and losing it to kind's would
+# report a delete failure as a scenario failure and drop the report's summary.
+teardown() { log "teardown"; kind delete cluster --name "$CLUSTER" || log "teardown: kind delete cluster failed (cluster may still exist)"; }
 
 # --- scenarios -------------------------------------------------------------
 # Each scenario: inject -> scan (recorded; never aborts the harness) -> revert.

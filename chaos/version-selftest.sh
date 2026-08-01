@@ -30,7 +30,21 @@ for m in $(chaos_versions); do
   check "chaos_image $m exits 0"          "$rc" 0
   check "chaos_image $m names kindest"    "$(printf '%s' "$img" | grep -c '^kindest/node:' || true)" 1
   check "chaos_image $m is digest-pinned" "$(printf '%s' "$img" | grep -cE '@sha256:[0-9a-f]{64}$' || true)" 1
-  check "chaos_image $m names the minor"  "$(printf '%s' "$img" | grep -c "kindest/node:${m}\." || true)" 1
+  check "chaos_image $m names the minor"  "$(printf '%s' "$img" | grep -cF "kindest/node:${m}." || true)" 1
+done
+
+# A shape-valid minor that is merely a PREFIX of a supported one must still be
+# rejected. Without this, relaxing the membership test to a prefix match leaves
+# every other check in this file passing: chaos_image v1.3 still fails, but only
+# incidentally, because no KUBEAGENT_CHAOS_IMAGE_v1_3 exists — while chaos_suffix
+# v1.3 happily returns "-v1-3" and names a cluster that boots the wrong minor.
+for near in v1.3 v1.320 v01.32; do
+  out="$(chaos_image "$near" 2>/dev/null)" && rc=0 || rc=$?
+  check "chaos_image rejects the near-miss '$near'"  "$rc"  1
+  check "chaos_image prints nothing for '$near'"     "$out" ""
+  out="$(chaos_suffix "$near" 2>/dev/null)" && rc=0 || rc=$?
+  check "chaos_suffix rejects the near-miss '$near'" "$rc"  1
+  check "chaos_suffix prints nothing for '$near'"    "$out" ""
 done
 
 # --- chaos_image rejects ---------------------------------------------------

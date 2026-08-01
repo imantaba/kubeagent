@@ -1187,8 +1187,8 @@ SHAPES
   kubectl --context "$CTX" -n "$ns" rollout status deploy/besteffort --timeout=90s >/dev/null 2>&1 || true
   kubectl --context "$CTX" -n "$ns" rollout status deploy/limitonly --timeout=90s >/dev/null 2>&1 || true
 
-  local out body
-  out="$(scan --capacity 2>&1 || true)"
+  local out rc body
+  out="$(scan --capacity 2>&1)" && rc=0 || rc=$?
   body="$(scan_body "$out")"
   local cap_line cp_n besteffort_n limitonly_n trainer_n nometrics_n banned_n
   cap_line="$(printf '%s\n' "$body" | grep -m1 'CAPACITY' || true)"
@@ -1226,6 +1226,7 @@ SHAPES
     # never itself contributes to this line — that is what this gate is checking.
     printf 'cluster verdict:               %s\n' "$(printf '%s\n' "$body" | grep -m1 '^Cluster:' || true)"
     printf '\n--- assertions ---\n'
+    expect_eq       "scan exit code" "$rc" 0
     expect_contains "capacity section rendered"        "$cap_line" "CAPACITY"
     expect_ge "control-plane excluded from headroom"   "$cp_n"          1
     expect_ge "no-requests rule fired (besteffort)"    "$besteffort_n"  1

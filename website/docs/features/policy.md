@@ -119,8 +119,10 @@ violation per rule: the first slot that fails.
 | `notMatches` | the value matches none of them | skipped |
 | `gt` `gte` `lt` `lte` | numeric or quantity comparison against `values[0]` | skipped |
 
-Globs use `*` for any run of characters, including `/`, and `?` for exactly
-one. `registry.example.com/*` matches `registry.example.com/team/app:1.0`.
+Globs use `*` for any run of bytes, including `/`, and `?` for exactly one
+byte — so `?` against a multi-byte UTF-8 character consumes only its first
+byte, not the whole character. `registry.example.com/*` matches
+`registry.example.com/team/app:1.0`.
 
 Comparisons understand plain numbers and Kubernetes quantities, so `500m`,
 `2Gi` and `1.5` all work. A value that parses as neither is skipped rather

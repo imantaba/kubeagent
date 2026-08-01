@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Two chaos scenarios cover the two opt-in health probes that had no live
+  coverage. Scenario 21 proves `--control-plane-health` really issues its
+  `/readyz` request against a running apiserver, classifies it `ok`, and reports
+  a ready control plane by saying nothing. Scenario 22 breaks DNS the way a
+  liveness check cannot see — CoreDNS Ready, serving metrics, and answering
+  every query `SERVFAIL` — and proves `--dns-health` names it. Scenario 20 now
+  runs both flags under its least-privilege identity too: the CoreDNS
+  `pods/proxy` refusal joins the three it already asserted, and `/readyz` — which
+  a stock cluster grants to every authenticated identity — is asserted *not* to
+  be named, so a read that succeeded is never reported as one kubeagent could not
+  make.
+
 ### Changed
 
 - `internal/safetext.Line` now bounds combining marks: a character keeps at most

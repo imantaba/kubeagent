@@ -43,7 +43,7 @@ like when `--k8s-version` is given — and never reads your current kubecontext.
 ./chaos/run.sh                 # create cluster, run all scenarios, leave cluster up
 ./chaos/run.sh --recreate      # delete + recreate the cluster first (clean slate)
 ./chaos/run.sh --teardown      # delete the cluster when finished
-./chaos/run.sh --only 7        # run a single scenario (1..20) for debugging
+./chaos/run.sh --only 7        # run a single scenario (1..22) for debugging
 ./chaos/run.sh --out path.md   # write the report somewhere specific
 ./chaos/run.sh --k8s-version v1.33   # pin the Kubernetes minor (see below)
 ```
@@ -107,13 +107,13 @@ stdout.
 ### What this matrix does and does not cover
 
 The nightly workflow (`.github/workflows/chaos-matrix.yml`) runs the full
-suite — the baseline plus all 20 scenarios below — once per supported
+suite — the baseline plus all 22 scenarios below — once per supported
 Kubernetes minor (currently v1.32, v1.33, v1.34), each on its own disposable
 **kind** cluster on a GitHub-hosted `ubuntu-latest` runner, with Calico as the
 CNI and kind's own containerd as the node runtime. Three green cells prove
 that kubeagent held its contract — the machine-checked assertions described
-under Assertions, below — on three kind-hosted minors under twenty specific
-injected outages. That is **not** a claim that kubeagent is correct in
+under Assertions, below — on three kind-hosted minors under twenty-two
+specific injected outages. That is **not** a claim that kubeagent is correct in
 general, and the axes below are the ones a three-minor matrix could easily be
 mistaken for covering:
 
@@ -145,7 +145,7 @@ mistaken for covering:
   redaction, not the real Anthropic backend, which stays covered by unit
   tests only.
 
-Each cell runs 105 assertions. On a GitHub-hosted runner a cell takes roughly
+Each cell runs 122 assertions. On a GitHub-hosted runner a cell takes roughly
 17 minutes; locally it's 35-40. All three supported
 minors have gone green on real runners.
 
@@ -179,7 +179,7 @@ sees scroll by.
 `main` finishes with `assert_summary`, which appends an `## Assertion summary`
 to the end of the report naming every `FAIL`, prints `assertions: N run, M
 failed` to the console, and returns non-zero when `M > 0` — that return status
-is what makes `./chaos/run.sh` itself exit non-zero. The baseline and all 20
+is what makes `./chaos/run.sh` itself exit non-zero. The baseline and all 22
 scenarios are asserted except one: scenario 2 (expired certificates) runs no
 scan and computes nothing, so it carries no assertion by design — the TLS
 branch it would otherwise cover is unit-tested in `internal/connectivity`
@@ -188,9 +188,9 @@ instead.
 These assertions are written at kubeagent's contract level — a finding
 kubeagent reported, a counter kubeagent computed, kubeagent's own exit code —
 never at the Kubernetes API server's wording, which can change between minor
-versions without kubeagent being wrong. Twenty specific injected outages
-passing proves kubeagent kept its side of the contract on those twenty; it is
-not a general correctness proof.
+versions without kubeagent being wrong. Twenty-two specific injected outages
+passing proves kubeagent kept its side of the contract on those twenty-two; it
+is not a general correctness proof.
 
 When a `FAIL:` line shows up, the report is what you read to understand it,
 not what you read to detect it: each scenario's section opens with a
@@ -228,7 +228,9 @@ second.
 | 17 | GitOps drift | install real Flux (pinned v2.4.0), create a `GitRepository` pointing at an unresolvable host plus a failing and a suspended `Kustomization` | `--drift` names the failing `Kustomization` as stale (past `--drift-age`) and the other as `suspended`; the `GitRepository`'s repo URL and the fake token embedded in it appear **zero** times anywhere in the report. Flux is removed again afterwards |
 | 18 | Capacity hints, no metrics-server | a `Deployment` with no resource requests, one with a memory limit but no request, and a `Job` requesting 40 CPU cores (unschedulable on this cluster) | `--capacity` names all three structural right-sizing rules and reports the metrics-server-unavailable, structural-rules-only path; no cost/peak/waste vocabulary anywhere. CAPACITY is purely advisory and never itself moves the verdict — the cluster still reads **Degraded**, because the 40-core Job's Pod is genuinely unschedulable and the existing Pending/Unschedulable detector reports that independently |
 | 19 | MCP server over stdio | drive `kubeagent mcp` as the real binary over real stdio (not the fake clientset): `initialize`, `tools/list`, then `tools/call kubeagent_triage` against a crash-looping pod | `tools/list` names exactly `kubeagent_advisory kubeagent_inspect kubeagent_triage` — no tool name contains a write verb (`fix`/`apply`/`delete`/`patch`/`create`); the triage call returns a `degraded` verdict with at least one finding and `coverage.context` echoing back the `--context` the server was started with |
-| 20 | Least-privilege RBAC | generate a `scan`-profile `ClusterRole` with `kubeagent rbac print`, bind it to a fresh ServiceAccount, then run `kubeagent rbac check` and `scan --certs --logs --disk-usage` as that identity alone | `rbac check` reports `core` allowed and exactly `certs diskusage logs` blocked, named from kubeagent's own table, never the API server's; the scan still exits `0`; the report names `secrets`/`pods/log`/`nodes/proxy` as unread rather than showing three empty sections |
+| 20 | Least-privilege RBAC | generate a `scan`-profile `ClusterRole` with `kubeagent rbac print`, bind it to a fresh ServiceAccount, then run `kubeagent rbac check` and `scan --certs --logs --disk-usage --control-plane-health --dns-health` as that identity alone | `rbac check` reports `core` allowed and exactly `certs diskusage logs` blocked, named from kubeagent's own table, never the API server's; the scan still exits `0`; the report names `secrets`/`pods/log`/`nodes/proxy`/`pods/proxy` as unread rather than showing four empty sections, and does *not* name `/readyz`, which a stock cluster grants to every authenticated identity — a read that succeeded is never reported as a blind spot |
+| 21 | Control-plane readiness probe | nothing injected — the probe runs against a healthy apiserver | `--control-plane-health` classifies `/readyz` as `ok` in the JSON report and renders **no** CONTROL PLANE section in the text one; without the flag the JSON carries no `controlPlane` key at all. The unhealthy branch is deliberately not injected: the only apiserver readyz check reachable from outside is etcd, and breaking etcd takes every read the report is built from with it — that is scenario 1 |
+| 22 | DNS up but not resolving | a Corefile that keeps CoreDNS Ready and serving `/metrics` while answering every query `SERVFAIL` (the `template` plugin), plus a Job driving enough queries to clear the 100-response floor | `--dns-health` reports `degraded`, names it (`cluster DNS is failing to resolve`) and quantifies the SERVFAIL+REFUSED ratio; exit code stays `0` because the section is advisory; without the flag the JSON carries no `dns` key. Scenario 5 covers the other DNS outage — CoreDNS crash-looping — and cannot reach this one, because a CoreDNS that is down serves no `/metrics` to read |
 
 ### Validating `--fix` (remediation)
 

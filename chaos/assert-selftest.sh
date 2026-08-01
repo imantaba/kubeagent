@@ -54,7 +54,7 @@ line="$(expect_ge 'ready replicas' '' 1)"
 check 'expect_ge fails on empty'     "${line%%:*}" FAIL
 
 # --- a FAIL does not abort the caller under set -e ---------------------------
-# This is the whole design: all 20 scenarios must still run after one fails.
+# This is the whole design: all 22 scenarios must still run after one fails.
 assert_init
 reached=no
 expect_eq 'deliberate failure' a b >/dev/null

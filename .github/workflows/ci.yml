@@ -22,3 +22,7 @@ jobs:
         run: go test -race ./...
       - name: Build
         run: go build ./...
+      - name: Chaos harness self-tests
+        run: |
+          bash chaos/assert-selftest.sh
+          bash chaos/version-selftest.sh

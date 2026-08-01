@@ -2,8 +2,10 @@
 # Resolves a Kubernetes minor to the kind node image the chaos harness should
 # boot, and to the suffix that keeps two versions' clusters from colliding.
 # Sourced by chaos/run.sh and by chaos/version-selftest.sh; the data itself
-# lives in chaos/versions.env so the harness and the nightly workflow can never
-# disagree about what "supported" means.
+# lives in chaos/versions.env, so everything that needs to know what "supported"
+# means resolves it from one place rather than keeping its own copy — the
+# harness and the release skill's per-minor loop today, and CI when the nightly
+# matrix lands.
 
 CHAOS_VERSIONS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=chaos/versions.env

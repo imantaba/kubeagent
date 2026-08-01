@@ -1,0 +1,9 @@
+- id: registry-allowlist
+  match:
+    kind: Pod
+  assert:
+    path: spec.containers[*].image
+    op: matches
+    values: ["quay.example.org/*"]
+  level: info
+  message: duplicate id, used to prove cross-file detection

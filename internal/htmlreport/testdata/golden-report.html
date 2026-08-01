@@ -38,6 +38,7 @@
   .empty { color: var(--muted); }
   .blind { background: var(--panel); border-left: 3px solid var(--warning); padding: .75rem 1rem; }
   .blind p { color: var(--muted); margin: .25rem 0 .5rem; }
+  .policy { background: var(--panel); border-left: 3px solid var(--muted); padding: .75rem 1rem; }
   ul { margin: .5rem 0; padding-left: 1.2rem; }
   details { border: 1px solid var(--line); border-radius: 4px; padding: .5rem .75rem; margin-bottom: .6rem; }
   summary { cursor: pointer; font-weight: 600; }
@@ -75,6 +76,21 @@
   <p>kubeagent could not read the following, so the findings below are incomplete.</p>
   <ul>
     <li><span class="mono">horizontalpodautoscalers</span> &mdash; permission denied — kubeagent&#39;s credentials may not list it</li>
+  </ul>
+</section>
+<section class="policy">
+  <h2>Policy</h2>
+  <p>3 rules evaluated from the policy files given on the command line.</p>
+  <table>
+    <thead><tr><th>Level</th><th>Rule</th><th>Kind</th><th>Object</th><th>Message</th><th>Evidence</th></tr></thead>
+    <tbody>
+      <tr class="critical"><td class="sev">critical</td><td class="mono">registry-allowlist</td><td>Pod</td><td class="mono">shop/checkout-7d9f</td><td>image is not from an allowed registry</td><td class="mono">docker.example.net/checkout:2.1</td></tr>
+      <tr class="warning"><td class="sev">warning</td><td class="mono">pdb-required</td><td>Deployment</td><td class="mono">shop/checkout</td><td>no PodDisruptionBudget covers this Deployment</td><td class="mono"></td></tr>
+    </tbody>
+  </table>
+  <p>The following rules were <strong>not evaluated</strong>, so nothing here says whether the cluster satisfies them.</p>
+  <ul>
+    <li><span class="mono">storage-encrypted</span> (critical, StorageClass) &mdash; kubeagent could not read this kind, so the rule was not evaluated</li>
   </ul>
 </section>
 

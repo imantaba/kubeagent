@@ -1,0 +1,31 @@
+- id: registry-allowlist
+  match:
+    kind: Pod
+    namespaceLabels:
+      tier: prod
+  assert:
+    path: spec.containers[*].image
+    op: matches
+    values: ["registry.example.com/*"]
+  level: critical
+  message: image comes from a registry outside the allowlist
+
+- id: prod-deployments-need-a-pdb
+  match:
+    kind: Deployment
+    namespaceLabels:
+      tier: prod
+  assert:
+    relation: hasPodDisruptionBudget
+  level: warning
+  message: no PodDisruptionBudget covers this Deployment
+
+- id: memory-limit-is-set
+  match:
+    kind: Pod
+    namespaces: [prod]
+  assert:
+    path: spec.containers[*].resources.limits.memory
+    op: exists
+  level: warning
+  message: container sets no memory limit

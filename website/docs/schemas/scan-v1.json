@@ -1236,6 +1236,74 @@
       ],
       "type": "object"
     },
+    "policy.Unevaluated": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "level": {
+          "enum": [
+            "info",
+            "warning",
+            "critical"
+          ],
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "ruleId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "level",
+        "reason",
+        "ruleId"
+      ],
+      "type": "object"
+    },
+    "policy.Violation": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "evidence": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "level": {
+          "enum": [
+            "info",
+            "warning",
+            "critical"
+          ],
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "ruleId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "level",
+        "message",
+        "name",
+        "ruleId"
+      ],
+      "type": "object"
+    },
     "pvchealth.Issue": {
       "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
       "properties": {
@@ -1384,6 +1452,30 @@
       },
       "required": [
         "narrative"
+      ],
+      "type": "object"
+    },
+    "report.PolicyView": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "notEvaluated": {
+          "items": {
+            "$ref": "#/$defs/policy.Unevaluated"
+          },
+          "type": "array"
+        },
+        "rules": {
+          "type": "integer"
+        },
+        "violations": {
+          "items": {
+            "$ref": "#/$defs/policy.Violation"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "rules"
       ],
       "type": "object"
     },
@@ -1702,6 +1794,9 @@
     },
     "platform": {
       "$ref": "#/$defs/platform.Facts"
+    },
+    "policy": {
+      "$ref": "#/$defs/report.PolicyView"
     },
     "pvcIssues": {
       "items": {

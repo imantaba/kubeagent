@@ -12,6 +12,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/findings"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/policy"
 	"github.com/imantaba/kubeagent/internal/redact"
 	"github.com/imantaba/kubeagent/internal/report"
 	"github.com/imantaba/kubeagent/internal/scan"
@@ -464,5 +465,100 @@ func TestRenderExplanationOnlyWhenPresent(t *testing.T) {
 	without := render(t, Input{Report: report.Input{Now: fixedNow}, Version: "v0.66.0"})
 	if strings.Contains(without, "Explanation") {
 		t.Error("a scan without --explain must not render an empty Explanation section")
+	}
+}
+
+func policyInput() Input {
+	in := Input{Version: "test", Namespace: "prod"}
+	in.Report.Now = time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
+	in.Report.Policy = &report.PolicyView{
+		Rules: 4,
+		Violations: []policy.Violation{
+			{RuleID: "registry-allowlist", Level: policy.LevelCritical, Kind: "Pod",
+				Namespace: "prod", Name: "web-7d9f", Message: "image is not from an allowed registry",
+				Evidence: "docker.example.net/app:1.0"},
+			{RuleID: "pdb-required", Level: policy.LevelWarning, Kind: "Deployment",
+				Namespace: "prod", Name: "api", Message: "no PodDisruptionBudget covers this Deployment"},
+			{RuleID: "zone-label", Level: policy.LevelInfo, Kind: "Node", Name: "worker-1",
+				Message: "no topology label"},
+		},
+		NotEvaluated: []policy.Unevaluated{{
+			RuleID: "storage-encrypted", Level: policy.LevelCritical, Kind: "StorageClass",
+			Reason: "kubeagent could not read this kind, so the rule was not evaluated",
+		}},
+	}
+	return in
+}
+
+func TestPolicySectionRendersRulesViolationsAndUnevaluated(t *testing.T) {
+	var buf bytes.Buffer
+	if err := Render(&buf, policyInput()); err != nil {
+		t.Fatal(err)
+	}
+	doc := buf.String()
+
+	for _, want := range []string{
+		"Policy", "registry-allowlist", "web-7d9f", "image is not from an allowed registry",
+		"docker.example.net/app:1.0", "pdb-required", "zone-label", "worker-1",
+		"storage-encrypted", "not evaluated",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("the policy section is missing %q", want)
+		}
+	}
+}
+
+// A violation is not a cluster finding: it must not be counted in the header
+// pills, which tally kubeagent's own judgement about cluster health.
+func TestPolicyViolationsDoNotEnterTheSeverityTally(t *testing.T) {
+	var buf bytes.Buffer
+	if err := Render(&buf, policyInput()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "0 critical") {
+		t.Error("a critical policy violation was counted in the header tally")
+	}
+}
+
+// Gate evidence item 1 in miniature: with no policy the document is what it
+// was before this task existed.
+func TestNoPolicyRendersNoPolicySection(t *testing.T) {
+	in := policyInput()
+	in.Report.Policy = nil
+
+	var buf bytes.Buffer
+	if err := Render(&buf, in); err != nil {
+		t.Fatal(err)
+	}
+	// The .policy CSS rule is gated the same as the section: a nil-policy
+	// render must be byte-identical to the document rendered before this
+	// task's --policy support existed, and that document never carried this
+	// selector at all.
+	for _, absent := range []string{
+		`<section class="policy">`, "<h2>Policy</h2>", "rules evaluated",
+		"registry-allowlist", "storage-encrypted", ".policy {",
+	} {
+		if strings.Contains(buf.String(), absent) {
+			t.Errorf("a scan with no --policy rendered %q", absent)
+		}
+	}
+}
+
+// The document is written to be forwarded. A policy file lives at a path on the
+// operator's machine, and that path is a credential.
+func TestPolicySectionCarriesNoPath(t *testing.T) {
+	in := policyInput()
+	in.Report.Policy.Violations[0].Evidence = "/etc/kubeagent/policies/prod.yaml"
+
+	var buf bytes.Buffer
+	if err := Render(&buf, in); err != nil {
+		t.Fatal(err)
+	}
+	// Evidence is cluster text, not a path — but if a future change ever routes
+	// a path into it, this document must not be the place it surfaces.
+	for _, needle := range []string{"/etc/", "/home/", "kubeconfig"} {
+		if strings.Contains(buf.String(), needle) {
+			t.Errorf("the document rendered %q", needle)
+		}
 	}
 }

@@ -187,6 +187,13 @@ reports no log cause (non-fatal). kubeagent stays strictly get/list/watch otherw
 		Rules: []Rule{{APIGroup: "", Resources: []string{"pods/log"}, Verbs: GetOnly}},
 	},
 	{
+		Name:      "policy",
+		Flag:      "--policy",
+		Summary:   "organization-specific checks from a policy file; reads only kinds core already grants",
+		CoveredBy: "core",
+		ScanOnly:  true,
+	},
+	{
 		Name:     "operators",
 		Flag:     "--operators",
 		Summary:  "health of installed operators: cert-manager, CNPG, Longhorn, Argo CD, Flux, Prometheus",

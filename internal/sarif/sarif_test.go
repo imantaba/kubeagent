@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/imantaba/kubeagent/internal/findings"
 	"github.com/imantaba/kubeagent/internal/gate"
+	"github.com/imantaba/kubeagent/internal/policy"
+	"github.com/imantaba/kubeagent/internal/scan"
 )
 
 func sampleVerdict() gate.Verdict {
@@ -345,5 +348,45 @@ func TestRenderIgnoresTheGateSchemaVersion(t *testing.T) {
 	}
 	if !bytes.Equal(without, with) {
 		t.Error("the gate's schemaVersion changed the SARIF output; SARIF is versioned by OASIS")
+	}
+}
+
+func TestPolicyFindingsRenderAsSARIFRules(t *testing.T) {
+	v := gate.Decide(scan.Result{}, gate.Options{
+		FailOn: findings.Warning,
+		PolicyViolations: []policy.Violation{{
+			RuleID: "registry-allowlist", Level: policy.LevelCritical, Kind: "Pod",
+			Namespace: "prod", Name: "web", Message: "image is not from an allowed registry",
+		}},
+		PolicyNotEvaluated: []policy.Unevaluated{{
+			RuleID: "storage-encrypted", Level: policy.LevelCritical, Kind: "StorageClass",
+			Reason: "kubeagent could not read this kind, so the rule was not evaluated",
+		}},
+	})
+	out, err := Render(v, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(out)
+
+	for _, want := range []string{
+		`"policy/registry-allowlist"`,
+		`"policy/storage-encrypted"`,
+		`k8s://prod/Pod/web`,
+		`k8s://StorageClass`,
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("SARIF is missing %q\n%s", want, doc)
+		}
+	}
+	if strings.Contains(doc, `k8s://StorageClass/"`) {
+		t.Error("an object-less finding rendered a trailing empty path segment")
+	}
+	// A policy file's path is a credential and must not reach a document that
+	// gets uploaded to a code-scanning dashboard.
+	for _, needle := range []string{".yaml", ".yml", "/etc/", "/home/"} {
+		if strings.Contains(doc, needle) {
+			t.Errorf("SARIF contains %q — a policy path must never be rendered", needle)
+		}
 	}
 }

@@ -60,6 +60,35 @@
         "waived"
       ],
       "type": "object"
+    },
+    "policy.Unevaluated": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "level": {
+          "enum": [
+            "info",
+            "warning",
+            "critical"
+          ],
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "ruleId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "level",
+        "reason",
+        "ruleId"
+      ],
+      "type": "object"
     }
   },
   "$id": "https://k8sproject.top/schemas/gate-v1.json",
@@ -97,6 +126,12 @@
         "array",
         "null"
       ]
+    },
+    "policyNotEvaluated": {
+      "items": {
+        "$ref": "#/$defs/policy.Unevaluated"
+      },
+      "type": "array"
     },
     "reported": {
       "items": {

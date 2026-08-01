@@ -56,6 +56,7 @@ type gateOptions struct {
 	timeout          time.Duration
 	pollInterval     time.Duration
 	allowPartialRead []string
+	policyPaths      []string
 	namespace        string
 }
 
@@ -77,6 +78,7 @@ func bindGateFlags(cmd *cobra.Command, o *gateOptions) {
 	f.DurationVar(&o.timeout, "timeout", 5*time.Minute, "with --wait-for: give up waiting after this long (exit 3)")
 	f.DurationVar(&o.pollInterval, "poll-interval", 2*time.Second, "with --wait-for: how often to re-read the workload")
 	f.StringArrayVar(&o.allowPartialRead, "allow-partial-read", nil, "accept that this resource cannot be read, instead of exiting 2 (repeatable, e.g. leases)")
+	f.StringArrayVar(&o.policyPaths, "policy", nil, "evaluate organization-specific checks from this policy file or directory (repeatable)")
 	f.StringVarP(&o.namespace, "namespace", "n", "", "namespace to judge (default: all namespaces)")
 }
 
@@ -135,6 +137,18 @@ func runGateOpts(o gateOptions) error {
 	ctx := context.Background()
 
 	opts := gate.Options{FailOn: level, AllowPartialRead: o.allowPartialRead}
+
+	// Exit 4 for a bad policy file: it is bad input, in the same class as a bad
+	// flag, and nothing was attempted against the cluster. Exit 1 would claim
+	// kubeagent looked and found problems.
+	pv, err := evaluatePolicy(ctx, o.policyPaths, o.kubeconfig, o.contextName, o.namespace)
+	if err != nil {
+		return &exitError{code: gate.CodeUsage, msg: err.Error()}
+	}
+	if pv != nil {
+		opts.PolicyViolations, opts.PolicyNotEvaluated = pv.Violations, pv.NotEvaluated
+	}
+
 	if o.waitFor != "" {
 		opts = scopeTo(opts, target)
 		res, err := rolloutwait.Wait(ctx, client, target, o.timeout, o.pollInterval, rolloutwait.Real{})

@@ -47,6 +47,12 @@ func scanWorkers() int {
 	return n
 }
 
+// Workers is the cap the scan's own reads run under, exported so a surface
+// that adds reads of its own — the policy evaluation in `scan` and in `gate` —
+// runs them under the same bound and the same KUBEAGENT_SCAN_WORKERS knob.
+// An operator who turns kubeagent down to one worker means all of it.
+func Workers() int { return scanWorkers() }
+
 // runReads executes every read closure and returns their errors in INDEX order:
 // errs[i] is always the error from reads[i]. The index-ordered contract is what
 // lets the body become a bounded worker pool without any caller changing.

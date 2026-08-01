@@ -62,8 +62,9 @@ byte-for-byte. Passing the flag pins a specific minor instead:
 ```
 
 The supported minors and the node image for each live in
-[`versions.env`](versions.env), read only by `chaos/versions.sh`, so the harness
-and the nightly workflow can never disagree about what "supported" means. An
+[`versions.env`](versions.env), read only by `chaos/versions.sh`. Everything that
+needs to know what "supported" means resolves it from there rather than keeping
+its own copy — the harness today, and CI when the nightly matrix lands. An
 unsupported or malformed value is refused before anything touches docker, with
 the supported set named on stderr and nothing on stdout — a caller that ignored
 the status would otherwise hand `kind create cluster` an empty `--image` and
@@ -187,7 +188,12 @@ second.
 ### Validating `--fix` (remediation)
 
 Scenario 9 (faulty rollout) is the acceptance test for `--fix`. After a run leaves
-it injected, roll it back and confirm recovery:
+it injected, roll it back and confirm recovery.
+
+The commands below name the default context, `kind-kubeagent-chaos`. After a run
+with `--k8s-version`, substitute that run's context throughout — `kubectl config
+get-contexts` shows it, and the node in the `Uncordon` check gains the same
+suffix (`kubeagent-chaos-v1-33-worker`).
 
 ```bash
 # Force a degraded rollout: no surge + allow an old pod down, so the failing new

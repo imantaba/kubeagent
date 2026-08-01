@@ -79,14 +79,16 @@ machine need inotify limits most workstations do not have (`chaos/README.md` has
 `sysctl` commands, and the harness's preflight prints them):
 
 ```bash
-for v in v1.32 v1.33 v1.34; do
+for v in $(. chaos/versions.sh && chaos_versions); do
   ./chaos/run.sh --k8s-version "$v" --recreate --teardown || echo "GATE FAILED on $v"
 done
 ```
 
-Each minor gets its own cluster, context and report (`docs/testing/chaos-results-$v.md`),
-so nothing collides. The supported minors and their digest-pinned images live in
-`chaos/versions.env`; an unsupported value is refused before docker is touched.
+The minor list is read from `chaos/versions.env` rather than typed here, so this
+command cannot go stale when the supported set changes. Each minor gets its own
+cluster, context and report (`docs/testing/chaos-results-$v.md`), so nothing collides;
+the images are digest-pinned, and an unsupported value is refused before docker is
+touched.
 
 **Detector / report / docs-only changes** fully covered by unit tests + the fake
 clientset (a new pure detector, an output-format tweak) don't need the full outage suite —

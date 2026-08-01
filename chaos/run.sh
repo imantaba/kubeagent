@@ -27,6 +27,11 @@ if [ -n "$ONLY" ] && printf '%s' "$ONLY" | grep -qE '^[0-9]+$'; then ONLY=$(prin
 
 : "${OUT:=docs/testing/chaos-results.md}"
 
+# Assertion helpers (expect_eq / expect_ge / expect_contains / expect_absent) and
+# the summary that turns their outcomes into this script's exit code.
+# shellcheck source=chaos/assert.sh
+. "$ROOT/chaos/assert.sh"
+
 log() { printf '\n=== %s ===\n' "$*"; }
 
 preflight() {
@@ -1210,6 +1215,7 @@ main() {
 
   mkdir -p "$(dirname "$OUT")"
   : > "$OUT"
+  assert_init
   {
     printf '# kubeagent chaos-test results\n\n'
     printf -- '- Cluster: Kind %s, Calico CNI, 1 control-plane + 2 workers\n' "$(kind version 2>/dev/null | awk '{print $2}')"
@@ -1233,6 +1239,9 @@ main() {
     echo "cluster left up ($CTX). Re-run with --teardown to delete, or:"
     echo "  kind delete cluster --name $CLUSTER"
   fi
+
+  # Non-zero when any assertion failed: this is what makes the harness a gate.
+  assert_summary "$OUT"
 }
 
 main

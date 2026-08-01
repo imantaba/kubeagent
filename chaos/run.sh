@@ -281,7 +281,7 @@ NP
     sleep 2
   done
   broken="$(ready_replicas "$ns" blocked)"
-  blocked_scan="$(scan 2>&1 || true)"
+  blocked_scan="$(scan 2>&1)" && blocked_rc=0 || blocked_rc=$?
   probe_event="$(kubectl --context "$CTX" -n "$ns" get events --field-selector reason=Unhealthy \
     --sort-by=.lastTimestamp -o jsonpath='{range .items[*]}{.message}{"\n"}{end}' 2>/dev/null \
     | grep -v '^$' | tail -1 || true)"
@@ -294,7 +294,7 @@ NP
     sleep 2
   done
   recovered="$(ready_replicas "$ns" blocked)"
-  recovery_scan="$(scan 2>&1 || true)"
+  recovery_scan="$(scan 2>&1)" && recovery_rc=0 || recovery_rc=$?
   blocked_lines="$(scan_body "$blocked_scan"  | grep -c 'chaos-np/blocked' || true)"
   recovery_lines="$(scan_body "$recovery_scan" | grep -c 'chaos-np/blocked' || true)"
 
@@ -313,18 +313,25 @@ NP
     echo '--- scan WITH deny-all in force ---'
     printf '%s\n' "$blocked_scan"
     echo
+    printf 'scan exit code under deny-all: %s\n' "$blocked_rc"
     printf 'chaos-np/blocked lines in that scan: %s\n' "$blocked_lines"
     echo
     echo '--- scan after deleting ONLY the NetworkPolicy ---'
     printf '%s\n' "$recovery_scan"
     echo
+    printf 'scan exit code after deleting the policy: %s\n' "$recovery_rc"
     printf 'chaos-np/blocked lines in the recovery scan: %s\n' "$recovery_lines"
     echo
     echo '--- assertions ---'
     expect_eq "blocked ready replicas before the policy" "$baseline"  1
     expect_eq "blocked ready replicas under deny-all"    "$broken"    0
     expect_eq "blocked ready replicas after deletion"    "$recovered" 1
+    expect_eq "scan exit code under deny-all"          "$blocked_rc"  0
     expect_ge "chaos-np/blocked reported under deny-all" "$blocked_lines"  1
+    # The exit code is asserted before the line count on purpose: a scan that
+    # crashed prints no object names either, so "0 lines" alone would read as a
+    # clean recovery. Only a scan that succeeded makes the count meaningful.
+    expect_eq "scan exit code after deleting the policy" "$recovery_rc" 0
     expect_eq "chaos-np/blocked gone from the recovery scan" "$recovery_lines" 0
   } | record "4. NetworkPolicy blocking traffic (Calico deny-all, causal)" \
     "expect: the three replica counts read 1 / 0 / 1 (a \"?\" means the query itself failed — a harness fault, not a reading). That triple is the whole point of this scenario — the workload is healthy before the policy, degraded while it is in force, and healthy again once it is deleted with nothing else changed, so the policy is demonstrably the cause rather than merely present. The Unhealthy event must show the wget call timing out; the old version of this scenario used an exec probe of \"false\", which failed identically with or without the policy and therefore proved nothing. In the scan taken under deny-all, chaos-np/blocked is reported 0/1 Degraded with a ProbeFailure finding and NO NetworkPolicy hint. The absent hint is correct, not a miss: netpolicy.Annotate (internal/netpolicy/netpolicy.go) attaches policy names only to a workload that is Flagged() with zero detector findings, because the hint exists to explain a degraded workload nothing else accounts for. A failing readiness probe already accounts for this one, so the hint is suppressed by design. In the recovery scan, chaos-np/blocked must not appear at all: its line count must be 0 while the count in the first scan is non-zero. Note the CNI subtlety this scenario encodes: Calico still lets the kubelet probe a local pod under a deny-all Ingress policy, so a network-dependent probe here has to be pod-sourced (exec) and blocked by the Egress half."

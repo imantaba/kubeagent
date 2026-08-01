@@ -40,10 +40,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - id: resolve
+        env:
+          # A `${{ }}` expression is substituted into the script text before bash
+          # ever sees it, so a dispatch input containing shell metacharacters would
+          # be executed rather than assigned. Routing it through `env:` keeps it an
+          # ordinary string. The input only exists on workflow_dispatch — on the
+          # (temporary) push trigger there are no inputs at all, so `set -u` needs
+          # the `:-` below rather than a bare `$INPUT_VERSIONS`.
+          INPUT_VERSIONS: ${{ inputs.versions }}
         run: |
           set -euo pipefail
           . chaos/versions.sh
-          picked="${{ inputs.versions }}"
+          picked="${INPUT_VERSIONS:-}"
           [ -n "$picked" ] || picked="$(chaos_versions)"
           # Validate every requested minor through the same resolver the
           # harness uses, so a typo in a dispatch input fails here — in
@@ -71,9 +79,16 @@ jobs:
           cache: true
 
       - name: Install kind
+        env:
+          # kind-linux-amd64.sha256sum, the kubernetes-sigs/kind v0.30.0 release
+          # asset (https://github.com/kubernetes-sigs/kind/releases/tag/v0.30.0).
+          # Bumping the kind version means re-fetching that asset and updating
+          # this value alongside it — never dropping the check.
+          KIND_SHA256: 517ab7fc89ddeed5fa65abf71530d90648d9638ef0c4cde22c2c11f8097b8889
         run: |
           set -euo pipefail
           curl -sSLo /tmp/kind https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-amd64
+          printf '%s  /tmp/kind\n' "$KIND_SHA256" | sha256sum -c -
           chmod +x /tmp/kind
           sudo mv /tmp/kind /usr/local/bin/kind
           kind version

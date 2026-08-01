@@ -503,9 +503,24 @@ These are the north star; every item below is measured against them.
   by one container out of three; Secrets are not selectable and a ConfigMap's
   contents are not readable; and a rule kubeagent could not evaluate is
   reported as not evaluated and **fails a gate** rather than passing quietly
-  — see [Policy as code](features/policy.md). The rest of Theme H — the
-  cross-version/distro chaos matrix and the v1.0 production contract — remains
-  ahead.
+  — see [Policy as code](features/policy.md). Slice 8 — a cross-version chaos
+  matrix — has shipped: the chaos harness's checks are machine-checked
+  assertions (`chaos/assert.sh`'s `expect_eq`/`expect_ge`/`expect_contains`/
+  `expect_absent`), so `./chaos/run.sh` itself exits non-zero the moment one
+  fails instead of relying on someone reading the whole report; `--k8s-version
+  <minor>` pins the harness to a specific Kubernetes minor's digest-pinned
+  kind node image, with everything cluster-derived (cluster name, context,
+  report path) taking that minor's suffix so two coexist on one machine; and
+  a nightly GitHub Actions workflow runs the full 20-scenario suite once per
+  supported minor (v1.32, v1.33, v1.34 today) in its own job, `fail-fast`
+  off, with the report scanned for credential material before a flagged one
+  is ever uploaded. The nightly grants no secret — `ANTHROPIC_API_KEY` is
+  never set, so it gates kubeagent's deterministic core, not the `--explain`
+  path — and it covers exactly one distribution, one architecture, and one
+  CNI: kind, on `ubuntu-latest`, amd64, with Calico. Cross-distro coverage
+  (EKS, GKE, AKS, OpenShift, k3s, RKE2) is not part of this slice and remains
+  ahead, alongside the v1.0 production contract — see
+  [the chaos harness](https://github.com/imantaba/kubeagent/tree/main/chaos).
 
 ### Milestones
 

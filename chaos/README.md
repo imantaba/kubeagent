@@ -104,6 +104,51 @@ docker, in under a second: every listed minor resolves to a digest-pinned
 merely prefix-matching value (`v1.3` against `v1.33`) is refused with nothing on
 stdout.
 
+### What this matrix does and does not cover
+
+The nightly workflow (`.github/workflows/chaos-matrix.yml`) runs the full
+suite — the baseline plus all 20 scenarios below — once per supported
+Kubernetes minor (currently v1.32, v1.33, v1.34), each on its own disposable
+**kind** cluster on a GitHub-hosted `ubuntu-latest` runner, with Calico as the
+CNI and kind's own containerd as the node runtime. Three green cells prove
+that kubeagent held its contract — the machine-checked assertions described
+under Assertions, below — on three kind-hosted minors under twenty specific
+injected outages. That is **not** a claim that kubeagent is correct in
+general, and the axes below are the ones a three-minor matrix could easily be
+mistaken for covering:
+
+- **Kubernetes distribution.** Only kind. EKS, GKE, AKS, OpenShift, k3s and
+  RKE2 are untested, and so is any managed control plane — a kind
+  control-plane container has none of a cloud provider's admission chain,
+  IAM-mapped auth, or managed upgrade behaviour.
+- **CPU architecture.** Only amd64. The runner is GitHub's `ubuntu-latest`
+  and the workflow installs the `kind-linux-amd64` binary; arm64 and every
+  other architecture are untested.
+- **CNI.** Only Calico (`chaos/kind-config.yaml` disables kind's default CNI
+  so Calico can enforce NetworkPolicy). Cilium, kindnet's own default, and
+  every other CNI are untested — scenario 4's NetworkPolicy assertion in
+  particular exercises Calico's enforcement, not a behaviour every CNI
+  guarantees identically.
+- **Container runtime.** Only containerd, because that is what a kind node
+  ships (scenario 11 stops it by name to test the boundary). CRI-O and other
+  runtimes are untested.
+- **`--explain` against a real model.** `ANTHROPIC_API_KEY` is never set in
+  the nightly workflow, so the harness's normal gate on the flag
+  (`explain_flag`, above) means every ordinary scenario's scan runs without
+  `--explain` — the nightly exercises kubeagent's deterministic core, not the
+  model path. (Read-only cluster access and making no LLM call are two
+  separate properties; the nightly holds both, but they are not the same
+  claim.) Scenario 14 is the one nuance worth naming precisely: it does pass
+  `--explain` to `kubeagent watch`, but against a local Python stub
+  (`chaos/explain-stub.py`) that never leaves the runner and needs no key —
+  it proves the budget, the throttle, the notification shape, and the egress
+  redaction, not the real Anthropic backend, which stays covered by unit
+  tests only.
+
+Each cell runs 105 assertions. On a GitHub-hosted runner a cell takes roughly
+17 minutes; locally (see the estimate above) it's 35-40. All three supported
+minors have gone green on real runners.
+
 ### `--explain`
 
 `run.sh` adds `--explain` to every scan **only when `ANTHROPIC_API_KEY` is set in

@@ -44,8 +44,9 @@ is a choice, not an oversight:
 
 ## What MINOR and MAJOR mean
 
-Every `schemaVersion` is `MAJOR.MINOR`. All four surfaces start at `1.0`
-today, and **the schema version is not the kubeagent release version** — a
+Every `schemaVersion` is `MAJOR.MINOR`. All four surfaces started at `1.0`;
+`scan` and `gate` are at `1.1` today, having each gained one optional field,
+and **the schema version is not the kubeagent release version** — a
 surface's number moves only when its own document's shape moves, so a new
 `scan` field does not disturb a script reading the `gate` document.
 

@@ -77,4 +77,5 @@ nav:
       - Policy as code: features/policy.md
   - Install: install.md
   - Verifying a release: verify.md
+  - Compatibility and support: compatibility.md
   - Roadmap: roadmap.md

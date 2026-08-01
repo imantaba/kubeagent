@@ -246,4 +246,14 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   `gate --policy` evaluate operator-written YAML rules, `kubeagent policy
   validate` checks a file with no cluster, and a rule that could not be
   evaluated fails a gate instead of passing quietly.
-  The rest of Theme H — the v1.0 production contract — remains ahead.
+  Slice 8 — the cross-version chaos matrix — and slice 9 — the written
+  production contract — have shipped (v1.0.0), and **Theme H is complete**:
+  `chaos/run.sh` is a gate rather than a report (105 machine-checked assertions,
+  non-zero exit on the first failure), `--k8s-version <minor>` pins it to a
+  digest-pinned kind node image from `chaos/versions.env`,
+  `.github/workflows/chaos-matrix.yml` runs the full suite nightly once per
+  supported minor, and
+  [website/docs/compatibility.md](website/docs/compatibility.md) writes down
+  which surfaces are stable within 1.x, which are deliberately not, and what
+  deprecating one costs. From 1.0 onward a MAJOR release is the only one that
+  may break a stable surface.

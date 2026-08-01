@@ -524,6 +524,16 @@ is checked by the CI workflow (vet + test + build).
 > then pins the tag itself, while a dispatched run can only pin the branch it
 > ran from.
 
+## Compatibility
+
+From **1.0** onward, only a MAJOR release may break a stable surface.
+[Compatibility and support](https://k8sproject.top/compatibility/) says which
+surfaces those are — the command line, `gate`'s exit codes, the documented
+`KUBEAGENT_*` variables, the Helm chart's values, and the six versioned JSON
+documents — which ones are deliberately *not* stable, and which Kubernetes
+minors are supported (v1.32, v1.33 and v1.34, each gated nightly by the
+[chaos matrix](chaos/README.md)).
+
 ## Roadmap
 
 - **v1** — `kubeagent scan`: deterministic whole-cluster scan + diagnosis

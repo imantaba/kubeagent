@@ -454,7 +454,7 @@ These are the north star; every item below is measured against them.
   verify, SARIF, exit codes); a **shareable HTML report** (shipped, `scan
   --output html`); and an **interactive TUI** (shipped, `kubeagent tui`). An
   optional in-cluster dashboard remains ahead.
-- **H · Supply-chain & trust** — signed releases, SBOM and build provenance
+- **H · Supply-chain & trust** ✅ — signed releases, SBOM and build provenance
   (shipped: keyless cosign signatures, an SPDX SBOM, SLSA build provenance and
   byte-reproducible archives — see [Verifying a release](verify.md));
   **per-feature least-privilege RBAC** (shipped: `kubeagent rbac print` and
@@ -504,7 +504,7 @@ These are the north star; every item below is measured against them.
   contents are not readable; and a rule kubeagent could not evaluate is
   reported as not evaluated and **fails a gate** rather than passing quietly
   — see [Policy as code](features/policy.md). Slice 8 — a cross-version chaos
-  matrix — has shipped: the chaos harness's checks are machine-checked
+  matrix — has shipped (v1.0.0): the chaos harness's checks are machine-checked
   assertions (`chaos/assert.sh`'s `expect_eq`/`expect_ge`/`expect_contains`/
   `expect_absent`), so `./chaos/run.sh` itself exits non-zero the moment one
   fails instead of relying on someone reading the whole report; `--k8s-version
@@ -519,8 +519,15 @@ These are the north star; every item below is measured against them.
   path — and it covers exactly one distribution, one architecture, and one
   CNI: kind, on `ubuntu-latest`, amd64, with Calico. Cross-distro coverage
   (EKS, GKE, AKS, OpenShift, k3s, RKE2) is not part of this slice and remains
-  ahead, alongside the v1.0 production contract — see
+  ahead — see
   [the chaos harness](https://github.com/imantaba/kubeagent/tree/main/chaos).
+  Slice 9 — the production contract itself — has shipped (v1.0.0) and closes
+  Theme H: [Compatibility and support](compatibility.md) writes down which
+  surfaces are stable within 1.x and which are deliberately not, states the
+  supported Kubernetes window as an evidenced one — v1.32, v1.33 and v1.34,
+  because the nightly matrix passes 105 assertions against each — and commits
+  to a deprecation policy of one full MINOR, a stderr-only warning, and removal
+  no earlier than the next MAJOR. **Theme H is complete.**
 
 ### Milestones
 
@@ -535,7 +542,7 @@ one guarded step at a time. Roughly:
 | **v0.36–v0.40** | Continuous operations (E, D) | Stateful `watch` (trends, flapping, MTTR, new-since-last); Slack/PagerDuty/webhook alerts; SLO burn-rate; on-incident `--explain`; multi-cluster hub; guarded autonomous remediation |
 | **v0.41–v0.45** | Ecosystem & operators (F) | Operator/CRD adapters (CNPG, cert-manager, Longhorn, Argo/Flux, mesh); GitOps drift; cost/right-sizing; deep networking & storage checks |
 | **v0.5x** | Interfaces & adoption (G) | **MCP server** (shipped, `kubeagent mcp`); **`kubectl` krew plugin** (shipped); **CI/CD gate mode + SARIF** (shipped, `kubeagent gate`); **shareable HTML report** (shipped, `scan --output html`); **interactive TUI** (shipped, `kubeagent tui`); optional in-cluster dashboard |
-| **v1.0** | Production-grade contract (H) | Stable versioned JSON schema; cosign-signed releases + SBOM + provenance; per-feature least-privilege RBAC; fuzzed detectors; **policy as code** — operator-written YAML checks, chosen over a compiled plugin SDK so a custom check can never write, panic a scan, or widen RBAC; a cross-version chaos matrix that gates every supported Kubernetes minor nightly; the two v1 simplifications (stdlib-`flag` CLI, sequential scan) retired deliberately — Cobra + bounded scan concurrency — behind the same test bar; and a written [compatibility and support contract](compatibility.md) |
+| **v1.0** ✅ | Production-grade contract (H) | **Shipped.** Stable versioned JSON schema; cosign-signed releases + SBOM + provenance; per-feature least-privilege RBAC; fuzzed detectors; **policy as code** — operator-written YAML checks, chosen over a compiled plugin SDK so a custom check can never write, panic a scan, or widen RBAC; a cross-version chaos matrix that gates every supported Kubernetes minor nightly; the two v1 simplifications (stdlib-`flag` CLI, sequential scan) retired deliberately — Cobra + bounded scan concurrency — behind the same test bar; and a written [compatibility and support contract](compatibility.md) |
 | **post-1.0** | The best, sustained | Anomaly/baseline learning ("what's normal for *this* cluster"); fleet-scale (hundreds of clusters); a curated community detector library and known-issues knowledge base |
 
 ### How we keep it the best

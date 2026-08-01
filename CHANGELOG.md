@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Policy as code.** `kubeagent scan --policy FILE|DIR` and
+  `kubeagent gate --policy FILE|DIR` evaluate organization-specific checks
+  written in YAML, alongside the built-in detectors — "every production
+  Deployment must be covered by a PodDisruptionBudget", "no image may come from
+  a registry outside the allowlist" — without forking kubeagent. A rule names
+  one kind and asserts one thing about it, from a closed set of ten operators
+  and two relations. `kubeagent policy validate FILE…` checks a file with no
+  cluster and no kubeconfig, so CI can reject a bad policy before a deploy.
+  Evaluation is strictly read-only and adds no RBAC: the selectable kinds are
+  exactly the kinds a plain scan already reads. Secrets are not selectable and
+  a ConfigMap's `data` is not readable. A rule kubeagent could not evaluate is
+  reported as **not evaluated** and fails a gate rather than passing quietly.
+  See [Policy as code](https://k8sproject.top/features/policy/).
+
+### Changed
+
+- `scan`'s JSON document is schema version **1.1** (added `policy`) and
+  `gate`'s is **1.1** (added `policyNotEvaluated`). Both additions are
+  `omitempty`, so a run without `--policy` encodes neither and every existing
+  consumer is unaffected.
+
 ## [0.73.0] - 2026-07-31
 
 ### Added

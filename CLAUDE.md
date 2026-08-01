@@ -90,6 +90,21 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   dependency graph: `Render` takes an `io.Writer` and a value, holds no client
   and no context, and never reads `RemediationPlan`. It must still never import
   `internal/remediate`, `internal/explain` or `internal/investigate` directly.
+  `internal/policy` (the `--policy` evaluator) is a sixth case and the most
+  constrained: it is **pure** — no client, no context, no I/O beyond the bytes
+  it is handed — and must never import `internal/remediate`, `internal/explain`,
+  `internal/investigate`, `internal/report`, `internal/scan` or
+  `internal/findings`. `internal/findings` imports `internal/scan`, which
+  imports `internal/policy`, so the last three are a cycle rather than a
+  preference; that is why `policy` defines its own `Level` type. A policy can
+  never write to the cluster: there is no `--fix` path from a rule
+  (see [website/docs/features/policy.md](website/docs/features/policy.md)).
+  A policy can never require a grant beyond `core`: the kinds a rule may select
+  are exactly the kinds `rbacprofile.coreRules` already grants, pinned by
+  `TestSelectableKindsMatchesRBACProfileCore`, so `--policy` changes no RBAC manifest.
+  `Secret` is not a selectable kind and a `ConfigMap` path beginning `data` or
+  `binaryData` is a load error — a violation carries its evidence into a report
+  designed to be forwarded.
 - **Untrusted API text is sanitized at ingress, not at each renderer.** Every
   value read from a field the API server does not validate — `waiting.Message`,
   `terminated.Reason`, condition and event messages, `involvedObject.fieldPath`,
@@ -119,7 +134,11 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   `watch.IssuesReport` or `watch.ExplanationsReport` means bumping the surface's
   version in `internal/jsonschema` and regenerating with
   `go test ./internal/schemadoc -run TestSchemaDrift -update`. The drift test
-  says whether the change was additive (MINOR) or breaking (MAJOR).
+  says whether the change was additive (MINOR) or breaking (MAJOR). `scan` is
+  at schema version **1.1** (added `policy`, `omitempty`) and `gate` is at
+  **1.1** (added `policyNotEvaluated`, `omitempty`) — both additive, so a run
+  without `--policy` encodes neither key and every existing consumer is
+  unaffected.
 
 ## Commit conventions
 
@@ -223,4 +242,8 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   earlier keep working; and `kubeagent completion bash|zsh|fish|powershell`
   generates a completion script from the command tree
   ([website/docs/features/completion.md](website/docs/features/completion.md)).
+  Slice 7 — policy as code — has shipped (v0.74.0): `scan --policy` and
+  `gate --policy` evaluate operator-written YAML rules, `kubeagent policy
+  validate` checks a file with no cluster, and a rule that could not be
+  evaluated fails a gate instead of passing quietly.
   The rest of Theme H — the v1.0 production contract — remains ahead.

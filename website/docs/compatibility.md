@@ -32,6 +32,24 @@ normalizes a leading `-longname` back to `--longname` for any name the target
 command registers, so command lines written against v0.72 and earlier still run
 unchanged. Removing that shim would be a breaking change.
 
+### Environment variables
+
+Every `KUBEAGENT_*` variable this site documents is stable in the same sense a
+flag is: within 1.x it is not removed, not renamed, and not given a different
+meaning. New ones may arrive in any MINOR.
+
+Two things about them are deliberately **not** promised:
+
+- **The tuning defaults.** `KUBEAGENT_SCAN_WORKERS` defaults to `8` and
+  `KUBEAGENT_QPS`/`KUBEAGENT_BURST` default to no client-side limit at all.
+  Those numbers are performance behaviour, not contract — they may be retuned in
+  a MINOR. What is stable is that setting them works, that they only affect how
+  fast a scan reads, and that they never change what it reports. See
+  [Performance tuning](features/tuning.md).
+- **What a bad value does beyond staying non-fatal.** The tuning variables
+  ignore a value they cannot use and run with the default rather than failing
+  the scan; that tolerance is the contract, the exact clamping is not.
+
 ### Exit codes
 
 `kubeagent gate` exists to be branched on by a pipeline, so its exit codes are
@@ -132,14 +150,17 @@ from a policy rule, an MCP tool call, or a model response into a write.
 
 Two documented exceptions:
 
-- **`scan --fix`** is the sole write path. It is opt-in, guard-railed by a fixed
-  allowlist, refuses protected namespaces, confirms each action, re-verifies
-  afterwards, and is **never LLM-decided**. See
+- **Remediation** — `scan --fix`, and `scan --rollback` which undoes what a
+  previous `--fix` recorded in its audit log. These are the only two flags in
+  kubeagent that write, they are mutually exclusive, and both are opt-in and
+  carry the same guard rails: a fixed allowlist, protected namespaces refused, a
+  permission preflight, a per-action confirmation, an audit-log entry, and a
+  re-verify afterwards. Neither is **ever LLM-decided**. See
   [Remediation (--fix)](features/remediation.md).
 - **`kubeagent rbac check`** creates `SelfSubjectAccessReview` objects — the same
   virtual resource `kubectl auth can-i` uses. The API server evaluates them and
-  never persists them. It is the only non-`--fix` path that issues a POST, and it
-  changes no cluster state.
+  never persists them. It is the only path outside remediation that issues a
+  POST, and it changes no cluster state.
 
 `kubeagent mcp`, `kubeagent gate`, `kubeagent tui`, and `kubeagent rbac` make no
 model API call at all, whatever flags you pass. Read-only and makes-no-external-call

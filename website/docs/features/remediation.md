@@ -4,10 +4,12 @@
 for a small set of problems `kubeagent` already detects.
 
 !!! warning
-    `--fix` is the **only** feature that writes to your cluster. Without it,
-    `kubeagent` is strictly read-only. Every write is **deterministic** (never
-    decided by `--explain` or any model), drawn from a **fixed allowlist**, and
-    applied only **after a per-action confirmation**.
+    Remediation is the **only** feature that writes to your cluster — `--fix`,
+    and `--rollback`, which undoes what a previous `--fix` recorded in its audit
+    log. The two are mutually exclusive, and no other flag on any command
+    writes. Without them, `kubeagent` is strictly read-only. Every write is
+    **deterministic** (never decided by `--explain` or any model), drawn from a
+    **fixed allowlist**, and applied only **after a per-action confirmation**.
 
 ## The actions
 

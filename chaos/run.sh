@@ -145,7 +145,15 @@ scenario_01_etcd() {   # control-plane / etcd down -> API unreachable
   local c; c="$(cp_container)"
   docker stop "$c" >/dev/null
   sleep 5
-  { scan 2>&1 || true; } | record "1. etcd quorum loss (control-plane stopped)" "boundary: connectivity diagnosis expected"
+  local out rc
+  out="$(scan 2>&1)" && rc=0 || rc=$?
+  {
+    printf '%s\n' "$out"
+    printf '\n--- assertions ---\n'
+    expect_ge       "scan exits non-zero when the API is unreachable" "$rc" 1
+    expect_contains "connectivity diagnosed in kubeagent's own words" "$out" "refused the connection"
+    expect_absent   "no cluster report is rendered"                   "$out" "Cluster: Healthy"
+  } | record "1. etcd quorum loss (control-plane stopped)" "boundary: connectivity diagnosis expected"
   docker start "$c" >/dev/null
   kubectl --context "$CTX" wait --for=condition=Ready nodes --all --timeout=180s >/dev/null 2>&1 || true
   # Wait for the abruptly-stopped control-plane static pods (etcd/apiserver/scheduler/
@@ -1349,6 +1357,12 @@ for line in open(sys.argv[1]):
     printf 'tools/call (id 3) verdict:          %s\n' "${got_verdict:-}"
     printf 'tools/call (id 3) findings count:   %s\n' "${got_findings:-0}"
     printf 'tools/call (id 3) coverage.context: %s\n' "${got_context:-}"
+    printf '\n--- assertions ---\n'
+    expect_eq "advertised tools" "$tools" "kubeagent_advisory kubeagent_inspect kubeagent_triage"
+    expect_eq "no tool name carries a write verb" "$write_verbs" 0
+    expect_eq "triage verdict" "${got_verdict:-}" "degraded"
+    expect_ge "triage findings" "${got_findings:-0}" 1
+    expect_eq "the server's context round-trips into the response" "${got_context:-}" "$CTX"
   } | record "19. MCP server over stdio (kubeagent mcp)" \
     "expect: tools/list (id 2) tool names reads exactly 'kubeagent_advisory kubeagent_inspect kubeagent_triage'; tool names containing a write verb reads 0 — no fix/apply/delete/patch/create verb in any tool name, so the server advertises no path to a cluster write. That line reading N/A is a FAILURE, not a pass: it means no tools/list response arrived and the read-only claim went unchecked; tools/call (id 3) verdict reads degraded (the crash-looping pod is a real finding); tools/call (id 3) findings count is at least 1; tools/call (id 3) coverage.context reads $CTX (the --context the server was started with round-trips into the response)"
 
@@ -1457,6 +1471,12 @@ except (ValueError, TypeError, KeyError):
     printf 'scan exit code:                      %s\n' "$rc"
     printf 'blind spots naming a missing grant:  %s\n' "$named"
     printf 'credential material in recorded output: %s (want 0)\n' "$leaked"
+    printf '\n--- assertions ---\n'
+    expect_eq "core profile is allowed"     "${core_ok:-}" "True"
+    expect_eq "exactly the ungranted add-ons are blocked" "${blocked:-}" "certs diskusage logs"
+    expect_eq "a missing add-on grant degrades the scan, it does not fail it" "$rc" 0
+    expect_ge "refused reads are named as blind spots" "$named" 1
+    expect_eq "no credential material in the recorded output" "$leaked" 0
   } | record "20. Least-privilege RBAC (scan-profile-only identity)" \
     "expect: rbac check core allowed reads True — the generated scan-profile role really does cover core; rbac check blocked features reads exactly 'certs diskusage logs' — the three add-ons the identity was never granted, named by kubeagent from its own table and never quoting the API server; scan exit code is 0 — a missing add-on grant degrades the scan, it does not fail it; blind spots naming a missing grant is at least 1 — the report NAMES secrets / pods/log / nodes/proxy as unread rather than printing three empty sections. That last line reading 0 is the failure this scenario exists to catch: a scan that could not see must never look like a scan that saw nothing wrong. credential material in recorded output must read 0 — this scan output is about to be committed into docs/testing/chaos-results.md, and a refused read reported in kubeagent's own words never carries the scanner ServiceAccount's bearer token or certificate material the way the raw API server message would"
 

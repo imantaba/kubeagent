@@ -23,7 +23,9 @@ while [ $# -gt 0 ]; do
 done
 
 # Normalize a numeric --only to the zero-padded form used in scenario keys (01..20).
-if [ -n "$ONLY" ] && printf '%s' "$ONLY" | grep -qE '^[0-9]+$'; then ONLY=$(printf '%02d' "$ONLY"); fi
+# 10# forces base 10: printf reads a leading-zero numeral as octal, so a plain
+# --only 08 or --only 09 errored and normalized to 00, silently matching nothing.
+if [ -n "$ONLY" ] && printf '%s' "$ONLY" | grep -qE '^[0-9]+$'; then ONLY=$(printf '%02d' "$((10#$ONLY))"); fi
 
 : "${OUT:=docs/testing/chaos-results.md}"
 

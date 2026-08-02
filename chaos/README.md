@@ -145,7 +145,7 @@ mistaken for covering:
   redaction, not the real Anthropic backend, which stays covered by unit
   tests only.
 
-Each cell runs 122 assertions. On a GitHub-hosted runner a cell takes roughly
+Each cell runs 124 assertions. On a GitHub-hosted runner a cell takes roughly
 17 minutes; locally it's 35-40. All three supported
 minors have gone green on real runners.
 

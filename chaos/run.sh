@@ -148,6 +148,32 @@ preload_calico_images() {
   done
 }
 
+# preload_flux_images <manifest> — side-loads Flux's controller images into the
+# Kind nodes, for exactly the reason preload_calico_images exists: a Kind node has
+# its own containerd store and the kubelet serializes image pulls, so on a cold
+# cluster the six ghcr.io controllers pull one after another. Measured on this
+# harness: helm-controller alone took 4m01s, and source-controller and
+# kustomize-controller — the only two scenario 17 needs — were still pulling after
+# their rollout waits had already timed out. The scenario then scanned a Flux that
+# had never reconciled anything, so its Kustomization read "Ready not reported"
+# and the `stale` assertion failed on a missing precondition rather than on
+# anything kubeagent did.
+#
+# Best-effort, like the Calico preload: a failed pull or load falls back to the
+# in-node pull, and the precondition assertions in the scenario catch what that
+# fallback does not manage in time.
+preload_flux_images() {
+  log "preload Flux images into $CLUSTER nodes"
+  local ref
+  for ref in $(grep -hoE 'ghcr\.io/fluxcd/[A-Za-z0-9._/-]+:[A-Za-z0-9._-]+' "$1" | sort -u); do
+    docker image inspect "$ref" >/dev/null 2>&1 || docker pull "$ref" || { echo "preload: pull $ref failed; falling back to in-node pull" >&2; continue; }
+    # Unlike the Calico refs there is no prefix to strip: docker only normalizes
+    # away docker.io, so a ghcr.io ref is tagged locally under its full name and
+    # `kind load` puts it in the node store under the name the manifest asks for.
+    kind load docker-image "$ref" --name "$CLUSTER" || echo "preload: load $ref failed; falling back to in-node pull" >&2
+  done
+}
+
 install_calico() {
   log "install Calico CNI"
   kubectl --context "$CTX" apply -f chaos/manifests/calico.yaml
@@ -1189,9 +1215,30 @@ scenario_17_gitops() {   # real Flux -> --drift; a failing and a suspended Kusto
   log "scenario 17: GitOps drift (--drift)"
   local ns=chaos-gitops
   local fluxurl="https://github.com/fluxcd/flux2/releases/download/v2.4.0/install.yaml"
-  kubectl --context "$CTX" apply -f "$fluxurl" >/dev/null 2>&1 || true
-  kubectl --context "$CTX" -n flux-system rollout status deploy/source-controller --timeout=180s >/dev/null 2>&1 || true
-  kubectl --context "$CTX" -n flux-system rollout status deploy/kustomize-controller --timeout=180s >/dev/null 2>&1 || true
+  # Fetch once to a per-cluster scratch file: the preload has to read the image
+  # refs out of the same manifest that gets applied, and two minors running on one
+  # machine must not share it (the same reason COREDNS_BACKUP is per-cluster).
+  local fluxyaml="/tmp/$CLUSTER-flux-install.yaml"
+  if curl -fsSL "$fluxurl" -o "$fluxyaml" && [ -s "$fluxyaml" ]; then
+    preload_flux_images "$fluxyaml"
+    kubectl --context "$CTX" apply -f "$fluxyaml" >/dev/null 2>&1 || true
+  else
+    echo "flux manifest fetch failed; applying from the release URL without a preload" >&2
+    kubectl --context "$CTX" apply -f "$fluxurl" >/dev/null 2>&1 || true
+  fi
+  # Generous now only to cover a preload miss falling back to an in-node pull —
+  # with the images side-loaded these return in seconds.
+  kubectl --context "$CTX" -n flux-system rollout status deploy/source-controller --timeout=300s >/dev/null 2>&1 || true
+  kubectl --context "$CTX" -n flux-system rollout status deploy/kustomize-controller --timeout=300s >/dev/null 2>&1 || true
+
+  # Everything below claims something about what a reconciler DID. Capture whether
+  # the two controllers that would do it are actually up, and assert it beside the
+  # rest — so a Flux that never started names itself instead of surfacing as a
+  # confusing "the Kustomization is not counted stale".
+  local sc_ready kc_ready
+  sc_ready="$(ready_replicas flux-system source-controller)"
+  kc_ready="$(ready_replicas flux-system kustomize-controller)"
+
   kubectl --context "$CTX" create ns "$ns" --dry-run=client -o yaml | kubectl --context "$CTX" apply -f - >/dev/null
 
   # A GitRepository pointing at a host that cannot resolve: source-controller
@@ -1258,6 +1305,8 @@ KS
   {
     printf '%s\n' "$out"
     printf '\n--- gate checks ---\n'
+    printf 'source-controller ready:         %s\n' "$sc_ready"
+    printf 'kustomize-controller ready:      %s\n' "$kc_ready"
     printf 'GITOPS DRIFT section:            %s\n' "$drift_line"
     printf 'Kustomization line:              %s\n' "$ks_line"
     printf 'doomed enumerated:               %s\n' "$doomed_n"
@@ -1265,6 +1314,8 @@ KS
     printf 'repo URL or token in report:     %s\n' "$leak_n"
     printf 'cluster verdict:                 %s\n' "$(printf '%s\n' "$body" | grep -m1 '^Cluster:' || true)"
     printf '\n--- assertions ---\n'
+    expect_ge "precondition: source-controller is reconciling"    "$sc_ready" 1
+    expect_ge "precondition: kustomize-controller is reconciling" "$kc_ready" 1
     expect_eq       "scan exit code" "$rc" 0
     expect_contains "GitOps drift section rendered"   "$drift_line" "GITOPS DRIFT"
     expect_contains "the stale Kustomization is counted" "$ks_line" "stale"

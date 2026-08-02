@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-08-02
+
 ### Added
 
 - The Helm chart can name the cluster it runs in: `watch.clusterName` renders
@@ -42,6 +44,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rule that an absent element still contributes an absent slot are all
   unchanged, and a differential fuzz run over 819 000 paths found no divergence
   from the previous resolver.
+- The chaos harness side-loads Flux's controller images before scenario 17 runs,
+  the same treatment Calico already gets. A Kind node has its own image store and
+  the kubelet pulls serially, so on a cold cluster the six controllers queued up
+  behind one another and the two the scenario depends on were still pulling after
+  their rollout waits had timed out — the scenario then scanned a Flux that had
+  never reconciled anything. Two assertions now state that dependency directly,
+  so a Flux that fails to start says so instead of surfacing as a drift finding
+  that did not appear. The suite runs 124 assertions, up from 122.
 - `internal/safetext.Line` now bounds combining marks: a character keeps at most
   four, and a mark that opens a line or follows a space is dropped because it has
   no base character to sit on. Real text is unaffected — decomposed Vietnamese,
@@ -1426,7 +1436,8 @@ infrastructure (a documentation site and a pre-release chaos-test harness).
 - CI (vet/test/build on push & PR) and a release workflow publishing a
   linux/amd64 tarball + `SHA256SUMS` to a GitHub Release.
 
-[Unreleased]: https://github.com/imantaba/kubeagent/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/imantaba/kubeagent/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/imantaba/kubeagent/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/imantaba/kubeagent/compare/v0.74.0...v1.0.0
 [0.74.0]: https://github.com/imantaba/kubeagent/compare/v0.73.0...v0.74.0
 [0.73.0]: https://github.com/imantaba/kubeagent/compare/v0.72.0...v0.73.0

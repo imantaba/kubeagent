@@ -16,6 +16,14 @@ watch:
   heartbeat: 60s
   # Coalescing window for change events.
   debounce: 2s
+  # Name for the cluster this daemon runs in. Becomes its `cluster` metric label
+  # and the cluster field in /issues and /explanations. Empty = the daemon's own
+  # default, "local" — which says nothing useful once a second cluster's metrics
+  # land in the same Prometheus.
+  #
+  # Set it to whatever you call this cluster elsewhere, so a dashboard, an alert
+  # and a kubeconfig context all name it the same thing.
+  clusterName: ""
 
 metricsPort: 8080
 
@@ -164,5 +172,6 @@ multicluster:
   # Also watch the cluster this daemon runs in, through its ServiceAccount and
   # the ClusterRole below.
   includeLocal: true
-  # The cluster label for that local cluster.
+  # The cluster label for that local cluster. watch.clusterName names the same
+  # thing and takes precedence; this is the older spelling, kept working.
   localName: local

@@ -26,6 +26,12 @@ spec:
         - name: kubeagent
           image: {{ include "kubeagent.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- /*
+            The name for the cluster this daemon's own ServiceAccount reaches.
+            watch.clusterName wins; multicluster.localName is the older spelling
+            and still works, so a chart upgrade changes no rendered label.
+          */}}
+          {{- $localName := .Values.watch.clusterName | default .Values.multicluster.localName }}
           args:
             - "watch"
             - "--metrics-addr=:{{ .Values.metricsPort }}"
@@ -51,13 +57,20 @@ spec:
             {{- end }}
             - "--context={{ . }}"
             {{- end }}
-            {{- if not .Values.multicluster.localName }}
-            {{- fail "multicluster.localName is required when multicluster.enabled is true" }}
+            {{- if not $localName }}
+            {{- fail "multicluster.localName (or watch.clusterName) is required when multicluster.enabled is true" }}
             {{- end }}
-            - "--cluster-name={{ .Values.multicluster.localName }}"
+            - "--cluster-name={{ $localName }}"
             {{- if .Values.multicluster.includeLocal }}
             - "--include-local"
             {{- end }}
+            {{- else if .Values.watch.clusterName }}
+            {{- /*
+              Single-cluster install. Without this the daemon falls back to its
+              own default and every series reads cluster="local" — a label that
+              says nothing once a second cluster exists.
+            */}}
+            - "--cluster-name={{ .Values.watch.clusterName }}"
             {{- end }}
             {{- if .Values.alerts.enabled }}
             - "--alert-format={{ .Values.alerts.format }}"

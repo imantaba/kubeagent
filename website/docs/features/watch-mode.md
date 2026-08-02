@@ -679,6 +679,9 @@ write-capable credentials it never uses but nonetheless holds.
 Cross-cutting settings stay global: one webhook, one explanation budget, one
 `--slo-target`. If you need them split per cluster, run one daemon per cluster —
 that still works, and each one labels its series with its own `--cluster-name`.
+On the chart that is `watch.clusterName`, and it applies to a single-cluster
+install too: without it every series reads `cluster="local"`, which stops meaning
+anything the moment a second daemon's metrics reach the same Prometheus.
 
 ## Run it
 

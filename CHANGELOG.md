@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The Helm chart can name the cluster it runs in: `watch.clusterName` renders
+  `--cluster-name`, setting the `cluster` label on every metric series and the
+  `cluster` field in `/issues` and `/explanations`. Until now that flag was only
+  reachable through the multi-cluster block, so a single-cluster install had no
+  way to say what it was watching and every series read `cluster="local"` — a
+  label that stops meaning anything the moment a second daemon's metrics reach
+  the same Prometheus. `multicluster.localName` names the same thing and keeps
+  working; `watch.clusterName` takes precedence, and leaving both empty renders
+  exactly what it rendered before, byte for byte.
 - Two chaos scenarios cover the two opt-in health probes that had no live
   coverage. Scenario 21 proves `--control-plane-health` really issues its
   `/readyz` request against a running apiserver, classifies it `ok`, and reports

@@ -94,11 +94,21 @@ helm install kubeagent deploy/helm/kubeagent -n kubeagent --create-namespace \
 helm install kubeagent deploy/helm/kubeagent -n kubeagent --create-namespace \
   --set watch.namespace=payments \
   --set watch.heartbeat=30s
+
+# name this cluster, so its metrics do not all read cluster="local"
+helm install kubeagent deploy/helm/kubeagent -n kubeagent --create-namespace \
+  --set watch.clusterName=prod-eu
 ```
 
+`watch.clusterName` sets the `cluster` label on every metric series and the
+`cluster` field in `/issues` and `/explanations`. Left empty the daemon uses its
+own default, `local` — fine for one cluster, useless the moment a second
+cluster's metrics land in the same Prometheus. It names the same thing as
+`multicluster.localName` below and takes precedence over it.
+
 See [`helm/kubeagent/values.yaml`](helm/kubeagent/values.yaml) for the full list
-of values (image, replicas, watch cadence, metrics port, RBAC/ServiceAccount
-creation, resources, security context, scheduling).
+of values (image, replicas, watch cadence, cluster name, metrics port,
+RBAC/ServiceAccount creation, resources, security context, scheduling).
 
 Uninstall:
 
@@ -232,8 +242,8 @@ helm upgrade --install kubeagent deploy/helm/kubeagent -n kubeagent \
 
 By default the chart also watches the cluster it runs in, alongside the
 listed contexts (`multicluster.includeLocal=true`), labelled by
-`multicluster.localName` (default `local`); set `includeLocal=false` to watch
-only the remote contexts. See the
+`watch.clusterName` — or by `multicluster.localName` (default `local`) when
+that is empty; set `includeLocal=false` to watch only the remote contexts. See the
 [watch mode docs](https://k8sproject.top/features/watch-mode/#watching-several-clusters)
 for the per-cluster metric label, the `/issues` and `/explanations` cluster
 fields, and the config-error-vs-runtime-failure isolation model.

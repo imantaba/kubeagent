@@ -462,8 +462,8 @@ func ratio(f float64) string {
 
 // budgetRemaining is the fraction of the error budget left over the window,
 // clamped to [0,1] — the same definition the
-// kubeagent_slo_budget_remaining_ratio series carries. A burn above 1x means
-// the budget is already spent.
+// kubeagent_slo_error_budget_remaining_ratio series carries. A burn above 1x
+// means the budget is already spent.
 func budgetRemaining(burn float64) string {
 	if !finite(burn) {
 		return none

@@ -314,3 +314,33 @@ func TestExplanationsRender(t *testing.T) {
 		}
 	}
 }
+
+// TestExplanationNamesItsClusterOnlyWhenMulticluster mirrors the rule the
+// incident tables follow. Explanations are a flat list, not a block per
+// cluster, so on a one-cluster page the name is on the header already and
+// repeating it on every article is noise — but on a multi-cluster page an
+// explanation that does not say which cluster it came from is unreadable.
+func TestExplanationNamesItsClusterOnlyWhenMulticluster(t *testing.T) {
+	explanations := []Explanation{{
+		Cluster: "example-cluster", Kind: "Deployment", Namespace: "example-ns", Name: "web",
+		ExplainedAt: "2026-08-02T09:20:00Z", Model: "example-model",
+		Text: "The image tag does not exist in the registry.",
+	}}
+	one := render(t, Input{
+		Now: fixedNow, ExplainEnabled: true, Explanations: explanations,
+		Clusters: []Cluster{{Name: "example-cluster", Up: true, LastScan: "2026-08-02T09:00:00Z"}},
+	})
+	if strings.Contains(one, "example-cluster · Deployment") {
+		t.Error("a single-cluster page repeats the cluster name on an explanation")
+	}
+	two := render(t, Input{
+		Now: fixedNow, ExplainEnabled: true, Explanations: explanations,
+		Clusters: []Cluster{
+			{Name: "example-cluster", Up: true, LastScan: "2026-08-02T09:00:00Z"},
+			{Name: "example-other", Up: true, LastScan: "2026-08-02T09:00:00Z"},
+		},
+	})
+	if !strings.Contains(two, "example-cluster · Deployment") {
+		t.Error("a multi-cluster page does not say which cluster an explanation came from")
+	}
+}

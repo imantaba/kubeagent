@@ -344,3 +344,52 @@ func TestExplanationNamesItsClusterOnlyWhenMulticluster(t *testing.T) {
 		t.Error("a multi-cluster page does not say which cluster an explanation came from")
 	}
 }
+
+// TestRenderIsDeterministic asserts that the same Input rendered twice produces
+// the same bytes. Map iteration order and an unstable sort are the two ways
+// this fails, and both would show up as a page that reshuffles itself every
+// thirty seconds.
+func TestRenderIsDeterministic(t *testing.T) {
+	in := goldenInput()
+	first := render(t, in)
+	for i := 0; i < 20; i++ {
+		if got := render(t, in); got != first {
+			t.Fatalf("render %d differs from the first render", i+2)
+		}
+	}
+}
+
+// TestRenderIgnoresInputOrder is what actually proves the order is total. If
+// any pair of rows compared equal, some permutation would place them in the
+// other order and the bytes would differ.
+func TestRenderIgnoresInputOrder(t *testing.T) {
+	in := goldenInput()
+	want := render(t, in)
+	for i := 0; i < len(in.Active); i++ {
+		shuffled := goldenInput()
+		// A rotation by i is a deterministic permutation — no random source, so
+		// a failure reproduces exactly.
+		shuffled.Active = append(append([]Incident(nil), shuffled.Active[i:]...), shuffled.Active[:i]...)
+		shuffled.Resolved = append(append([]Incident(nil), shuffled.Resolved[i%len(shuffled.Resolved):]...), shuffled.Resolved[:i%len(shuffled.Resolved)]...)
+		if got := render(t, shuffled); got != want {
+			t.Errorf("rotating the input by %d changed the page — the sort order is not total", i)
+		}
+	}
+}
+
+// TestEqualDurationsStillOrderTotally is the case the age-first sort makes
+// likely: two incidents firing for exactly the same number of seconds. They
+// must fall through to the tiebreaker chain, not to whatever order they
+// arrived in.
+func TestEqualDurationsStillOrderTotally(t *testing.T) {
+	a := Incident{Cluster: "example-a", Kind: "Deployment", Namespace: "example-ns", Name: "alpha", Issue: "Degraded", AgeSeconds: 600}
+	b := Incident{Cluster: "example-a", Kind: "Deployment", Namespace: "example-ns", Name: "beta", Issue: "Degraded", AgeSeconds: 600}
+	one := render(t, Input{Now: fixedNow, Active: []Incident{a, b}})
+	two := render(t, Input{Now: fixedNow, Active: []Incident{b, a}})
+	if one != two {
+		t.Error("two incidents with equal firing durations render in input order")
+	}
+	if strings.Index(one, "alpha") > strings.Index(one, "beta") {
+		t.Error("the tiebreaker chain did not order equal-duration rows by name")
+	}
+}

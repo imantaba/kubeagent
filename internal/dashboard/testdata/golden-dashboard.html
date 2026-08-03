@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="30">
+<title>kubeagent — cluster incidents</title>
+<style>
+:root { color-scheme: light dark; }
+body { font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 1.5rem; }
+h1 { font-size: 1.4rem; margin: 0; }
+h2 { font-size: 1.05rem; margin: 2rem 0 .6rem; border-bottom: 1px solid currentColor; padding-bottom: .3rem; opacity: .95; }
+.meta { opacity: .7; margin: .25rem 0 0; }
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; padding: .35rem .6rem; border-bottom: 1px solid rgba(128,128,128,.35); vertical-align: top; }
+th { font-weight: 600; opacity: .8; white-space: nowrap; }
+tr.down td { font-weight: 600; }
+tr.down td:first-child::before { content: "\25CF\00a0"; }
+tr.pending td { opacity: .75; }
+.empty { opacity: .7; }
+.badge { border: 1px solid currentColor; border-radius: .6rem; padding: 0 .4rem; font-size: .8rem; }
+.tiles { display: flex; flex-wrap: wrap; gap: 1rem; }
+.tile { border: 1px solid rgba(128,128,128,.45); border-radius: .4rem; padding: .6rem 1rem; min-width: 7rem; }
+.tile .n { display: block; font-size: 1.4rem; font-weight: 600; }
+.tile .l { display: block; opacity: .7; font-size: .8rem; }
+h3 { font-size: .95rem; margin: 1rem 0 .4rem; opacity: .9; }
+pre.explanation { white-space: pre-wrap; word-break: break-word; margin: 0; font: inherit; border-left: 3px solid rgba(128,128,128,.45); padding-left: .8rem; }
+article { margin-bottom: 1.2rem; }
+</style>
+</head>
+<body>
+<header>
+<h1>kubeagent</h1>
+<p class="meta">version v1.2.0 · generated 2026-08-02 09:30:00 UTC · reloads every 30s</p>
+</header>
+
+<h2>Clusters</h2>
+<table>
+<thead><tr><th>Name</th><th>State</th><th>Last evaluation</th><th>Error</th></tr></thead>
+<tbody>
+<tr class="up"><td>example-a</td><td>up</td><td>2026-08-02T09:29:30Z</td><td>—</td></tr>
+<tr class="down"><td>example-b</td><td>unreachable</td><td>2026-08-02T09:14:00Z</td><td>connection refused</td></tr>
+<tr class="pending"><td>example-c</td><td>starting up — not scanned yet</td><td>—</td><td>—</td></tr>
+</tbody>
+</table>
+
+<h2>Active incidents (3)</h2>
+<table>
+<thead><tr><th>Cluster</th><th>Kind</th><th>Object</th><th>Issue</th><th>Firing for</th><th>Firings</th><th>Flapping</th></tr></thead>
+<tbody>
+<tr><td>example-a</td><td>Pod</td><td>example-ns/worker-0</td><td>CrashLoopBackOff</td><td>1h 0m</td><td>7</td><td><span class="badge">flapping</span></td></tr>
+<tr><td>example-a</td><td>Deployment</td><td>example-ns/web</td><td>ImagePullBackOff</td><td>30m 0s</td><td>2</td><td>—</td></tr>
+<tr><td>example-b</td><td>Node</td><td>node-1</td><td>NotReady</td><td>5m 0s</td><td>1</td><td>—</td></tr>
+</tbody>
+</table>
+
+<h2>Resolved incidents (2)</h2>
+<table>
+<thead><tr><th>Cluster</th><th>Kind</th><th>Object</th><th>Issue</th><th>Resolved at</th><th>Time to resolution</th><th>Firings</th></tr></thead>
+<tbody>
+<tr><td>example-b</td><td>Service</td><td>example-ns/api</td><td>NoEndpoints</td><td>2026-08-02T08:20:00Z</td><td>10m 0s</td><td>3</td></tr>
+<tr><td>example-a</td><td>StatefulSet</td><td>example-ns/cache</td><td>Degraded</td><td>2026-08-02T07:45:00Z</td><td>45m 0s</td><td>1</td></tr>
+</tbody>
+</table>
+
+<h2>Totals</h2>
+<div class="tiles">
+<div class="tile"><span class="n">9</span><span class="l">new</span></div>
+<div class="tile"><span class="n">6</span><span class="l">resolved</span></div>
+<div class="tile"><span class="n">2</span><span class="l">flapping</span></div>
+<div class="tile"><span class="n">1</span><span class="l">dropped</span></div>
+<div class="tile"><span class="n">27m 30s</span><span class="l">mean time to resolution</span></div>
+</div>
+<h2>SLO</h2>
+<h3>example-a — target 99.90%</h3>
+<table>
+<thead><tr><th>Window</th><th>Availability</th><th>Burn rate</th><th>Error budget left</th><th>Coverage</th></tr></thead>
+<tbody>
+<tr><td>fast (1h)</td><td>98.20%</td><td>18.00</td><td>0.00%</td><td>45.00% <span class="badge">burn alert suppressed</span></td></tr>
+<tr><td>slow (6h)</td><td>99.93%</td><td>0.70</td><td>30.00%</td><td>98.00%</td></tr>
+</tbody>
+</table>
+<h2>Explanations (1)</h2>
+<article>
+<h3>example-a · Deployment example-ns/web</h3>
+<p class="meta">ImagePullBackOff · example-model · 2026-08-02T09:05:00Z</p>
+<pre class="explanation">The image tag referenced by the Deployment does not exist in the registry.
+Roll back to the previous tag, or push the missing tag.</pre>
+</article>
+</body>
+</html>

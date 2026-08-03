@@ -931,7 +931,7 @@ tr.pending td { opacity: .75; }
 <h2>Clusters</h2>
 {{- if .Clusters }}
 <table>
-<thead><tr><th>Cluster</th><th>State</th><th>Last evaluation</th><th>Error</th></tr></thead>
+<thead><tr><th>Name</th><th>State</th><th>Last evaluation</th><th>Error</th></tr></thead>
 <tbody>
 {{- range .Clusters }}
 <tr class="{{ .State }}"><td>{{ .Name }}</td><td>{{ .Label }}</td><td>{{ .LastScan }}</td><td>{{ .Error }}</td></tr>
@@ -1511,6 +1511,7 @@ import (
 	"bytes"
 	"flag"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -1644,23 +1645,10 @@ func firstDiff(want, got string) string {
 			b = g[i]
 		}
 		if a != b {
-			return "line " + itoa(i+1) + ":\n  want: " + a + "\n  got:  " + b
+			return "line " + strconv.Itoa(i+1) + ":\n  want: " + a + "\n  got:  " + b
 		}
 	}
 	return "(no line differs — check trailing bytes)"
-}
-
-// itoa avoids pulling strconv in for one call site.
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b []byte
-	for n > 0 {
-		b = append([]byte{byte('0' + n%10)}, b...)
-		n /= 10
-	}
-	return string(b)
 }
 ```
 

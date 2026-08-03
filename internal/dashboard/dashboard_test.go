@@ -1,0 +1,206 @@
+package dashboard
+
+import (
+	"bytes"
+	"strings"
+	"testing"
+	"time"
+)
+
+// fixedNow is the clock every test that compares bytes uses, so no fixture
+// holds a time-varying value.
+var fixedNow = time.Date(2026, 8, 2, 9, 30, 0, 0, time.UTC)
+
+// render is the tests' entry point: it fails the test on a render error, which
+// no test in this file expects, and returns the page as a string.
+func render(t *testing.T, in Input) string {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := Render(&buf, in); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	return buf.String()
+}
+
+// payloadInput puts the same string into every field of the page that carries
+// caller-supplied text. Task 3 extends it with the SLO and explanation fields.
+func payloadInput(payload string) Input {
+	return Input{
+		Version: payload,
+		Now:     fixedNow,
+		Clusters: []Cluster{{
+			Name:     payload,
+			Up:       false,
+			LastScan: "2026-08-02T09:29:00Z",
+			Error:    payload,
+		}},
+		Active: []Incident{{
+			Cluster: payload, Kind: payload, Namespace: payload, Name: payload,
+			Issue: payload, FiringSince: "2026-08-02T09:00:00Z",
+			Firings: 3, Flapping: true, AgeSeconds: 1800,
+		}},
+		Resolved: []Incident{{
+			Cluster: payload, Kind: payload, Namespace: payload, Name: payload,
+			Issue: payload, FiringSince: "2026-08-02T08:00:00Z",
+			Firings: 1, ResolvedAt: "2026-08-02T08:30:00Z", ResolutionSeconds: 1800,
+		}},
+		Stats: Stats{
+			NewTotal: 4, ResolvedTotal: 2, FlapTotal: 1, DroppedTotal: 0,
+			ResolutionSecondsSum: 3600, ResolutionSecondsCount: 2,
+		},
+	}
+}
+
+// escapePayloads are the strings a hostile or merely unlucky cluster can put
+// into a field the API server does not validate. Each must reach the page
+// escaped and inert.
+var escapePayloads = []struct{ name, payload string }{
+	{"script tag", "<script>alert(1)</script>"},
+	{"attribute break-out", `"><img src=x onerror=alert(1)>`},
+	{"bare ampersand", "a & b"},
+	{"single quote", "it's broken"},
+	{"combining marks", "é́́"},
+}
+
+// TestRenderEscapesEveryStringField is the escaping table. It asserts the whole
+// postcondition rather than a spelling: no executable markup survives anywhere
+// in the page, and the payload's angle brackets arrive as entities.
+func TestRenderEscapesEveryStringField(t *testing.T) {
+	for _, tc := range escapePayloads {
+		t.Run(tc.name, func(t *testing.T) {
+			out := render(t, payloadInput(tc.payload))
+			lower := strings.ToLower(out)
+			if strings.Contains(lower, "<script") {
+				t.Error("a <script tag reached the page")
+			}
+			// There is deliberately no assertion on the substring "onerror=".
+			// Contextual escaping rewrites < > & " ' and nothing else, so in a
+			// text node that substring survives verbatim inside
+			// &#34;&gt;&lt;img src=x onerror=alert(1)&gt; — inert, because an
+			// event handler runs only inside a tag, and the two assertions
+			// around this comment are what prove no tag boundary was created.
+			// Asserting its absence would fail correct code and could only be
+			// satisfied by a second transformation on top of escaping, which
+			// this package must not become.
+			if strings.Contains(out, "<img") {
+				t.Error("an <img element reached the page")
+			}
+			if strings.Contains(out, tc.payload) && strings.ContainsAny(tc.payload, "<>&") {
+				t.Errorf("payload %q reached the page unescaped", tc.payload)
+			}
+		})
+	}
+}
+
+// TestRenderEscapesAngleBracketsAsEntities pins the positive half: the payload
+// is not merely absent, it is present in escaped form. A renderer that dropped
+// the field entirely would pass the negative assertions above.
+func TestRenderEscapesAngleBracketsAsEntities(t *testing.T) {
+	out := render(t, payloadInput("<script>alert(1)</script>"))
+	if !strings.Contains(out, "&lt;script&gt;") {
+		t.Error("the payload is neither present escaped nor rendered at all")
+	}
+}
+
+// TestRenderEmptyInput is the starting state: a daemon that has just come up,
+// with no cluster reporting and nothing tracked. It must render a page, not
+// panic and not go dark.
+func TestRenderEmptyInput(t *testing.T) {
+	out := render(t, Input{Now: fixedNow})
+	if !strings.Contains(out, "No active incidents") {
+		t.Error("an empty page does not say there are no active incidents")
+	}
+	if strings.Contains(out, "NaN") {
+		t.Error("an empty page renders NaN")
+	}
+}
+
+// TestRenderUnscannedCluster covers the state before the first evaluation
+// completes. An empty incident list from a cluster that has never been scanned
+// must not read like a healthy one — that distinction is the whole reason the
+// cluster strip exists.
+func TestRenderUnscannedCluster(t *testing.T) {
+	out := render(t, Input{
+		Now:      fixedNow,
+		Clusters: []Cluster{{Name: "example-cluster"}},
+	})
+	if !strings.Contains(out, "not scanned yet") {
+		t.Error("a cluster with no completed evaluation does not say so")
+	}
+}
+
+// TestRenderUnreachableCluster is the other half: reachable-and-quiet must not
+// look like unreachable.
+func TestRenderUnreachableCluster(t *testing.T) {
+	out := render(t, Input{
+		Now: fixedNow,
+		Clusters: []Cluster{{
+			Name:     "example-cluster",
+			LastScan: "2026-08-02T09:29:00Z",
+			Error:    "connection refused",
+		}},
+	})
+	if !strings.Contains(out, "unreachable") {
+		t.Error("a down cluster is not reported as unreachable")
+	}
+	if !strings.Contains(out, "connection refused") {
+		t.Error("the cluster's error is not shown")
+	}
+}
+
+// TestMeanTimeToResolutionWithNoResolutions asserts the tile shows an em dash
+// rather than dividing by zero.
+func TestMeanTimeToResolutionWithNoResolutions(t *testing.T) {
+	out := render(t, Input{Now: fixedNow, Stats: Stats{ResolutionSecondsSum: 0, ResolutionSecondsCount: 0}})
+	if strings.Contains(out, "NaN") || strings.Contains(out, "+Inf") {
+		t.Error("mean time to resolution divided by zero")
+	}
+	if !strings.Contains(out, "—") {
+		t.Error("mean time to resolution does not render an em dash when nothing has resolved")
+	}
+}
+
+// TestClusterColumnOnlyWhenMulticluster keeps a single-cluster page from
+// carrying a column that says the same thing on every row.
+func TestClusterColumnOnlyWhenMulticluster(t *testing.T) {
+	one := render(t, Input{
+		Now:      fixedNow,
+		Clusters: []Cluster{{Name: "example-cluster", Up: true, LastScan: "2026-08-02T09:29:00Z"}},
+		Active:   []Incident{{Cluster: "example-cluster", Kind: "Deployment", Namespace: "example-ns", Name: "web", Issue: "ImagePullBackOff", AgeSeconds: 90}},
+	})
+	if strings.Count(one, "<th>Cluster</th>") != 0 {
+		t.Error("a single-cluster page carries a Cluster column in an incident table")
+	}
+	two := render(t, Input{
+		Now: fixedNow,
+		Clusters: []Cluster{
+			{Name: "example-a", Up: true, LastScan: "2026-08-02T09:29:00Z"},
+			{Name: "example-b", Up: true, LastScan: "2026-08-02T09:29:00Z"},
+		},
+		Active: []Incident{{Cluster: "example-a", Kind: "Deployment", Namespace: "example-ns", Name: "web", Issue: "ImagePullBackOff", AgeSeconds: 90}},
+	})
+	if !strings.Contains(two, "<th>Cluster</th>") {
+		t.Error("a multicluster page omits the Cluster column")
+	}
+}
+
+// TestHumanDuration pins the duration spelling the incident tables use.
+func TestHumanDuration(t *testing.T) {
+	cases := []struct {
+		sec  int64
+		want string
+	}{
+		{0, "0s"},
+		{45, "45s"},
+		{90, "1m 30s"},
+		{3600, "1h 0m"},
+		{7845, "2h 10m"},
+		{86400, "1d 0h"},
+		{-5, "0s"},
+	}
+	for _, tc := range cases {
+		if got := humanDuration(tc.sec); got != tc.want {
+			t.Errorf("humanDuration(%d) = %q, want %q", tc.sec, got, tc.want)
+		}
+	}
+}

@@ -2349,7 +2349,7 @@ Expected: PASS both.
 
 ```bash
 go list -deps ./internal/watch | grep -E 'kubeagent/internal/(report|remediate)$' && echo "INVARIANT BROKEN" || echo "ok: watch reaches neither report nor remediate"
-go list -deps ./internal/dashboard | grep kubeagent && echo "INVARIANT BROKEN" || echo "ok: dashboard imports nothing from kubeagent"
+go list -deps ./internal/dashboard | grep -v '^github.com/imantaba/kubeagent/internal/dashboard$' | grep kubeagent && echo "INVARIANT BROKEN" || echo "ok: dashboard imports nothing from kubeagent"
 ```
 
 Expected: both print `ok:`.

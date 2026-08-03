@@ -1,6 +1,7 @@
 package watch
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/imantaba/kubeagent/internal/alert"
+	"github.com/imantaba/kubeagent/internal/dashboard"
 	"github.com/imantaba/kubeagent/internal/ingresshealth"
 	"github.com/imantaba/kubeagent/internal/jsonschema"
 	"github.com/imantaba/kubeagent/internal/oncall"
@@ -124,6 +126,11 @@ type metrics struct {
 	pending  map[string]bool // clusters yet to finish a first reconcile attempt
 	alerts   alert.Stats     // process-wide: one sink
 	explain  explainSnapshot // process-wide: one budget
+	// dashboard and version are set once, in Run, before the HTTP server starts
+	// and before any worker exists. They are never written again, so they need
+	// no lock — unlike everything above them, which workers update live.
+	dashboard bool
+	version   string
 }
 
 // newMetrics pre-creates a snapshot per cluster so kubeagent_cluster_up renders
@@ -535,7 +542,15 @@ func (m *metrics) render() string {
 	return b.String()
 }
 
-// handler serves /metrics, /issues, /explanations, /healthz, and /readyz.
+// renderDashboard is dashboard.Render, indirected so a test can make it fail.
+// A parsed template only errors on a write failure, and the handler writes into
+// a bytes.Buffer, which cannot fail — so the 500 path is otherwise unreachable
+// and would go untested. This is the same indirection internal/cli uses for
+// watch.Run.
+var renderDashboard = dashboard.Render
+
+// handler serves /metrics, /issues, /explanations, /healthz, /readyz, and —
+// only when --dashboard is set — /dashboard.
 func (m *metrics) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) {
@@ -560,6 +575,24 @@ func (m *metrics) handler() http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(body)
 	})
+	// Registered only when --dashboard is set. A disabled daemon 404s the path
+	// through the mux's own not-found handling; there is no switched-off page
+	// to serve.
+	if m.dashboard {
+		mux.HandleFunc("/dashboard", func(w http.ResponseWriter, _ *http.Request) {
+			// Render into a buffer, not into the ResponseWriter: a failure
+			// mid-execution would otherwise land after the 200 header and
+			// produce a truncated page. One page in memory is a negligible
+			// cost for turning that into a clean 500.
+			var buf bytes.Buffer
+			if err := renderDashboard(&buf, m.dashboardInput(m.version, time.Now())); err != nil {
+				http.Error(w, "rendering dashboard", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Write(buf.Bytes())
+		})
+	}
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, "ok") })
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
 		if !m.isReady() {
@@ -758,4 +791,91 @@ func (m *metrics) explanationsJSON() ([]byte, error) {
 		})
 	}
 	return json.Marshal(out)
+}
+
+// dashboardInput copies the daemon's state into the renderer's input, under the
+// same read lock issuesJSON takes.
+//
+// Every slice is freshly allocated. The renderer runs after this function
+// returns and therefore after the lock is released, so an Input holding a
+// reference into a snapshot a worker can swap would be a data race that happens
+// to produce plausible output most of the time.
+//
+// It performs no cluster call. It also makes no model call: m.explain.Latest is
+// what the incident pipeline already computed, and reading it is free. Those
+// are two separate promises.
+func (m *metrics) dashboardInput(version string, now time.Time) dashboard.Input {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	in := dashboard.Input{
+		Version:        version,
+		Now:            now,
+		ExplainEnabled: m.explain.Enabled,
+		Clusters:       make([]dashboard.Cluster, 0, len(m.names)),
+	}
+	for _, n := range m.names {
+		c := m.clusters[n]
+		cv := dashboard.Cluster{Name: n, Up: c.up, Error: c.lastError}
+		if c.lastScanUnix != 0 {
+			cv.LastScan = rfc3339(time.Unix(c.lastScanUnix, 0))
+		}
+		in.Clusters = append(in.Clusters, cv)
+
+		for _, r := range c.issues.Active {
+			in.Active = append(in.Active, dashboard.Incident{
+				Cluster: n, Kind: r.Key.Kind, Namespace: r.Key.Namespace,
+				Name: r.Key.Name, Issue: r.Key.Issue,
+				FiringSince: rfc3339(r.FiringSince),
+				Firings:     r.Firings,
+				Flapping:    r.Flapping,
+				AgeSeconds:  ageSeconds(r.FiringSince, c.issues.At),
+			})
+		}
+		for _, r := range c.issues.Resolved {
+			in.Resolved = append(in.Resolved, dashboard.Incident{
+				Cluster: n, Kind: r.Key.Kind, Namespace: r.Key.Namespace,
+				Name: r.Key.Name, Issue: r.Key.Issue,
+				FiringSince:       rfc3339(r.FiringSince),
+				Firings:           r.Firings,
+				Flapping:          r.Flapping,
+				ResolvedAt:        rfc3339(r.ResolvedAt),
+				ResolutionSeconds: ageSeconds(r.FiringSince, r.ResolvedAt),
+			})
+		}
+
+		in.Stats.NewTotal += c.issues.Stats.NewTotal
+		in.Stats.ResolvedTotal += c.issues.Stats.ResolvedTotal
+		in.Stats.FlapTotal += c.issues.Stats.FlapTotal
+		in.Stats.DroppedTotal += c.issues.Stats.DroppedTotal
+		in.Stats.ResolutionSecondsSum += c.issues.Stats.ResolutionSecondsSum
+		in.Stats.ResolutionSecondsCount += c.issues.Stats.ResolutionSecondsCount
+
+		if c.slo.Enabled {
+			// The window labels carry their spans for a reader; the bare
+			// "fast"/"slow" halves match the `window` label on the
+			// kubeagent_slo_* series, so the page and a Grafana panel name the
+			// same thing.
+			in.SLO = append(in.SLO, dashboard.SLO{
+				Cluster: n,
+				Target:  c.slo.Target,
+				Windows: []dashboard.SLOWindow{
+					{Name: "fast (1h)", Availability: c.slo.Fast.Availability, BurnRate: c.slo.Fast.BurnRate, Coverage: c.slo.Fast.Coverage},
+					{Name: "slow (6h)", Availability: c.slo.Slow.Availability, BurnRate: c.slo.Slow.BurnRate, Coverage: c.slo.Slow.Coverage},
+				},
+			})
+		}
+	}
+	for _, x := range m.explain.Latest {
+		in.Explanations = append(in.Explanations, dashboard.Explanation{
+			Cluster:     x.Cluster,
+			Kind:        x.Kind,
+			Namespace:   x.Namespace,
+			Name:        x.Name,
+			Issues:      append([]string(nil), x.Issues...), // copied: the snapshot still owns the original
+			ExplainedAt: x.ExplainedAt.UTC().Format(time.RFC3339),
+			Model:       x.Model,
+			Text:        x.Text,
+		})
+	}
+	return in
 }

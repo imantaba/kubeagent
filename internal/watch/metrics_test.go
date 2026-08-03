@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/certhealth"
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/controlplane"
+	"github.com/imantaba/kubeagent/internal/dashboard"
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/diskusage"
 	"github.com/imantaba/kubeagent/internal/dnshealth"
@@ -660,4 +662,192 @@ func TestIssuesAndExplanationsJSONStampTheSchemaVersion(t *testing.T) {
 			t.Errorf("%s schemaVersion = %q, want %q", name, doc.SchemaVersion, jsonschema.WatchVersion)
 		}
 	}
+}
+
+// TestDashboardDisabledReturns404 asserts that a daemon without --dashboard
+// does not register the path at all. The mux's own not-found handling answers,
+// so there is no switched-off page to serve and no handler to get wrong.
+func TestDashboardDisabledReturns404(t *testing.T) {
+	srv := httptest.NewServer(newMetrics([]string{"local"}).handler())
+	defer srv.Close()
+	resp, err := http.Get(srv.URL + "/dashboard")
+	if err != nil {
+		t.Fatalf("GET /dashboard: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", resp.StatusCode)
+	}
+}
+
+// TestDashboardEnabledServesHTML covers the enabled path end to end: the
+// status, the content type, and that the page names the tracked incident.
+func TestDashboardEnabledServesHTML(t *testing.T) {
+	m := newMetrics([]string{"local"})
+	m.dashboard = true
+	m.version = "v1.2.0"
+	c := m.clusters["local"]
+	c.up = true
+	c.lastScanUnix = time.Date(2026, 8, 2, 9, 29, 0, 0, time.UTC).Unix()
+	c.issues = issueSnapshot{
+		At: time.Date(2026, 8, 2, 9, 30, 0, 0, time.UTC),
+		Active: []watchstate.Record{{
+			Key:         watchstate.Key{Kind: "Deployment", Namespace: "example-ns", Name: "web", Issue: "ImagePullBackOff"},
+			FirstSeen:   time.Date(2026, 8, 2, 9, 0, 0, 0, time.UTC),
+			FiringSince: time.Date(2026, 8, 2, 9, 0, 0, 0, time.UTC),
+			LastSeen:    time.Date(2026, 8, 2, 9, 30, 0, 0, time.UTC),
+			Firings:     1,
+		}},
+	}
+
+	srv := httptest.NewServer(m.handler())
+	defer srv.Close()
+	resp, err := http.Get(srv.URL + "/dashboard")
+	if err != nil {
+		t.Fatalf("GET /dashboard: %v", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading body: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "text/html; charset=utf-8" {
+		t.Errorf("Content-Type = %q, want %q", ct, "text/html; charset=utf-8")
+	}
+	page := string(body)
+	for _, want := range []string{"v1.2.0", "example-ns/web", "ImagePullBackOff"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the page does not contain %q", want)
+		}
+	}
+}
+
+// TestDashboardInputCopies asserts the builder copies rather than aliases.
+// The renderer runs after the read lock is released, so an Input holding a
+// reference into a snapshot a worker can swap would be a data race that
+// happens to produce plausible output most of the time.
+func TestDashboardInputCopies(t *testing.T) {
+	m := newMetrics([]string{"local"})
+	c := m.clusters["local"]
+	c.up = true
+	c.lastScanUnix = time.Date(2026, 8, 2, 9, 29, 0, 0, time.UTC).Unix()
+	c.issues = issueSnapshot{
+		At: time.Date(2026, 8, 2, 9, 30, 0, 0, time.UTC),
+		Active: []watchstate.Record{{
+			Key:         watchstate.Key{Kind: "Deployment", Namespace: "example-ns", Name: "web", Issue: "ImagePullBackOff"},
+			FiringSince: time.Date(2026, 8, 2, 9, 0, 0, 0, time.UTC),
+			Firings:     1,
+		}},
+	}
+	m.explain = explainSnapshot{Enabled: true, Latest: []oncall.Explanation{{
+		Cluster: "local", Kind: "Deployment", Namespace: "example-ns", Name: "web",
+		Issues: []string{"ImagePullBackOff"}, ExplainedAt: time.Date(2026, 8, 2, 9, 5, 0, 0, time.UTC),
+		Model: "example-model", Text: "example text",
+	}}}
+
+	in := m.dashboardInput("v1.2.0", time.Date(2026, 8, 2, 9, 30, 0, 0, time.UTC))
+
+	// Mutate everything the snapshot owns, including the one slice field an
+	// Input reaches into.
+	c.issues.Active[0].Key.Name = "mutated"
+	c.lastError = "mutated"
+	m.explain.Latest[0].Issues[0] = "mutated"
+
+	if in.Active[0].Name != "web" {
+		t.Errorf("Active[0].Name = %q — the Input aliases the snapshot's records", in.Active[0].Name)
+	}
+	if in.Explanations[0].Issues[0] != "ImagePullBackOff" {
+		t.Errorf("Explanations[0].Issues[0] = %q — the Input aliases the explanation's issue slice", in.Explanations[0].Issues[0])
+	}
+}
+
+// TestDashboardRenderFailureIs500 covers the path buffering exists for. A
+// template failure mid-execution would otherwise land after the 200 header and
+// produce a truncated page; buffering turns it into a clean 500 with no body
+// from the renderer.
+func TestDashboardRenderFailureIs500(t *testing.T) {
+	m := newMetrics([]string{"local"})
+	m.dashboard = true
+
+	orig := renderDashboard
+	renderDashboard = func(w io.Writer, in dashboard.Input) error {
+		io.WriteString(w, "<html>partial")
+		return errors.New("synthetic template failure")
+	}
+	defer func() { renderDashboard = orig }()
+
+	srv := httptest.NewServer(m.handler())
+	defer srv.Close()
+	resp, err := http.Get(srv.URL + "/dashboard")
+	if err != nil {
+		t.Fatalf("GET /dashboard: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", resp.StatusCode)
+	}
+	if strings.Contains(string(body), "partial") {
+		t.Error("a partially rendered page reached the client")
+	}
+}
+
+// TestDashboardConcurrentReadsAndSwaps is the race test. Run under -race it
+// asserts that no dashboard request observes a snapshot a worker is writing.
+func TestDashboardConcurrentReadsAndSwaps(t *testing.T) {
+	m := newMetrics([]string{"local"})
+	m.dashboard = true
+	m.version = "v1.2.0"
+
+	srv := httptest.NewServer(m.handler())
+	defer srv.Close()
+
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; ; i++ {
+			select {
+			case <-done:
+				return
+			default:
+			}
+			m.mu.Lock()
+			c := m.clusters["local"]
+			c.up = i%2 == 0
+			c.lastScanUnix = int64(1754126000 + i)
+			c.lastError = "connection refused"
+			c.issues = issueSnapshot{
+				At: time.Date(2026, 8, 2, 9, 30, 0, 0, time.UTC),
+				Active: []watchstate.Record{{
+					Key:         watchstate.Key{Kind: "Deployment", Namespace: "example-ns", Name: "web", Issue: "ImagePullBackOff"},
+					FiringSince: time.Date(2026, 8, 2, 9, 0, 0, 0, time.UTC),
+					Firings:     i,
+				}},
+			}
+			m.mu.Unlock()
+		}
+	}()
+
+	for i := 0; i < 50; i++ {
+		resp, err := http.Get(srv.URL + "/dashboard")
+		if err != nil {
+			close(done)
+			wg.Wait()
+			t.Fatalf("GET /dashboard: %v", err)
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			close(done)
+			wg.Wait()
+			t.Fatalf("status = %d, want 200", resp.StatusCode)
+		}
+	}
+	close(done)
+	wg.Wait()
 }

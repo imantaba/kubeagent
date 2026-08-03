@@ -452,9 +452,15 @@ func TestRenderEscapesEveryStringField(t *testing.T) {
 			if strings.Contains(lower, "<script") {
 				t.Error("a <script tag reached the page")
 			}
-			if strings.Contains(lower, "onerror=") {
-				t.Error("an onerror= handler reached the page")
-			}
+			// There is deliberately no assertion on the substring "onerror=".
+			// Contextual escaping rewrites < > & " ' and nothing else, so in a
+			// text node that substring survives verbatim inside
+			// &#34;&gt;&lt;img src=x onerror=alert(1)&gt; — inert, because an
+			// event handler runs only inside a tag, and the two assertions
+			// around this comment are what prove no tag boundary was created.
+			// Asserting its absence would fail correct code and could only be
+			// satisfied by a second transformation on top of escaping, which
+			// this package must not become.
 			if strings.Contains(out, "<img") {
 				t.Error("an <img element reached the page")
 			}

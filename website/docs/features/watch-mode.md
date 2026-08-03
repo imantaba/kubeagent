@@ -593,15 +593,6 @@ This is model-written prose about your failures, served on the same
 unauthenticated metrics port as `/issues`. Same sensitivity class as `/issues`,
 but worth knowing before you enable it.
 
-## Dashboard (`--dashboard`)
-
-`--dashboard` serves the same tracked state as an HTML page at `/dashboard` on
-the metrics port — the URL you hand someone instead of a `curl | jq`. It
-performs no extra cluster read, needs no extra RBAC, and makes no model call.
-It is unauthenticated, exactly like `/metrics` and `/issues` on the same port.
-
-See [In-cluster dashboard](dashboard.md).
-
 ### With a local model
 
 No data leaves your network:
@@ -641,6 +632,16 @@ helm upgrade --install kubeagent deploy/helm/kubeagent \
 `explain.existingSecret` is required whenever `explain.enabled` is true — the
 API key and any endpoint URL are both credentials and must come from a
 Secret, never from `values.yaml`.
+
+## Dashboard (`--dashboard`)
+
+`--dashboard` serves the same tracked state as an HTML page at `/dashboard` on
+the metrics port — the URL you hand someone instead of a `curl | jq`. It
+performs no extra cluster read and needs no extra RBAC. Separately: a dashboard
+request makes no model call. It is unauthenticated, exactly like `/metrics` and
+`/issues` on the same port.
+
+See [In-cluster dashboard](dashboard.md).
 
 ## Watching several clusters
 

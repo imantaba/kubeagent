@@ -15,7 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reachability, the aggregate counters, SLO burn when `--slo-target` is set, and
   on-incident explanations when `--explain` is set. It renders only state the
   daemon already tracks, so it performs no extra cluster read and needs no extra
-  RBAC, and it makes no model call. Server-rendered with zero JavaScript, so
+  RBAC. Separately, no dashboard request makes a model call.
+  Server-rendered with zero JavaScript, so
   `html/template`'s contextual escaping is the single escape boundary; the new
   `internal/dashboard` package imports nothing from kubeagent, enforced by a
   source-level test. The page is **unauthenticated**, exactly like `/metrics`

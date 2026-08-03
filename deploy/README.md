@@ -213,6 +213,8 @@ producing a daemon that starts and immediately errors. See the
 [watch mode docs](https://k8sproject.top/features/watch-mode/#slo-burn-rate)
 for the SLI definition, the fixed windows/thresholds, and the restart caveat.
 
+## In-cluster dashboard (opt-in)
+
 Serve the read-only dashboard on the metrics port:
 
 ```bash

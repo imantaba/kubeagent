@@ -447,7 +447,7 @@ These are the north star; every item below is measured against them.
   operator; reconciler-reported GitOps drift (`--drift`); and advisory
   scheduling-headroom + structural right-sizing hints (`--capacity`). Theme F
   is complete.
-- **G · Meet people where they work** — an **MCP server** so other AI agents can
+- **G · Meet people where they work** ✅ — an **MCP server** so other AI agents can
   call kubeagent's read-only diagnosis as a trusted tool (shipped, `kubeagent
   mcp`); a **`kubectl` krew plugin** (shipped, `kubectl kubeagent`); a **CI/CD
   gate mode** (shipped, `kubeagent gate` — pre-deploy sanity, post-deploy

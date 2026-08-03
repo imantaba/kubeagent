@@ -88,11 +88,14 @@ Documented keys in `deploy/helm/kubeagent/values.yaml` keep their names and
 meanings within 1.x. New keys may be added. The chart's own `version` moves
 independently of the application's `appVersion`.
 
-The dashboard's surfaces are stable in the same sense as any other flag and
-chart value documented here:
+### The watch daemon's `/dashboard` endpoint
 
-- `watch --dashboard`, `KUBEAGENT_DASHBOARD`, the `dashboard.enabled` chart
-  value, and `/dashboard` existing and returning HTML when enabled.
+`watch --dashboard` serves an HTML page at `/dashboard` on the metrics port.
+Within 1.x that endpoint keeps its path, keeps returning HTML when the flag is
+set, and keeps returning `404` when it is not. The flag, its
+`KUBEAGENT_DASHBOARD` spelling and the `dashboard.enabled` chart value are
+stable under the three rules above, like every other flag, variable and chart
+key. **The page's markup is not** — it is listed under unstable surfaces below.
 
 ## Unstable surfaces — do not build on these
 

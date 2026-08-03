@@ -1751,11 +1751,12 @@ quietly narrowing to a subset."
 
 ## Task 5: `FuzzDashboardRender`
 
-Joins the eight `go test -fuzz` targets Theme H slice 3 shipped. Same risk class: no value a cluster can produce may panic a render or reach a browser as markup.
+Joins the `go test -fuzz` suite Theme H slice 3 opened. Same risk class: no value a cluster can produce may panic a render or reach a browser as markup.
 
 **Files:**
 
 - Test: `internal/dashboard/fuzz_test.go` (create)
+- Modify: `.github/workflows/fuzz.yml` — the nightly matrix names every `(package, target)` pair explicitly, so a target it does not list never runs a campaign.
 
 **Interfaces:**
 
@@ -1906,7 +1907,21 @@ go test ./internal/dashboard -run FuzzDashboardRender -fuzz FuzzDashboardRender 
 
 Expected: no new failing input. If the fuzzer writes a crasher into `testdata/fuzz/`, **do not commit the crasher and move on** — fix the renderer so the crasher passes, then commit both the fix and the crasher file, which becomes a permanent seed.
 
-- [ ] **Step 4: Run the full gate**
+- [ ] **Step 4: Enrol the target in the nightly campaign**
+
+A target the nightly workflow does not name never runs a campaign — a plain
+`go test` only replays its seeds, which is a regression check, not a search.
+`.github/workflows/fuzz.yml` enumerates `(package, target)` pairs explicitly,
+because `go test -fuzz` accepts exactly one of each per invocation. Add the
+thirteenth pair to the end of the matrix list, matching the existing
+indentation:
+
+```yaml
+          - package: ./internal/dashboard
+            target: FuzzDashboardRender
+```
+
+- [ ] **Step 5: Run the full gate**
 
 ```bash
 go build ./... && go test ./... -p 2
@@ -1914,13 +1929,13 @@ go build ./... && go test ./... -p 2
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add internal/dashboard/fuzz_test.go
+git add internal/dashboard/fuzz_test.go .github/workflows/fuzz.yml
 git commit -s -m "dashboard: fuzz the renderer
 
-Ninth target in the suite Theme H slice 3 shipped, same risk class: nothing
+Thirteenth target in the suite Theme H slice 3 opened, same risk class: nothing
 a cluster can put in a field the API server does not validate may panic a
 render or reach a browser as markup.
 

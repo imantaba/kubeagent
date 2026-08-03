@@ -525,7 +525,7 @@ These are the north star; every item below is measured against them.
   Theme H: [Compatibility and support](compatibility.md) writes down which
   surfaces are stable within 1.x and which are deliberately not, states the
   supported Kubernetes window as an evidenced one — v1.32, v1.33 and v1.34,
-  because the nightly matrix passes 124 assertions against each — and commits
+  because the nightly matrix passes 128 assertions against each — and commits
   to a deprecation policy of one full MINOR, a stderr-only warning, and removal
   no earlier than the next MAJOR. **Theme H is complete.**
 

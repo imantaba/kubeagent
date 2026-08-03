@@ -248,7 +248,7 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   evaluated fails a gate instead of passing quietly.
   Slice 8 — the cross-version chaos matrix — and slice 9 — the written
   production contract — have shipped (v1.0.0), and **Theme H is complete**:
-  `chaos/run.sh` is a gate rather than a report (124 machine-checked assertions;
+  `chaos/run.sh` is a gate rather than a report (128 machine-checked assertions;
   a failure lets the remaining scenarios run and surfaces in the exit code at the
   end), `--k8s-version <minor>` pins it to a
   digest-pinned kind node image from `chaos/versions.env`,

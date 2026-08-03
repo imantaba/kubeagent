@@ -452,8 +452,10 @@ These are the north star; every item below is measured against them.
   mcp`); a **`kubectl` krew plugin** (shipped, `kubectl kubeagent`); a **CI/CD
   gate mode** (shipped, `kubeagent gate` — pre-deploy sanity, post-deploy
   verify, SARIF, exit codes); a **shareable HTML report** (shipped, `scan
-  --output html`); and an **interactive TUI** (shipped, `kubeagent tui`). An
-  optional in-cluster dashboard remains ahead.
+  --output html`); and an **interactive TUI** (shipped, `kubeagent tui`). The
+  optional in-cluster dashboard has shipped (`kubeagent watch --dashboard`,
+  documented in [features/dashboard.md](features/dashboard.md)), and **Theme G
+  is complete**.
 - **H · Supply-chain & trust** ✅ — signed releases, SBOM and build provenance
   (shipped: keyless cosign signatures, an SPDX SBOM, SLSA build provenance and
   byte-reproducible archives — see [Verifying a release](verify.md));
@@ -541,7 +543,7 @@ one guarded step at a time. Roughly:
 | **v0.32–v0.35** | Principled intelligence & safer fixes (C, D) | `--explain` → ranked remediation suggestions + runbooks; opt-in read-only `--investigate`; local-model explain; `--fix` plan/dry-run + diff + audit log + RBAC preflight + rollback; larger reversible allowlist |
 | **v0.36–v0.40** | Continuous operations (E, D) | Stateful `watch` (trends, flapping, MTTR, new-since-last); Slack/PagerDuty/webhook alerts; SLO burn-rate; on-incident `--explain`; multi-cluster hub; guarded autonomous remediation |
 | **v0.41–v0.45** | Ecosystem & operators (F) | Operator/CRD adapters (CNPG, cert-manager, Longhorn, Argo/Flux, mesh); GitOps drift; cost/right-sizing; deep networking & storage checks |
-| **v0.5x** | Interfaces & adoption (G) | **MCP server** (shipped, `kubeagent mcp`); **`kubectl` krew plugin** (shipped); **CI/CD gate mode + SARIF** (shipped, `kubeagent gate`); **shareable HTML report** (shipped, `scan --output html`); **interactive TUI** (shipped, `kubeagent tui`); optional in-cluster dashboard |
+| **v0.5x** | Interfaces & adoption (G) | **MCP server** (shipped, `kubeagent mcp`); **`kubectl` krew plugin** (shipped); **CI/CD gate mode + SARIF** (shipped, `kubeagent gate`); **shareable HTML report** (shipped, `scan --output html`); **interactive TUI** (shipped, `kubeagent tui`); **in-cluster dashboard** (shipped, `watch --dashboard`) |
 | **v1.0** ✅ | Production-grade contract (H) | **Shipped.** Stable versioned JSON schema; cosign-signed releases + SBOM + provenance; per-feature least-privilege RBAC; fuzzed detectors; **policy as code** — operator-written YAML checks, chosen over a compiled plugin SDK so a custom check can never write, panic a scan, or widen RBAC; a cross-version chaos matrix that gates every supported Kubernetes minor nightly; the two v1 simplifications (stdlib-`flag` CLI, sequential scan) retired deliberately — Cobra + bounded scan concurrency — behind the same test bar; and a written [compatibility and support contract](compatibility.md) |
 | **post-1.0** | The best, sustained | Anomaly/baseline learning ("what's normal for *this* cluster"); fleet-scale (hundreds of clusters); a curated community detector library and known-issues knowledge base |
 

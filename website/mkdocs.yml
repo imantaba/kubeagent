@@ -75,6 +75,7 @@ nav:
       - Performance tuning: features/tuning.md
       - Shell completion: features/completion.md
       - Policy as code: features/policy.md
+      - In-cluster dashboard: features/dashboard.md
   - Install: install.md
   - Verifying a release: verify.md
   - Compatibility and support: compatibility.md

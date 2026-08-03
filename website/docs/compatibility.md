@@ -88,13 +88,20 @@ Documented keys in `deploy/helm/kubeagent/values.yaml` keep their names and
 meanings within 1.x. New keys may be added. The chart's own `version` moves
 independently of the application's `appVersion`.
 
+The dashboard's surfaces are stable in the same sense as any other flag and
+chart value documented here:
+
+- `watch --dashboard`, `KUBEAGENT_DASHBOARD`, the `dashboard.enabled` chart
+  value, and `/dashboard` existing and returning HTML when enabled.
+
 ## Unstable surfaces — do not build on these
 
 - **The text report's wording and layout.** `internal/report/testdata/golden-scan.txt`
   is a regression guard so a change to the report is always deliberate — it is
   not a promise to consumers. Parse `--output json`, never the text.
-- **The HTML report's markup.** It is a shareable artifact for a human, and its
-  structure will change.
+- **The HTML report's and the dashboard's markup.** Both are artifacts for a
+  human to look at — a shareable file in one case, a page in a browser in the
+  other — and their structure will change. Parse `--output json` or `/issues`.
 - **Every `internal/` package.** Go's `internal/` rule already enforces this:
   nothing outside the module can import them, and the layout is free to move.
   kubeagent is a binary, not a library.

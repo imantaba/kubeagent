@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **In-cluster dashboard (`kubeagent watch --dashboard`).** A read-only HTML
+  page at `/dashboard` on the daemon's metrics port: tracked incidents active
+  and resolved with firing duration and time-to-resolution, per-cluster
+  reachability, the aggregate counters, SLO burn when `--slo-target` is set, and
+  on-incident explanations when `--explain` is set. It renders only state the
+  daemon already tracks, so it performs no extra cluster read and needs no extra
+  RBAC, and it makes no model call. Server-rendered with zero JavaScript, so
+  `html/template`'s contextual escaping is the single escape boundary; the new
+  `internal/dashboard` package imports nothing from kubeagent, enforced by a
+  source-level test. The page is **unauthenticated**, exactly like `/metrics`
+  and `/issues` on the same port — see
+  [the docs](https://k8sproject.top/features/dashboard/) for the exposure
+  posture. Enable with `--dashboard`, `KUBEAGENT_DASHBOARD=true`, or
+  `--set dashboard.enabled=true`. Completes Theme G.
+
 ## [1.1.0] - 2026-08-02
 
 ### Added

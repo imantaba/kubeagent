@@ -105,6 +105,19 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   `Secret` is not a selectable kind and a `ConfigMap` path beginning `data` or
   `binaryData` is a load error — a violation carries its evidence into a report
   designed to be forwarded.
+  `internal/dashboard` (the `watch --dashboard` renderer) is a seventh case and
+  the strictest: it **imports nothing from kubeagent at all** — only `embed`,
+  `html/template`, `io`, `time`, `sort`, `strings` and `fmt` — which puts it in
+  the same class as `internal/jsonschema` and makes reaching
+  `internal/remediate` or `internal/explain` impossible by construction rather
+  than by rule. `internal/dashboard/imports_test.go` enforces that, and a second
+  test in the same file asserts that `template.HTML`, `template.JS`,
+  `template.URL` and their four siblings appear nowhere, so contextual
+  auto-escaping is the package's single escape boundary. It holds no client and
+  no context, issues no cluster call and makes no model call — two separate
+  promises. The page it renders is HTML, not one of the six versioned JSON
+  documents, so no `schemaVersion` moves
+  (see [website/docs/features/dashboard.md](website/docs/features/dashboard.md)).
 - **Untrusted API text is sanitized at ingress, not at each renderer.** Every
   value read from a field the API server does not validate — `waiting.Message`,
   `terminated.Reason`, condition and event messages, `involvedObject.fieldPath`,

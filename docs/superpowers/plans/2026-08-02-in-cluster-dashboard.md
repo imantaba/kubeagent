@@ -2527,11 +2527,16 @@ go build -o /tmp/kubeagent-dash . && /tmp/kubeagent-dash watch --help | grep -A1
 Expected: the flag and its usage text appear. Then check the shell completion still generates:
 
 ```bash
-/tmp/kubeagent-dash completion bash | grep -c dashboard
+/tmp/kubeagent-dash completion bash | head -1
 rm -f /tmp/kubeagent-dash
 ```
 
-Expected: a non-zero count — completion is generated from the command tree, so the flag appears with no extra work.
+Expected: a script is emitted. Do NOT grep it for `dashboard`: Cobra's
+bash-completion-v2 script names no flag at all — it calls the binary's hidden
+`__complete` at completion time, so `grep -c dashboard` returns 0 for this flag
+exactly as it does for the long-standing `--explain`. The flag reaching
+completion is covered by `TestCommandSurfaceWatch`, which asserts the command
+registers it.
 
 - [ ] **Step 6: Run the full gate**
 

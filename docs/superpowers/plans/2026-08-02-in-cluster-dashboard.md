@@ -2706,7 +2706,7 @@ In `scenario_12_watch`, extend the local declaration line:
 
 ```bash
   local ns=chaos-watch port=18080 aport=18081 wlog wpid i firing after alerts apid
-  local dash dash_code dash_type
+  local dash dash_code dash_type dash_webhook
 ```
 
 Add `--dashboard` to the daemon invocation:
@@ -2725,6 +2725,12 @@ Immediately after the existing `firing="$(curl ...)"` line, capture the page whi
   dash_code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/dashboard" 2>/dev/null || echo 000)"
   dash_type="$(curl -s -o /dev/null -w '%{content_type}' "http://127.0.0.1:$port/dashboard" 2>/dev/null || true)"
   dash="$(curl -s "http://127.0.0.1:$port/dashboard" 2>/dev/null || echo '<unreachable>')"
+  # Count, never quote: assert.sh embeds a needle in its own PASS/FAIL line, so
+  # an expect_absent here would write the endpoint into the report on every
+  # passing run — the leak the assertion exists to rule out. The webhook
+  # redaction check twenty lines above and scenario 20 both count for the same
+  # reason.
+  dash_webhook="$(printf '%s\n' "$dash" | grep -cF -- "127.0.0.1:$aport" || true)"
 ```
 
 - [ ] **Step 2: Add the four assertions**
@@ -2735,6 +2741,7 @@ In the `{ ... } | record` block, add a reporting section before the `--- asserti
     echo '--- dashboard served while the outage was firing ---'
     printf 'status: %s\ncontent type: %s\npage bytes: %s\n' \
       "$dash_code" "$dash_type" "$(printf '%s' "$dash" | wc -c | tr -d ' ')"
+    printf 'page lines naming the webhook endpoint host: %s\n' "$dash_webhook"
     echo
 ```
 
@@ -2745,10 +2752,12 @@ and the four `expect_*` calls after the existing six:
     expect_contains "dashboard content type is HTML"                    "$dash_type" "text/html"
     expect_contains "dashboard names the broken workload"               "$dash"      "$ns/web"
     # A webhook URL is a credential, and this scenario is the only place in the
-    # suite where the daemon actually holds one. Asserting its absence from the
+    # suite where the daemon actually holds one. Asserting it never reaches the
     # page is a stronger test of the "URLs are credentials" rule than a generic
-    # path grep would be, because the value is really there to leak.
-    expect_absent   "dashboard body carries no alert webhook URL"       "$dash"      "127.0.0.1:$aport"
+    # path grep would be, because the value is really there to leak. The
+    # assertion carries a count rather than the endpoint itself, so a passing
+    # run does not print what it just proved absent.
+    expect_eq       "dashboard body carries no alert webhook URL"       "$dash_webhook" 0
 ```
 
 Extend the `record` header's `expect:` sentence — append to the existing text:
@@ -2779,7 +2788,7 @@ For each of the four, make a temporary edit, run the scenario, confirm the FAIL 
 1. **200** — remove `--dashboard` from the daemon invocation. Expect `FAIL: dashboard returns 200 while an incident is firing (got '404', want '200')`.
 2. **HTML** — change the assertion's needle from `text/html` to `application/json`. Expect a FAIL naming the missing needle.
 3. **workload name** — change the needle from `$ns/web` to `$ns/does-not-exist`. Expect a FAIL.
-4. **webhook URL** — change `expect_absent` to `expect_contains` on the same needle. Expect a FAIL, proving the needle is genuinely absent rather than the assertion being vacuous.
+4. **webhook URL** — point the counted needle at a string the page really does carry, e.g. `grep -cF -- "$ns/web"`. Expect `FAIL: dashboard body carries no alert webhook URL (got '1', want '0')`, proving the counter counts rather than always returning zero.
 
 Each run:
 
@@ -3203,11 +3212,14 @@ Two spec sentences deliberately land differently from their literal wording, and
 both are recorded where an implementer will see them:
 
 1. The spec's fourth chaos assertion reads "no credential material and no
-   filesystem path". `expect_absent` takes one needle, so Task 9 implements it
-   as the alert-webhook-URL absence check — the only credential-class value the
-   daemon actually holds during that scenario, and therefore a stronger test
-   than a generic path grep. The reasoning is in the task and in the commit
-   message.
+   filesystem path". Task 9 implements it as a count of the alert-webhook-URL
+   host in the page, asserted equal to zero — the only credential-class value
+   the daemon actually holds during that scenario, and therefore a stronger test
+   than a generic path grep. It counts rather than naming a needle because
+   `assert.sh` embeds the needle in its own PASS line, which would put the
+   endpoint into the report on every passing run; scenario 20 and the webhook
+   redaction check in this same scenario count for that reason. The reasoning is
+   in the task and in the commit message.
 2. The spec lists `internal/dashboard`'s imports as six packages;
    `strings.Join` for the explanation issue list makes it seven, all standard
    library. The invariant is "nothing from kubeagent", which is what the test

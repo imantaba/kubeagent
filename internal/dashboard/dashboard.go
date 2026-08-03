@@ -25,6 +25,7 @@ import (
 	"html/template"
 	"io"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -67,6 +68,18 @@ type Input struct {
 	Resolved []Incident
 	// Stats is the aggregate the daemon already keeps.
 	Stats Stats
+	// SLO is one entry per cluster with SLO tracking on. Empty means the
+	// section does not render — a daemon running without --slo-target should
+	// not carry an empty table.
+	SLO []SLO
+	// ExplainEnabled reports whether --explain is on. It gates the section
+	// independently of Explanations, because "on and nothing explained yet" is
+	// a state an operator paying for the feature needs to be able to see, and a
+	// vanishing section would look identical to the feature being off.
+	ExplainEnabled bool
+	// Explanations is the latest explanation per object, as the incident
+	// pipeline computed it. Rendering one makes no model call.
+	Explanations []Explanation
 }
 
 // Cluster is one watched cluster's reachability.
@@ -110,6 +123,39 @@ type Stats struct {
 	ResolutionSecondsCount int64
 }
 
+// SLO is one cluster's error-budget state.
+type SLO struct {
+	Cluster string
+	// Target is the availability target as a ratio in (0,1).
+	Target  float64
+	Windows []SLOWindow
+}
+
+// SLOWindow is one measurement window. Name is the caller's label — the
+// renderer never interprets it — and matches the `window` label on the
+// kubeagent_slo_* series so the page and a Grafana panel name the same thing.
+type SLOWindow struct {
+	Name         string
+	Availability float64
+	BurnRate     float64
+	Coverage     float64
+}
+
+// Explanation is one object's latest explanation. Text is model output and gets
+// exactly the same escaping as everything else: it is laid out with
+// white-space: pre-wrap and never parsed as markdown, since parsing means
+// unescaping.
+type Explanation struct {
+	Cluster     string
+	Kind        string
+	Namespace   string
+	Name        string
+	Issues      []string
+	ExplainedAt string
+	Model       string
+	Text        string
+}
+
 // Render writes the complete HTML page to w. It performs no cluster call and
 // makes no model call.
 func Render(w io.Writer, in Input) error {
@@ -124,11 +170,14 @@ type view struct {
 	RefreshSeconds int
 	// MultiCluster drops the Cluster column from the incident tables when only
 	// one cluster is watched, where it would repeat the same value on every row.
-	MultiCluster bool
-	Clusters     []clusterRow
-	Active       []incidentRow
-	Resolved     []incidentRow
-	Tiles        tiles
+	MultiCluster     bool
+	Clusters         []clusterRow
+	Active           []incidentRow
+	Resolved         []incidentRow
+	Tiles            tiles
+	SLO              []sloView
+	ShowExplanations bool
+	Explanations     []explanationRow
 }
 
 // clusterRow is one line of the cluster strip. State is a fixed keyword used as
@@ -164,6 +213,41 @@ type tiles struct {
 	Dropped  int64
 	MTTR     string
 }
+
+// sloView is one cluster's SLO block.
+type sloView struct {
+	Cluster string
+	Target  string
+	Windows []sloWindowRow
+}
+
+// sloWindowRow is one window's line. Suppressed carries the same threshold the
+// kubeagent_slo_window_coverage_ratio help text documents: below 0.6 the burn
+// alert is suppressed, and a reader looking at a high burn rate needs to know
+// that before acting on it.
+type sloWindowRow struct {
+	Name            string
+	Availability    string
+	BurnRate        string
+	BudgetRemaining string
+	Coverage        string
+	Suppressed      bool
+}
+
+// explanationRow is one explanation as the page shows it.
+type explanationRow struct {
+	Cluster     string
+	Kind        string
+	Target      string
+	Issues      string
+	Model       string
+	ExplainedAt string
+	Text        string
+}
+
+// coverageFloor is the coverage below which the burn alert is suppressed. It
+// matches internal/watch's metric help text; the two must not drift.
+const coverageFloor = 0.6
 
 // none is what every field prints when it has no value. One constant so the
 // page never mixes spellings.
@@ -235,6 +319,34 @@ func newView(in Input) view {
 			Cluster: r.Cluster, Kind: r.Kind, Target: target(r), Issue: r.Issue,
 			ResolvedAt: at, Resolution: humanDuration(r.ResolutionSeconds),
 			Firings: r.Firings, Flapping: r.Flapping,
+		})
+	}
+
+	for _, s := range in.SLO {
+		sv := sloView{Cluster: s.Cluster, Target: percent(s.Target)}
+		for _, w := range s.Windows {
+			sv.Windows = append(sv.Windows, sloWindowRow{
+				Name:            w.Name,
+				Availability:    percent(w.Availability),
+				BurnRate:        ratio(w.BurnRate),
+				BudgetRemaining: budgetRemaining(w.BurnRate),
+				Coverage:        percent(w.Coverage),
+				Suppressed:      finite(w.Coverage) && w.Coverage < coverageFloor,
+			})
+		}
+		v.SLO = append(v.SLO, sv)
+	}
+
+	v.ShowExplanations = in.ExplainEnabled
+	for _, x := range in.Explanations {
+		v.Explanations = append(v.Explanations, explanationRow{
+			Cluster:     x.Cluster,
+			Kind:        x.Kind,
+			Target:      target(Incident{Namespace: x.Namespace, Name: x.Name}),
+			Issues:      strings.Join(x.Issues, ", "),
+			Model:       x.Model,
+			ExplainedAt: x.ExplainedAt,
+			Text:        x.Text,
 		})
 	}
 	return v
@@ -329,3 +441,39 @@ func meanResolution(sum float64, count int64) string {
 // these comparisons keep the package's import list to the standard-library
 // packages the design named, which is the list imports_test.go asserts against.
 func finite(f float64) bool { return f == f && f-f == 0 }
+
+// percent renders a ratio as a percentage. A non-finite value prints as no
+// value: a burn rate is a quotient, and a target of exactly 1 makes it
+// infinite.
+func percent(f float64) string {
+	if !finite(f) {
+		return none
+	}
+	return fmt.Sprintf("%.2f%%", f*100)
+}
+
+// ratio renders a plain multiple, such as a burn rate.
+func ratio(f float64) string {
+	if !finite(f) {
+		return none
+	}
+	return fmt.Sprintf("%.2f", f)
+}
+
+// budgetRemaining is the fraction of the error budget left over the window,
+// clamped to [0,1] — the same definition the
+// kubeagent_slo_budget_remaining_ratio series carries. A burn above 1x means
+// the budget is already spent.
+func budgetRemaining(burn float64) string {
+	if !finite(burn) {
+		return none
+	}
+	left := 1 - burn
+	if left < 0 {
+		left = 0
+	}
+	if left > 1 {
+		left = 1
+	}
+	return percent(left)
+}

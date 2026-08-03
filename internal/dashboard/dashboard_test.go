@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"bytes"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -48,6 +49,19 @@ func payloadInput(payload string) Input {
 			NewTotal: 4, ResolvedTotal: 2, FlapTotal: 1, DroppedTotal: 0,
 			ResolutionSecondsSum: 3600, ResolutionSecondsCount: 2,
 		},
+		SLO: []SLO{{
+			Cluster: payload,
+			Target:  0.999,
+			Windows: []SLOWindow{{Name: payload, Availability: 0.9, BurnRate: 2, Coverage: 0.8}},
+		}},
+		ExplainEnabled: true,
+		Explanations: []Explanation{{
+			Cluster: payload, Kind: payload, Namespace: payload, Name: payload,
+			Issues:      []string{payload},
+			ExplainedAt: "2026-08-02T09:20:00Z",
+			Model:       payload,
+			Text:        payload,
+		}},
 	}
 }
 
@@ -201,6 +215,102 @@ func TestHumanDuration(t *testing.T) {
 	for _, tc := range cases {
 		if got := humanDuration(tc.sec); got != tc.want {
 			t.Errorf("humanDuration(%d) = %q, want %q", tc.sec, got, tc.want)
+		}
+	}
+}
+
+// sloInput is an SLO section with both windows populated and coverage below the
+// suppression floor on the fast window.
+func sloInput() Input {
+	return Input{
+		Now: fixedNow,
+		SLO: []SLO{{
+			Cluster: "example-cluster",
+			Target:  0.999,
+			Windows: []SLOWindow{
+				{Name: "fast (1h)", Availability: 0.9, BurnRate: 100, Coverage: 0.4},
+				{Name: "slow (6h)", Availability: 0.9995, BurnRate: 0.5, Coverage: 0.95},
+			},
+		}},
+	}
+}
+
+// TestSLOSectionAbsentWhenNoSLO keeps the section out of a page for a daemon
+// running without --slo-target, rather than rendering an empty table.
+func TestSLOSectionAbsentWhenNoSLO(t *testing.T) {
+	if out := render(t, Input{Now: fixedNow}); strings.Contains(out, "<h2>SLO") {
+		t.Error("the SLO section renders with no SLO configured")
+	}
+}
+
+// TestSLOSectionRenders covers the numbers and the coverage annotation. The
+// suppression note matches what the kubeagent_slo_window_coverage_ratio help
+// text already documents: below 0.6 the burn alert is suppressed.
+func TestSLOSectionRenders(t *testing.T) {
+	out := render(t, sloInput())
+	for _, want := range []string{"<h2>SLO", "example-cluster", "99.90%", "fast (1h)", "slow (6h)", "burn alert suppressed"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the SLO section does not contain %q", want)
+		}
+	}
+	if strings.Contains(out, "NaN") {
+		t.Error("the SLO section renders NaN")
+	}
+}
+
+// TestSLOSectionSurvivesNonFiniteNumbers is the arithmetic boundary. A burn
+// rate is a quotient, and a quotient by a target of exactly 1 is infinite.
+func TestSLOSectionSurvivesNonFiniteNumbers(t *testing.T) {
+	out := render(t, Input{
+		Now: fixedNow,
+		SLO: []SLO{{
+			Cluster: "example-cluster",
+			Target:  1,
+			Windows: []SLOWindow{{Name: "fast (1h)", Availability: 0.5, BurnRate: math.Inf(1), Coverage: math.NaN()}},
+		}},
+	})
+	if strings.Contains(out, "NaN") || strings.Contains(out, "Inf") {
+		t.Error("a non-finite SLO number reached the page")
+	}
+}
+
+// TestExplanationsSectionAbsentWhenDisabled keeps the section off a page for a
+// daemon running without --explain.
+func TestExplanationsSectionAbsentWhenDisabled(t *testing.T) {
+	if out := render(t, Input{Now: fixedNow}); strings.Contains(out, "<h2>Explanations") {
+		t.Error("the explanations section renders with --explain off")
+	}
+}
+
+// TestExplanationsSectionEmptyWhenEnabled asserts the section is present but
+// empty when --explain is on and nothing has been explained yet. That is a
+// distinguishable state an operator paying for the feature needs to see; a
+// section that vanished would look identical to the feature being off.
+func TestExplanationsSectionEmptyWhenEnabled(t *testing.T) {
+	out := render(t, Input{Now: fixedNow, ExplainEnabled: true})
+	if !strings.Contains(out, "<h2>Explanations") {
+		t.Error("the explanations section is absent with --explain on")
+	}
+	if !strings.Contains(out, "No incident has been explained yet") {
+		t.Error("an enabled but empty explanations section does not say so")
+	}
+}
+
+// TestExplanationsRender covers the populated case.
+func TestExplanationsRender(t *testing.T) {
+	out := render(t, Input{
+		Now:            fixedNow,
+		ExplainEnabled: true,
+		Explanations: []Explanation{{
+			Cluster: "example-cluster", Kind: "Deployment", Namespace: "example-ns", Name: "web",
+			Issues:      []string{"ImagePullBackOff", "Degraded"},
+			ExplainedAt: "2026-08-02T09:20:00Z", Model: "example-model",
+			Text: "The image tag does not exist in the registry.",
+		}},
+	})
+	for _, want := range []string{"example-ns/web", "ImagePullBackOff, Degraded", "example-model", "does not exist in the registry"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the explanations section does not contain %q", want)
 		}
 	}
 }

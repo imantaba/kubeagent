@@ -23,6 +23,9 @@ tr.pending td { opacity: .75; }
 .tile { border: 1px solid rgba(128,128,128,.45); border-radius: .4rem; padding: .6rem 1rem; min-width: 7rem; }
 .tile .n { display: block; font-size: 1.4rem; font-weight: 600; }
 .tile .l { display: block; opacity: .7; font-size: .8rem; }
+h3 { font-size: .95rem; margin: 1rem 0 .4rem; opacity: .9; }
+pre.explanation { white-space: pre-wrap; word-break: break-word; margin: 0; font: inherit; border-left: 3px solid rgba(128,128,128,.45); padding-left: .8rem; }
+article { margin-bottom: 1.2rem; }
 </style>
 </head>
 <body>
@@ -81,5 +84,35 @@ tr.pending td { opacity: .75; }
 <div class="tile"><span class="n">{{ .Tiles.Dropped }}</span><span class="l">dropped</span></div>
 <div class="tile"><span class="n">{{ .Tiles.MTTR }}</span><span class="l">mean time to resolution</span></div>
 </div>
+
+{{- if .SLO }}
+<h2>SLO</h2>
+{{- range .SLO }}
+<h3>{{ .Cluster }} — target {{ .Target }}</h3>
+<table>
+<thead><tr><th>Window</th><th>Availability</th><th>Burn rate</th><th>Error budget left</th><th>Coverage</th></tr></thead>
+<tbody>
+{{- range .Windows }}
+<tr><td>{{ .Name }}</td><td>{{ .Availability }}</td><td>{{ .BurnRate }}</td><td>{{ .BudgetRemaining }}</td><td>{{ .Coverage }}{{ if .Suppressed }} <span class="badge">burn alert suppressed</span>{{ end }}</td></tr>
+{{- end }}
+</tbody>
+</table>
+{{- end }}
+{{- end }}
+
+{{- if .ShowExplanations }}
+<h2>Explanations ({{ len .Explanations }})</h2>
+{{- if .Explanations }}
+{{- range .Explanations }}
+<article>
+<h3>{{ .Kind }} {{ .Target }}</h3>
+<p class="meta">{{ .Issues }} · {{ .Model }} · {{ .ExplainedAt }}</p>
+<pre class="explanation">{{ .Text }}</pre>
+</article>
+{{- end }}
+{{- else }}
+<p class="empty">No incident has been explained yet.</p>
+{{- end }}
+{{- end }}
 </body>
 </html>

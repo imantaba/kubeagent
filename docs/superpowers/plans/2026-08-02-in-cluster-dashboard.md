@@ -1143,6 +1143,36 @@ func TestExplanationsRender(t *testing.T) {
 		}
 	}
 }
+
+// TestExplanationNamesItsClusterOnlyWhenMulticluster mirrors the rule the
+// incident tables follow. Explanations are a flat list, not a block per
+// cluster, so on a one-cluster page the name is on the header already and
+// repeating it on every article is noise — but on a multi-cluster page an
+// explanation that does not say which cluster it came from is unreadable.
+func TestExplanationNamesItsClusterOnlyWhenMulticluster(t *testing.T) {
+	explanations := []Explanation{{
+		Cluster: "example-cluster", Kind: "Deployment", Namespace: "example-ns", Name: "web",
+		ExplainedAt: "2026-08-02T09:20:00Z", Model: "example-model",
+		Text: "The image tag does not exist in the registry.",
+	}}
+	one := render(t, Input{
+		Now: fixedNow, ExplainEnabled: true, Explanations: explanations,
+		Clusters: []Cluster{{Name: "example-cluster", Up: true, LastScan: "2026-08-02T09:00:00Z"}},
+	})
+	if strings.Contains(one, "example-cluster · Deployment") {
+		t.Error("a single-cluster page repeats the cluster name on an explanation")
+	}
+	two := render(t, Input{
+		Now: fixedNow, ExplainEnabled: true, Explanations: explanations,
+		Clusters: []Cluster{
+			{Name: "example-cluster", Up: true, LastScan: "2026-08-02T09:00:00Z"},
+			{Name: "example-other", Up: true, LastScan: "2026-08-02T09:00:00Z"},
+		},
+	})
+	if !strings.Contains(two, "example-cluster · Deployment") {
+		t.Error("a multi-cluster page does not say which cluster an explanation came from")
+	}
+}
 ```
 
 Extend `payloadInput` so the escaping table covers the two new sections. Replace its `return` statement's struct literal tail — after the `Stats:` field — with:
@@ -1305,7 +1335,7 @@ func ratio(f float64) string {
 
 // budgetRemaining is the fraction of the error budget left over the window,
 // clamped to [0,1] — the same definition the
-// kubeagent_slo_budget_remaining_ratio series carries. A burn above 1x means
+// kubeagent_slo_error_budget_remaining_ratio series carries. A burn above 1x means
 // the budget is already spent.
 func budgetRemaining(burn float64) string {
 	if !finite(burn) {
@@ -1381,7 +1411,7 @@ Insert before the closing `</body>`, after the Totals block:
 {{- if .Explanations }}
 {{- range .Explanations }}
 <article>
-<h3>{{ .Kind }} {{ .Target }}</h3>
+<h3>{{ if $.MultiCluster }}{{ .Cluster }} · {{ end }}{{ .Kind }} {{ .Target }}</h3>
 <p class="meta">{{ .Issues }} · {{ .Model }} · {{ .ExplainedAt }}</p>
 <pre class="explanation">{{ .Text }}</pre>
 </article>

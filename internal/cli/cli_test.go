@@ -2490,14 +2490,15 @@ func TestParseScanFlagsDefaults(t *testing.T) {
 }
 
 func TestParseWatchFlagsCarriesEveryValue(t *testing.T) {
-	// Thirteen of watch's flags default from the environment, reading the twelve
-	// keys below — --namespace and -n both read KUBEAGENT_NAMESPACE. Clear them:
-	// a developer's shell must not decide whether this passes.
+	// Fourteen of watch's flags default from the environment, reading the
+	// thirteen keys below — --namespace and -n both read KUBEAGENT_NAMESPACE.
+	// Clear them: a developer's shell must not decide whether this passes.
 	for _, k := range []string{
 		"KUBEAGENT_CLUSTER_NAME", "KUBEAGENT_INCLUDE_LOCAL", "KUBEAGENT_METRICS_ADDR",
 		"KUBEAGENT_HEARTBEAT", "KUBEAGENT_DEBOUNCE", "KUBEAGENT_ALERT_FORMAT",
 		"KUBEAGENT_ALERT_REPEAT", "KUBEAGENT_SLO_TARGET", "KUBEAGENT_NAMESPACE",
 		"KUBEAGENT_EXPLAIN", "KUBEAGENT_EXPLAIN_COOLDOWN", "KUBEAGENT_EXPLAIN_BUDGET",
+		"KUBEAGENT_DASHBOARD",
 	} {
 		t.Setenv(k, "")
 	}
@@ -2514,6 +2515,7 @@ func TestParseWatchFlagsCarriesEveryValue(t *testing.T) {
 		"--explain-cooldown", "15m",
 		"--explain-budget", "7",
 		"--namespace", "example-ns",
+		"--dashboard",
 	})
 	if err != nil {
 		t.Fatalf("parseWatchFlags: %v", err)
@@ -2553,6 +2555,45 @@ func TestParseWatchFlagsCarriesEveryValue(t *testing.T) {
 	}
 	if o.namespace != "example-ns" {
 		t.Errorf("namespace = %q, want example-ns", o.namespace)
+	}
+	if !o.dashboard {
+		t.Error("dashboard = false, want true")
+	}
+}
+
+// TestWatchDashboardDefaultsFromEnvironment pins KUBEAGENT_DASHBOARD to the
+// same envBool contract every other watch toggle uses.
+func TestWatchDashboardDefaultsFromEnvironment(t *testing.T) {
+	t.Setenv("KUBEAGENT_DASHBOARD", "true")
+	o, err := parseWatchFlags(nil)
+	if err != nil {
+		t.Fatalf("parseWatchFlags: %v", err)
+	}
+	if !o.dashboard {
+		t.Error("dashboard = false with KUBEAGENT_DASHBOARD=true")
+	}
+
+	t.Setenv("KUBEAGENT_DASHBOARD", "")
+	o, err = parseWatchFlags(nil)
+	if err != nil {
+		t.Fatalf("parseWatchFlags: %v", err)
+	}
+	if o.dashboard {
+		t.Error("dashboard = true with KUBEAGENT_DASHBOARD unset")
+	}
+}
+
+// TestNormalizeAcceptsSingleDashDashboard keeps the single-dash long-flag shim
+// covering the new flag. Command lines written against v0.72 and earlier use
+// this spelling, and Normalize is why they keep working.
+func TestNormalizeAcceptsSingleDashDashboard(t *testing.T) {
+	t.Setenv("KUBEAGENT_DASHBOARD", "")
+	o, err := parseWatchFlags([]string{"-dashboard"})
+	if err != nil {
+		t.Fatalf("parseWatchFlags: %v", err)
+	}
+	if !o.dashboard {
+		t.Error("-dashboard did not set the flag")
 	}
 }
 

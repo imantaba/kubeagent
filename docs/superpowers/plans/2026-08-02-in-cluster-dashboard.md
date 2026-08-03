@@ -2994,18 +2994,33 @@ In `website/mkdocs.yml`, add after the `Policy as code` line (line 77):
 
 - [ ] **Step 3: Cross-reference from watch-mode**
 
-In `website/docs/features/watch-mode.md`, add a short section immediately after the `### /explanations` section ends and before `## Watching several clusters`:
+In `website/docs/features/watch-mode.md`, add a short section **after the last
+`###` subsection of `## On-incident explanations (--explain)` ends** — that is,
+after `### In the chart` — and before `## Watching several clusters`.
+
+`### /explanations` is not the last subsection of the `--explain` section:
+`### With a local model` and `### In the chart` follow it and are both
+`--explain` content. Inserting a new `##` heading between them and their parent
+silently re-parents them under "Dashboard" in the generated table of contents.
+Place the new section after `### In the chart`, immediately before
+`## Watching several clusters`.
 
 ```markdown
 ## Dashboard (`--dashboard`)
 
 `--dashboard` serves the same tracked state as an HTML page at `/dashboard` on
 the metrics port — the URL you hand someone instead of a `curl | jq`. It
-performs no extra cluster read, needs no extra RBAC, and makes no model call.
-It is unauthenticated, exactly like `/metrics` and `/issues` on the same port.
+performs no extra cluster read and needs no extra RBAC. Separately: a dashboard
+request makes no model call. It is unauthenticated, exactly like `/metrics` and
+`/issues` on the same port.
 
 See [In-cluster dashboard](dashboard.md).
 ```
+
+The two-sentence split is deliberate and required by the Global Constraints:
+*read-only toward the cluster* and *makes no model call* are separate promises,
+and neither follows from the other — `--explain` also renders only tracked
+state and does call a model.
 
 - [ ] **Step 4: Extend the compatibility statement**
 
@@ -3018,13 +3033,34 @@ In `website/docs/compatibility.md`, extend the HTML-report bullet under
   other — and their structure will change. Parse `--output json` or `/issues`.
 ```
 
-And add the dashboard's stable surfaces to the stable-surfaces list, beside the
-existing flag and chart-value entries — one line each:
+And add the one genuinely new stable surface. `## Stable surfaces` enumerates no
+individual flags, variables or chart keys anywhere — `### The command line`,
+`### Environment variables` and `### The Helm chart's values` each state a
+blanket rule that already covers `--dashboard`, `KUBEAGENT_DASHBOARD` and
+`dashboard.enabled`. Restating them buys nothing, and a bullet naming a flag and
+an environment variable does not belong under a subsection titled "The Helm
+chart's values".
+
+What no existing subsection covers is the endpoint. Add it as its own
+subsection, **after `### The Helm chart's values` ends** (it becomes the last
+subsection of `## Stable surfaces`, immediately before
+`## Unstable surfaces — do not build on these`):
 
 ```markdown
-- `watch --dashboard`, `KUBEAGENT_DASHBOARD`, the `dashboard.enabled` chart
-  value, and `/dashboard` existing and returning HTML when enabled.
+### The watch daemon's `/dashboard` endpoint
+
+`watch --dashboard` serves an HTML page at `/dashboard` on the metrics port.
+Within 1.x that endpoint keeps its path, keeps returning HTML when the flag is
+set, and keeps returning `404` when it is not. The flag, its
+`KUBEAGENT_DASHBOARD` spelling and the `dashboard.enabled` chart value are
+stable under the three rules above, like every other flag, variable and chart
+key. **The page's markup is not** — it is listed under unstable surfaces below.
 ```
+
+Write it as a plain paragraph, not a bullet, matching the prose style of the
+sibling subsections. Do not link to the unstable-surfaces heading by anchor;
+"below" avoids guessing a generated anchor that `--strict` would then have to
+resolve.
 
 - [ ] **Step 5: Mark Theme G complete in the roadmap**
 
@@ -3041,12 +3077,33 @@ dashboard has shipped and Theme G is complete, naming the doc:
 At line 544, change `optional in-cluster dashboard` in the milestone table cell
 to `**in-cluster dashboard** (shipped, `watch --dashboard`)`.
 
-- [ ] **Step 6: Document the chart value**
-
-In `deploy/README.md`, add after the `slo.enabled` / `slo.target` `--set` block
-(around line 210):
+Also add the completion marker to the Theme G bullet's own title. Every other
+completed theme in that list carries one — `- **A · Root-cause, not symptoms**
+✅ —`, and the same for B, C, D, E, F and H. G is the only bullet whose prose
+says the theme is complete while its title does not. Change
 
 ```markdown
+- **G · Meet people where they work** — an **MCP server** so other AI agents can
+```
+
+to
+
+```markdown
+- **G · Meet people where they work** ✅ — an **MCP server** so other AI agents can
+```
+
+- [ ] **Step 6: Document the chart value**
+
+In `deploy/README.md`, add a section of its own **after the whole
+`## SLO burn rate (opt-in)` section ends and before `## Multi-cluster hub
+(opt-in)`**. Every opt-in feature in this file gets its own `## <Name> (opt-in)`
+heading — disk usage, certificate expiry, crash log root-cause, operator health,
+GitOps drift, alerting, SLO burn rate, multi-cluster hub — and prose appended
+under a neighbouring heading reads as part of that neighbour's feature:
+
+```markdown
+## In-cluster dashboard (opt-in)
+
 Serve the read-only dashboard on the metrics port:
 
 ```bash
@@ -3092,7 +3149,8 @@ Under `## [Unreleased]` in `CHANGELOG.md`, in an `### Added` block:
   reachability, the aggregate counters, SLO burn when `--slo-target` is set, and
   on-incident explanations when `--explain` is set. It renders only state the
   daemon already tracks, so it performs no extra cluster read and needs no extra
-  RBAC, and it makes no model call. Server-rendered with zero JavaScript, so
+  RBAC. Separately, no dashboard request makes a model call.
+  Server-rendered with zero JavaScript, so
   `html/template`'s contextual escaping is the single escape boundary; the new
   `internal/dashboard` package imports nothing from kubeagent, enforced by a
   source-level test. The page is **unauthenticated**, exactly like `/metrics`

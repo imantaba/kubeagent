@@ -27,12 +27,16 @@ const (
 	maxAlertmanagerRepeat = 4 * time.Minute
 )
 
-// Config configures the sink. Repeat is used only to validate the cadence against
-// the chosen format; the re-send itself is driven by alertstate.
+// Config configures the sink. Repeat is used only to validate the cadence
+// against the chosen format; the re-send itself is driven by alertstate.
+// RoutingKey is the PagerDuty integration key and is required by — and used by
+// — that format alone: PagerDuty authenticates in the request body, where every
+// other receiver authenticates with the URL itself.
 type Config struct {
-	URL    string
-	Format Format
-	Repeat time.Duration
+	URL        string
+	Format     Format
+	Repeat     time.Duration
+	RoutingKey string
 }
 
 // Stats are monotonic process-lifetime delivery counters.
@@ -52,6 +56,7 @@ type Stats struct {
 type Sink struct {
 	url         string
 	format      Format
+	routingKey  string
 	client      *http.Client
 	queue       chan alertstate.Notification
 	done        chan struct{}
@@ -64,8 +69,10 @@ type Sink struct {
 
 // DefaultRepeat is the re-send interval for a format when the operator did not
 // choose one. Alertmanager needs a short cadence because it expires an alert
-// resolve_timeout after the last POST; json and slack are notification channels
-// where a chatty default is alert fatigue.
+// resolve_timeout after the last POST; json, slack and pagerduty are
+// notification channels where a chatty default is alert fatigue. PagerDuty needs
+// no ceiling to match maxAlertmanagerRepeat: it does not expire alerts, so a
+// slow cadence produces no false recovery to guard against.
 func DefaultRepeat(f Format) time.Duration {
 	if f == FormatAlertmanager {
 		return time.Minute
@@ -77,12 +84,17 @@ func DefaultRepeat(f Format) time.Duration {
 // default (a 10s per-attempt timeout). Errors never echo the URL.
 func New(cfg Config, c *http.Client) (*Sink, error) {
 	switch cfg.Format {
-	case FormatJSON, FormatSlack, FormatAlertmanager:
+	case FormatJSON, FormatSlack, FormatAlertmanager, FormatPagerDuty:
 	default:
-		return nil, fmt.Errorf("unknown alert format %q (want json, slack, or alertmanager)", cfg.Format)
+		return nil, fmt.Errorf("unknown alert format %q (want json, slack, alertmanager, or pagerduty)", cfg.Format)
 	}
 	if cfg.Format == FormatAlertmanager && cfg.Repeat > maxAlertmanagerRepeat {
 		return nil, fmt.Errorf("alert repeat interval %s exceeds %s, the safe maximum for the alertmanager format (Alertmanager expires an alert resolve_timeout — 5m by default — after the last POST)", cfg.Repeat, maxAlertmanagerRepeat)
+	}
+	if cfg.Format == FormatPagerDuty {
+		if err := validateRoutingKey(cfg.RoutingKey); err != nil {
+			return nil, err
+		}
 	}
 	u, err := resolveURL(cfg.URL, cfg.Format)
 	if err != nil {
@@ -94,6 +106,7 @@ func New(cfg Config, c *http.Client) (*Sink, error) {
 	return &Sink{
 		url:         u,
 		format:      cfg.Format,
+		routingKey:  cfg.RoutingKey,
 		client:      c,
 		queue:       make(chan alertstate.Notification, queueSize),
 		done:        make(chan struct{}),
@@ -175,7 +188,7 @@ func (s *Sink) Stats() Stats {
 
 // deliver encodes and POSTs one notification, retrying server-side failures.
 func (s *Sink) deliver(ctx context.Context, n alertstate.Notification) {
-	body, err := encode(s.format, "", n)
+	body, err := encode(s.format, s.routingKey, n)
 	if err != nil {
 		log.Printf("kubeagent: encoding alert for %s: %v", n.Object, err)
 		s.record(n, false)

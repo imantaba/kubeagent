@@ -271,3 +271,21 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   which surfaces are stable within 1.x, which are deliberately not, and what
   deprecating one costs. From 1.0 onward a MAJOR release is the only one that
   may break a stable surface.
+- **Post-1.0 — the chaos harness's portability seam has shipped (v1.4.0):**
+  `./chaos/run.sh --context <ctx>` runs the suite against a cluster the harness
+  did not create. Each scenario declares what it needs from a closed six-name
+  capability vocabulary, and twelve `requires` guards decide what runs; nine
+  scenarios skip on a foreign cluster, each naming its reason in the assertion
+  summary, which counts skips separately so a partial run can never be mistaken
+  for a full one. `--recreate`, `--teardown` and `--k8s-version` are refused
+  rather than ignored, a preflight checks the context connects and that a
+  namespace round trip works before anything is touched, and leftover
+  `chaos-*` namespaces are swept at the end. The harness is deliberately **not**
+  read-only toward the cluster — it injects outages — which is exactly why
+  pointing it at someone's real cluster is guard-railed. Portable mode also
+  treats that cluster's identity as a credential: node names and the kubeconfig
+  context name are redacted from the results file at a single seam every report
+  write passes through (see `chaos/README.md` for the one documented residual),
+  and a section that cannot be redacted is withheld rather than shown. This
+  makes a cross-distribution answer obtainable by hand; **gating a second
+  distribution in CI is the follow-up slice and is still ahead.**

@@ -48,6 +48,9 @@ sed -i "s#imantaba/kubeagent:v$OLD#imantaba/kubeagent:v$NEW#g" deploy/deployment
 sed -i "s#^appVersion: \"v$OLD\"#appVersion: \"v$NEW\"#" "$CHART"
 sed -i "s#--set image.tag=v$OLD#--set image.tag=v$NEW#g" deploy/README.md
 sed -i "s#imantaba/kubeagent:v$OLD#imantaba/kubeagent:v$NEW#g; s#--set image.tag=v$OLD#--set image.tag=v$NEW#g" website/docs/install.md
+# The Claude Code plugin manifest spells the version WITHOUT a leading v, so it
+# needs its own substitution rather than joining the v-prefixed swaps above.
+sed -i "s#^\(\s*\"version\":\s*\)\"$OLD\"#\1\"$NEW\"#" .claude-plugin/plugin.json
 
 # --- Helm chart's own version: patch-bump by default -----------------------------
 # Convention: patch when only appVersion changed; MINOR when templates/values changed.
@@ -61,6 +64,13 @@ STALE="$(grep -rn "v$OLD" --include=*.yaml --include=*.md . \
   | grep -v "$CHANGELOG" | grep -v docs/superpowers | grep -v '.superpowers/' || true)"
 [ -z "$STALE" ] || { echo "STALE references to v$OLD remain:" >&2; echo "$STALE" >&2; exit 1; }
 
+# The staleness grep above searches for "v$OLD" in *.yaml and *.md, so it can
+# never see the plugin manifest: that file is JSON and its version has no v.
+# Assert it directly instead of widening the grep, which would sweep in the
+# generated schema documents under website/docs/schemas/.
+grep -q "\"version\": \"$NEW\"" .claude-plugin/plugin.json \
+  || die ".claude-plugin/plugin.json still does not declare version $NEW"
+
 cat <<EOF
 
 bumped to v$NEW:
@@ -69,6 +79,7 @@ bumped to v$NEW:
   $CHART                  appVersion → v$NEW · chart version $CHART_VER → $CHART_NEW (patch)
   deploy/README.md        --set image.tag → v$NEW
   website/docs/install.md image pin + --set image.tag → v$NEW
+  .claude-plugin/plugin.json  version → $NEW (Claude Code plugin manifest)
 
 no stale v$OLD references outside CHANGELOG/superpowers ✅
 

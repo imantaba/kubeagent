@@ -53,10 +53,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   regex over the context, since a real one can carry almost anything a
   kubeconfig accepts) rather than as two independently-ordered steps, which
   can each consume their own needle before the other's exact match ever
-  runs. A scenario added later inherits the protection rather than having
-  to remember it. A redaction that fails withholds the affected section
-  instead of showing it unredacted, and never aborts the run. A context
-  name is a credential and the results file is designed to be forwarded.
+  runs. One case still slips a fragment through: a node name and the
+  context name that overlap without either containing the other can leave
+  the loser's non-overlapping tail in the clear, though never either's full
+  literal text — see `chaos/README.md` for when. A scenario added later
+  inherits the protection rather than having to remember it. A redaction
+  that fails withholds the affected section instead of showing it
+  unredacted, and never aborts the run. A context name is a credential and
+  the results file is designed to be forwarded.
 
 ## [1.3.0] - 2026-08-05
 

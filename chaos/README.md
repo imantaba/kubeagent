@@ -238,9 +238,15 @@ Each failure exits 1 with its reason on **stderr**.
 
 The report names the platform and never the cluster: server version, node count,
 and the deduplicated OS image, container runtime and kubelet version from
-`nodeInfo`. **No context name, no node name, no address.** A kubeconfig context
-name is a credential — on a managed cluster it is routinely an ARN or a
-project/region path — and this report is designed to be forwarded.
+`nodeInfo`. **No node name or context name reaches the report as its full
+literal text, and no address is ever printed at all** — with one exception: a
+context name and a node name that overlap without either containing the other
+can leave the losing one's non-overlapping tail in the clear, never either
+name's full text. That takes two real identities landing byte-adjacent with no
+separator, which the log lines, JSON fields and metric labels this filter
+protects never produce. A kubeconfig context name is a credential — on a managed
+cluster it is routinely an ARN or a project/region path — and this report is
+designed to be forwarded.
 
 Both are enforced the same way, literally: every scenario's write to the
 report passes through one filter, and that filter redacts node names and the

@@ -118,9 +118,9 @@ key. **The page's markup is not** — it is listed under unstable surfaces below
 kubeagent supports **v1.32, v1.33, and v1.34**.
 
 This is an evidenced window rather than an asserted one. A nightly GitHub
-Actions matrix runs the full 22-scenario chaos suite — real injected outages, on
+Actions matrix runs the full 23-scenario chaos suite — real injected outages, on
 a real cluster — once per supported minor, each on its own disposable kind
-cluster, with 128 machine-checked assertions per cell. A minor is listed here
+cluster, with 134 machine-checked assertions per cell. A minor is listed here
 because that suite passes on it, and it stops being listed when the suite stops
 being run against it.
 

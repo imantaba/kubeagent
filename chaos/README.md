@@ -43,7 +43,7 @@ like when `--k8s-version` is given — and never reads your current kubecontext.
 ./chaos/run.sh                 # create cluster, run all scenarios, leave cluster up
 ./chaos/run.sh --recreate      # delete + recreate the cluster first (clean slate)
 ./chaos/run.sh --teardown      # delete the cluster when finished
-./chaos/run.sh --only 7        # run a single scenario (1..22) for debugging
+./chaos/run.sh --only 7        # run a single scenario (1..23) for debugging
 ./chaos/run.sh --out path.md   # write the report somewhere specific
 ./chaos/run.sh --k8s-version v1.33   # pin the Kubernetes minor (see below)
 ```
@@ -107,12 +107,12 @@ stdout.
 ### What this matrix does and does not cover
 
 The nightly workflow (`.github/workflows/chaos-matrix.yml`) runs the full
-suite — the baseline plus all 22 scenarios below — once per supported
+suite — the baseline plus all 23 scenarios below — once per supported
 Kubernetes minor (currently v1.32, v1.33, v1.34), each on its own disposable
 **kind** cluster on a GitHub-hosted `ubuntu-latest` runner, with Calico as the
 CNI and kind's own containerd as the node runtime. Three green cells prove
 that kubeagent held its contract — the machine-checked assertions described
-under Assertions, below — on three kind-hosted minors under twenty-two
+under Assertions, below — on three kind-hosted minors under twenty-three
 specific injected outages. That is **not** a claim that kubeagent is correct in
 general, and the axes below are the ones a three-minor matrix could easily be
 mistaken for covering:
@@ -145,7 +145,7 @@ mistaken for covering:
   redaction, not the real Anthropic backend, which stays covered by unit
   tests only.
 
-Each cell runs 128 assertions. On a GitHub-hosted runner a cell takes roughly
+Each cell runs 134 assertions. On a GitHub-hosted runner a cell takes roughly
 17 minutes; locally it's 35-40. All three supported
 minors have gone green on real runners.
 
@@ -179,7 +179,7 @@ sees scroll by.
 `main` finishes with `assert_summary`, which appends an `## Assertion summary`
 to the end of the report naming every `FAIL`, prints `assertions: N run, M
 failed` to the console, and returns non-zero when `M > 0` — that return status
-is what makes `./chaos/run.sh` itself exit non-zero. The baseline and all 22
+is what makes `./chaos/run.sh` itself exit non-zero. The baseline and all 23
 scenarios are asserted except one: scenario 2 (expired certificates) runs no
 scan and computes nothing, so it carries no assertion by design — the TLS
 branch it would otherwise cover is unit-tested in `internal/connectivity`
@@ -188,8 +188,8 @@ instead.
 These assertions are written at kubeagent's contract level — a finding
 kubeagent reported, a counter kubeagent computed, kubeagent's own exit code —
 never at the Kubernetes API server's wording, which can change between minor
-versions without kubeagent being wrong. Twenty-two specific injected outages
-passing proves kubeagent kept its side of the contract on those twenty-two; it
+versions without kubeagent being wrong. Twenty-three specific injected outages
+passing proves kubeagent kept its side of the contract on those twenty-three; it
 is not a general correctness proof.
 
 When a `FAIL:` line shows up, the report is what you read to understand it,
@@ -231,6 +231,7 @@ second.
 | 20 | Least-privilege RBAC | generate a `scan`-profile `ClusterRole` with `kubeagent rbac print`, bind it to a fresh ServiceAccount, then run `kubeagent rbac check` and `scan --certs --logs --disk-usage --control-plane-health --dns-health` as that identity alone | `rbac check` reports `core` allowed and exactly `certs diskusage logs` blocked, named from kubeagent's own table, never the API server's; the scan still exits `0`; the report names `secrets`/`pods/log`/`nodes/proxy`/`pods/proxy` as unread rather than showing four empty sections, and does *not* name `/readyz`, which a stock cluster grants to every authenticated identity — a read that succeeded is never reported as a blind spot |
 | 21 | Control-plane readiness probe | nothing injected — the probe runs against a healthy apiserver | `--control-plane-health` classifies `/readyz` as `ok` in the JSON report and renders **no** CONTROL PLANE section in the text one; without the flag the JSON carries no `controlPlane` key at all. The unhealthy branch is deliberately not injected: the only apiserver readyz check reachable from outside is etcd, and breaking etcd takes every read the report is built from with it — that is scenario 1 |
 | 22 | DNS up but not resolving | a Corefile that keeps CoreDNS Ready and serving `/metrics` while answering every query `SERVFAIL` (the `template` plugin), plus a Job driving enough queries to clear the 100-response floor | `--dns-health` reports `degraded`, names it (`cluster DNS is failing to resolve`) and quantifies the SERVFAIL+REFUSED ratio; exit code stays `0` because the section is advisory; without the flag the JSON carries no `dns` key. Scenario 5 covers the other DNS outage — CoreDNS crash-looping — and cannot reach this one, because a CoreDNS that is down serves no `/metrics` to read |
+| 23 | PagerDuty receiver | run `kubeagent watch --alert-format pagerduty` with the routing key in the environment and the endpoint pointed at a local stand-in for `events.pagerduty.com`, then inject and repair the bad-image outage | an Events API v2 `trigger` while the Deployment is broken and a `resolve` after the repair, both on the same identity-derived `dedup_key` — the property that makes a daemon restart re-trigger onto the open incident instead of opening a second one — and the routing key, which travels in the request body only, in **no** line of the daemon's log |
 
 ### Validating `--fix` (remediation)
 

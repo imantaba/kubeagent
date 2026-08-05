@@ -647,6 +647,7 @@ teardown() { log "teardown"; kind delete cluster --name "$CLUSTER" || log "teard
 cp_container() { docker ps --filter "name=${CLUSTER}-control-plane" --format '{{.Names}}' | head -1; }
 
 scenario_01_etcd() {   # control-plane / etcd down -> API unreachable
+  requires node_exec || return 0
   log "scenario 1: etcd quorum loss (control-plane stopped)"
   local c; c="$(cp_container)"
   docker stop "$c" >/dev/null
@@ -670,6 +671,7 @@ scenario_01_etcd() {   # control-plane / etcd down -> API unreachable
 }
 
 scenario_03_diskfull() {   # cordon stand-in for DiskPressure/SchedulingDisabled
+  requires cluster_write || return 0
   log "scenario 3: disk full on control plane (node cordon stand-in)"
   local node; node="$(worker_node)"
   kubectl --context "$CTX" cordon "$node" >/dev/null
@@ -695,6 +697,7 @@ scenario_03_diskfull() {   # cordon stand-in for DiskPressure/SchedulingDisabled
 }
 
 scenario_05_coredns() {   # bad Corefile -> CoreDNS CrashLoop
+  requires cluster_write || return 0
   log "scenario 5: broken DNS (CoreDNS crash)"
   kubectl --context "$CTX" -n kube-system patch cm coredns --type=merge \
     -p='{"data":{"Corefile":".:53 {\n    this_is_an_invalid_plugin\n}\n"}}' >/dev/null
@@ -719,6 +722,7 @@ scenario_05_coredns() {   # bad Corefile -> CoreDNS CrashLoop
 }
 
 scenario_04_networkpolicy() {   # Calico-enforced deny-all as the *cause* of a degraded app
+  requires netpol_enforced || return 0
   log "scenario 4: NetworkPolicy blocking traffic"
   local ns=chaos-np i baseline broken recovered blocked_scan recovery_scan probe_event blocked_lines recovery_lines blocked_rc recovery_rc
   kubectl --context "$CTX" create ns "$ns" --dry-run=client -o yaml | kubectl --context "$CTX" apply -f - >/dev/null
@@ -845,6 +849,7 @@ NP
 }
 
 scenario_06_lb() {   # LoadBalancer Service with no provider -> pending (no external address)
+  requires no_loadbalancer || return 0
   log "scenario 6: cloud load balancer failure"
   kubectl --context "$CTX" create ns chaos-lb --dry-run=client -o yaml | kubectl --context "$CTX" apply -f - >/dev/null
   kubectl --context "$CTX" -n chaos-lb apply -f chaos/manifests/app.yaml >/dev/null
@@ -865,6 +870,7 @@ scenario_06_lb() {   # LoadBalancer Service with no provider -> pending (no exte
 }
 
 scenario_08_nsdelete() {   # stateless blind spot
+  requires clean_baseline || return 0
   log "scenario 8: accidental namespace deletion"
   kubectl --context "$CTX" create ns chaos-doomed --dry-run=client -o yaml | kubectl --context "$CTX" apply -f - >/dev/null
   kubectl --context "$CTX" -n chaos-doomed apply -f chaos/manifests/app.yaml >/dev/null
@@ -947,6 +953,7 @@ scenario_10_credleak() {   # ConfigMap with a fake AWS key -> --lint-secrets
 }
 
 scenario_11_kubelet() {   # runtime outage: node NotReady, kubelet /healthz still ok -> --kubelet-health abstains
+  requires node_exec || return 0
   log "scenario 11: kubelet health probe via nodes/proxy (--kubelet-health)"
   local node; node="$(worker_node)"
   # Stop the container runtime on a worker (its Kubernetes node name equals its Kind
@@ -1417,6 +1424,7 @@ scenario_15_multicluster() {   # one daemon, three targets: two names for this c
 }
 
 scenario_16_operators() {   # real cert-manager CRDs -> --operators; an unadapted CRD stays absent
+  requires cluster_write || return 0
   log "scenario 16: operator/CRD adapters (--operators)"
   local ns=chaos-operators
   local cmurl="https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml"
@@ -1550,12 +1558,22 @@ WIDGET
   kubectl --context "$CTX" delete -f "$cmurl" --wait=false >/dev/null 2>&1 || true
 }
 
-scenario_02_certs() {   # documented skip (can't force cert expiry on Kind)
+scenario_02_certs() {   # unconditional documented skip (can't force cert expiry quickly or safely)
+  # The one scenario that is skipped on every cluster, kind or not. It is
+  # declared through assert_skip rather than left as a bare record() so it is
+  # counted in `scenarios skipped` alongside the capability-gated ones: a run
+  # that reported "0 skipped" while quietly omitting this scenario is the exact
+  # defect the skip accounting was added to remove.
+  #
+  # Still no expect_* call, and still on purpose: this scenario runs no scan and
+  # computes no value, so any assertion could only compare the skip text with
+  # itself. The TLS branch is asserted in internal/connectivity's unit tests
+  # instead (x509 UnknownAuthority / CertificateInvalid / Hostname errors, plus
+  # "x509:" / "certificate" / "tls: " substrings).
+  local reason='control-plane certificate expiry cannot be forced quickly or safely'
   log "scenario 2: expired certificates (skipped)"
-  # No assertion here on purpose: this scenario runs no scan and computes no
-  # value, so any expect_* call could only compare the skip text with itself.
-  # The TLS branch is asserted in internal/connectivity's unit tests instead.
-  printf 'Skipped on Kind: control-plane certificate expiry cannot be forced quickly or safely.\nkubeagent TLS / expired-certificate handling is covered by internal/connectivity unit tests\n(x509 UnknownAuthority / CertificateInvalid / Hostname errors, plus "x509:" / "certificate" / "tls: " substrings).\n' \
+  assert_skip "$(scenario_title "${FUNCNAME[0]}")" "$reason"
+  printf 'Skipped: %s.\nkubeagent TLS / expired-certificate handling is covered by internal/connectivity unit tests.\n' "$reason" \
     | record "2. Expired certificates" "skipped (documented; TLS branch unit-tested)"
 }
 
@@ -1594,6 +1612,7 @@ OOM
 }
 
 scenario_17_gitops() {   # real Flux -> --drift; a failing and a suspended Kustomization
+  requires cluster_write || return 0
   log "scenario 17: GitOps drift (--drift)"
   local ns=chaos-gitops
   local fluxurl="https://github.com/fluxcd/flux2/releases/download/v2.4.0/install.yaml"
@@ -1711,6 +1730,7 @@ KS
 }
 
 scenario_18_capacity() {   # --capacity: structural rules on a cluster with no metrics-server
+  requires no_metrics_server || return 0
   log "scenario 18: capacity hints (--capacity)"
   local ns=chaos-capacity
   kubectl --context "$CTX" create ns "$ns" --dry-run=client -o yaml | kubectl --context "$CTX" apply -f - >/dev/null
@@ -1946,6 +1966,7 @@ for line in open(sys.argv[1]):
 }
 
 scenario_20_rbac() {   # a real least-privilege identity: the API server actually says no
+  requires cluster_write || return 0
   log "scenario 20: least-privilege RBAC (kubeagent rbac + a scan-profile-only identity)"
   local ns=chaos-rbac
   kubectl --context "$CTX" create namespace "$ns" --dry-run=client -o yaml |
@@ -2141,6 +2162,7 @@ scenario_21_controlplane() {   # --control-plane-health: the apiserver /readyz p
 }
 
 scenario_22_dnshealth() {   # --dns-health: CoreDNS up and Ready, answering SERVFAIL
+  requires cluster_write || return 0
   log "scenario 22: DNS resolving to SERVFAIL (--dns-health)"
   local ns=chaos-dns
   # A Corefile that keeps CoreDNS healthy and answers every query SERVFAIL. That

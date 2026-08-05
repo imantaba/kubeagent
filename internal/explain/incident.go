@@ -12,7 +12,6 @@ import (
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/redact"
-	"github.com/imantaba/kubeagent/internal/remediation"
 	"github.com/imantaba/kubeagent/internal/svchealth"
 )
 
@@ -75,7 +74,7 @@ func BuildIncidentPrompt(object string, issues []string, cluster clusterhealth.C
 				if f.LogCause != "" {
 					fmt.Fprintf(&b, "      log cause: %s\n", redact.Addresses(f.LogCause))
 				}
-				s := remediation.For(f)
+				s := suggestionFor(f, w)
 				fmt.Fprintf(&b, "      suggested fix (deterministic, pre-reviewed — do not substitute): %s | run: %s\n", s.NextStep, s.Command)
 			}
 			if w.RootCause != "" {

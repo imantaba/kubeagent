@@ -12,6 +12,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
+	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/platform"
 	"github.com/imantaba/kubeagent/internal/redact"
@@ -111,6 +112,30 @@ func (c *Client) ExplainInventory(ctx context.Context, cluster clusterhealth.Clu
 	return out, nil
 }
 
+// suggestionFor renders a finding's deterministic next step in the form a
+// prompt may carry. remediation.For targets the pod the finding was diagnosed
+// on, and a controller's pod name is generated per replica: it identifies one
+// instance of a workload to anyone who reads it and explains nothing, which is
+// the same reason pod rows are not rendered at all. The prompt therefore gets
+// the command with the pod's name replaced by a placeholder — the namespace,
+// the verb and the container survive, so the model can still reproduce a Fix
+// line the operator can complete.
+//
+// A finding diagnosed on the object itself keeps its name: RolloutStuck sets
+// Pod to the Deployment's own identity, which the prompt has already named as
+// the object that broke. Both callers render inside a workload loop, so the
+// comparison is against the workload the finding hangs off.
+func suggestionFor(f diagnose.Finding, w inventory.Workload) remediation.Suggestion {
+	if f.Pod != "" && f.Pod != w.Namespace+"/"+w.Name {
+		if i := strings.IndexByte(f.Pod, '/'); i >= 0 {
+			f.Pod = f.Pod[:i+1] + "<pod>"
+		} else {
+			f.Pod = "<pod>"
+		}
+	}
+	return remediation.For(f)
+}
+
 // BuildInventoryPrompt renders the cluster verdict (when degraded) and the
 // given (pre-filtered) workloads. Only structured fields are sent — never raw pod specs or
 // secrets (node names in the cluster section are infrastructure identifiers).
@@ -158,7 +183,7 @@ func BuildInventoryPrompt(cluster clusterhealth.ClusterHealth, summary *resource
 					fmt.Fprintf(&b, "      container resources: memory req=%s limit=%s, cpu req=%s limit=%s\n",
 						r.MemRequest, r.MemLimit, r.CPURequest, r.CPULimit)
 				}
-				s := remediation.For(f)
+				s := suggestionFor(f, w)
 				fmt.Fprintf(&b, "      suggested fix (deterministic, pre-reviewed — do not substitute): %s | run: %s\n", s.NextStep, s.Command)
 			}
 			if len(w.NetworkPolicies) > 0 {

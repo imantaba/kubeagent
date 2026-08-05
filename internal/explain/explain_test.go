@@ -82,8 +82,11 @@ func TestBuildInventoryPrompt_OnlyStructuredFields(t *testing.T) {
 			t.Errorf("prompt missing %q:\n%s", want, got)
 		}
 	}
-	// Egress guard: per-pod IPs / node names must NOT be sent to the model.
-	for _, leak := range []string{"10.42.9.9", "secret-node-name"} {
+	// Egress guard: per-pod IPs, node names and the generated pod name must NOT
+	// be sent to the model. The pod name reaches the prompt through the
+	// finding's kubectl command as well as through the pod row, so both routes
+	// are covered here.
+	for _, leak := range []string{"10.42.9.9", "secret-node-name", "coredns-x"} {
 		if strings.Contains(got, leak) {
 			t.Errorf("prompt leaked %q:\n%s", leak, got)
 		}
@@ -291,8 +294,11 @@ func TestBuildInventoryPrompt_InjectsDeterministicSuggestion(t *testing.T) {
 	if !strings.Contains(got, "suggested fix (deterministic, pre-reviewed — do not substitute):") {
 		t.Errorf("prompt missing the deterministic suggestion line:\n%s", got)
 	}
-	// The exact remediation.For command for a CrashLoopBackOff finding.
-	if !strings.Contains(got, "kubectl -n shop logs web-abc -c web --previous") {
+	// The exact remediation.For command for a CrashLoopBackOff finding, with the
+	// generated pod name replaced — the prompt leaves the cluster, so the pod it
+	// was diagnosed on is a placeholder while the namespace, verb and container
+	// survive.
+	if !strings.Contains(got, "kubectl -n shop logs <pod> -c web --previous") {
 		t.Errorf("prompt missing the exact remediation.For command:\n%s", got)
 	}
 }

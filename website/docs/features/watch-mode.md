@@ -547,6 +547,13 @@ contents, pod names, pod IPs, node names, or logs. Enabling `--explain` adds no
 cluster read and no RBAC verb: the daemon sends only findings it had already
 collected.
 
+Each finding travels with the deterministic kubectl command kubeagent would
+print for it, so the model can hand back a `Fix:` line rather than inventing
+one — with the pod's generated name replaced by `<pod>`. The namespace, the
+verb and the container are what make the command useful; the replica's name is
+what would identify your cluster. The report you read locally keeps the real
+name.
+
 ### Cost control
 
 Two limits, for two different ways spend runs away:

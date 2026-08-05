@@ -25,6 +25,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   posture. Enable with `--dashboard`, `KUBEAGENT_DASHBOARD=true`, or
   `--set dashboard.enabled=true`. Completes Theme G.
 
+### Fixed
+
+- **`--explain` no longer sends a pod's generated name to the model.** Every
+  finding records the pod it was diagnosed on, and the deterministic kubectl
+  command rendered beside it targeted that pod by name — so a prompt built for
+  a pod-scoped issue carried `kubectl -n shop describe pod web-6b8d94f7c5-q2xzt`
+  out of the cluster, on both `scan --explain` and the watch daemon's
+  on-incident explanations. Pod rows were already withheld for exactly this
+  reason; the command was a second route out that no test covered, because every
+  fixture left the finding's pod field empty. The prompt now carries
+  `kubectl -n shop describe pod <pod>` — same namespace, same verb, same
+  container, placeholder for the generated name — and a finding diagnosed on the
+  object itself (`RolloutStuck` names the Deployment) still renders its own name,
+  which the prompt has already stated as the object that broke. Reports are
+  unchanged: they run locally and keep the real command. Caught by the nightly
+  chaos matrix, whose egress assertion fires only when the explained incident
+  happens to be pod-scoped.
+
 ## [1.1.0] - 2026-08-02
 
 ### Added

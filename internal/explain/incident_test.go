@@ -17,7 +17,12 @@ func incidentWorkloads() []inventory.Workload {
 		{
 			Namespace: "shop", Name: "web", Kind: "Deployment",
 			Desired: 3, Ready: 0, Status: "Degraded", Restarts: 4,
+			// A real finding always names the pod it was diagnosed on — that is
+			// what the report's kubectl command targets. The fixture carries it
+			// so the egress guard below tests the builder as it runs in
+			// production rather than a pod-less shape it never sees.
 			Findings: []diagnose.Finding{{
+				Pod:   "shop/web-7d9f-abcde",
 				Issue: "ImagePullBackOff", Reason: "tag not found", Evidence: "manifest unknown",
 			}},
 			RootCause: "registry ghcr.example (12 workloads failing to pull)",
@@ -29,7 +34,10 @@ func incidentWorkloads() []inventory.Workload {
 		{
 			Namespace: "shop", Name: "cart", Kind: "Deployment",
 			Desired: 2, Ready: 1, Status: "Degraded",
-			Findings: []diagnose.Finding{{Issue: "CrashLoopBackOff", Reason: "exit 1", Evidence: "restarts 9"}},
+			Findings: []diagnose.Finding{{
+				Pod: "shop/cart-6b8d94f7c5-q2xzt", Container: "cart",
+				Issue: "CrashLoopBackOff", Reason: "exit 1", Evidence: "restarts 9",
+			}},
 		},
 	}
 }
@@ -78,13 +86,55 @@ func TestBuildIncidentPromptIncludesDegradedClusterAndServiceIssues(t *testing.T
 // that is needed to explain a failure, so none of it may leave the cluster. A
 // positive-only test would pass just as happily if the builder started
 // serializing whole pod specs.
+//
+// The pod name has a second way out that pod rows do not cover: every finding
+// names the pod it was diagnosed on, and the deterministic kubectl command
+// rendered from it targets that pod by name. Both fixtures' findings carry a
+// pod, so this test fails if either route reopens.
 func TestBuildIncidentPromptDoesNotLeakPodDetail(t *testing.T) {
 	p := BuildIncidentPrompt("Deployment/shop/web", []string{"ImagePullBackOff"},
 		clusterhealth.ClusterHealth{Verdict: "Healthy"}, incidentWorkloads(), nil)
-	for _, forbidden := range []string{"10.244.3.17", "web-7d9f-abcde", "worker-2"} {
+	for _, forbidden := range []string{"10.244.3.17", "web-7d9f-abcde", "worker-2", "cart-6b8d94f7c5-q2xzt"} {
 		if strings.Contains(p, forbidden) {
 			t.Errorf("prompt leaked %q, which no explanation needs:\n%s", forbidden, p)
 		}
+	}
+}
+
+// The command still has to be worth pasting: the namespace, the verb and the
+// container survive, and only the pod's generated name is replaced. A guard
+// that let the whole command drop would pass the leak test above and quietly
+// remove the Fix line's only concrete instruction.
+func TestBuildIncidentPromptKeepsTheCommandUsable(t *testing.T) {
+	p := BuildIncidentPrompt("Deployment/shop/web", []string{"ImagePullBackOff"},
+		clusterhealth.ClusterHealth{Verdict: "Healthy"}, incidentWorkloads(), nil)
+	for _, want := range []string{
+		"kubectl -n shop describe pod <pod>",
+		"kubectl -n shop logs <pod> -c cart --previous",
+	} {
+		if !strings.Contains(p, want) {
+			t.Errorf("prompt must carry %q:\n%s", want, p)
+		}
+	}
+}
+
+// Not every finding is diagnosed on a pod: RolloutStuck names the Deployment
+// itself, and that name is the object the alert fired for — already in the
+// prompt's first line. Replacing it would cost the model the one command it is
+// told to reproduce verbatim, for no privacy gain.
+func TestBuildIncidentPromptKeepsTheObjectsOwnName(t *testing.T) {
+	ws := []inventory.Workload{{
+		Namespace: "shop", Name: "web", Kind: "Deployment",
+		Desired: 3, Ready: 0, Status: "Degraded",
+		Findings: []diagnose.Finding{{
+			Pod:   "shop/web",
+			Issue: "RolloutStuck", Reason: "rollout cannot complete", Evidence: "ProgressDeadlineExceeded",
+		}},
+	}}
+	p := BuildIncidentPrompt("Deployment/shop/web", []string{"RolloutStuck"},
+		clusterhealth.ClusterHealth{Verdict: "Healthy"}, ws, nil)
+	if !strings.Contains(p, "kubectl -n shop describe deployment web") {
+		t.Errorf("prompt must keep the command targeting the object itself:\n%s", p)
 	}
 }
 

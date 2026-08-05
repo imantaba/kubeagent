@@ -456,7 +456,7 @@ func TestRunWatch_WarnsWhenAlertFormatSetWithoutWebhook(t *testing.T) {
 	stderr := captureStderr(t, func() {
 		_ = runWatch([]string{"--alert-format", "slack", "--kubeconfig", bad})
 	})
-	if !strings.Contains(stderr, "KUBEAGENT_ALERT_WEBHOOK is not set") {
+	if !strings.Contains(stderr, "neither KUBEAGENT_ALERT_WEBHOOK nor KUBEAGENT_ALERT_ROUTING_KEY") {
 		t.Fatalf("expected the ignored-alert-flags warning on stderr, got: %q", stderr)
 	}
 }
@@ -469,7 +469,7 @@ func TestRunWatch_WarnsWhenAlertRepeatSetWithoutWebhook(t *testing.T) {
 	stderr := captureStderr(t, func() {
 		_ = runWatch([]string{"--alert-repeat", "5m", "--kubeconfig", bad})
 	})
-	if !strings.Contains(stderr, "KUBEAGENT_ALERT_WEBHOOK is not set") {
+	if !strings.Contains(stderr, "neither KUBEAGENT_ALERT_WEBHOOK nor KUBEAGENT_ALERT_ROUTING_KEY") {
 		t.Fatalf("expected the ignored-alert-flags warning on stderr, got: %q", stderr)
 	}
 }
@@ -507,12 +507,97 @@ func TestRunWatch_NoWarningWithDefaultAlertFlags(t *testing.T) {
 	}
 }
 
+// The routing key is a credential and inherits the webhook URL's rule: no flag,
+// because a flag would put it in the pod spec's args and in `ps` output.
+func TestRunWatch_NoRoutingKeyFlagExists(t *testing.T) {
+	bad := filepath.Join(t.TempDir(), "nonexistent-kubeconfig")
+	err := runWatch([]string{"--alert-routing-key", "not-a-real-routing-key", "--kubeconfig", bad})
+	if err == nil {
+		t.Fatal("expected no --alert-routing-key flag to exist")
+	}
+	if !strings.Contains(err.Error(), "unknown flag") {
+		t.Fatalf("expected an unknown-flag error, got: %v", err)
+	}
+}
+
+// A routing key under a format that does not use one is a configuration
+// mistake, and a silent ignore is how it stays one.
+func TestRunWatch_WarnsWhenTheRoutingKeyIsSetUnderAnotherFormat(t *testing.T) {
+	t.Setenv("KUBEAGENT_ALERT_WEBHOOK", "")
+	t.Setenv("KUBEAGENT_ALERT_ROUTING_KEY", "not-a-real-routing-key")
+	bad := filepath.Join(t.TempDir(), "nonexistent-kubeconfig")
+	stderr := captureStderr(t, func() {
+		_ = runWatch([]string{"--alert-format", "json", "--kubeconfig", bad})
+	})
+	if !strings.Contains(stderr, "KUBEAGENT_ALERT_ROUTING_KEY is set but --alert-format is json") {
+		t.Fatalf("expected the wrong-format warning on stderr, got: %q", stderr)
+	}
+	if strings.Contains(stderr, "not-a-real-routing-key") {
+		t.Fatalf("the warning echoes the routing key: %q", stderr)
+	}
+}
+
+// A routing key with --alert-format pagerduty turns alerting on with no webhook
+// URL set, so the "alerting is off" warning must not fire.
+func TestRunWatch_RoutingKeyAloneEnablesPagerDuty(t *testing.T) {
+	t.Setenv("KUBEAGENT_ALERT_WEBHOOK", "")
+	t.Setenv("KUBEAGENT_ALERT_ROUTING_KEY", "not-a-real-routing-key")
+	bad := filepath.Join(t.TempDir(), "nonexistent-kubeconfig")
+	stderr := captureStderr(t, func() {
+		_ = runWatch([]string{"--alert-format", "pagerduty", "--kubeconfig", bad})
+	})
+	if strings.Contains(stderr, "alert-* flags ignored") {
+		t.Fatalf("unexpected alerting-is-off warning with a routing key set: %q", stderr)
+	}
+	if strings.Contains(stderr, "not-a-real-routing-key") {
+		t.Fatalf("stderr carries the routing key: %q", stderr)
+	}
+}
+
+// With neither credential set, the existing warning still fires and now names
+// both.
+func TestRunWatch_WarnsWhenNeitherCredentialIsSet(t *testing.T) {
+	t.Setenv("KUBEAGENT_ALERT_WEBHOOK", "")
+	t.Setenv("KUBEAGENT_ALERT_ROUTING_KEY", "")
+	bad := filepath.Join(t.TempDir(), "nonexistent-kubeconfig")
+	stderr := captureStderr(t, func() {
+		_ = runWatch([]string{"--alert-format", "pagerduty", "--kubeconfig", bad})
+	})
+	if !strings.Contains(stderr, "--alert-* flags ignored") {
+		t.Fatalf("expected the ignored-alert-flags warning on stderr, got: %q", stderr)
+	}
+	if !strings.Contains(stderr, "KUBEAGENT_ALERT_ROUTING_KEY") {
+		t.Fatalf("the warning does not name the pagerduty credential: %q", stderr)
+	}
+}
+
+// The env var must reach watch.Config, not merely fail to warn.
+func TestRunWatch_RoutingKeyReachesTheConfig(t *testing.T) {
+	t.Setenv("KUBEAGENT_ALERT_WEBHOOK", "")
+	t.Setenv("KUBEAGENT_ALERT_ROUTING_KEY", "not-a-real-routing-key")
+	kc := deadKubeconfigPath(t)
+	cfg, err := captureWatchConfig(t, []string{"--alert-format", "pagerduty", "--kubeconfig", kc})
+	if err != nil {
+		t.Fatalf("captureWatchConfig: %v", err)
+	}
+	if cfg.AlertRoutingKey != "not-a-real-routing-key" {
+		t.Errorf("AlertRoutingKey = %q, want the value from the environment", cfg.AlertRoutingKey)
+	}
+	if cfg.AlertURL != "" {
+		t.Errorf("AlertURL = %q, want empty — pagerduty defaults its endpoint in the sink", cfg.AlertURL)
+	}
+	// 4h is DefaultRepeat's answer for every format but alertmanager.
+	if cfg.AlertRepeat != 4*time.Hour {
+		t.Errorf("AlertRepeat = %s, want 4h0m0s", cfg.AlertRepeat)
+	}
+}
+
 func TestRun_UsageMentionsWatchAlertFlags(t *testing.T) {
 	err := Run(nil)
 	if err == nil {
 		t.Fatal("expected a usage error with no args")
 	}
-	if !strings.Contains(err.Error(), "[--alert-format json|slack|alertmanager] [--alert-repeat dur]") {
+	if !strings.Contains(err.Error(), "[--alert-format json|slack|alertmanager|pagerduty] [--alert-repeat dur]") {
 		t.Fatalf("expected the usage string to mention --alert-format and --alert-repeat, got: %v", err)
 	}
 }

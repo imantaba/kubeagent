@@ -139,7 +139,13 @@ spec:
               value: {{ .Values.certs.warnDays | quote }}
             {{- end }}
             {{- if .Values.alerts.enabled }}
-            - name: KUBEAGENT_ALERT_WEBHOOK
+            {{- /*
+              PagerDuty authenticates with an integration key in the request
+              body, where every other receiver authenticates with the URL
+              itself. Same Secret shape either way — only the variable name
+              changes, so an operator adds no new values to switch.
+            */}}
+            - name: {{ if eq .Values.alerts.format "pagerduty" }}KUBEAGENT_ALERT_ROUTING_KEY{{ else }}KUBEAGENT_ALERT_WEBHOOK{{ end }}
               valueFrom:
                 secretKeyRef:
                   name: {{ required "alerts.existingSecret is required when alerts.enabled is true" .Values.alerts.existingSecret | quote }}

@@ -108,7 +108,7 @@ func bindWatchFlags(cmd *cobra.Command, o *watchOptions) {
 	f.DurationVar(&o.debounce, "debounce", envDur("KUBEAGENT_DEBOUNCE", 2*time.Second), "coalescing window for change events")
 	f.BoolVar(&o.includeCron, "include-cron", false, "include CronJobs in the evaluation")
 	f.BoolVar(&o.includeRestarts, "include-restarts", false, "include workloads that are healthy now but have restarted")
-	f.StringVar(&o.alertFormat, "alert-format", envOr("KUBEAGENT_ALERT_FORMAT", "json"), "alert payload format: json, slack, or alertmanager")
+	f.StringVar(&o.alertFormat, "alert-format", envOr("KUBEAGENT_ALERT_FORMAT", "json"), "alert payload format: json, slack, alertmanager, or pagerduty")
 	f.DurationVar(&o.alertRepeat, "alert-repeat", envDur("KUBEAGENT_ALERT_REPEAT", 0), "re-send interval for still-firing alerts (0 = the format default: 4h, or 60s for alertmanager)")
 	f.Float64Var(&o.sloTarget, "slo-target", envFloat("KUBEAGENT_SLO_TARGET", 0), "availability SLO as a percentage, e.g. 99.9 (0 = SLO tracking off)")
 	f.BoolVar(&o.explain, "explain", envBool("KUBEAGENT_EXPLAIN", false), "explain new incidents via one LLM call each (needs ANTHROPIC_API_KEY, or KUBEAGENT_EXPLAIN_ENDPOINT for a local OpenAI-compatible model)")
@@ -139,16 +139,25 @@ func parseWatchFlags(args []string) (watchOptions, error) {
 // runWatchOpts serves `kubeagent watch`. o is the already-parsed command
 // line, as produced by parseWatchFlags.
 func runWatchOpts(o watchOptions) error {
-	// The webhook URL is a credential (a Slack incoming-webhook URL is a bearer
-	// token in URL form), so it comes from the environment only — never a flag,
-	// which would put it in the pod spec's args and in `ps` output.
+	// The webhook URL and the PagerDuty routing key are both credentials — a
+	// Slack incoming-webhook URL is a bearer token in URL form, and a routing
+	// key is one outright — so they come from the environment only, never a
+	// flag, which would put them in the pod spec's args and in `ps` output.
 	alertURL := os.Getenv("KUBEAGENT_ALERT_WEBHOOK")
+	routingKey := os.Getenv("KUBEAGENT_ALERT_ROUTING_KEY")
 	repeat := o.alertRepeat
 	if repeat == 0 {
 		repeat = alert.DefaultRepeat(alert.Format(o.alertFormat))
 	}
-	if alertURL == "" && (o.alertFormat != "json" || o.alertRepeat != 0) {
-		warnf(os.Stderr, "--alert-* flags ignored: KUBEAGENT_ALERT_WEBHOOK is not set, so alerting is off")
+	// Alerting is on when the format's own credential is present: the URL for
+	// every format, or the routing key for pagerduty, which defaults its
+	// endpoint.
+	alerting := alertURL != "" || (o.alertFormat == string(alert.FormatPagerDuty) && routingKey != "")
+	if !alerting && (o.alertFormat != "json" || o.alertRepeat != 0) {
+		warnf(os.Stderr, "--alert-* flags ignored: neither KUBEAGENT_ALERT_WEBHOOK nor KUBEAGENT_ALERT_ROUTING_KEY (with --alert-format pagerduty) is set, so alerting is off")
+	}
+	if routingKey != "" && o.alertFormat != string(alert.FormatPagerDuty) {
+		warnf(os.Stderr, "KUBEAGENT_ALERT_ROUTING_KEY is set but --alert-format is %s: the routing key is used by the pagerduty format alone", o.alertFormat)
 	}
 
 	// --explain needs Anthropic, or a local OpenAI-compatible endpoint. Check
@@ -230,6 +239,7 @@ func runWatchOpts(o watchOptions) error {
 		WebhookTimeoutThreshold: int32(envInt("KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS", 15)),
 		AlertURL:                alertURL,
 		AlertFormat:             o.alertFormat,
+		AlertRoutingKey:         routingKey,
 		AlertRepeat:             repeat,
 		SLOTarget:               sloRatio,
 		Explain:                 o.explain,

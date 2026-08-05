@@ -23,7 +23,7 @@ while [ $# -gt 0 ]; do
   esac; shift
 done
 
-# Normalize a numeric --only to the zero-padded form used in scenario keys (01..22).
+# Normalize a numeric --only to the zero-padded form used in scenario keys (01..23).
 # 10# forces base 10: printf reads a leading-zero numeral as octal, so a plain
 # --only 08 or --only 09 errored and normalized to 00, silently matching nothing.
 if [ -n "$ONLY" ] && printf '%s' "$ONLY" | grep -qE '^[0-9]+$'; then ONLY=$(printf '%02d' "$((10#$ONLY))"); fi
@@ -1860,12 +1860,107 @@ scenario_22_dnshealth() {   # --dns-health: CoreDNS up and Ready, answering SERV
   kubectl --context "$CTX" delete namespace "$ns" --wait=false >/dev/null 2>&1 || true
 }
 
+scenario_23_pagerduty() {   # PagerDuty receiver: trigger on outage, resolve on repair, one dedup_key, no key in the log
+  log "scenario 23: PagerDuty alert format (trigger/resolve on one dedup_key)"
+  local ns=chaos-pagerduty port=18096 aport=18097 wlog wpid i events apid
+  wlog="$(mktemp)"
+  events="$(mktemp)"
+  # The receiver stands in for events.pagerduty.com. KUBEAGENT_ALERT_WEBHOOK
+  # overrides the default endpoint, which is what makes this format testable at
+  # all without reaching PagerDuty.
+  python3 chaos/alert-receiver.py "$aport" "$events" >/dev/null 2>&1 &
+  apid=$!
+  kubectl --context "$CTX" create ns "$ns" --dry-run=client -o yaml | kubectl --context "$CTX" apply -f - >/dev/null
+  kubectl --context "$CTX" -n "$ns" apply -f chaos/manifests/app.yaml >/dev/null
+  kubectl --context "$CTX" -n "$ns" rollout status deploy web --timeout=90s >/dev/null 2>&1 || true
+
+  # The routing key is a credential and has no flag: it comes from the
+  # environment, exactly like the webhook URL beside it. This value is a fixture,
+  # not a key — no PagerDuty account is contacted by this scenario.
+  KUBEAGENT_ALERT_WEBHOOK="http://127.0.0.1:$aport" \
+  KUBEAGENT_ALERT_ROUTING_KEY="not-a-real-routing-key" \
+  ./kubeagent watch --context "$CTX" -n "$ns" --metrics-addr "127.0.0.1:$port" \
+    --heartbeat 10s --debounce 2s --alert-format pagerduty --alert-repeat 1h >"$wlog" 2>&1 &
+  wpid=$!
+  for i in $(seq 40); do
+    curl -sf "http://127.0.0.1:$port/readyz" >/dev/null 2>&1 && break
+    sleep 1
+  done
+
+  # Same outage as scenario 9: a bad image, with the old replicas taken down by
+  # the rollout so Ready < Desired.
+  kubectl --context "$CTX" -n "$ns" patch deploy web --type=strategic \
+    -p '{"spec":{"strategy":{"rollingUpdate":{"maxUnavailable":"100%"}}}}' >/dev/null
+  kubectl --context "$CTX" -n "$ns" set image deploy/web web=nginx:does-not-exist-9999 >/dev/null
+  sleep 30
+
+  # Repair and let the tracker observe the issue clear.
+  kubectl --context "$CTX" -n "$ns" set image deploy/web web=nginx:1.27-alpine >/dev/null
+  kubectl --context "$CTX" -n "$ns" rollout status deploy web --timeout=120s >/dev/null 2>&1 || true
+  sleep 30
+
+  kill "$wpid" >/dev/null 2>&1 || true
+  wait "$wpid" >/dev/null 2>&1 || true
+  kill "$apid" >/dev/null 2>&1 || true
+  wait "$apid" >/dev/null 2>&1 || true
+
+  # Every capture is `|| true` guarded: grep exits 1 on zero matches, and under
+  # `set -euo pipefail` a bare assignment that fails would abort the scenario
+  # before the namespace cleanup at the bottom ever ran.
+  local trigger_n resolve_n event_n keyed_n web_dedup_n resolve_dedup key_in_log
+  trigger_n="$(grep -c '"event_action":"trigger"' "$events" 2>/dev/null || true)"
+  resolve_n="$(grep -c '"event_action":"resolve"' "$events" 2>/dev/null || true)"
+  event_n="$(grep -c '"event_action"' "$events" 2>/dev/null || true)"
+  # The routing key must be in every body. Counting both sides and comparing two
+  # numbers keeps the key itself out of the assertion label.
+  keyed_n="$(grep -cF -- '"routing_key":"not-a-real-routing-key"' "$events" 2>/dev/null || true)"
+  # The property the whole format rests on: one object, one incident key, across
+  # its trigger and its resolve. Not a count of all keys — how many other objects
+  # break alongside the Deployment depends on timing, and asserting that number
+  # would be asserting the scheduler rather than the encoder. Scoped to
+  # Deployment/$ns/web specifically: the Service of the same name genuinely
+  # fires its own dedup_key too (svchealth correctly flags it as a real,
+  # non-expected NoEndpoints issue while the Deployment has zero ready pods),
+  # and an unscoped suffix match would count that second, distinct object's
+  # key alongside the Deployment's.
+  web_dedup_n="$(grep -o "\"dedup_key\":\"[^/]*/Deployment/$ns/web\"" "$events" 2>/dev/null | sort -u | wc -l || true)"
+  resolve_dedup="$(grep '"event_action":"resolve"' "$events" 2>/dev/null | grep -o '"dedup_key":"[^"]*"' | sort -u || true)"
+  # Count, never quote: assert.sh embeds its needle in the PASS/FAIL line, so an
+  # expect_absent here would write the routing key into the report on every
+  # passing run — the leak this assertion exists to rule out.
+  key_in_log="$(grep -cF -- "not-a-real-routing-key" "$wlog" || true)"
+
+  {
+    echo '--- PagerDuty events delivered to the receiver ---'
+    { grep -o '"event_action":"[a-z]*","dedup_key":"[^"]*"' "$events" || echo '<no events delivered>'; }
+    echo
+    printf 'trigger events: %s\n' "$trigger_n"
+    printf 'resolve events: %s\n' "$resolve_n"
+    printf 'events carrying a routing key: %s of %s\n' "$keyed_n" "$event_n"
+    printf 'distinct dedup keys for %s/web: %s\n' "$ns" "$web_dedup_n"
+    echo
+    echo '--- routing-key redaction check (the daemon log must never carry it) ---'
+    printf 'daemon log lines carrying the routing key: %s\n' "$key_in_log"
+    echo
+    echo '--- assertions ---'
+    expect_ge       "trigger events delivered"                        "$trigger_n"   1
+    expect_ge       "resolve events delivered after the repair"       "$resolve_n"   1
+    expect_eq       "every delivered event carries the routing key"   "$keyed_n"     "$event_n"
+    expect_eq       "the Deployment fires on exactly one dedup key"   "$web_dedup_n" 1
+    expect_contains "the resolve carries the Deployment's dedup key"  "$resolve_dedup" "Deployment/$ns/web"
+    expect_eq       "daemon log carries no routing key"               "$key_in_log"  0
+  } | record "23. PagerDuty receiver (trigger on outage, resolve on repair, one dedup_key per object)" "expect: the daemon posts Events API v2 bodies to a local stand-in for events.pagerduty.com — a trigger while the Deployment is broken, a resolve after the repair, and both on the same identity-derived dedup_key, which is what makes a daemon restart re-trigger onto the open incident instead of opening a second one. The routing key travels in the request body only: it is in every delivered event and in no line of the daemon's log."
+
+  rm -f "$wlog" "$events"
+  kubectl --context "$CTX" delete ns "$ns" --wait=true --timeout=120s >/dev/null 2>&1 || true
+}
+
 run_scenarios() {
   # 01_etcd runs LAST: stopping the control-plane is the most disruptive fault and
   # etcd/apiserver flap for a while afterwards (and while the API is down even
   # `kubectl wait` can't settle it). Running it last keeps that recovery noise from
   # contaminating the other scenarios' scans.
-  local all=(02_certs 03_diskfull 04_networkpolicy 05_coredns 06_lb 07_oom 08_nsdelete 09_rollout 10_credleak 11_kubelet 12_watch 13_slo 14 15_multicluster 16_operators 17_gitops 18_capacity 19_mcp 20_rbac 21_controlplane 22_dnshealth 01_etcd)
+  local all=(02_certs 03_diskfull 04_networkpolicy 05_coredns 06_lb 07_oom 08_nsdelete 09_rollout 10_credleak 11_kubelet 12_watch 13_slo 14 15_multicluster 16_operators 17_gitops 18_capacity 19_mcp 20_rbac 21_controlplane 22_dnshealth 23_pagerduty 01_etcd)
   for s in "${all[@]}"; do
     if [ -z "$ONLY" ] || [ "$ONLY" = "${s%%_*}" ]; then "scenario_$s"; fi
   done

@@ -1,15 +1,20 @@
 package alert
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/imantaba/kubeagent/internal/alertstate"
 )
 
 // waitFor polls cond until it holds or the deadline passes.
@@ -285,6 +290,11 @@ func TestNew_Validation(t *testing.T) {
 		{"bad url", Config{URL: "nope", Format: FormatJSON, Repeat: time.Hour}, true},
 		{"alertmanager within the cadence limit", Config{URL: "http://am:9093", Format: FormatAlertmanager, Repeat: time.Minute}, false},
 		{"alertmanager repeat too long", Config{URL: "http://am:9093", Format: FormatAlertmanager, Repeat: 4 * time.Hour}, true},
+		{"pagerduty with a routing key and no URL", Config{Format: FormatPagerDuty, RoutingKey: "not-a-real-routing-key", Repeat: 4 * time.Hour}, false},
+		{"pagerduty with an explicit endpoint", Config{URL: "http://192.0.2.10:8080/capture", Format: FormatPagerDuty, RoutingKey: "not-a-real-routing-key", Repeat: 4 * time.Hour}, false},
+		{"pagerduty without a routing key", Config{URL: "http://192.0.2.10:8080/capture", Format: FormatPagerDuty, Repeat: 4 * time.Hour}, true},
+		{"pagerduty with a whitespace-bearing routing key", Config{Format: FormatPagerDuty, RoutingKey: "not-a-real-routing-key\n", Repeat: 4 * time.Hour}, true},
+		{"pagerduty ignores the alertmanager cadence ceiling", Config{Format: FormatPagerDuty, RoutingKey: "not-a-real-routing-key", Repeat: 24 * time.Hour}, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -305,9 +315,112 @@ func TestDefaultRepeat(t *testing.T) {
 	if got := DefaultRepeat(FormatAlertmanager); got != time.Minute {
 		t.Errorf("DefaultRepeat(alertmanager) = %s, want 1m0s", got)
 	}
-	for _, f := range []Format{FormatJSON, FormatSlack} {
+	for _, f := range []Format{FormatJSON, FormatSlack, FormatPagerDuty} {
 		if got := DefaultRepeat(f); got != 4*time.Hour {
 			t.Errorf("DefaultRepeat(%s) = %s, want 4h0m0s", f, got)
 		}
+	}
+}
+
+// PagerDuty authenticates in the request body, and answers 202 rather than 200.
+// This asserts the whole path end to end against a real HTTP server: the key
+// arrives, the 2xx counts, and the log the daemon would print carries neither
+// the credential nor the endpoint's path.
+func TestSink_PagerDutyDeliversTheRoutingKeyInTheBodyOnly(t *testing.T) {
+	var mu sync.Mutex
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies = append(bodies, string(b))
+		mu.Unlock()
+		w.WriteHeader(http.StatusAccepted) // 202, what PagerDuty returns
+	}))
+	defer srv.Close()
+
+	var logBuf bytes.Buffer
+	log.SetOutput(&logBuf)
+	defer log.SetOutput(os.Stderr)
+
+	s, err := New(Config{URL: srv.URL + "/capture", Format: FormatPagerDuty, RoutingKey: "not-a-real-routing-key", Repeat: 4 * time.Hour}, srv.Client())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.Start(ctx)
+	s.Enqueue(alertstate.Notification{
+		Object:      alertstate.Object{Cluster: "local", Kind: "Deployment", Namespace: "shop", Name: "web"},
+		Status:      alertstate.StatusFiring,
+		Reason:      alertstate.ReasonNew,
+		Issues:      []string{"ImagePullBackOff"},
+		FiringSince: at,
+	})
+	waitFor(t, "one firing delivery", func() bool { return s.Stats().FiringOK == 1 })
+
+	mu.Lock()
+	got := bodies
+	mu.Unlock()
+	if len(got) != 1 {
+		t.Fatalf("got %d bodies, want 1", len(got))
+	}
+	if !strings.Contains(got[0], `"routing_key":"not-a-real-routing-key"`) {
+		t.Errorf("the routing key did not reach the body: %s", got[0])
+	}
+	if !strings.Contains(got[0], `"event_action":"trigger"`) {
+		t.Errorf("body is not a trigger: %s", got[0])
+	}
+	// A 202 must count as a success, not as a retryable failure.
+	if s.Stats().FiringFailed != 0 {
+		t.Errorf("a 202 was counted as a failure: %+v", s.Stats())
+	}
+	if strings.Contains(logBuf.String(), "not-a-real-routing-key") {
+		t.Errorf("the routing key reached a log line: %s", logBuf.String())
+	}
+	if strings.Contains(logBuf.String(), "/capture") {
+		t.Errorf("the endpoint path reached a log line: %s", logBuf.String())
+	}
+}
+
+// A bad routing key is a 400, and a wrong credential does not fix itself.
+func TestSink_PagerDutyBadRoutingKeyIsNotRetried(t *testing.T) {
+	var mu sync.Mutex
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer srv.Close()
+
+	var logBuf bytes.Buffer
+	log.SetOutput(&logBuf)
+	defer log.SetOutput(os.Stderr)
+
+	s, err := New(Config{URL: srv.URL + "/capture", Format: FormatPagerDuty, RoutingKey: "not-a-real-routing-key", Repeat: 4 * time.Hour}, srv.Client())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.Start(ctx)
+	s.Enqueue(alertstate.Notification{
+		Object:      alertstate.Object{Cluster: "local", Kind: "Deployment", Namespace: "shop", Name: "web"},
+		Status:      alertstate.StatusFiring,
+		Reason:      alertstate.ReasonNew,
+		Issues:      []string{"ImagePullBackOff"},
+		FiringSince: at,
+	})
+	waitFor(t, "one failed firing delivery", func() bool { return s.Stats().FiringFailed == 1 })
+
+	mu.Lock()
+	n := calls
+	mu.Unlock()
+	if n != 1 {
+		t.Errorf("got %d attempts, want 1 — a 4xx will not fix itself", n)
+	}
+	if strings.Contains(logBuf.String(), "not-a-real-routing-key") {
+		t.Errorf("the routing key reached a log line: %s", logBuf.String())
 	}
 }

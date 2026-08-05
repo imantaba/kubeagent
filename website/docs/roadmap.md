@@ -436,8 +436,8 @@ These are the north star; every item below is measured against them.
   do), and rollback (`--rollback`). Theme D is complete; guarded, policy-gated
   autonomous remediation inside `watch` moves to Theme E.
 - **E · Continuous operations** ✅ — `watch` gains state (regressions, flapping,
-  MTTR, "new since last"), webhook alerting (JSON / Slack / Alertmanager
-  shipped; PagerDuty remains an open receiver), SLO burn-rate signals
+  MTTR, "new since last"), webhook alerting (JSON / Slack / Alertmanager /
+  PagerDuty, all shipped), SLO burn-rate signals
   (shipped), rate-limited on-incident `--explain` (shipped), and a
   multi-cluster hub (shipped). Theme E is complete; guarded, policy-gated
   autonomous remediation inside `watch` is a separate, future track.
@@ -513,7 +513,7 @@ These are the north star; every item below is measured against them.
   <minor>` pins the harness to a specific Kubernetes minor's digest-pinned
   kind node image, with everything cluster-derived (cluster name, context,
   report path) taking that minor's suffix so two coexist on one machine; and
-  a nightly GitHub Actions workflow runs the full 22-scenario suite once per
+  a nightly GitHub Actions workflow runs the full 23-scenario suite once per
   supported minor (v1.32, v1.33, v1.34 today) in its own job, `fail-fast`
   off, with the report scanned for credential material before a flagged one
   is ever uploaded. The nightly grants no secret — `ANTHROPIC_API_KEY` is
@@ -527,7 +527,7 @@ These are the north star; every item below is measured against them.
   Theme H: [Compatibility and support](compatibility.md) writes down which
   surfaces are stable within 1.x and which are deliberately not, states the
   supported Kubernetes window as an evidenced one — v1.32, v1.33 and v1.34,
-  because the nightly matrix passes 128 assertions against each — and commits
+  because the nightly matrix passes 134 assertions against each — and commits
   to a deprecation policy of one full MINOR, a stderr-only warning, and removal
   no earlier than the next MAJOR. **Theme H is complete.**
 

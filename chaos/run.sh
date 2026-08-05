@@ -845,10 +845,13 @@ record() {
 # may not, and the refusal is the safety property this whole seam exists for.
 #
 # That ownership question is still exactly `cluster_write`'s whole story.
-# `node_exec` is narrower: the harness owns a k3d cluster exactly as fully as
-# it owns a kind one, but k3s has no separately stoppable etcd or kubelet, so
-# granting `node_exec` there would let scenarios 1 and 11 run and fail —
-# strictly worse than a named skip.
+# `node_exec` is narrower: it needs that same ownership, plus a control plane
+# whose etcd and kubelet are separately stoppable units. The harness owns a
+# k3d cluster exactly as fully as it owns a kind one, but k3s fails the
+# second half, so granting `node_exec` there would let scenarios 1 and 11 run
+# and fail — strictly worse than a named skip. The portable path fails the
+# first half instead, for an unrelated reason: only kind clears both, and
+# only kind is granted.
 #
 # The other four are facts about the target cluster, decided by probe_capabilities
 # and by the baseline scan.
@@ -857,7 +860,7 @@ record() {
 # want of this capability. Returns 1 for a name outside the vocabulary.
 capability_reason() {
   case "$1" in
-    node_exec)         printf 'needs shell access to a node running a kubeadm-shaped control plane, where etcd and kubelet are separately stoppable units\n' ;;
+    node_exec)         printf 'needs shell access to a node the harness owns, whose control plane runs etcd and kubelet as separately stoppable units\n' ;;
     cluster_write)     printf 'writes cluster-scoped objects, which the harness will not do on a cluster it does not own\n' ;;
     clean_baseline)    printf 'asserts whole-cluster health, which is only meaningful on a cluster that reported none before the run\n' ;;
     no_loadbalancer)   printf 'asserts a LoadBalancer Service never gets an address, which is false on a cluster with a provider\n' ;;

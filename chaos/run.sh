@@ -456,6 +456,32 @@ create_cluster() {
     ${KIND_IMAGE:+--image "$KIND_IMAGE"}
 }
 
+# create_cluster_k3s — create_cluster's counterpart on the k3s path.
+#
+# k3d runs k3s in containers, so the harness owns this cluster exactly as fully
+# as it owns a kind one: it created it, it can delete it, and nobody else's
+# workload is on it. That ownership is what lets main() grant cluster_write here
+# as honestly as it does on kind.
+#
+# STOCK DEFAULTS ARE LOAD-BEARING, not an aesthetic preference. k3s ships Traefik
+# as a LoadBalancer holding ports 80 and 443 on every node its affinity allows,
+# and that is exactly why ServiceLB never publishes an address for a second
+# port-80 Service — which is what makes probe_capabilities grant no_loadbalancer
+# and scenario 6 RUN rather than skip. Disabling Traefik (`--k3s-arg
+# '--disable=traefik@server:*'`) would free port 80, ServiceLB would assign an
+# address, and scenario 6 would fail. Do not add it.
+create_cluster_k3s() {
+  local existing
+  existing="$(k3d cluster list --no-headers 2>/dev/null | awk '{print $1}')" || existing=""
+  if printf '%s\n' "$existing" | grep -qx "$CLUSTER"; then
+    if [ "$RECREATE" = 1 ]; then k3d cluster delete "$CLUSTER"; else
+      echo "cluster $CLUSTER already exists (use --recreate to rebuild)"; return 0; fi
+  fi
+  log "create k3d cluster $CLUSTER (image $K3S_IMAGE)"
+  k3d cluster create "$CLUSTER" --servers 1 --agents 2 --image "$K3S_IMAGE" \
+    --wait --timeout 300s
+}
+
 # preload_calico_images side-loads the Calico images into the Kind nodes before we
 # apply the CNI. Kind nodes have their own containerd store, so on a cold cluster the
 # kubelet pulls calico/cni + calico/node serially from docker.io (~3-4m each) — and the
@@ -471,6 +497,17 @@ preload_calico_images() {
     # re-adds the docker.io/ prefix in the node store, matching the manifest's image ref.
     kind load docker-image "${ref#docker.io/}" --name "$CLUSTER" || echo "preload: load $ref failed; falling back to in-node pull" >&2
   done
+}
+
+# node_image_load <ref> — side-load an image into this distro's node store.
+#
+# Both node kinds keep their own containerd store, which is the entire reason
+# the preloads exist; only the command differs.
+node_image_load() {
+  case "$DISTRO" in
+    k3s) k3d image import "$1" --cluster "$CLUSTER" ;;
+    *)   kind load docker-image "$1" --name "$CLUSTER" ;;
+  esac
 }
 
 # preload_flux_images <manifest> — side-loads Flux's controller images into the
@@ -494,8 +531,11 @@ preload_flux_images() {
     docker image inspect "$ref" >/dev/null 2>&1 || docker pull "$ref" || { echo "preload: pull $ref failed; falling back to in-node pull" >&2; continue; }
     # Unlike the Calico refs there is no prefix to strip: docker only normalizes
     # away docker.io, so a ghcr.io ref is tagged locally under its full name and
-    # `kind load` puts it in the node store under the name the manifest asks for.
-    kind load docker-image "$ref" --name "$CLUSTER" || echo "preload: load $ref failed; falling back to in-node pull" >&2
+    # node_image_load puts it in the node store under the name the manifest asks
+    # for. That is unchanged from kind; the reason the preload matters on k3d is
+    # the same one it matters on kind — a node's own containerd store, not
+    # anything kind-specific.
+    node_image_load "$ref" || echo "preload: load $ref failed; falling back to in-node pull" >&2
   done
 }
 
@@ -786,9 +826,16 @@ requires() {
 }
 
 # A failed teardown must not abort main before assert_summary runs: the exit
-# code callers read is the assertion gate's, and losing it to kind's would
-# report a delete failure as a scenario failure and drop the report's summary.
-teardown() { log "teardown"; kind delete cluster --name "$CLUSTER" || log "teardown: kind delete cluster failed (cluster may still exist)"; }
+# code callers read is the assertion gate's, and losing it to the cluster tool's
+# would report a delete failure as a scenario failure and drop the report's
+# summary.
+teardown() {
+  log "teardown"
+  case "$DISTRO" in
+    k3s) k3d cluster delete "$CLUSTER" || log "teardown: k3d cluster delete failed (cluster may still exist)" ;;
+    *)   kind delete cluster --name "$CLUSTER" || log "teardown: kind delete cluster failed (cluster may still exist)" ;;
+  esac
+}
 
 # --- scenarios -------------------------------------------------------------
 # Each scenario: inject -> scan (recorded; never aborts the harness) -> revert.

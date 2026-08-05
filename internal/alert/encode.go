@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -274,4 +275,25 @@ func trimRunes(s string, n int) string {
 		return s
 	}
 	return string([]rune(s)[:n])
+}
+
+// validateRoutingKey rejects a value that cannot be an integration key: empty,
+// or carrying a space or any byte outside printable ASCII — which is what a
+// Secret with a trailing newline or a pasted multi-line blob looks like.
+// Catching it at startup beats catching it at the first HTTP 400. The error
+// names the variable to fix and never echoes the value.
+//
+// The length is deliberately not checked against PagerDuty's 32 characters:
+// pinning an upstream length is a hostage to fortune, and it would force every
+// fixture to be a 32-character string that reads like a real key.
+func validateRoutingKey(key string) error {
+	if key == "" {
+		return errors.New("the pagerduty alert format needs KUBEAGENT_ALERT_ROUTING_KEY set to the integration key")
+	}
+	for i := 0; i < len(key); i++ {
+		if b := key[i]; b <= ' ' || b > '~' {
+			return errors.New("KUBEAGENT_ALERT_ROUTING_KEY must be one token of printable ASCII with no spaces (a trailing newline from a Secret is the usual cause)")
+		}
+	}
+	return nil
 }

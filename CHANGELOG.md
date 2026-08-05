@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-08-05
+
 ### Added
 
 - **PagerDuty as a fourth alert receiver (`kubeagent watch --alert-format
@@ -1493,7 +1495,8 @@ infrastructure (a documentation site and a pre-release chaos-test harness).
 - CI (vet/test/build on push & PR) and a release workflow publishing a
   linux/amd64 tarball + `SHA256SUMS` to a GitHub Release.
 
-[Unreleased]: https://github.com/imantaba/kubeagent/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/imantaba/kubeagent/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/imantaba/kubeagent/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/imantaba/kubeagent/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/imantaba/kubeagent/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/imantaba/kubeagent/compare/v0.74.0...v1.0.0

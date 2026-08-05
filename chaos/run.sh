@@ -1953,28 +1953,48 @@ for line in open(sys.argv[1]):
   if [ -n "${got_context:-}" ] && [ "${got_context}" = "$CTX" ]; then context_matches=yes; fi
 
   # The kubeagent_triage response echoes cfg.Context inside its own JSON
-  # payload (cluster.context and coverage.context — the same field
-  # context_matches above already checks without naming it), so a plain `cat`
-  # of the raw response below would put the context name back into $OUT
-  # through the one route the fixes above don't touch. Redact it here too: a
-  # literal string replace (not a regex) so a context name carrying a regex
-  # metacharacter — a real one can contain almost anything a kubeconfig
-  # accepts — is still matched exactly.
+  # payload at two distinct paths, cluster.context and coverage.context, both
+  # carrying the same value — but only coverage.context is the field
+  # context_matches above inspected (via got_context). A plain `cat` of the
+  # raw response below would put that value back into $OUT through the one
+  # route the fixes above don't touch. Redact it here too: a literal string
+  # replace (not a regex) so a context name carrying a regex metacharacter —
+  # a real one can contain almost anything a kubeconfig accepts — is still
+  # matched exactly.
+  #
+  # bash has no block-scoped functions: defining this inside
+  # scenario_19_mcp() still installs it in the global function table on
+  # first call, same as every other function in this file. It is placed here
+  # rather than at top level because it exists solely for this scenario's raw
+  # dump; nothing else in the harness calls it.
+  #
+  # Operates on bytes, not decoded text: $out is a stream of JSON-RPC lines
+  # this scenario does not fully control (a stray non-UTF-8 byte anywhere in
+  # a crash-looping pod's name, image, or event text would ride along), and
+  # decoding before the replace would raise UnicodeDecodeError on such a
+  # byte. Reading/writing sys.stdin.buffer/sys.stdout.buffer and encoding
+  # $CTX to bytes keeps the replace exact without ever decoding.
   redact_stdio() {
     python3 -c '
 import sys
-ctx = sys.argv[1]
-data = sys.stdin.read()
-sys.stdout.write(data.replace(ctx, "<context>") if ctx else data)
+ctx = sys.argv[1].encode()
+data = sys.stdin.buffer.read()
+sys.stdout.buffer.write(data.replace(ctx, b"<context>") if ctx else data)
 ' "$CTX"
   }
 
   {
     echo '--- raw stdout (one JSON-RPC response per line) ---'
-    redact_stdio <"$out"
+    # preflight()/portable_preflight() both require python3, so this
+    # fallback should never fire — it exists because "no helper ever
+    # returns non-zero" (chaos/assert.sh's own header invariant) is
+    # absolute, not conditional on python3 actually being missing. A static
+    # marker, not an empty section: a visible gap beats a silent one, and
+    # the marker carries no cluster identity.
+    redact_stdio <"$out" || printf '<raw output withheld: redaction failed>\n'
     echo
     echo '--- stderr ---'
-    redact_stdio <"$err"
+    redact_stdio <"$err" || printf '<raw output withheld: redaction failed>\n'
     printf '\n--- gate checks ---\n'
     printf 'tools/list (id 2) tool names:       %s\n' "$tools"
     printf 'tool names containing a write verb:  %s\n' "$write_verbs"

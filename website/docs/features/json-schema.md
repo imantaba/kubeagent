@@ -31,10 +31,11 @@ is a choice, not an oversight:
 - **SARIF** (`kubeagent gate --output sarif`) — SARIF 2.1.0 is versioned by
   [OASIS](https://json.schemastore.org/sarif-2.1.0.json). Wrapping someone
   else's standard in kubeagent's own version number would misattribute it.
-- **The Slack and Alertmanager alert payloads** (`watch --alert-format
-  slack|alertmanager`) — these are the receiver's shapes, not kubeagent's.
-  Slack's incoming-webhook body and Alertmanager's `POST /api/v2/alerts`
-  array are contracts Slack and Prometheus own; kubeagent only fills them in.
+- **The Slack, Alertmanager and PagerDuty alert payloads** (`watch
+  --alert-format slack|alertmanager|pagerduty`) — these are the receiver's
+  shapes, not kubeagent's. Slack's incoming-webhook body, Alertmanager's
+  `POST /api/v2/alerts` array and PagerDuty's Events API v2 event are
+  contracts Slack, Prometheus and PagerDuty own; kubeagent only fills them in.
 - **The `--fix` audit journal** (`--audit-log`) — a write-side record of
   remediation actions taken, appended to a file the operator names. It is
   evidence of what happened, not a read surface a script polls for shape.

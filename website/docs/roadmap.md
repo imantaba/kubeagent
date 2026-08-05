@@ -289,13 +289,16 @@
   [Watch mode](features/watch-mode.md#issue-tracking-state-across-reconciles).
 
 - **`watch` alerting** (Theme E — slice 2) — the daemon can now push transitions
-  outbound: one webhook alert per broken object in `json`, `slack`, or
-  `alertmanager` form. Alerts roll up on the object, not the issue, so an
+  outbound: one alert per broken object in `json`, `slack`, `alertmanager` or
+  `pagerduty` form. Alerts roll up on the object, not the issue, so an
   evolving failure (`Degraded` → `ErrImagePull` → `ImagePullBackOff`) opens a
   single alert that clears only once the object has no active issues at all —
-  a still-broken workload never reports a recovery. Off unless
-  `KUBEAGENT_ALERT_WEBHOOK` is set; the URL is env-only, Secret-only in the
-  chart, and never logged beyond `scheme://host`. Delivery is a bounded queue
+  a still-broken workload never reports a recovery. Off unless a credential is
+  set — `KUBEAGENT_ALERT_WEBHOOK` for the three webhook formats,
+  `KUBEAGENT_ALERT_ROUTING_KEY` for PagerDuty. Either is env-only, Secret-only
+  in the chart, and never reaches a log line; a URL is never logged beyond
+  `scheme://host` and the routing key is never logged at all. Delivery is a
+  bounded queue
   with three attempts and counted drops, on its own goroutine, so a hung
   receiver cannot stall the reconcile loop. The daemon stays strictly
   read-only toward the cluster and calls no LLM. See

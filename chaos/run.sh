@@ -242,6 +242,54 @@ portable_sweep() {
   return 0
 }
 
+# probe_capabilities — decide the capabilities that are facts about the target
+# cluster rather than policy. Implemented in the next commit.
+probe_capabilities() { :; }
+
+# portable_header — describe the target cluster in the report WITHOUT naming it.
+#
+# A kubeconfig context name is a credential under this project's rules, and on a
+# managed cluster it is routinely an ARN or a project/region path. Node names are
+# no better. What a reader of this report actually needs is the platform, and
+# nodeInfo gives that precisely and impersonally: an OS image reading "Amazon
+# Linux 2" or "Flatcar Container Linux" identifies the distribution far better
+# than a context name would, and identifies no account.
+#
+# Values are deduplicated: a 300-node cluster running one image should produce
+# one line, not 300.
+portable_header() {
+  local nodes
+  nodes="$(kubectl --context "$CTX" get nodes -o json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    doc = json.load(sys.stdin)
+except ValueError:
+    sys.exit(0)
+items = doc.get("items", [])
+
+def uniq(field):
+    seen = []
+    for n in items:
+        v = n.get("status", {}).get("nodeInfo", {}).get(field, "")
+        if v and v not in seen:
+            seen.append(v)
+    return ", ".join(seen) or "unknown"
+
+print("- Nodes: %d" % len(items))
+print("- OS image: %s" % uniq("osImage"))
+print("- Container runtime: %s" % uniq("containerRuntimeVersion"))
+print("- Kubelet: %s" % uniq("kubeletVersion"))
+' 2>/dev/null || true)"
+  [ -n "$nodes" ] || nodes='- Nodes: unknown'
+
+  printf '# kubeagent chaos-test results (portable mode)\n\n'
+  printf -- '- Mode: portable — an existing cluster the harness did not create and will not delete\n'
+  printf -- '- Kubernetes: %s\n' "$(kubectl --context "$CTX" version -o json 2>/dev/null \
+    | python3 -c 'import sys,json; print(json.load(sys.stdin).get("serverVersion",{}).get("gitVersion",""))' 2>/dev/null)"
+  printf '%s\n' "$nodes"
+  printf -- '- explain: %s\n' "$([ -n "${ANTHROPIC_API_KEY:-}" ] && echo enabled || echo 'disabled (no ANTHROPIC_API_KEY)')"
+}
+
 build_kubeagent() { log "build kubeagent"; go build -o ./kubeagent .; ./kubeagent version; }
 
 create_cluster() {
@@ -2164,49 +2212,101 @@ run_scenarios() {
 }
 
 main() {
-  preflight
-  build_kubeagent
-  create_cluster
-  preload_calico_images
-  install_calico
+  if [ "$PORTABLE" = 1 ]; then
+    portable_preflight
+    build_kubeagent
+  else
+    preflight
+    build_kubeagent
+    create_cluster
+    preload_calico_images
+    install_calico
+  fi
 
   mkdir -p "$(dirname "$OUT")"
   : > "$OUT"
   assert_init
-  {
-    printf '# kubeagent chaos-test results\n\n'
-    printf -- '- Cluster: Kind %s, Calico CNI, 1 control-plane + 2 workers\n' "$(kind version 2>/dev/null | awk '{print $2}')"
-    printf -- '- Kubernetes: %s\n' "$(kubectl --context "$CTX" version -o json 2>/dev/null | python3 -c 'import sys,json; print(json.load(sys.stdin).get("serverVersion",{}).get("gitVersion",""))' 2>/dev/null)"
-    printf -- '- explain: %s\n' "$([ -n "${ANTHROPIC_API_KEY:-}" ] && echo enabled || echo 'disabled (no ANTHROPIC_API_KEY)')"
-  } >> "$OUT"
+  if [ "$PORTABLE" = 1 ]; then
+    portable_header >> "$OUT"
+  else
+    {
+      printf '# kubeagent chaos-test results\n\n'
+      printf -- '- Cluster: Kind %s, Calico CNI, 1 control-plane + 2 workers\n' "$(kind version 2>/dev/null | awk '{print $2}')"
+      printf -- '- Kubernetes: %s\n' "$(kubectl --context "$CTX" version -o json 2>/dev/null | python3 -c 'import sys,json; print(json.load(sys.stdin).get("serverVersion",{}).get("gitVersion",""))' 2>/dev/null)"
+      printf -- '- explain: %s\n' "$([ -n "${ANTHROPIC_API_KEY:-}" ] && echo enabled || echo 'disabled (no ANTHROPIC_API_KEY)')"
+    } >> "$OUT"
 
-  # Capture the pristine CoreDNS Corefile TEXT now (cluster is healthy) so scenario 5
-  # can restore a known-good config via a clean merge-patch (apply of a get-dump is unreliable).
-  kubectl --context "$CTX" -n kube-system get cm coredns -o jsonpath='{.data.Corefile}' > "$COREDNS_BACKUP" 2>/dev/null || true
+    # Capture the pristine CoreDNS Corefile TEXT now (cluster is healthy) so scenario 5
+    # can restore a known-good config via a clean merge-patch (apply of a get-dump is unreliable).
+    kubectl --context "$CTX" -n kube-system get cm coredns -o jsonpath='{.data.Corefile}' > "$COREDNS_BACKUP" 2>/dev/null || true
 
-  wait_system_ready
+    wait_system_ready
+
+    # POLICY, not probe: on a cluster the harness created and can delete, it may
+    # shell into a node container and write cluster-scoped objects. On a cluster
+    # it merely holds credentials for, it may not — however wide those
+    # credentials happen to be.
+    capability_add node_exec
+    capability_add cluster_write
+  fi
 
   log "baseline healthy scan"
-  local bout brc bbody
+  local bout brc bbody btitle bverdict
   bout="$(scan 2>&1)" && brc=0 || brc=$?
   bbody="$(scan_body "$bout")"
+  btitle="Baseline (healthy cluster)"; bverdict="baseline"
+  if [ "$PORTABLE" = 1 ]; then
+    btitle="Baseline"
+    bverdict="baseline — on a cluster the harness does not own the verdict is recorded, not asserted"
+  fi
   {
     printf '%s\n' "$bout"
     printf '\n--- assertions ---\n'
-    expect_eq       "baseline scan exit code"          "$brc" 0
-    expect_contains "baseline cluster verdict"         "$bbody" "Cluster: Healthy"
-    expect_contains "baseline reports nothing to fix"  "$bbody" "No issues found."
-  } | record "Baseline (healthy cluster)" "baseline"
+    if [ "$PORTABLE" = 1 ]; then
+      # An operator's cluster is very likely NOT clean, through no fault of
+      # kubeagent, so asserting "Cluster: Healthy" here would manufacture a
+      # failure out of someone else's backlog. What is true of any conformant
+      # cluster is asserted; the verdict itself is recorded in the block above
+      # for a human to read.
+      expect_eq       "baseline scan exit code"             "$brc" 0
+      expect_contains "baseline rendered a cluster verdict"  "$bbody" "Cluster:"
+    else
+      expect_eq       "baseline scan exit code"          "$brc" 0
+      expect_contains "baseline cluster verdict"         "$bbody" "Cluster: Healthy"
+      expect_contains "baseline reports nothing to fix"  "$bbody" "No issues found."
+    fi
+  } | record "$btitle" "$bverdict"
+
+  # clean_baseline is decided by the baseline scan in BOTH modes: scenario 8
+  # asserts the WHOLE cluster reads healthy again after a namespace is deleted,
+  # which is only checkable on a cluster that read healthy to begin with. On kind
+  # it always does — and if it ever does not, the baseline assertions above have
+  # already failed the gate.
+  if printf '%s\n' "$bbody" | grep -qF "Cluster: Healthy" \
+     && printf '%s\n' "$bbody" | grep -qF "No issues found."; then
+    capability_add clean_baseline
+  fi
+
+  # The probes run AFTER the baseline: the LoadBalancer probe creates and deletes
+  # a namespace, and a namespace still terminating during the baseline scan would
+  # dirty a verdict the gate depends on.
+  probe_capabilities
 
   run_scenarios
 
   log "done — report: $OUT"
-  if [ "$TEARDOWN" = 1 ]; then teardown; else
+  if [ "$PORTABLE" = 1 ]; then
+    portable_sweep
+    echo "portable run finished against an existing cluster; nothing was deleted but the harness's own chaos-* namespaces."
+  elif [ "$TEARDOWN" = 1 ]; then
+    teardown
+  else
     echo "cluster left up ($CTX). Re-run with --teardown to delete, or:"
     echo "  kind delete cluster --name $CLUSTER"
   fi
 
   # Non-zero when any assertion failed: this is what makes the harness a gate.
+  # A skipped scenario is counted and named in the summary but never changes it.
   assert_summary "$OUT"
 }
 

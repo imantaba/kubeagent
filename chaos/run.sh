@@ -2660,9 +2660,10 @@ main() {
   else
     preflight
     build_kubeagent
-    create_cluster
-    preload_calico_images
-    install_calico
+    case "$DISTRO" in
+      k3s) create_cluster_k3s ;;
+      *)   create_cluster; preload_calico_images; install_calico ;;
+    esac
   fi
 
   mkdir -p "$(dirname "$OUT")"
@@ -2671,12 +2672,7 @@ main() {
   if [ "$PORTABLE" = 1 ]; then
     portable_header >> "$OUT"
   else
-    {
-      printf '# kubeagent chaos-test results\n\n'
-      printf -- '- Cluster: Kind %s, Calico CNI, 1 control-plane + 2 workers\n' "$(kind version 2>/dev/null | awk '{print $2}')"
-      printf -- '- Kubernetes: %s\n' "$(kubectl --context "$CTX" version -o json 2>/dev/null | python3 -c 'import sys,json; print(json.load(sys.stdin).get("serverVersion",{}).get("gitVersion",""))' 2>/dev/null)"
-      printf -- '- explain: %s\n' "$([ -n "${ANTHROPIC_API_KEY:-}" ] && echo enabled || echo 'disabled (no ANTHROPIC_API_KEY)')"
-    } >> "$OUT"
+    created_header >> "$OUT"
 
     # Capture the pristine CoreDNS Corefile TEXT now (cluster is healthy) so scenario 5
     # can restore a known-good config via a clean merge-patch (apply of a get-dump is unreliable).
@@ -2685,11 +2681,17 @@ main() {
     wait_system_ready
 
     # POLICY, not probe: on a cluster the harness created and can delete, it may
-    # shell into a node container and write cluster-scoped objects. On a cluster
-    # it merely holds credentials for, it may not — however wide those
-    # credentials happen to be.
-    capability_add node_exec
+    # write cluster-scoped objects. That is true of a k3d cluster exactly as it
+    # is of a kind one — the harness created both.
     capability_add cluster_write
+
+    # node_exec is narrower, and granted on the kind path only. `docker exec`
+    # into a k3d node would work, so this is not about access: k3s defaults to
+    # an embedded sqlite datastore, so there is no etcd to stop, and its kubelet
+    # is part of the single k3s process rather than a separate unit. Granting it
+    # here would make scenarios 1 and 11 RUN AND FAIL, which is strictly worse
+    # than a named skip — see capability_reason's wording.
+    if [ "$DISTRO" = kind ]; then capability_add node_exec; fi
   fi
 
   log "baseline healthy scan"
@@ -2744,7 +2746,10 @@ main() {
     teardown
   else
     echo "cluster left up ($CTX). Re-run with --teardown to delete, or:"
-    echo "  kind delete cluster --name $CLUSTER"
+    case "$DISTRO" in
+      k3s) echo "  k3d cluster delete $CLUSTER" ;;
+      *)   echo "  kind delete cluster --name $CLUSTER" ;;
+    esac
   fi
 
   # assert_summary is a second writer to $OUT, alongside record(): its FAIL

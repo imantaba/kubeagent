@@ -1327,13 +1327,18 @@ scenario_15_multicluster() {   # one daemon, three targets: two names for this c
 
   wlog="$(mktemp)"; kc="$(mktemp)"
 
-  # A second context pointing at the SAME cluster proves labelling and the
+  # Two harness-chosen names for the SAME cluster prove labelling and the
   # cross-cluster merge without paying for a second Kind cluster; a third
   # context pointing at a closed port proves per-cluster degradation. This does
   # NOT test genuinely divergent cluster state — see the verdict text.
+  #
+  # Both live names are alias-a and alias-b rather than the real context: the
+  # daemon labels every series by context name, this scenario dumps those series
+  # straight into the report, and a kubeconfig context name is a credential.
   kubectl --context "$CTX" config view --raw --minify --flatten >"$kc"
   ccluster="$(KUBECONFIG="$kc" kubectl config view -o jsonpath='{.contexts[0].context.cluster}')"
   cuser="$(KUBECONFIG="$kc" kubectl config view -o jsonpath='{.contexts[0].context.user}')"
+  KUBECONFIG="$kc" kubectl config set-context alias-a --cluster="$ccluster" --user="$cuser" >/dev/null
   KUBECONFIG="$kc" kubectl config set-context alias-b --cluster="$ccluster" --user="$cuser" >/dev/null
   KUBECONFIG="$kc" kubectl config set-cluster dead-cluster --server=https://127.0.0.1:1 >/dev/null
   KUBECONFIG="$kc" kubectl config set-context dead --cluster=dead-cluster --user="$cuser" >/dev/null
@@ -1343,7 +1348,7 @@ scenario_15_multicluster() {   # one daemon, three targets: two names for this c
   kubectl --context "$CTX" -n "$ns" rollout status deploy web --timeout=90s >/dev/null 2>&1 || true
 
   ./kubeagent watch --kubeconfig "$kc" \
-    --context "$CTX" --context alias-b --context dead \
+    --context alias-a --context alias-b --context dead \
     -n "$ns" --metrics-addr "127.0.0.1:$port" --heartbeat 10s --debounce 2s >"$wlog" 2>&1 &
   wpid=$!
   # Readiness must arrive despite the dead target: ready means every cluster
@@ -1368,14 +1373,14 @@ scenario_15_multicluster() {   # one daemon, three targets: two names for this c
 
   # Hoist the per-cluster readings out of the grep pipelines, so the report
   # and the assertions below read the same values.
-  local clusters_total up_ctx up_alias up_dead issue_ctx issue_alias issue_dead kubeconfig_material write_verbs
+  local clusters_total up_a up_b up_dead issue_a issue_b issue_dead kubeconfig_material write_verbs
   clusters_total="$(printf '%s\n' "$metrics" | awk '/^kubeagent_clusters_total/{print $2}')"
-  up_ctx="$(printf   '%s\n' "$metrics" | awk -v c="cluster=\"$CTX\""      '$0 ~ /^kubeagent_cluster_up/ && index($0,c){print $2}')"
-  up_alias="$(printf '%s\n' "$metrics" | awk '$0 ~ /^kubeagent_cluster_up/ && index($0,"cluster=\"alias-b\""){print $2}')"
-  up_dead="$(printf  '%s\n' "$metrics" | awk '$0 ~ /^kubeagent_cluster_up/ && index($0,"cluster=\"dead\""){print $2}')"
-  issue_ctx="$(printf   '%s\n' "$metrics" | grep -c "^kubeagent_issue_active{cluster=\"$CTX\"" || true)"
-  issue_alias="$(printf '%s\n' "$metrics" | grep -c '^kubeagent_issue_active{cluster="alias-b"' || true)"
-  issue_dead="$(printf  '%s\n' "$metrics" | grep -c '^kubeagent_issue_active{cluster="dead"' || true)"
+  up_a="$(printf    '%s\n' "$metrics" | awk '$0 ~ /^kubeagent_cluster_up/ && index($0,"cluster=\"alias-a\""){print $2}')"
+  up_b="$(printf    '%s\n' "$metrics" | awk '$0 ~ /^kubeagent_cluster_up/ && index($0,"cluster=\"alias-b\""){print $2}')"
+  up_dead="$(printf '%s\n' "$metrics" | awk '$0 ~ /^kubeagent_cluster_up/ && index($0,"cluster=\"dead\""){print $2}')"
+  issue_a="$(printf    '%s\n' "$metrics" | grep -c '^kubeagent_issue_active{cluster="alias-a"' || true)"
+  issue_b="$(printf    '%s\n' "$metrics" | grep -c '^kubeagent_issue_active{cluster="alias-b"' || true)"
+  issue_dead="$(printf '%s\n' "$metrics" | grep -c '^kubeagent_issue_active{cluster="dead"' || true)"
   kubeconfig_material="$(grep -cE 'BEGIN CERTIFICATE|client-key-data|client-certificate-data|token:' "$wlog" || true)"
   write_verbs="$(grep -icE '\b(create|update|patch|delete)d?\b' "$wlog" || true)"
 
@@ -1409,15 +1414,15 @@ scenario_15_multicluster() {   # one daemon, three targets: two names for this c
     echo '--- assertions ---'
     expect_eq "readyz stays 200 with one target dead" "$ready_code" 200
     expect_eq "cluster roster size"                   "$clusters_total" 3
-    expect_eq "the real cluster is up"                "$up_ctx"   1
-    expect_eq "its second label is up"                "$up_alias" 1
+    expect_eq "the first label for the real cluster is up"  "$up_a" 1
+    expect_eq "the second label for the real cluster is up" "$up_b" 1
     expect_eq "the unreachable target is down"        "$up_dead"  0
-    expect_ge "the broken workload is seen under the real cluster label" "$issue_ctx"   1
-    expect_ge "and again under its second label"                         "$issue_alias" 1
-    expect_eq "no issue is attributed to the unreachable target"         "$issue_dead"  0
+    expect_ge "the broken workload is seen under the first label"  "$issue_a" 1
+    expect_ge "and again under the second label"                   "$issue_b" 1
+    expect_eq "no issue is attributed to the unreachable target"   "$issue_dead" 0
     expect_eq "no log line carries kubeconfig material" "$kubeconfig_material" 0
     expect_eq "daemon log mentions no write verb"       "$write_verbs" 0
-  } | record "15. Multi-cluster hub (three targets, one dead)" "expect: /readyz returns HTTP 200 even though the 'dead' target never reaches its API server — readiness means every cluster finished a first attempt, because a NotReady pod leaves its Service endpoints and Prometheus would then stop scraping the clusters that ARE working. kubeagent_clusters_total is 3; kubeagent_cluster_up is 1 for both $CTX and alias-b and 0 for dead. The broken workload appears in kubeagent_issue_active once per healthy cluster label — four lines in all: the Deployment's ErrImagePull and its same-named Service's NoEndpoints (the container-name coupling scenario 12 documents), each under cluster=\"$CTX\" and again under cluster=\"alias-b\" — and the /issues cluster roster lists all three with dead carrying a non-empty error. No log line may carry kubeconfig material, and no write verb may appear. Scope: alias-b is a second NAME for the same cluster, so this proves labelling, the cross-cluster merge and the degradation path — the parts most likely to regress — but it does not exercise genuinely divergent cluster state, which would need a second Kind cluster and is covered by unit tests with independent fake clientsets instead. Every daemon log line must also carry a [<cluster>] prefix; with three interleaved reconcile loops an unprefixed line is a bug."
+  } | record "15. Multi-cluster hub (three targets, one dead)" "expect: /readyz returns HTTP 200 even though the 'dead' target never reaches its API server — readiness means every cluster finished a first attempt, because a NotReady pod leaves its Service endpoints and Prometheus would then stop scraping the clusters that ARE working. kubeagent_clusters_total is 3; kubeagent_cluster_up is 1 for both alias-a and alias-b and 0 for dead. The broken workload appears in kubeagent_issue_active once per healthy cluster label — four lines in all: the Deployment's ErrImagePull and its same-named Service's NoEndpoints (the container-name coupling scenario 12 documents), each under cluster=\"alias-a\" and again under cluster=\"alias-b\" — and the /issues cluster roster lists all three with dead carrying a non-empty error. No log line may carry kubeconfig material, and no write verb may appear. Scope: alias-a and alias-b are two harness-chosen NAMES for the same cluster, so this proves labelling, the cross-cluster merge and the degradation path — the parts most likely to regress — but it does not exercise genuinely divergent cluster state, which would need a second Kind cluster and is covered by unit tests with independent fake clientsets instead. Every daemon log line must also carry a [<cluster>] prefix; with three interleaved reconcile loops an unprefixed line is a bug."
 
   rm -f "$wlog" "$kc"
   kubectl --context "$CTX" delete ns "$ns" --wait=true --timeout=120s >/dev/null 2>&1 || true
@@ -1937,29 +1942,53 @@ for line in open(sys.argv[1]):
             pass
         break
 ' "$out" 2>/dev/null || true)"
-  local got_verdict got_findings got_context
+  local got_verdict got_findings got_context context_matches
   IFS='|' read -r got_verdict got_findings got_context <<<"$triage"
+  # The context name is a credential, and expect_eq echoes the ACTUAL value on
+  # its PASS branch — so comparing got_context against $CTX would write the
+  # context name into the report on a passing run. Compare a derived indicator
+  # instead: the report carries the answer, never the name. `if` rather than a
+  # && chain because a false && chain returns 1 and `set -e` would abort here.
+  context_matches=no
+  if [ -n "${got_context:-}" ] && [ "${got_context}" = "$CTX" ]; then context_matches=yes; fi
+
+  # The kubeagent_triage response echoes cfg.Context inside its own JSON
+  # payload (cluster.context and coverage.context — the same field
+  # context_matches above already checks without naming it), so a plain `cat`
+  # of the raw response below would put the context name back into $OUT
+  # through the one route the fixes above don't touch. Redact it here too: a
+  # literal string replace (not a regex) so a context name carrying a regex
+  # metacharacter — a real one can contain almost anything a kubeconfig
+  # accepts — is still matched exactly.
+  redact_stdio() {
+    python3 -c '
+import sys
+ctx = sys.argv[1]
+data = sys.stdin.read()
+sys.stdout.write(data.replace(ctx, "<context>") if ctx else data)
+' "$CTX"
+  }
 
   {
     echo '--- raw stdout (one JSON-RPC response per line) ---'
-    cat "$out"
+    redact_stdio <"$out"
     echo
     echo '--- stderr ---'
-    cat "$err"
+    redact_stdio <"$err"
     printf '\n--- gate checks ---\n'
     printf 'tools/list (id 2) tool names:       %s\n' "$tools"
     printf 'tool names containing a write verb:  %s\n' "$write_verbs"
     printf 'tools/call (id 3) verdict:          %s\n' "${got_verdict:-}"
     printf 'tools/call (id 3) findings count:   %s\n' "${got_findings:-0}"
-    printf 'tools/call (id 3) coverage.context: %s\n' "${got_context:-}"
+    printf 'tools/call (id 3) coverage.context matches --context: %s\n' "$context_matches"
     printf '\n--- assertions ---\n'
     expect_eq "advertised tools" "$tools" "kubeagent_advisory kubeagent_inspect kubeagent_triage"
     expect_eq "no tool name carries a write verb" "$write_verbs" 0
     expect_eq "triage verdict" "${got_verdict:-}" "degraded"
     expect_ge "triage findings" "${got_findings:-0}" 1
-    expect_eq "the server's context round-trips into the response" "${got_context:-}" "$CTX"
+    expect_eq "the server's context round-trips into the response" "$context_matches" "yes"
   } | record "19. MCP server over stdio (kubeagent mcp)" \
-    "expect: tools/list (id 2) tool names reads exactly 'kubeagent_advisory kubeagent_inspect kubeagent_triage'; tool names containing a write verb reads 0 — no fix/apply/delete/patch/create verb in any tool name, so the server advertises no path to a cluster write. That line reading N/A is a FAILURE, not a pass: it means no tools/list response arrived and the read-only claim went unchecked; tools/call (id 3) verdict reads degraded (the crash-looping pod is a real finding); tools/call (id 3) findings count is at least 1; tools/call (id 3) coverage.context reads $CTX (the --context the server was started with round-trips into the response)"
+    "expect: tools/list (id 2) tool names reads exactly 'kubeagent_advisory kubeagent_inspect kubeagent_triage'; tool names containing a write verb reads 0 — no fix/apply/delete/patch/create verb in any tool name, so the server advertises no path to a cluster write. That line reading N/A is a FAILURE, not a pass: it means no tools/list response arrived and the read-only claim went unchecked; tools/call (id 3) verdict reads degraded (the crash-looping pod is a real finding); tools/call (id 3) findings count is at least 1; tools/call (id 3) coverage.context matches --context reads yes (the --context the server was started with round-trips into the response; the context name itself is a credential and never reaches this report)"
 
   rm -f "$out" "$err"
   kubectl --context "$CTX" delete namespace "$ns" --wait=false >/dev/null 2>&1 || true

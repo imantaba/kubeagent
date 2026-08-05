@@ -1259,9 +1259,10 @@ looked.
 ## Two skills directories
 
 If you are working *on* kubeagent rather than *with* it: `.claude/skills/` in
-this repository is dev-facing and untracked, and root-level `skills/` is what
-the plugin ships. Claude Code auto-discovers only the former, so a contributor
-never loads the user-facing skills by accident.
+this repository is dev-facing — it holds `release` and `update-demo-gif`, which
+maintain the project itself — and root-level `skills/` is what the plugin ships
+to users. Claude Code auto-discovers only the former, so a contributor never
+loads the user-facing skills by accident.
 
 ## Stability
 
@@ -1353,8 +1354,8 @@ In `CLAUDE.md`, in the bullet beginning `**Theme G slices 1, 2, 3, 4a and 4b hav
   [website/docs/features/claude-plugin.md](website/docs/features/claude-plugin.md).
   It ships no Go production code and is **read-only**: no tool, skill, or
   command reaches `--fix`. Note the two skills directories — `.claude/skills/`
-  is dev-facing and untracked (it holds `release` and `update-demo-gif`);
-  root-level `skills/` is what the plugin ships to users. Claude Code
+  is dev-facing (it holds `release` and `update-demo-gif`); root-level
+  `skills/` is what the plugin ships to users. Claude Code
   auto-discovers only the former. `plugin_manifest_test.go` and
   `internal/cli/plugin_flags_test.go` fail the build when the manifests or the
   shipped skill text drift from the flags and tool names kubeagent registers.

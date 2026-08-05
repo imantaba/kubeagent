@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
 	"testing"
 
 	"sigs.k8s.io/yaml"
@@ -147,4 +150,88 @@ func TestMarketplaceEntryResolves(t *testing.T) {
 	if _, err := os.Stat(manifest); err != nil {
 		t.Errorf("marketplace source %q does not resolve to a plugin: %v", entry.Source, err)
 	}
+}
+
+// pluginDocFiles is the explicit list of shipped skill and command files.
+// It is a required-paths list, not a directory walk: a walk would pass
+// vacuously if the directory went missing, which is the failure most worth
+// catching. Tasks that add a skill or command add its path here.
+var pluginDocFiles = []string{
+	"skills/triaging-a-cluster/SKILL.md",
+}
+
+// toolNameRE matches an MCP tool name wherever it appears — in a Go
+// registration or in prose.
+var toolNameRE = regexp.MustCompile(`\b(kubeagent_[a-z_]+|list_contexts)\b`)
+
+// registrationRE matches only the Name field of a tool registration, so
+// prose inside internal/mcp (a coverage "why" string naming another tool,
+// for instance) is not mistaken for a registration.
+var registrationRE = regexp.MustCompile(`\bName:\s*"(kubeagent_[a-z_]+|list_contexts)"`)
+
+// registeredMCPTools derives the set of tool names internal/mcp actually
+// registers, by reading the source. Deriving it beats hard-coding it: a tool
+// renamed in Go is then a test failure in the docs, not a silent lie.
+func registeredMCPTools(t *testing.T) map[string]bool {
+	t.Helper()
+	entries, err := os.ReadDir("internal/mcp")
+	if err != nil {
+		t.Fatalf("reading internal/mcp: %v", err)
+	}
+	tools := map[string]bool{}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join("internal/mcp", name))
+		if err != nil {
+			t.Fatalf("reading internal/mcp/%s: %v", name, err)
+		}
+		for _, m := range registrationRE.FindAllStringSubmatch(string(raw), -1) {
+			tools[m[1]] = true
+		}
+	}
+	if len(tools) == 0 {
+		t.Fatal("found no registered MCP tools in internal/mcp; the registration " +
+			"pattern changed and this test no longer checks anything")
+	}
+	return tools
+}
+
+// TestShippedDocsNameOnlyRegisteredTools fails closed on the documentation
+// side: a skill or command that tells the model to call a tool kubeagent no
+// longer registers breaks the build. That is the drift that costs a user
+// something — the model follows the instruction and the call errors.
+func TestShippedDocsNameOnlyRegisteredTools(t *testing.T) {
+	registered := registeredMCPTools(t)
+
+	for _, path := range pluginDocFiles {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Errorf("reading %s: %v", path, err)
+			continue
+		}
+		mentioned := toolNameRE.FindAllString(string(raw), -1)
+		if len(mentioned) == 0 {
+			t.Errorf("%s names no MCP tool at all; it is supposed to teach the "+
+				"model how to call them", path)
+			continue
+		}
+		for _, name := range mentioned {
+			if !registered[name] {
+				t.Errorf("%s names tool %q, which internal/mcp does not register "+
+					"(registered: %v)", path, name, sortedKeys(registered))
+			}
+		}
+	}
+}
+
+func sortedKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

@@ -228,71 +228,100 @@ check 'capability_add exits 2 on an unknown name' \
 
 # --- redact_nodes: the portable-mode seam that keeps node AND context names
 # out of $OUT ------------------------------------------------------------
-# redact_nodes is a pure filter once NODE_SED and $CTX are set, so it is
+# redact_nodes is a pure filter once NODE_NAMES and $CTX are set, so it is
 # tested directly: source run.sh in a guarded subshell (same "set --
 # before sourcing" pattern as requires_probe above), override the two
 # globals, pipe text in, compare what comes out.
-redact_probe() {   # redact_probe <node_sed> <ctx> <input> -> <output>
+redact_probe() {   # redact_probe <node_names> <ctx> <input> -> <output>
   (
     # Capture the args before `set --` for the same reason requires_probe
     # does above: a bare `. chaos/run.sh` hands run.sh's own --flag parser
     # this subshell's positional parameters as if they were its argv.
-    local node_sed="$1" ctx="$2" input="$3"
+    local node_names="$1" ctx="$2" input="$3"
     set --
     . chaos/run.sh
-    NODE_SED="$node_sed"
+    NODE_NAMES="$node_names"
     CTX="$ctx"
     printf '%s' "$input" | redact_nodes
   )
 }
 
-check 'kind mode (NODE_SED empty) is a byte-identical passthrough, context included' \
+check 'kind mode (NODE_NAMES empty) is a byte-identical passthrough, context included' \
   "$(redact_probe '' 'kind-kubeagent-chaos' \
       'log line naming kind-kubeagent-chaos and node worker-1')" \
   'log line naming kind-kubeagent-chaos and node worker-1'
 
 check 'portable mode redacts a plain context name' \
-  "$(redact_probe 's/no-such-node-zzz/<node-1>/g' 'kind-kubeagent-chaos' \
+  "$(redact_probe 'no-such-node-zzz' 'kind-kubeagent-chaos' \
       'cluster="kind-kubeagent-chaos"')" \
   'cluster="<context>"'
 
 # A realistic managed-cluster context — the shape AWS's own docs use, with the
 # twelve-digit example account 123456789012 — carries `:` and `/`. If it were
-# fed to sed instead of matched literally, `/` would break the script (or
-# silently change what it matches) the way it would for NODE_SED's `|`
-# delimiter.
-check 'a context name with sed metacharacters is matched exactly, not as a pattern' \
-  "$(redact_probe 's/no-such-node-zzz/<node-1>/g' \
+# fed to a regex instead of matched literally, `/` and `:` could break the
+# pattern (or silently change what it matches).
+check 'a context name with regex metacharacters is matched exactly, not as a pattern' \
+  "$(redact_probe 'no-such-node-zzz' \
       'arn:aws:eks:us-east-1:123456789012:cluster/prod' \
       '"cluster": "arn:aws:eks:us-east-1:123456789012:cluster/prod"')" \
   '"cluster": "<context>"'
 
 check 'node and context redaction compose' \
-  "$(redact_probe 's/worker-1/<node-1>/g' 'kind-kubeagent-chaos' \
+  "$(redact_probe 'worker-1' 'kind-kubeagent-chaos' \
       'context kind-kubeagent-chaos saw node worker-1')" \
   'context <context> saw node <node-1>'
 
-# The ordering this depends on: a node name ("prod") that is also a trailing
-# substring of the context string, a realistic shape when a node pool is
-# named after its cluster. Running the node-name regex first would splice
-# <node-1> into the middle of the ARN and leave the account ID and region
-# behind unredacted, because the later exact-match context replace would no
-# longer find the (now-mutated) context string intact. redact_nodes runs the
-# context replace first for exactly this reason.
+# node1/node10: the short name must not eat the prefix of the long one and
+# leave a stray "0" behind. This is the same longest-first guarantee
+# portable_node_redaction has always relied on, now carried by
+# redact_needles's single alternation instead of a hand-built sed script.
+check 'a node name that is a prefix of another node name does not fracture it' \
+  "$(redact_probe "$(printf 'node1\nnode10')" 'kind-kubeagent-chaos' \
+      'saw node1 and node10')" \
+  'saw <node-1> and <node-2>'
+
+# The case a two-pass, context-first filter gets right: a node name ("prod")
+# that is also a trailing substring of the context string, the shape a node
+# pool named after its cluster produces. A single pass must get this right
+# too, not just the direction a sequential filter happens to handle.
 check 'a node name that is a substring of the context leaves no partial credential' \
-  "$(redact_probe 's/prod/<node-1>/g' \
+  "$(redact_probe 'prod' \
       'arn:aws:eks:us-east-1:123456789012:cluster/prod' \
       'cluster: arn:aws:eks:us-east-1:123456789012:cluster/prod')" \
   'cluster: <context>'
 
+# The mirror case: a bare context name (no `:`, no `/`, so nothing marks it
+# as "not a node name") that is itself a substring of a node name — exactly
+# GKE's own default node-name shape, gke-<cluster>-<pool>-<hash>. A
+# context-first two-pass filter gets this backwards: the context replace
+# runs first, consumes "prod" out of the middle of the node name, and the
+# node-name pass — built from the original, now-stale name — never matches
+# what is left, leaking "-worker-1.example.com" in the clear. This is the
+# case redact_needles's single pass exists to fix.
+check 'a context name that is a substring of a node name does not fracture the node name' \
+  "$(redact_probe 'prod-worker-1.example.com' 'prod' \
+      'log line naming node prod-worker-1.example.com in cluster')" \
+  'log line naming node <node-1> in cluster'
+
+# Two needles that overlap without either containing the other: context
+# "abc-def" and node "def-ghi" share "def" at the boundary in "abc-def-ghi".
+# Neither needle's FULL text survives — that is the promise redact_needles
+# keeps unconditionally — but the comment above the function is explicit
+# that a non-overlapping tail of the needle that loses the race (here,
+# node "def-ghi"'s "-ghi") can remain. This locks in that documented,
+# narrower residual rather than a stronger claim the design does not make.
+check 'overlapping needles: neither survives whole, though a losing tail can remain' \
+  "$(redact_probe 'def-ghi' 'abc-def' 'abc-def-ghi')" \
+  '<context>-ghi'
+
 check 'text containing neither name is unchanged' \
-  "$(redact_probe 's/no-such-node-zzz/<node-1>/g' 'no-such-context-zzz' \
+  "$(redact_probe 'no-such-node-zzz' 'no-such-context-zzz' \
       'nothing sensitive here')" \
   'nothing sensitive here'
 
 # --- redact_nodes: a redaction failure withholds the section, logs to
 # stderr, and never aborts the run ----------------------------------------
-# Force redact_ctx to fail (standing in for the python3 call misbehaving,
+# Force redact_needles to fail (standing in for the python3 call misbehaving,
 # which preflight/portable_preflight's python3 requirement should make
 # impossible in practice) and check the three promises in run.sh's comment:
 # no fallback to the raw text, a visible marker in its place, a line on
@@ -303,13 +332,13 @@ redact_failure_probe() {   # -> "<rc>|<stdout>|<stderr names the failure>"
   (
     set --
     . chaos/run.sh
-    NODE_SED='s/no-such-node-zzz/<node-1>/g'
+    NODE_NAMES='no-such-node-zzz'
     CTX='top-secret-context'
-    redact_ctx() { return 1; }
+    redact_needles() { return 1; }
     printf 'top-secret-context appears here\n' | redact_nodes
   ) >"$tmpout" 2>"$tmperr" && rc=0 || rc=$?
   printf '%s|%s|%s\n' "$rc" "$(cat "$tmpout")" \
-    "$(grep -c 'context redaction failed' "$tmperr" || true)"
+    "$(grep -c 'redaction failed' "$tmperr" || true)"
   rm -f "$tmpout" "$tmperr"
 }
 redact_failure_result="$(redact_failure_probe)"
@@ -317,7 +346,7 @@ check 'a redaction failure does not abort the pipeline' \
   "$(printf '%s' "$redact_failure_result" | cut -d'|' -f1)" 0
 check 'a redaction failure withholds the section, never the raw credential' \
   "$(printf '%s' "$redact_failure_result" | cut -d'|' -f2)" \
-  '<context redaction failed: section withheld>'
+  '<redaction failed: section withheld>'
 check 'a redaction failure logs a line on stderr' \
   "$(printf '%s' "$redact_failure_result" | cut -d'|' -f3)" 1
 

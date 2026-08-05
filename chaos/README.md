@@ -242,12 +242,19 @@ and the deduplicated OS image, container runtime and kubelet version from
 name is a credential — on a managed cluster it is routinely an ARN or a
 project/region path — and this report is designed to be forwarded.
 
-Both are enforced the same way: every scenario's write to the report passes
-through one filter. Node names go through a generated substitution list; the
-context name goes through an exact, literal replace rather than a regex,
-because a real context name can carry almost anything a kubeconfig accepts. A
-section the filter cannot redact is withheld — replaced by a marker, never
-shown unredacted — and that failure never stops the run.
+Both are enforced the same way, literally: every scenario's write to the
+report passes through one filter, and that filter redacts node names and the
+context name together, in a single pass, rather than as two independent
+steps run one after the other. Two independent steps can each consume their
+own needle out of the text before the other's exact match ever sees it —
+whichever direction a node name or the context name happens to embed the
+other, running the filters in a fixed order gets one of those directions
+wrong. A single pass avoids that: every node name and the context name are
+matched as literals, never as a regex (a real context name can carry almost
+anything a kubeconfig accepts), longest name first, in one left-to-right
+scan that never revisits text it has already replaced. A section the filter
+cannot redact is withheld — replaced by a marker, never shown unredacted —
+and that failure never stops the run.
 
 ### The baseline
 

@@ -48,13 +48,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   context name, and a scenario that dumps that output into the report as
   evidence has no name of its own to substitute. Those are now caught at a
   single seam instead — every write to the report, from every scenario,
-  passes through one filter that redacts the context name (a literal byte
-  replace, since a real one can carry almost anything a kubeconfig accepts)
-  alongside the node-name redaction already in place there, so a scenario
-  added later inherits the protection rather than having to remember it. A
-  redaction that fails withholds the affected section instead of showing it
-  unredacted, and never aborts the run. A context name is a credential and
-  the results file is designed to be forwarded.
+  passes through one filter that redacts node names and the context name
+  together, in a single left-to-right pass over the raw bytes (never a
+  regex over the context, since a real one can carry almost anything a
+  kubeconfig accepts) rather than as two independently-ordered steps, which
+  can each consume their own needle before the other's exact match ever
+  runs. A scenario added later inherits the protection rather than having
+  to remember it. A redaction that fails withholds the affected section
+  instead of showing it unredacted, and never aborts the run. A context
+  name is a credential and the results file is designed to be forwarded.
 
 ## [1.3.0] - 2026-08-05
 

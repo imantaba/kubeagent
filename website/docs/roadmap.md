@@ -523,8 +523,14 @@ These are the north star; every item below is measured against them.
   never set, so it gates kubeagent's deterministic core, not the `--explain`
   path — and it covers exactly one distribution, one architecture, and one
   CNI: kind, on `ubuntu-latest`, amd64, with Calico. Cross-distro coverage
-  (EKS, GKE, AKS, OpenShift, k3s, RKE2) is not part of this slice and remains
-  ahead — see
+  (EKS, GKE, AKS, OpenShift, k3s, RKE2) was not part of that
+  slice. Since then the harness has grown a **portability seam**:
+  `./chaos/run.sh --context <ctx>` runs the namespaced-only subset — plus one
+  scenario that only reads — against a cluster the harness did not create,
+  refuses every scenario that would write a
+  cluster-scoped object or shell into a node, and names each skip and its reason in
+  the assertion summary. Pointing it at a distribution is now a hand-run away;
+  **gating one in CI is still ahead** — see
   [the chaos harness](https://github.com/imantaba/kubeagent/tree/main/chaos).
   Slice 9 — the production contract itself — has shipped (v1.0.0) and closes
   Theme H: [Compatibility and support](compatibility.md) writes down which

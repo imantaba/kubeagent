@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A portability seam in the chaos harness.** `./chaos/run.sh --context <ctx>`
+  runs the suite against a cluster the harness did not create. Each scenario
+  declares the infrastructure it needs from a closed six-name vocabulary, and a
+  scenario whose need is unmet is skipped with a named reason rather than run or
+  silently dropped: six scenarios that write cluster-scoped objects and two that
+  need shell access to a node container are refused outright on a cluster the
+  harness does not own, and four more are gated on what the cluster turns out to
+  have — a LoadBalancer provider, metrics-server, a NetworkPolicy-enforcing CNI,
+  and a clean starting verdict. A preflight refuses to start unless the context
+  connects, no `chaos-*` namespace already exists, and a namespace create/delete
+  round trip succeeds; `--recreate`, `--teardown` and `--k8s-version` are refused
+  rather than ignored; and leftover namespaces are swept at the end. The report
+  names the platform (server version, node count, deduplicated OS image,
+  container runtime and kubelet version) and never the cluster. This makes a
+  cross-distribution answer obtainable by hand; gating a distribution in CI is a
+  separate piece of work.
+
+### Changed
+
+- **The chaos harness's assertion summary now counts skipped scenarios.** The
+  report gains a `- scenarios skipped: N` bullet and, when N is non-zero, a
+  fenced list of each skip and its reason; the console line becomes
+  `assertions: N run, M failed; K scenario(s) skipped`. It is reported
+  unconditionally, including when it is zero. A skip is never a failure and never
+  changes the exit code, which stays non-zero if and only if an assertion failed.
+
+### Fixed
+
+- **The chaos report no longer carries the kubeconfig context name.** The
+  multi-cluster and MCP scenarios wrote it into the results file — as an
+  asserted value that the assertion helper echoes on its passing branch, and
+  in the MCP scenario's raw JSON-RPC response, which echoes it independent of
+  the asserted value. Both now compare a harness-chosen alias or a derived
+  indicator instead, proving exactly what they proved before. Four more
+  scenarios could not take that route: the watch daemon labels its own log
+  lines, its `/issues` roster and its Prometheus metric series with the
+  context name, and a scenario that dumps that output into the report as
+  evidence has no name of its own to substitute. Those are now caught at a
+  single seam instead — every write to the report, from every scenario,
+  passes through one filter that redacts node names and the context name
+  together, in a single left-to-right pass over the raw bytes (never a
+  regex over the context, since a real one can carry almost anything a
+  kubeconfig accepts) rather than as two independently-ordered steps, which
+  can each consume their own needle before the other's exact match ever
+  runs. One case still slips a fragment through: a node name and the
+  context name that overlap without either containing the other can leave
+  the loser's non-overlapping tail in the clear, though never either's full
+  literal text — see `chaos/README.md` for when. A scenario added later
+  inherits the protection rather than having to remember it. A redaction
+  that fails withholds the affected section instead of showing it
+  unredacted, and never aborts the run. A context name is a credential and
+  the results file is designed to be forwarded.
+
 ## [1.3.0] - 2026-08-05
 
 ### Added

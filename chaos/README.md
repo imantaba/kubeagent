@@ -9,9 +9,12 @@ report: `./chaos/run.sh` exits non-zero the moment any assertion fails, so a
 regression stops a release instead of waiting for someone to notice it while
 reading the whole thing.
 
-It is read-only with respect to any real cluster: it creates and targets only
-its own `kind-kubeagent-chaos` context — `kind-kubeagent-chaos-v1-33` and the
-like when `--k8s-version` is given — and never reads your current kubecontext.
+By default the harness targets **only** the Kind context it creates
+(`kind-kubeagent-chaos`, or `kind-kubeagent-chaos-v1-33` and the like when
+`--k8s-version` is given) — it does not read your current kubecontext, so a
+plain run cannot touch another cluster. `--context <ctx>` deliberately points
+it at a cluster you already have; that mode is described under
+[Portable mode](#portable-mode) and carries its own guard rails.
 
 ## Prerequisites
 
@@ -161,6 +164,112 @@ ANTHROPIC_API_KEY=sk-ant-... ./chaos/run.sh --recreate
 
 The key is read from the environment only; it is never written to the report.
 
+## Portable mode
+
+```bash
+./chaos/run.sh --context <ctx>
+```
+
+Runs the portable subset against a cluster the harness did **not** create. The
+report defaults to `docs/testing/chaos-results-portable.md`.
+
+`kind` and `docker` are not required in this mode — the binary list is
+`kubectl`, `go`, `curl` and `python3`.
+
+### What it does to the cluster
+
+Every scenario that runs writes to a `chaos-*` namespace it creates, breaks
+something inside it, and deletes the namespace afterwards — with one exception:
+scenario 21 (control-plane readiness) injects nothing and creates no namespace.
+Its entire body is `scan --control-plane-health`, a GET against the live
+apiserver's `/readyz`, so it has no blast radius at all. Whatever a partial run
+leaves behind is swept at the end. Two consequences are worth knowing before you
+point this at a shared cluster:
+
+- **Scenario 8 deletes a namespace and asserts the cluster reads healthy again.**
+  It deletes only the `chaos-doomed` namespace it created moments earlier — but
+  a cluster where a namespace deletion triggers alerting will alert.
+- **Scenario 10 plants a fake AWS access key** (`AKIAIOSFODNN7EXAMPLE`, AWS's own
+  published example value) in a ConfigMap so kubeagent's credential-leak detector
+  has something to find. A secret scanner or a Falco rule watching the API server
+  will fire on it. It is deleted with the namespace.
+
+### What it refuses
+
+Nine of the 23 scenarios are skipped on a cluster the harness does not own:
+
+| Skipped | Why |
+|---|---|
+| 1, 11 | need shell access to a node container, which exists only on a cluster the harness created |
+| 3, 5, 16, 17, 20, 22 | write cluster-scoped objects (node conditions, the CoreDNS ConfigMap, CRDs, ClusterRoles) |
+| 2 | control-plane certificate expiry cannot be forced quickly or safely — skipped everywhere, including on Kind |
+
+Four more skip depending on what the cluster turns out to be:
+
+| Skipped when | Scenario | Probe |
+|---|---|---|
+| a LoadBalancer provider assigns addresses | 6 | a LoadBalancer Service in a temporary `chaos-probe` namespace gets an address within 30s |
+| metrics-server is installed | 18 | the `v1beta1.metrics.k8s.io` APIService exists |
+| the CNI is not recognised as enforcing | 4 | a `calico-node`, `cilium`, `weave-net`, `kube-router` or `antrea-agent` DaemonSet in `kube-system` |
+| the cluster was not already healthy | 8 | the baseline scan reported `Cluster: Healthy` and `No issues found.` |
+
+The CNI probe is a **heuristic** with two named failure modes: an enforcing CNI
+whose DaemonSet is not on that list produces a false skip (safe — the summary
+names it), and a listed CNI configured not to enforce produces a false failure in
+scenario 4. There is no cheap probe that avoids both, and the harness prefers to
+be wrong in the direction of skipping.
+
+Three flags are **refused**, not ignored, because all three manage a Kind
+cluster's lifecycle: `--recreate`, `--teardown` and `--k8s-version`. Each exits
+2 with its reason.
+
+### What it checks before touching anything
+
+1. The named context exists in your kubeconfig.
+2. The cluster answers.
+3. No `chaos-*` namespace already exists — debris from an aborted run, or a
+   second run in progress. The harness names what it found and refuses; it will
+   not delete a namespace it did not create.
+4. A namespace create/delete round trip actually succeeds with these credentials.
+
+Each failure exits 1 with its reason on **stderr**.
+
+### What is in the report, and what is not
+
+The report names the platform and never the cluster: server version, node count,
+and the deduplicated OS image, container runtime and kubelet version from
+`nodeInfo`. **No node name or context name reaches the report as its full
+literal text, and no address is ever printed at all** — with one exception: a
+context name and a node name that overlap without either containing the other
+can leave the losing one's non-overlapping tail in the clear, never either
+name's full text. That takes two real identities landing byte-adjacent with no
+separator, which the log lines, JSON fields and metric labels this filter
+protects never produce. A kubeconfig context name is a credential — on a managed
+cluster it is routinely an ARN or a project/region path — and this report is
+designed to be forwarded.
+
+Both are enforced the same way, literally: every scenario's write to the
+report passes through one filter, and that filter redacts node names and the
+context name together, in a single pass, rather than as two independent
+steps run one after the other. Two independent steps can each consume their
+own needle out of the text before the other's exact match ever sees it —
+whichever direction a node name or the context name happens to embed the
+other, running the filters in a fixed order gets one of those directions
+wrong. A single pass avoids that: every node name and the context name are
+matched as literals, never as a regex (a real context name can carry almost
+anything a kubeconfig accepts), longest name first, in one left-to-right
+scan that never revisits text it has already replaced. A section the filter
+cannot redact is withheld — replaced by a marker, never shown unredacted —
+and that failure never stops the run.
+
+### The baseline
+
+A cluster you already run is very likely not clean, through no fault of
+kubeagent. In portable mode the baseline asserts only that the scan exited 0 and
+rendered a verdict; the verdict itself is recorded for a human to read rather
+than asserted. A dirty baseline also withdraws `clean_baseline`, which skips
+scenario 8.
+
 ## Assertions
 
 Every scenario captures a value it already computed from the scan — an exit
@@ -177,13 +286,21 @@ the console. That is what an operator watching a 35–40 minute run actually
 sees scroll by.
 
 `main` finishes with `assert_summary`, which appends an `## Assertion summary`
-to the end of the report naming every `FAIL`, prints `assertions: N run, M
-failed` to the console, and returns non-zero when `M > 0` — that return status
-is what makes `./chaos/run.sh` itself exit non-zero. The baseline and all 23
-scenarios are asserted except one: scenario 2 (expired certificates) runs no
-scan and computes nothing, so it carries no assertion by design — the TLS
-branch it would otherwise cover is unit-tested in `internal/connectivity`
-instead.
+to the end of the report. The run ends with `assertions: N run, M failed; K
+scenario(s) skipped` on the console and an `## Assertion summary` in the report
+carrying the same three counts. A failure list is fenced under it when there
+are failures; a skip list is fenced under it when there are skips.
+
+**A skip is never a failure and never moves the exit code** — it is a declared
+gap. It is reported unconditionally, including when the count is zero, so a run
+that skipped nine scenarios can never be read as a full green one. The exit
+code is non-zero if and only if an assertion failed.
+
+The baseline and all 23 scenarios are asserted except one: scenario 2 (expired
+certificates) runs no scan and computes nothing, so it carries no assertion by
+design — the TLS branch it would otherwise cover is unit-tested in
+`internal/connectivity` instead. It is now counted in `scenarios skipped`
+rather than silently absent.
 
 These assertions are written at kubeagent's contract level — a finding
 kubeagent reported, a counter kubeagent computed, kubeagent's own exit code —
@@ -291,9 +408,12 @@ vendor a pinned `pod-memory-hog` ChaosExperiment + ChaosEngine and swap it into
 
 ## Safety
 
-- Targets only the context it created — `kind-kubeagent-chaos`, or
-  `kind-kubeagent-chaos-v1-33` and the like under `--k8s-version`. It never
-  reads your current kubecontext, so it cannot touch another cluster.
+- By default the harness targets **only** the Kind context it creates
+  (`kind-kubeagent-chaos`, or `kind-kubeagent-chaos-v1-33` and the like under
+  `--k8s-version`) — it does not read your current kubecontext, so a plain run
+  cannot touch another cluster. `--context <ctx>` deliberately points it at a
+  cluster you already have; that mode is described under
+  [Portable mode](#portable-mode) and carries its own guard rails.
 - The credential-leak scenario uses the documentation value
   `AKIAIOSFODNN7EXAMPLE` — never a real secret.
 - `ANTHROPIC_API_KEY` is read from the environment and never logged or committed.

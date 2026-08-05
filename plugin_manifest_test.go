@@ -158,6 +158,7 @@ func TestMarketplaceEntryResolves(t *testing.T) {
 // catching. Tasks that add a skill or command add its path here.
 var pluginDocFiles = []string{
 	"skills/triaging-a-cluster/SKILL.md",
+	"skills/reading-kubeagent-findings/SKILL.md",
 }
 
 // toolNameRE matches an MCP tool name wherever it appears — in a Go

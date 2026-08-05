@@ -132,8 +132,16 @@ support window is a statement about what is tested, not a stable API.
 **What the matrix does not cover:** one distribution (kind), one architecture
 (amd64), one CNI (Calico), on `ubuntu-latest`. kubeagent uses only stable
 `client-go` APIs and should work on any conformant cluster in the window, but
-EKS, GKE, AKS, OpenShift, k3s, and RKE2 are not gated in CI. Cross-distribution
-coverage is on the roadmap.
+EKS, GKE, AKS, OpenShift, k3s, and RKE2 are **not gated in CI**, and nothing on
+this page claims they are.
+
+The harness itself can now be pointed at a cluster it did not create:
+`./chaos/run.sh --context <ctx>` runs the subset of scenarios whose blast radius
+is a namespace it creates and deletes, refuses every scenario that would write a
+cluster-scoped object or touch a node, and names each skipped scenario and its
+reason in the assertion summary — so a partial run can never be mistaken for a
+full one. That makes a cross-distribution answer **obtainable by hand**. It does
+not make one **gated**, which is still ahead.
 
 ## Deprecation policy
 

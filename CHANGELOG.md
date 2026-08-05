@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A portability seam in the chaos harness.** `./chaos/run.sh --context <ctx>`
+  runs the suite against a cluster the harness did not create. Each scenario
+  declares the infrastructure it needs from a closed six-name vocabulary, and a
+  scenario whose need is unmet is skipped with a named reason rather than run or
+  silently dropped: six scenarios that write cluster-scoped objects and two that
+  need shell access to a node container are refused outright on a cluster the
+  harness does not own, and four more are gated on what the cluster turns out to
+  have — a LoadBalancer provider, metrics-server, a NetworkPolicy-enforcing CNI,
+  and a clean starting verdict. A preflight refuses to start unless the context
+  connects, no `chaos-*` namespace already exists, and a namespace create/delete
+  round trip succeeds; `--recreate`, `--teardown` and `--k8s-version` are refused
+  rather than ignored; and leftover namespaces are swept at the end. The report
+  names the platform (server version, node count, deduplicated OS image,
+  container runtime and kubelet version) and never the cluster. This makes a
+  cross-distribution answer obtainable by hand; gating a distribution in CI is a
+  separate piece of work.
+
+### Changed
+
+- **The chaos harness's assertion summary now counts skipped scenarios.** The
+  report gains a `- scenarios skipped: N` bullet and, when N is non-zero, a
+  fenced list of each skip and its reason; the console line becomes
+  `assertions: N run, M failed; K scenarios skipped`. It is reported
+  unconditionally, including when it is zero. A skip is never a failure and never
+  changes the exit code, which stays non-zero if and only if an assertion failed.
+
+### Fixed
+
+- **The chaos report no longer carries the kubeconfig context name.** The
+  multi-cluster and MCP scenarios wrote it into the results file — as a metric
+  label, in a `/issues` roster, as an asserted value that the assertion helper
+  echoes on its passing branch, and in the MCP scenario's raw JSON-RPC response
+  dumped into the report as evidence, which echoes it at `cluster.context` and
+  `coverage.context` independent of the asserted value. All four routes now
+  compare harness-chosen names, derived indicators, or a redacted copy instead,
+  proving exactly what they proved before. A context name is a credential and
+  the results file is designed to be forwarded.
+
 ## [1.3.0] - 2026-08-05
 
 ### Added

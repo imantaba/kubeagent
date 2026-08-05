@@ -146,6 +146,88 @@ preflight() {
   check_inotify_limits
 }
 
+# portable_preflight — what the harness must know before it touches a cluster it
+# does not own. Every one of these exits rather than degrading: a chaos run that
+# started against the wrong cluster cannot be undone by noticing later.
+#
+# The binary list is SHORTER than preflight()'s, not longer: portable mode
+# creates no kind cluster and side-loads no image, so kind and docker are not
+# needed at all.
+#
+# The context name appears on stderr here and nowhere else. It is a credential
+# under this project's rules — on a managed cluster it is routinely an ARN or a
+# project/region path — but stderr is the operator's own channel, read by the
+# person who typed the name, and a preflight failure that will not say which
+# cluster it means is not actionable. It never reaches $OUT.
+portable_preflight() {
+  local b existing probe=chaos-preflight
+
+  for b in kubectl go curl python3; do
+    command -v "$b" >/dev/null || { echo "missing required tool: $b" >&2; exit 1; }
+  done
+
+  kubectl config get-contexts "$CTX" >/dev/null 2>&1 || {
+    printf 'no such context in the kubeconfig: %s\n' "$CTX" >&2
+    printf 'List them with: kubectl config get-contexts\n' >&2
+    exit 1
+  }
+
+  kubectl --context "$CTX" version -o json >/dev/null 2>&1 || {
+    printf 'context %s exists but the cluster did not answer\n' "$CTX" >&2
+    printf 'The credentials may be expired, or the API server may be unreachable from here.\n' >&2
+    exit 1
+  }
+
+  # Debris from an aborted run, or a second run already in progress. Either way
+  # the scenarios below would collide with it, and deleting someone else's
+  # namespace unasked is not the harness's call to make.
+  existing="$(kubectl --context "$CTX" get ns -o name 2>/dev/null \
+    | sed 's|^namespace/||' | grep '^chaos-' | tr '\n' ' ' || true)"
+  existing="${existing% }"
+  if [ -n "$existing" ]; then
+    {
+      printf 'refusing to start: chaos-* namespaces already exist on the target cluster:\n'
+      printf '  %s\n' "$existing"
+      printf 'They are debris from an aborted run, or another run is in progress. Delete them first:\n'
+      printf '  kubectl --context %s delete ns %s\n' "$CTX" "$existing"
+    } >&2
+    exit 1
+  fi
+
+  # A round trip, not a SelfSubjectAccessReview: what matters is that this
+  # identity can actually create AND delete a namespace here, which is the only
+  # write the portable subset performs.
+  log "portable preflight: namespace create/delete round trip"
+  kubectl --context "$CTX" create ns "$probe" >/dev/null 2>&1 || {
+    printf 'refusing to start: cannot create a namespace on the target cluster.\n' >&2
+    printf 'The portable subset creates and deletes chaos-* namespaces; it needs that permission.\n' >&2
+    exit 1
+  }
+  kubectl --context "$CTX" delete ns "$probe" --wait=true --timeout=120s >/dev/null 2>&1 || {
+    printf 'refusing to start: created namespace %s but could not delete it again.\n' "$probe" >&2
+    printf 'Delete it by hand before re-running.\n' >&2
+    exit 1
+  }
+}
+
+# portable_sweep — delete any chaos-* namespace still standing at the end of a
+# portable run, so a scenario that failed part way through does not leave a
+# broken workload on a cluster the harness does not own.
+#
+# Best-effort by design, and it must never return non-zero: it runs before
+# assert_summary, and a sweep that aborted the script would swallow the very
+# exit code the run exists to produce.
+portable_sweep() {
+  log "sweep leftover chaos-* namespaces"
+  local ns
+  for ns in $(kubectl --context "$CTX" get ns -o name 2>/dev/null \
+                | sed 's|^namespace/||' | grep '^chaos-' || true); do
+    kubectl --context "$CTX" delete ns "$ns" --wait=false >/dev/null 2>&1 \
+      || log "sweep: could not delete namespace $ns"
+  done
+  return 0
+}
+
 build_kubeagent() { log "build kubeagent"; go build -o ./kubeagent .; ./kubeagent version; }
 
 create_cluster() {

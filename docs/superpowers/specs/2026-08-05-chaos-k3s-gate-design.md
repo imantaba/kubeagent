@@ -96,16 +96,46 @@ k3s run is granted, and one reason string.
 |---|---|---|
 | `cluster_write` | **granted** | the harness created this cluster and can delete it |
 | `node_exec` | **withheld** | k3s has no kubeadm-shaped control plane to exec into |
-| `clean_baseline` | decided by the baseline scan | unchanged in both modes |
+| `clean_baseline` | **granted** | a fresh stock k3s reads healthy — measured |
 | `no_metrics_server` | not granted | k3s ships metrics-server |
-| `no_loadbalancer` | not granted | k3s ships ServiceLB |
+| `no_loadbalancer` | **granted** | measured; see below — not the answer this design first predicted |
 | `netpol_enforced` | not granted | Flannel, and no CNI DaemonSet the probe recognises |
 
 The four discovered capabilities are **not special-cased for k3s**. The probes
 run exactly as they do today and reach those answers on their own. That is
 deliberate: a probe that had to be told about k3s would prove nothing, and a
-probe that is wrong makes its scenario **fail**, not skip — so three skips on
-k3s are evidence the probes work.
+probe that is wrong makes its scenario **fail**, not skip.
+
+Every row above is measured on a throwaway k3d cluster
+(`rancher/k3s:v1.34.10-k3s1`, one server + two agents), not predicted. Two rows
+came back different from this design's first draft, which is the entire reason
+the measurement was made before the plan was written.
+
+### `no_loadbalancer` is granted on k3s, and why that is not a fluke
+
+k3s ships ServiceLB, so the expectation was that a LoadBalancer Service gets an
+address and the capability is withheld. It is not what happens. k3s's ServiceLB
+publishes an address only once the `svclb` DaemonSet it creates for that Service
+has a pod that can bind the requested **host port** — and k3s's own Traefik
+LoadBalancer already holds ports 80 and 443 on every node its affinity allows.
+A second port-80 LoadBalancer therefore stays addressless indefinitely, with its
+`svclb` pods Pending on `didn't have free ports for the requested pod ports`.
+
+Measured consequences, both on the throwaway cluster:
+
+- the probe Service gets no address in 30s, so `no_loadbalancer` is granted
+- scenario 06 therefore **runs**, and all three of its assertions pass: exit 0,
+  `chaos-lb/web` named, `no external address` flagged — while the scan
+  additionally surfaces the real k3s cause as an Unschedulable `svclb` DaemonSet
+
+That makes scenario 06 a *better* test on k3s than on kind: same finding,
+reached through a mechanism a real operator actually hits.
+
+It also creates a coupling that must be written down rather than left implicit:
+**the harness must not create the k3s cluster with Traefik disabled.** Passing
+`--disable=traefik` would free port 80, ServiceLB would assign an address, and
+scenario 06 would fail. "Stock defaults" is load-bearing here, not an aesthetic
+preference.
 
 ### Why `node_exec` is withheld, and why its reason changes
 
@@ -140,19 +170,22 @@ one scenario 01 writes today.
 
 ### Expected shape of a k3s run
 
-Six scenarios skip, each naming its reason in the assertion summary:
+Five scenarios skip, each naming its reason in the assertion summary:
 
 | scenario | skips because |
 |---|---|
 | 01 etcd | `node_exec` |
 | 11 kubelet | `node_exec` |
 | 04 networkpolicy | `netpol_enforced` |
-| 06 loadbalancer | `no_loadbalancer` |
 | 18 capacity | `no_metrics_server` |
 | 02 certs | the unconditional documented skip, as on kind |
 
-Seventeen scenarios run, including all six `cluster_write` ones. The assertion
-count that run produces is **measured during the build**, not predicted here.
+Eighteen scenarios run, including all six `cluster_write` ones and scenario 06.
+The assertion count that run produces is **measured during the build**, not
+predicted here.
+
+Anything outside this list that skips, or any scenario here that runs, is a
+finding to investigate rather than a number to write down.
 
 ## Harness changes beyond the flag
 
@@ -206,26 +239,56 @@ supported minor, resolved the same way the kind images were and documented in
 are defined for all three supported minors even though CI runs one, so an
 operator can run any of them by hand.
 
-## Two risks the local run must settle
+## Measured facts the plan builds on
 
-Named here rather than discovered during the build:
+All of the following were established on a throwaway k3d cluster before this
+plan was written, so no task has to discover them.
 
-1. **k3s re-applies its add-on manifests.** k3s deploys CoreDNS from an
-   auto-deploying manifest directory. Scenarios 05 (bad Corefile) and 22 (DNS
-   health) both modify the CoreDNS ConfigMap. If k3s reverts those edits, the
-   scenarios fail rather than skip. The end-to-end run on this machine is what
-   answers it. If it happens, the accommodation is scenario-level and is one of
-   exactly two: re-assert the edit after k3s reverts it, or drive the change
-   through k3s's own supported CoreDNS customization path. Withholding a
-   capability to mute the two scenarios is **not** an option — `cluster_write`
-   is granted honestly on a cluster the harness owns, and a capability must
-   never be repurposed as a per-scenario mute switch.
-2. **ServiceLB assigns node IPs as external addresses.** Scenario 06 is skipped,
-   so nothing asserts on the address. Nothing else in the harness reads a
-   LoadBalancer address except the `no_loadbalancer` probe, which already reads
-   it and discards it without printing — an external address is exactly the kind
-   of value this project does not write into a forwarded artifact. This must
-   stay true on k3s.
+**Tooling.** k3d **v5.9.0**, asset `k3d-linux-amd64`, SHA256
+`06d8f25bc3a971c4eb29e0ff08429b180402db0f4dec838c9eac427e296800a0`. Creating a
+one-server, two-agent cluster from a digest-pinned image took **71 seconds**.
+k3d bundles its own default k3s version, which is why the harness always passes
+`--image` explicitly rather than accepting it.
+
+**Digest-pinned images**, resolved through `registry-1.docker.io` with an
+`auth.docker.io` bearer token, newest patch of each supported minor:
+
+| minor | image |
+|---|---|
+| v1.32 | `rancher/k3s:v1.32.13-k3s1@sha256:7534b63e02277917f77c584ed5532b31562c760d6bb8fe88059002e9bdeee033` |
+| v1.33 | `rancher/k3s:v1.33.13-k3s2@sha256:ada5ff2e138120efe877f76d514dedda65b304122112b982eab532732c028c89` |
+| v1.34 | `rancher/k3s:v1.34.10-k3s1@sha256:e27c6ae5717752d4460efbb06595966a06d044301af5c8cf6c0bbf6b9bf53e3b` |
+
+**Cluster shape** on stock `v1.34.10-k3s1`: context `k3d-<cluster>`; nodes
+`k3d-<cluster>-server-0` (carrying the control-plane role label) and
+`-agent-0`/`-agent-1` (carrying no role label); `kube-system` Deployments
+coredns (one replica), local-path-provisioner, metrics-server and traefik; no
+`local-path-storage` namespace; no CNI DaemonSet. k3d also creates a
+`k3d-<cluster>-serverlb` proxy container and a transient tools container —
+neither is a Kubernetes node.
+
+**Baseline.** A fresh cluster scans as `Cluster: Healthy — 3/3 nodes Ready` with
+`No issues found.`, so `clean_baseline` is granted and scenario 08 runs.
+kubeagent already identifies the distribution on its own: the platform line
+reads `Traefik ingress · local-path storage · Kubernetes v1.34 (k3s) ·
+containerd`.
+
+**Risk closed — k3s does not revert the CoreDNS ConfigMap.** k3s deploys CoreDNS
+from an auto-deploying manifest directory, which raised the question of whether
+scenarios 05 and 22 could modify it at all. Measured: patching the Corefile to
+an invalid plugin and restarting produced `CrashLoopBackOff`, the scan read
+`Cluster: Degraded` and named `kube-system/coredns`, and the edit was still in
+place afterwards. Restoring from the captured backup brought the Deployment back
+Available. Scenario 05 needs no accommodation. Scenario 22 uses the same
+mechanism.
+
+**Risk closed — scenario 21 works.** `--control-plane-health` against k3s
+returns `controlPlane.status == "ok"`, which is what the scenario asserts.
+
+**External addresses stay unprinted.** The only place the harness reads a
+LoadBalancer address is the `no_loadbalancer` probe, which reads it and discards
+it without printing — an external address is exactly the kind of value this
+project does not write into a forwarded artifact. That stays true on k3s.
 
 ## CI
 
@@ -259,7 +322,7 @@ about the kind axis rather than about every cell.
 
 The k3s cell's measured count is published in **two** places only —
 `website/docs/compatibility.md` and `chaos/README.md`, the two documents that
-describe what CI covers — named alongside the six scenarios it skips and why.
+describe what CI covers — named alongside the five scenarios it skips and why.
 It does not go into `CLAUDE.md` or the roadmap: a number in four places is a
 number that goes stale in two of them.
 
@@ -288,7 +351,7 @@ scenario 03 cordons a node on each.
 
 - the full kind run stays green at 134 assertions, 0 failed, 1 scenario skipped
 - a full k3s run completes and its assertion count, failures and skip list are
-  measured — the six expected skips and nothing else
+  measured — the five expected skips and nothing else
 - the k3s report carries no node name, no context name and no external address
 
 k3d is a single downloadable binary, so both runs are reproducible here. Nothing

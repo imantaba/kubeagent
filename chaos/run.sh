@@ -160,7 +160,7 @@ preflight() {
 # person who typed the name, and a preflight failure that will not say which
 # cluster it means is not actionable. It never reaches $OUT.
 portable_preflight() {
-  local b existing probe=chaos-preflight
+  local b existing nslist probe=chaos-preflight list_rc=0
 
   for b in kubectl go curl python3; do
     command -v "$b" >/dev/null || { echo "missing required tool: $b" >&2; exit 1; }
@@ -181,8 +181,22 @@ portable_preflight() {
   # Debris from an aborted run, or a second run already in progress. Either way
   # the scenarios below would collide with it, and deleting someone else's
   # namespace unasked is not the harness's call to make.
-  existing="$(kubectl --context "$CTX" get ns -o name 2>/dev/null \
-    | sed 's|^namespace/||' | grep '^chaos-' | tr '\n' ' ' || true)"
+  #
+  # The list call is captured on its own line, separately from the grep that
+  # follows: under pipefail, a `kubectl get ns` that FAILS and a `kubectl get
+  # ns` that legitimately finds no chaos-* namespace both end the pipeline on
+  # grep's no-match exit status, indistinguishable without the `|| true`
+  # already needed for the second, legitimate case. Judging the list call on
+  # its own status, before grep ever runs, is what tells them apart — an
+  # identity that can create and delete a namespace by name but cannot list
+  # them cluster-wide must not be waved through as "no debris found".
+  nslist="$(kubectl --context "$CTX" get ns -o name 2>/dev/null)" || list_rc=$?
+  if [ "$list_rc" -ne 0 ]; then
+    printf 'refusing to start: could not list namespaces on the target cluster.\n' >&2
+    printf 'The portable subset must know whether chaos-* debris is already present, and it will not proceed blind.\n' >&2
+    exit 1
+  fi
+  existing="$(printf '%s\n' "$nslist" | sed 's|^namespace/||' | grep '^chaos-' | tr '\n' ' ' || true)"
   existing="${existing% }"
   if [ -n "$existing" ]; then
     {

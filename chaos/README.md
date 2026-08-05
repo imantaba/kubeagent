@@ -242,6 +242,13 @@ and the deduplicated OS image, container runtime and kubelet version from
 name is a credential — on a managed cluster it is routinely an ARN or a
 project/region path — and this report is designed to be forwarded.
 
+Both are enforced the same way: every scenario's write to the report passes
+through one filter. Node names go through a generated substitution list; the
+context name goes through an exact, literal replace rather than a regex,
+because a real context name can carry almost anything a kubeconfig accepts. A
+section the filter cannot redact is withheld — replaced by a marker, never
+shown unredacted — and that failure never stops the run.
+
 ### The baseline
 
 A cluster you already run is very likely not clean, through no fault of

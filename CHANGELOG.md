@@ -38,13 +38,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **The chaos report no longer carries the kubeconfig context name.** The
-  multi-cluster and MCP scenarios wrote it into the results file — as a metric
-  label, in a `/issues` roster, as an asserted value that the assertion helper
-  echoes on its passing branch, and in the MCP scenario's raw JSON-RPC response
-  dumped into the report as evidence, which echoes it at `cluster.context` and
-  `coverage.context` independent of the asserted value. All four routes now
-  compare harness-chosen names, derived indicators, or a redacted copy instead,
-  proving exactly what they proved before. A context name is a credential and
+  multi-cluster and MCP scenarios wrote it into the results file — as an
+  asserted value that the assertion helper echoes on its passing branch, and
+  in the MCP scenario's raw JSON-RPC response, which echoes it independent of
+  the asserted value. Both now compare a harness-chosen alias or a derived
+  indicator instead, proving exactly what they proved before. Four more
+  scenarios could not take that route: the watch daemon labels its own log
+  lines, its `/issues` roster and its Prometheus metric series with the
+  context name, and a scenario that dumps that output into the report as
+  evidence has no name of its own to substitute. Those are now caught at a
+  single seam instead — every write to the report, from every scenario,
+  passes through one filter that redacts the context name (a literal byte
+  replace, since a real one can carry almost anything a kubeconfig accepts)
+  alongside the node-name redaction already in place there, so a scenario
+  added later inherits the protection rather than having to remember it. A
+  redaction that fails withholds the affected section instead of showing it
+  unredacted, and never aborts the run. A context name is a credential and
   the results file is designed to be forwarded.
 
 ## [1.3.0] - 2026-08-05

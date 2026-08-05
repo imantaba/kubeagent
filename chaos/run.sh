@@ -385,10 +385,17 @@ print(";".join(parts))
 ' 2>/dev/null || true)"
   if [ -z "$NODE_SED" ]; then
     printf 'refusing to start: could not read the node list on the target cluster.\n' >&2
-    printf 'Portable mode redacts node names from the report, and it will not write one it cannot redact.\n' >&2
+    printf 'Portable mode redacts node and context names from the report, and it will not write one it cannot redact.\n' >&2
     exit 1
   fi
 }
+# NODE_SED's emptiness is also the gate redact_nodes uses for the context-name
+# redaction below: this function is the only thing that ever sets NODE_SED, so
+# there is nothing further for it to produce for the context case — $CTX is
+# already a plain in-memory string by the time main() calls it, not something
+# fetched from the cluster that can fail the way the node list can. See
+# redact_nodes and redact_ctx for the reasoning and for why that difference
+# means the context case needs no up-front refusal of its own.
 
 build_kubeagent() { log "build kubeagent"; go build -o ./kubeagent .; ./kubeagent version; }
 
@@ -541,14 +548,82 @@ worker_node() {
   printf '%s\n' "$n"
 }
 
-# redact_nodes — filter report text through the portable-mode node redaction.
+# redact_ctx — a byte-safe, literal replace of the kubeconfig context name
+# with the placeholder <context>. Written in Task 9 for scenario 19's raw
+# JSON-RPC dump and hoisted here so redact_nodes (below) can use it too: the
+# watch daemon labels its own log lines, /issues records and metric series by
+# context name, and a scenario that quotes that output into the report as
+# evidence has no name of its own to substitute the way scenarios 15 and 19's
+# own comparisons do.
 #
-# In kind mode there is nothing to redact: the harness created those nodes and
-# named them itself, and NODE_SED is empty, so this is a passthrough and the
-# kind path's bytes do not move. In portable mode NODE_SED is never empty —
-# portable_node_redaction exits rather than let it be.
+# A context name is a credential under this project's rules: on a managed
+# cluster it is routinely an EKS ARN (account ID, region and cluster name in
+# one string) or a project/region path, and it can contain almost anything a
+# kubeconfig accepts — including `/`, the delimiter NODE_SED's sed script
+# uses. Feeding it to `sed -E` is a bug whether or not it happens to work on
+# a harmless literal like a kind context; this is a literal byte replace
+# instead, never a regex.
+#
+# Operates on bytes, not decoded text: the report carries pod names, images
+# and event text this harness does not control, and decoding before the
+# replace would raise UnicodeDecodeError on a stray non-UTF-8 byte.
+#
+# Deliberately propagates python3's exit status rather than swallowing it:
+# every caller (redact_nodes below, and scenario_19_mcp's raw dump) catches
+# failure itself at the call site and decides what to show instead — never a
+# fallback to the unredacted bytes.
+redact_ctx() {
+  python3 -c '
+import sys
+ctx = sys.argv[1].encode()
+data = sys.stdin.buffer.read()
+sys.stdout.buffer.write(data.replace(ctx, b"<context>") if ctx else data)
+' "$CTX"
+}
+
+# redact_nodes — filter report text through the portable-mode redactions:
+# node names and the kubeconfig context name.
+#
+# In kind mode there is nothing to redact: the harness created those nodes
+# and chose that context itself, and NODE_SED is empty, so this is a
+# passthrough and the kind path's bytes do not move. In portable mode
+# NODE_SED is never empty — portable_node_redaction exits rather than let it
+# be — so its emptiness is also the gate for context redaction: neither
+# identity is the harness's own choice in the same run, so the two are
+# redacted together or not at all.
+#
+# The context replace runs FIRST, the node-name sed SECOND — not the other
+# order. A context name is not a DNS-1123 subdomain (an EKS ARN carries `:`
+# and `/`), but a node name IS one, and it is common for a node name to embed
+# the cluster name a context also names (e.g. a node pool named after its
+# cluster). If the node-name sed ran first, its regex could match that
+# fragment mid-context and splice a `<node-N>` placeholder into the middle of
+# it; the later exact-match context replace would then never find the
+# original context string intact — because part of it is gone — and the
+# surrounding, still-identifying fragment (account ID, region, path) would
+# reach $OUT unredacted. Running the atomic, exact-match replace first avoids
+# that: whatever it consumes is gone before the regex ever sees it, so the
+# regex cannot fracture a credential it hasn't matched. The reverse failure
+# cannot happen: DNS-1123 forbids `:` and `/`, so no node name can ever
+# contain a full context string for the node-name sed to prematurely consume.
+#
+# A redaction failure must not fall back to `cat` — the whole reason this
+# exists — so it is caught right at the call site, following the same shape
+# as redact_ctx's two call sites in scenario_19_mcp: withhold the section
+# with a visible marker, log a line on stderr, and keep going. Under
+# `set -euo pipefail`, record()'s pipeline would otherwise die on a single
+# unredactable chunk of evidence, taking every later scenario and
+# assert_summary's exit code down with it.
 redact_nodes() {
-  if [ -z "$NODE_SED" ]; then cat; else sed -E "$NODE_SED"; fi
+  if [ -z "$NODE_SED" ]; then
+    cat
+  else
+    { redact_ctx || {
+        printf 'chaos/run.sh: context redaction failed for one report section; withholding it.\n' >&2
+        printf '<context redaction failed: section withheld>\n'
+      }
+    } | sed -E "$NODE_SED"
+  fi
 }
 
 # record <title> <verdict> ; reads scan (and optional --explain) output from stdin.
@@ -1958,32 +2033,14 @@ for line in open(sys.argv[1]):
   # carrying the same value — but only coverage.context is the field
   # context_matches above inspected (via got_context). A plain `cat` of the
   # raw response below would put that value back into $OUT through the one
-  # route the fixes above don't touch. Redact it here too: a literal string
-  # replace (not a regex) so a context name carrying a regex metacharacter —
-  # a real one can contain almost anything a kubeconfig accepts — is still
-  # matched exactly.
+  # route the fixes above don't touch. Redact it here too, with redact_ctx
+  # (defined above redact_nodes — see its comment for why the replace is
+  # literal and byte-safe, never a regex over decoded text).
   #
-  # bash has no block-scoped functions: defining this inside
-  # scenario_19_mcp() still installs it in the global function table on
-  # first call, same as every other function in this file. It is placed here
-  # rather than at top level because it exists solely for this scenario's raw
-  # dump; nothing else in the harness calls it.
-  #
-  # Operates on bytes, not decoded text: $out is a stream of JSON-RPC lines
-  # this scenario does not fully control (a stray non-UTF-8 byte anywhere in
-  # a crash-looping pod's name, image, or event text would ride along), and
-  # decoding before the replace would raise UnicodeDecodeError on such a
-  # byte. Reading/writing sys.stdin.buffer/sys.stdout.buffer and encoding
-  # $CTX to bytes keeps the replace exact without ever decoding.
-  redact_stdio() {
-    python3 -c '
-import sys
-ctx = sys.argv[1].encode()
-data = sys.stdin.buffer.read()
-sys.stdout.buffer.write(data.replace(ctx, b"<context>") if ctx else data)
-' "$CTX"
-  }
-
+  # redact_ctx is a top-level function, not one scoped to this scenario: it
+  # is also record()'s general redaction path via redact_nodes, and it must
+  # already exist in the global function table the first time ANY scenario
+  # calls record(), which can happen before scenario 19 ever runs.
   {
     echo '--- raw stdout (one JSON-RPC response per line) ---'
     # preflight()/portable_preflight() both require python3, so this
@@ -1992,10 +2049,10 @@ sys.stdout.buffer.write(data.replace(ctx, b"<context>") if ctx else data)
     # absolute, not conditional on python3 actually being missing. A static
     # marker, not an empty section: a visible gap beats a silent one, and
     # the marker carries no cluster identity.
-    redact_stdio <"$out" || printf '<raw output withheld: redaction failed>\n'
+    redact_ctx <"$out" || printf '<raw output withheld: redaction failed>\n'
     echo
     echo '--- stderr ---'
-    redact_stdio <"$err" || printf '<raw output withheld: redaction failed>\n'
+    redact_ctx <"$err" || printf '<raw output withheld: redaction failed>\n'
     printf '\n--- gate checks ---\n'
     printf 'tools/list (id 2) tool names:       %s\n' "$tools"
     printf 'tool names containing a write verb:  %s\n' "$write_verbs"

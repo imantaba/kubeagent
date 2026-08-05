@@ -57,10 +57,17 @@ most common way to report a cluster healthy when it is not.
 
 ## Step 3: escalate from the findings, not from intuition
 
-For each finding with severity `critical` or `high`, call `kubeagent_inspect`
-using the `kind`, `namespace`, and `name` the finding already gave you. It
-returns that object's status, its pods, kubeagent's findings for it, and its
-recent Kubernetes events.
+Every finding carries a `severity` of `critical` (a detector matched a concrete
+failure mode) or `warning` (a health check flagged something that needs a
+human). Those are the only two values.
+
+Call `kubeagent_inspect` on every `critical` finding, using the `kind`,
+`namespace`, and `name` the finding already gave you. It returns that object's
+status, its pods, kubeagent's findings for it, and its recent Kubernetes events.
+Inspect a `warning` when it sits inside the scope the user asked about — most of
+kubeagent's Service, Ingress, PVC, PodDisruptionBudget, HPA and quota findings
+are warnings, so skipping them wholesale is how a real problem gets dismissed as
+noise.
 
 Do not inspect objects no finding pointed at. Do not invent names.
 
@@ -86,7 +93,8 @@ Stop when either is true:
 
 - The verdict is `healthy` and `coverage.partial` is empty. Say so and stop.
   Continuing to dig produces noise, not confidence.
-- You have inspected every critical and high finding and reported them.
+- You have inspected every `critical` finding, plus the `warning` findings in
+  the user's scope, and reported them.
 
 Then write the report: the verdict, the findings ranked by severity, and — always
 — what was not checked, in the user's words rather than as a raw JSON dump.

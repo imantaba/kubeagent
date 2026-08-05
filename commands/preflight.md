@@ -15,15 +15,15 @@ skill.
    and is there room to schedule what is about to land. Both are requested
    unconditionally here — unlike ordinary triage — because that is what makes
    this a gate.
-4. Inspect any `critical` finding with `kubeagent_inspect`. Skip `high` and
-   below unless a `critical` one points at them; this is a gate, not a full
-   audit.
+4. Inspect any `critical` finding with `kubeagent_inspect`. Leave the `warning`
+   findings uninspected unless a `critical` one points at them; this is a gate,
+   not a full audit.
 
 Report a single **GO** or **NO-GO**, then the reasoning:
 
 - NO-GO if there is any `critical` finding, or if `drift` shows the target
   namespace already diverging from Git.
-- GO with caveats if the only findings are `medium` or below.
+- GO with caveats if the only findings are `warning`.
 - **Always** list the blind spots: every entry in `coverage.partial`, and
   `metricsServer` if it is not `available` — a capacity verdict without
   metrics-server is a guess, and say so.

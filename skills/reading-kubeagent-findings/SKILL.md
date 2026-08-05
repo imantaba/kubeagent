@@ -60,11 +60,16 @@ metrics-server installed at all.
 
 ## severity and confidence are independent
 
-`severity` is how bad it would be. `confidence` is how sure kubeagent is.
+`severity` is how bad it would be: `critical` when a detector matched a concrete
+failure mode, `warning` when a health check flagged something that needs a
+human. Those are the only two values. `confidence` is how sure kubeagent is:
+`high` when the state is one Kubernetes itself asserts, `medium` when it is a
+kubeagent heuristic. The two vocabularies do not overlap — there is no `high`
+severity and no `critical` confidence.
 
-High severity with low confidence is a **lead to verify**, not a conclusion to
-report. Escalate it with `kubeagent_inspect` and read the object's events before
-you tell the user their production database is failing.
+A `critical` finding carrying `medium` confidence is a **lead to verify**, not a
+conclusion to report. Escalate it with `kubeagent_inspect` and read the object's
+events before you tell the user their production database is failing.
 
 ## verdict is derived, not separate
 

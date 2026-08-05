@@ -1947,7 +1947,7 @@ scenario_23_pagerduty() {   # PagerDuty receiver: trigger on outage, resolve on 
     expect_ge       "resolve events delivered after the repair"       "$resolve_n"   1
     expect_eq       "every delivered event carries the routing key"   "$keyed_n"     "$event_n"
     expect_eq       "the Deployment fires on exactly one dedup key"   "$web_dedup_n" 1
-    expect_contains "the resolve carries the Deployment's dedup key"  "$resolve_dedup" "$ns/web"
+    expect_contains "the resolve carries the Deployment's dedup key"  "$resolve_dedup" "Deployment/$ns/web"
     expect_eq       "daemon log carries no routing key"               "$key_in_log"  0
   } | record "23. PagerDuty receiver (trigger on outage, resolve on repair, one dedup_key per object)" "expect: the daemon posts Events API v2 bodies to a local stand-in for events.pagerduty.com — a trigger while the Deployment is broken, a resolve after the repair, and both on the same identity-derived dedup_key, which is what makes a daemon restart re-trigger onto the open incident instead of opening a second one. The routing key travels in the request body only: it is in every delivered event and in no line of the daemon's log."
 

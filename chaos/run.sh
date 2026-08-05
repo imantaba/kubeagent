@@ -548,16 +548,55 @@ install_calico() {
   kubectl --context "$CTX" wait --for=condition=Ready nodes --all --timeout=600s
 }
 
+# wait_for_deploy <namespace> <name> [seconds] — wait for a Deployment to EXIST,
+# then for it to become Available.
+#
+# `kubectl rollout status` fails outright on a Deployment that is not there yet,
+# and on k3s several of these are created by a HelmChart job some time after the
+# nodes go Ready. Poll for existence first, then hand over to rollout status,
+# which is what actually waits for Available. A Deployment that never appears
+# leaves rollout status to fail loudly, which is the same outcome the kind path
+# has always had.
+wait_for_deploy() {
+  local ns="$1" name="$2" secs="${3:-300}" i
+  for i in $(seq "$secs"); do
+    kubectl --context "$CTX" -n "$ns" get deploy "$name" >/dev/null 2>&1 && break
+    sleep 1
+  done
+  kubectl --context "$CTX" -n "$ns" rollout status "deploy/$name" --timeout="${secs}s"
+}
+
 # wait_system_ready blocks until the core system Deployments are Available, so the
-# baseline scan sees a settled cluster. On a freshly-created cluster CoreDNS,
-# calico-kube-controllers, and local-path-provisioner can still be Pending for a
-# while after the nodes go Ready — scanning too early makes the baseline read
-# Degraded (a harness timing artifact, not a real finding).
+# baseline scan sees a settled cluster. On a freshly-created cluster these can
+# still be Pending for a while after the nodes go Ready — scanning too early makes
+# the baseline read Degraded (a harness timing artifact, not a real finding).
+#
+# The two distributions genuinely ship different workloads: k3s has no Calico
+# controller and no local-path-storage namespace, and runs its own
+# local-path-provisioner, metrics-server and Traefik in kube-system. Waiting for
+# a Deployment the cluster does not have would fail every run.
+#
+# Traefik is on the k3s list for a reason that is easy to mistake for
+# thoroughness: until its LoadBalancer has claimed port 80, ServiceLB can still
+# hand probe_capabilities' probe Service an address, no_loadbalancer would be
+# withheld, and scenario 6 would skip instead of running. Waiting is what makes
+# that answer stable rather than a race.
 wait_system_ready() {
-  log "wait for system workloads to settle (CoreDNS, Calico controllers, local-path)"
-  kubectl --context "$CTX" -n kube-system rollout status deploy/coredns --timeout=300s
-  kubectl --context "$CTX" -n kube-system rollout status deploy/calico-kube-controllers --timeout=300s
-  kubectl --context "$CTX" -n local-path-storage rollout status deploy/local-path-provisioner --timeout=300s
+  case "$DISTRO" in
+    k3s)
+      log "wait for system workloads to settle (CoreDNS, local-path, metrics-server, Traefik)"
+      wait_for_deploy kube-system coredns
+      wait_for_deploy kube-system local-path-provisioner
+      wait_for_deploy kube-system metrics-server
+      wait_for_deploy kube-system traefik
+      ;;
+    *)
+      log "wait for system workloads to settle (CoreDNS, Calico controllers, local-path)"
+      kubectl --context "$CTX" -n kube-system rollout status deploy/coredns --timeout=300s
+      kubectl --context "$CTX" -n kube-system rollout status deploy/calico-kube-controllers --timeout=300s
+      kubectl --context "$CTX" -n local-path-storage rollout status deploy/local-path-provisioner --timeout=300s
+      ;;
+  esac
 }
 
 # Append --explain ONLY when a key is present in the environment (never logged).

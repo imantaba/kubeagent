@@ -80,6 +80,57 @@ check 'summary reports the failure count' \
   "$(grep -c '^- failed: 1$' "$report")" 1
 rm -f "$report"
 
+# --- assert_skip: a skip is recorded, printed, and is never a failure --------
+assert_init
+skip_line="$(assert_skip '5. coredns' 'writes cluster-scoped objects, which the harness will not do on a cluster it does not own')"
+check 'assert_skip prints one console line' \
+  "$skip_line" \
+  'SKIP: 5. coredns — writes cluster-scoped objects, which the harness will not do on a cluster it does not own'
+check 'assert_skip leaves the assertion log untouched' "$(wc -l < "$ASSERTLOG" | tr -d ' ')" 0
+check 'assert_skip appends one skip-log line'         "$(wc -l < "$SKIPLOG"   | tr -d ' ')" 1
+assert_skip '2. certs' 'documented' >/dev/null && rc=0 || rc=$?
+check 'assert_skip returns 0'                         "$rc" 0
+check 'assert_skip appends, it does not overwrite'    "$(wc -l < "$SKIPLOG" | tr -d ' ')" 2
+
+# --- assert_summary: skips are counted, in the report and on the console -----
+assert_init
+expect_eq 'a passing check' 1 1 >/dev/null
+rep="$(mktemp)"
+console="$(assert_summary "$rep")" && rc=0 || rc=$?
+check 'a run with no skips still exits 0' "$rc" 0
+check 'the console line names zero skips' \
+  "$(printf '%s' "$console" | tail -n1)" 'assertions: 1 run, 0 failed; 0 scenarios skipped'
+check 'the report carries the third bullet' "$(grep -c '^- scenarios skipped: 0$' "$rep")" 1
+check 'no skip block is written when there are none' "$(grep -c '^SKIP' "$rep")" 0
+rm -f "$rep"
+
+assert_init
+expect_eq 'a passing check' 1 1 >/dev/null
+assert_skip '2. certs' 'control-plane certificate expiry cannot be forced quickly or safely' >/dev/null
+rep="$(mktemp)"
+console="$(assert_summary "$rep")" && rc=0 || rc=$?
+check 'one skip does not change the exit code' "$rc" 0
+check 'the console line is singular for one skip' \
+  "$(printf '%s' "$console" | tail -n1)" 'assertions: 1 run, 0 failed; 1 scenario skipped'
+check 'the report counts the skip'   "$(grep -c '^- scenarios skipped: 1$' "$rep")" 1
+check 'the report lists the skip'    "$(grep -c '^SKIP	2. certs — control-plane certificate expiry cannot be forced quickly or safely$' "$rep")" 1
+rm -f "$rep"
+
+assert_init
+expect_eq 'a failing check' 1 2 >/dev/null 2>&1
+assert_skip '5. coredns' 'a reason' >/dev/null
+assert_skip '3. diskfull' 'another reason' >/dev/null
+assert_skip '1. etcd' 'a third reason' >/dev/null
+rep="$(mktemp)"
+console="$(assert_summary "$rep")" && rc=0 || rc=$?
+check 'a failure still fails the gate, skips or not' "$rc" 1
+check 'the console line is plural for several skips' \
+  "$(printf '%s' "$console" | tail -n1)" 'assertions: 1 run, 1 failed; 3 scenarios skipped'
+check 'the report counts every skip' "$(grep -c '^- scenarios skipped: 3$' "$rep")" 1
+check 'the report lists every skip'  "$(grep -c '^SKIP	' "$rep")" 3
+check 'the report still lists the failure' "$(grep -c '^FAIL	' "$rep")" 1
+rm -f "$rep"
+
 printf '\n%s\n' "$([ "$fails" -eq 0 ] && echo 'assert-selftest: all checks passed' \
                                      || echo "assert-selftest: $fails check(s) failed")"
 [ "$fails" -eq 0 ]

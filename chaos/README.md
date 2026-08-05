@@ -178,13 +178,16 @@ report defaults to `docs/testing/chaos-results-portable.md`.
 
 ### What it does to the cluster
 
-Every scenario that runs creates a `chaos-*` namespace, breaks something inside
-it, and deletes the namespace afterwards. Whatever a partial run leaves behind
-is swept at the end. Two consequences are worth knowing before you point this at
-a shared cluster:
+Every scenario that runs writes to a `chaos-*` namespace it creates, breaks
+something inside it, and deletes the namespace afterwards — with one exception:
+scenario 21 (control-plane readiness) injects nothing and creates no namespace.
+Its entire body is `scan --control-plane-health`, a GET against the live
+apiserver's `/readyz`, so it has no blast radius at all. Whatever a partial run
+leaves behind is swept at the end. Two consequences are worth knowing before you
+point this at a shared cluster:
 
 - **Scenario 8 deletes a namespace and asserts the cluster reads healthy again.**
-  It deletes only the `chaos-nsdelete` namespace it created moments earlier — but
+  It deletes only the `chaos-doomed` namespace it created moments earlier — but
   a cluster where a namespace deletion triggers alerting will alert.
 - **Scenario 10 plants a fake AWS access key** (`AKIAIOSFODNN7EXAMPLE`, AWS's own
   published example value) in a ConfigMap so kubeagent's credential-leak detector
@@ -264,7 +267,7 @@ sees scroll by.
 
 `main` finishes with `assert_summary`, which appends an `## Assertion summary`
 to the end of the report. The run ends with `assertions: N run, M failed; K
-scenarios skipped` on the console and an `## Assertion summary` in the report
+scenario(s) skipped` on the console and an `## Assertion summary` in the report
 carrying the same three counts. A failure list is fenced under it when there
 are failures; a skip list is fenced under it when there are skips.
 

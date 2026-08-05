@@ -525,8 +525,9 @@ These are the north star; every item below is measured against them.
   CNI: kind, on `ubuntu-latest`, amd64, with Calico. Cross-distro coverage
   (EKS, GKE, AKS, OpenShift, k3s, RKE2) was not part of that
   slice. Since then the harness has grown a **portability seam**:
-  `./chaos/run.sh --context <ctx>` runs the namespaced-only subset against a
-  cluster the harness did not create, refuses every scenario that would write a
+  `./chaos/run.sh --context <ctx>` runs the namespaced-only subset — plus one
+  scenario that only reads — against a cluster the harness did not create,
+  refuses every scenario that would write a
   cluster-scoped object or shell into a node, and names each skip and its reason in
   the assertion summary. Pointing it at a distribution is now a hand-run away;
   **gating one in CI is still ahead** — see

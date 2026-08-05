@@ -31,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The chaos harness's assertion summary now counts skipped scenarios.** The
   report gains a `- scenarios skipped: N` bullet and, when N is non-zero, a
   fenced list of each skip and its reason; the console line becomes
-  `assertions: N run, M failed; K scenarios skipped`. It is reported
+  `assertions: N run, M failed; K scenario(s) skipped`. It is reported
   unconditionally, including when it is zero. A skip is never a failure and never
   changes the exit code, which stays non-zero if and only if an assertion failed.
 

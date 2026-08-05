@@ -11,6 +11,7 @@ COREDNS_BACKUP=/tmp/kubeagent-chaos-coredns.yaml   # pristine Corefile, captured
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 TEARDOWN=0; RECREATE=0; ONLY=""; OUT=""; K8S_VERSION=""; KIND_IMAGE=""
+DISTRO=kind; DISTRO_SET=0; K3S_IMAGE=""   # the distribution axis; see the block below
 CAPS=""   # the capabilities this run has; see the capability block below
 PORTABLE=0; CONTEXT=""   # --context selects portable mode; see the block below
 NODE_NAMES=""   # sorted, de-duplicated node names redacted from portable-mode report text
@@ -23,6 +24,7 @@ while [ $# -gt 0 ]; do
     --out) OUT="$2"; shift ;;
     --k8s-version) K8S_VERSION="$2"; shift ;;
     --context) CONTEXT="$2"; shift ;;
+    --distro) DISTRO="$2"; DISTRO_SET=1; shift ;;
     *) echo "unknown flag: $1" >&2; exit 2 ;;
   esac; shift
 done
@@ -32,16 +34,31 @@ done
 # --only 08 or --only 09 errored and normalized to 00, silently matching nothing.
 if [ -n "$ONLY" ] && printf '%s' "$ONLY" | grep -qE '^[0-9]+$'; then ONLY=$(printf '%02d' "$((10#$ONLY))"); fi
 
+# The distribution axis. --distro picks which Kubernetes distribution the
+# harness CREATES: kind (the default, and what every command line written before
+# this flag existed means) or k3s, run in containers by k3d.
+#
+# The value is validated HERE, before the --context refusal below and before any
+# name is derived from it, for the same reason chaos_image validates before
+# chaos_suffix derives a name: a value that becomes a cluster name, a context and
+# a report path has no business being unchecked.
+case "$DISTRO" in
+  kind|k3s) ;;
+  *) echo "unknown --distro: $DISTRO (supported: kind, k3s)" >&2; exit 2 ;;
+esac
+
 # Portable mode. --context runs the namespaced-only subset of the suite against
 # a cluster the harness did NOT create: it creates and deletes chaos-* namespaces
 # and nothing else, and every scenario that would write a cluster-scoped object
 # or shell into a node refuses to run.
 #
-# Three flags are REFUSED rather than ignored. All three manage a kind cluster's
+# Four flags are REFUSED rather than ignored. Three manage a kind cluster's
 # lifecycle or its node image, and silently accepting one against someone else's
-# production cluster is exactly the trap this mode exists to avoid. They fire
-# here, before the version axis derives any name, so an operator who typed a
-# contradiction learns it before docker is touched.
+# production cluster is exactly the trap this mode exists to avoid. The fourth,
+# --distro, is refused for a different reason: it is not a lifecycle flag, but
+# --context and --distro answer contradictory questions. They fire here, before
+# the version axis derives any name, so an operator who typed a contradiction
+# learns it before docker is touched.
 if [ -n "$CONTEXT" ]; then
   PORTABLE=1
   if [ "$RECREATE" = 1 ]; then
@@ -56,6 +73,10 @@ if [ -n "$CONTEXT" ]; then
     echo "--context and --k8s-version are mutually exclusive: the version axis picks a kind node image, which says nothing about a cluster that already exists" >&2
     exit 2
   fi
+  if [ "$DISTRO_SET" = 1 ]; then
+    echo "--context and --distro are mutually exclusive: --context runs against a cluster that already exists, and --distro says which distribution to create" >&2
+    exit 2
+  fi
   CTX="$CONTEXT"
   : "${OUT:=docs/testing/chaos-results-portable.md}"
 fi
@@ -65,28 +86,42 @@ fi
 # shellcheck source=chaos/versions.sh
 . "$ROOT/chaos/versions.sh"
 
-# The version axis. Omitting --k8s-version keeps the historical names and lets
-# kind pick its own default image, so the release skill's documented command and
-# an operator's muscle memory keep working byte-for-byte.
+# Two axes, one derivation. Everything cluster-shaped — the cluster name, the
+# context, the report path and the CoreDNS scratch file — is derived here,
+# because two runs that collide on any one of them corrupt each other, and a
+# collision on the last one is the nastiest: it silently restores the wrong
+# Corefile.
 #
-# Everything cluster-shaped is derived from one place: two minors run on one
-# machine otherwise collide on the cluster, the context, the report and the
-# CoreDNS scratch file — and a collision on the last one is the nastiest,
-# because it silently restores the wrong Corefile.
+# The kind path is byte-for-byte what it was before --distro existed. Omitting
+# --k8s-version still lets kind pick its own node image, so the release skill's
+# documented command and an operator's muscle memory keep working.
 #
-# chaos_image runs FIRST because it is the call that validates: an unsupported or
-# malformed minor is refused here, before any name is derived from it and before
-# preflight has touched docker. chaos_suffix therefore cannot fail below.
-if [ -n "$K8S_VERSION" ]; then
-  KIND_IMAGE="$(chaos_image "$K8S_VERSION")" || exit 2
-  suffix="$(chaos_suffix "$K8S_VERSION")"
-  CLUSTER="$CLUSTER$suffix"
-  CTX="kind-$CLUSTER"
+# The k3s path ALWAYS pins an image, even without --k8s-version: k3d bundles a
+# default k3s version that moves with the k3d release, and an unpinned image
+# makes a red cell ambiguous — the whole reason versions.env exists.
+#
+# chaos_k3s_image / chaos_image run FIRST because they are the calls that
+# validate. chaos_suffix therefore cannot fail below.
+#
+# Portable mode is skipped entirely: it has already set CTX from --context and
+# OUT to the portable report, and all three of the flags this block reads are
+# refused above.
+if [ "$PORTABLE" = 0 ]; then
+  if [ "$DISTRO" = k3s ]; then
+    CLUSTER="$CLUSTER-k3s"
+    K3S_IMAGE="$(chaos_k3s_image "${K8S_VERSION:-$(chaos_newest)}")" || exit 2
+  fi
+  if [ -n "$K8S_VERSION" ]; then
+    if [ "$DISTRO" = kind ]; then KIND_IMAGE="$(chaos_image "$K8S_VERSION")" || exit 2; fi
+    suffix="$(chaos_suffix "$K8S_VERSION")"
+    CLUSTER="$CLUSTER$suffix"
+  fi
+  case "$DISTRO" in
+    kind) CTX="kind-$CLUSTER"; : "${OUT:=docs/testing/chaos-results${K8S_VERSION:+-$K8S_VERSION}.md}" ;;
+    k3s)  CTX="k3d-$CLUSTER";  : "${OUT:=docs/testing/chaos-results-k3s${K8S_VERSION:+-$K8S_VERSION}.md}" ;;
+  esac
   COREDNS_BACKUP="/tmp/$CLUSTER-coredns.yaml"
-  : "${OUT:=docs/testing/chaos-results-$K8S_VERSION.md}"
 fi
-
-: "${OUT:=docs/testing/chaos-results.md}"
 
 # Assertion helpers (expect_eq / expect_ge / expect_contains / expect_absent) and
 # the summary that turns their outcomes into this script's exit code.

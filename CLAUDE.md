@@ -197,7 +197,7 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   production contract) lives in
   [website/docs/roadmap.md](website/docs/roadmap.md). Update it when a milestone
   ships or the plan shifts.
-- **Theme G slices 1, 2, 3, 4a and 4b have shipped:** the MCP server
+- **Theme G is complete:** the MCP server
   (`kubeagent mcp`), documented in
   [website/docs/features/mcp.md](website/docs/features/mcp.md); the `kubectl`
   krew plugin (`krew/kubeagent.yaml.tmpl` +
@@ -207,8 +207,10 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   shareable HTML report (`scan --output html`), documented in
   [website/docs/features/html-report.md](website/docs/features/html-report.md);
   and the interactive TUI (`kubeagent tui`), documented in
-  [website/docs/features/tui.md](website/docs/features/tui.md). The rest of
-  Theme G — an optional in-cluster dashboard — remains ahead.
+  [website/docs/features/tui.md](website/docs/features/tui.md); and the
+  in-cluster dashboard (`watch --dashboard`, v1.2.0), documented in
+  [website/docs/features/dashboard.md](website/docs/features/dashboard.md),
+  which closed the theme.
   A third distribution surface now sits alongside the MCP server and the krew
   plugin: kubeagent installs into Claude Code as a plugin
   (`.claude-plugin/plugin.json` + `marketplace.json`, with user-facing skills

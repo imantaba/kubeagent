@@ -238,6 +238,40 @@ check 'capability_add is idempotent' \
 check 'capability_add exits 2 on an unknown name' \
   "$( ( set --; . chaos/run.sh; capability_add nope ) >/dev/null 2>&1 && echo 0 || echo $? )" 2
 
+# --- remediation_outcome: which branch a --fix/--rollback run took -----------
+# Scenario 9b asserts on two image names and an audit-log count. When the round
+# trip fails, those three say THAT it failed and nothing about WHY — applied,
+# refused, preflight-denied, an error, and "there was no record to roll back"
+# all look identical from the outside. remediation_outcome puts the deciding
+# line in the report, and these checks pin what it may and may not carry.
+check 'remediation_outcome reports an applied fix' \
+  "$( ( set --; . chaos/run.sh
+        remediation_outcome '  applied: rolled back chaos-rollout/web to revision 1 (pod template restored)' ) )" \
+  'applied: rolled back chaos-rollout/web to revision 1 (pod template restored)'
+check 'remediation_outcome reports an applied rollback' \
+  "$( ( set --; . chaos/run.sh
+        remediation_outcome '  rolled back: rolled chaos-rollout/web forward to revision 2 (pre-fix pod template restored)' ) )" \
+  'rolled back: rolled chaos-rollout/web forward to revision 2 (pre-fix pod template restored)'
+check 'remediation_outcome reports a refusal with its reason' \
+  "$( ( set --; . chaos/run.sh
+        remediation_outcome '  skipped: revision 2 no longer exists; no write made' ) )" \
+  'skipped: revision 2 no longer exists; no write made'
+# The no-record line is the one kubeagent prints with the audit log's filesystem
+# path in it. A path is a credential and the report is a forwarded artifact, so
+# this case is answered by a sentence of the harness's own — the value is never
+# echoed, only the fact.
+check 'remediation_outcome names the no-record case' \
+  "$( ( set --; . chaos/run.sh
+        remediation_outcome 'No applied remediation found in /tmp/tmp.EXAMPLE; nothing to roll back.' ) )" \
+  'no applied remediation recorded; nothing to roll back'
+check 'remediation_outcome never echoes the audit log path' \
+  "$( ( set --; . chaos/run.sh
+        remediation_outcome 'No applied remediation found in /tmp/tmp.EXAMPLE; nothing to roll back.' ) \
+      | grep -c 'tmp.EXAMPLE' || true )" 0
+check 'remediation_outcome says so when nothing was printed' \
+  "$( ( set --; . chaos/run.sh; remediation_outcome 'Cluster: Healthy' ) )" \
+  '(no outcome line printed)'
+
 # --- the distro axis: --distro parses, validates, refuses and derives -------
 # run.sh calls main() only on a direct execution, so sourcing it here runs its
 # flag parser and its name derivation with no cluster and no docker. Unlike the

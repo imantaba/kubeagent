@@ -652,6 +652,34 @@ ready_replicas() {
 # objects freely and would break a "must be 0" check whenever a key is set.
 scan_body() { printf '%s\n' "$1" | awk '/── Explanation ──/ { exit } { print }'; }
 
+# remediation_outcome <output> — the one line of a --fix or --rollback run that says
+# which branch kubeagent took: applied, refused, preflight-denied, an error, or no
+# recorded fix to roll back at all.
+#
+# Scenario 9b asserts on two image names and an audit-log count. Those say THAT the
+# round trip failed and nothing about WHY: every branch above leaves the same two
+# image names behind. The deciding line belongs in the report.
+#
+# The whole run is deliberately NOT echoed. kubeagent's no-record line names the audit
+# log's filesystem path, and a path is a credential the report must never carry — so
+# that one case is answered by a sentence of the harness's own, which states the fact
+# without the value. Every other line it returns carries a namespace, a workload, a
+# revision number or a refusal reason, all of which the report already holds.
+#
+# It never fails: a caller under `set -euo pipefail` must not lose the run here, and an
+# output with no outcome line at all says so rather than returning empty.
+remediation_outcome() {
+  local out="$1" line
+  if printf '%s\n' "$out" | grep -q '^No applied remediation found in '; then
+    printf 'no applied remediation recorded; nothing to roll back\n'
+    return 0
+  fi
+  line="$(printf '%s\n' "$out" \
+    | sed -n 's/^  \(applied\|rolled back\|skipped\|ERROR\): /\1: /p; /^Cannot roll back the last applied fix/p' \
+    | tail -1)"
+  printf '%s\n' "${line:-(no outcome line printed)}"
+}
+
 # json_get <document> <dotted path> — the value at a dotted path in a JSON scan
 # report, or a marker in place of one: "<absent>" when the path is not in the
 # document, "<unparseable>" when the document is not JSON at all.
@@ -1191,11 +1219,18 @@ scenario_09_rollout() {   # bad image -> ImagePullBackOff
     expect_contains "bad-image workload named" "$body" "chaos-rollout/web"
     expect_contains "image pull failure diagnosed" "$body" "ImagePullBackOff"
   } | record "9. Faulty rolling deployment (bad image)" "detected: ImagePullBackOff"
-  # slice-4: apply the fix with an audit log, then roll it back and confirm the image returns
+  # slice-4: apply the fix with an audit log, then roll it back and confirm the image returns.
+  #
+  # Both runs' outcome lines and the audit log go into the report. The three assertions
+  # below say THAT a round trip failed; they cannot say which branch kubeagent took,
+  # because a refusal, a preflight denial, an error and an empty audit log all leave the
+  # same two image names behind. remediation_outcome and the log itself say which — and
+  # neither carries a filesystem path, a context name or a node name.
   local alog; alog="$(mktemp)"
-  ./kubeagent scan --context "$CTX" -n chaos-rollout --fix --yes --audit-log "$alog" >/dev/null 2>&1 || true
+  local fixout rbout
+  fixout="$(./kubeagent scan --context "$CTX" -n chaos-rollout --fix --yes --audit-log "$alog" 2>&1)" || true
   local after_fix; after_fix="$(kubectl --context "$CTX" -n chaos-rollout get deploy web -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null)"
-  ./kubeagent scan --context "$CTX" -n chaos-rollout --rollback --yes --audit-log "$alog" >/dev/null 2>&1 || true
+  rbout="$(./kubeagent scan --context "$CTX" -n chaos-rollout --rollback --yes --audit-log "$alog" 2>&1)" || true
   local after_rollback; after_rollback="$(kubectl --context "$CTX" -n chaos-rollout get deploy web -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null)"
   local rollback_records
   rollback_records="$(grep -c '"disposition":"rollback"' "$alog" 2>/dev/null || true)"
@@ -1203,6 +1238,10 @@ scenario_09_rollout() {   # bad image -> ImagePullBackOff
     echo "after --fix:      $after_fix"
     echo "after --rollback: $after_rollback"
     printf 'rollback audit records: %s\n' "$rollback_records"
+    printf -- '--fix outcome:      %s\n' "$(remediation_outcome "$fixout")"
+    printf -- '--rollback outcome: %s\n' "$(remediation_outcome "$rbout")"
+    printf 'audit log:\n'
+    sed 's/^/  /' "$alog" 2>/dev/null || true
     printf '\n--- assertions ---\n'
     expect_eq "--fix restored a working image"      "$after_fix"      "nginx:1.27-alpine"
     expect_eq "--rollback restored the pre-fix image" "$after_rollback" "nginx:does-not-exist-9999"

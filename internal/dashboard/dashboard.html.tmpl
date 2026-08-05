@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="{{ .RefreshSeconds }}">
+<title>kubeagent — cluster incidents</title>
+<style>
+:root { color-scheme: light dark; }
+body { font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 1.5rem; }
+h1 { font-size: 1.4rem; margin: 0; }
+h2 { font-size: 1.05rem; margin: 2rem 0 .6rem; border-bottom: 1px solid currentColor; padding-bottom: .3rem; opacity: .95; }
+.meta { opacity: .7; margin: .25rem 0 0; }
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; padding: .35rem .6rem; border-bottom: 1px solid rgba(128,128,128,.35); vertical-align: top; }
+th { font-weight: 600; opacity: .8; white-space: nowrap; }
+tr.down td { font-weight: 600; }
+tr.down td:first-child::before { content: "\25CF\00a0"; }
+tr.pending td { opacity: .75; }
+.empty { opacity: .7; }
+.badge { border: 1px solid currentColor; border-radius: .6rem; padding: 0 .4rem; font-size: .8rem; }
+.tiles { display: flex; flex-wrap: wrap; gap: 1rem; }
+.tile { border: 1px solid rgba(128,128,128,.45); border-radius: .4rem; padding: .6rem 1rem; min-width: 7rem; }
+.tile .n { display: block; font-size: 1.4rem; font-weight: 600; }
+.tile .l { display: block; opacity: .7; font-size: .8rem; }
+h3 { font-size: .95rem; margin: 1rem 0 .4rem; opacity: .9; }
+pre.explanation { white-space: pre-wrap; word-break: break-word; margin: 0; font: inherit; border-left: 3px solid rgba(128,128,128,.45); padding-left: .8rem; }
+article { margin-bottom: 1.2rem; }
+</style>
+</head>
+<body>
+<header>
+<h1>kubeagent</h1>
+<p class="meta">version {{ .Version }} · generated {{ .Generated }} · reloads every {{ .RefreshSeconds }}s</p>
+</header>
+
+<h2>Clusters</h2>
+{{- if .Clusters }}
+<table>
+<thead><tr><th>Name</th><th>State</th><th>Last evaluation</th><th>Error</th></tr></thead>
+<tbody>
+{{- range .Clusters }}
+<tr class="{{ .State }}"><td>{{ .Name }}</td><td>{{ .Label }}</td><td>{{ .LastScan }}</td><td>{{ .Error }}</td></tr>
+{{- end }}
+</tbody>
+</table>
+{{- else }}
+<p class="empty">No cluster configured.</p>
+{{- end }}
+
+<h2>Active incidents ({{ len .Active }})</h2>
+{{- if .Active }}
+<table>
+<thead><tr>{{ if .MultiCluster }}<th>Cluster</th>{{ end }}<th>Kind</th><th>Object</th><th>Issue</th><th>Firing for</th><th>Firings</th><th>Flapping</th></tr></thead>
+<tbody>
+{{- range .Active }}
+<tr>{{ if $.MultiCluster }}<td>{{ .Cluster }}</td>{{ end }}<td>{{ .Kind }}</td><td>{{ .Target }}</td><td>{{ .Issue }}</td><td>{{ .Duration }}</td><td>{{ .Firings }}</td><td>{{ if .Flapping }}<span class="badge">flapping</span>{{ else }}—{{ end }}</td></tr>
+{{- end }}
+</tbody>
+</table>
+{{- else }}
+<p class="empty">No active incidents.</p>
+{{- end }}
+
+<h2>Resolved incidents ({{ len .Resolved }})</h2>
+{{- if .Resolved }}
+<table>
+<thead><tr>{{ if .MultiCluster }}<th>Cluster</th>{{ end }}<th>Kind</th><th>Object</th><th>Issue</th><th>Resolved at</th><th>Time to resolution</th><th>Firings</th><th>Flapping</th></tr></thead>
+<tbody>
+{{- range .Resolved }}
+<tr>{{ if $.MultiCluster }}<td>{{ .Cluster }}</td>{{ end }}<td>{{ .Kind }}</td><td>{{ .Target }}</td><td>{{ .Issue }}</td><td>{{ .ResolvedAt }}</td><td>{{ .Resolution }}</td><td>{{ .Firings }}</td><td>{{ if .Flapping }}<span class="badge">flapping</span>{{ else }}—{{ end }}</td></tr>
+{{- end }}
+</tbody>
+</table>
+{{- else }}
+<p class="empty">No incident has resolved yet.</p>
+{{- end }}
+
+<h2>Totals</h2>
+<div class="tiles">
+<div class="tile"><span class="n">{{ .Tiles.New }}</span><span class="l">new</span></div>
+<div class="tile"><span class="n">{{ .Tiles.Resolved }}</span><span class="l">resolved</span></div>
+<div class="tile"><span class="n">{{ .Tiles.Flapping }}</span><span class="l">flapping</span></div>
+<div class="tile"><span class="n">{{ .Tiles.Dropped }}</span><span class="l">dropped</span></div>
+<div class="tile"><span class="n">{{ .Tiles.MTTR }}</span><span class="l">mean time to resolution</span></div>
+</div>
+
+{{- if .SLO }}
+<h2>SLO</h2>
+{{- range .SLO }}
+<h3>{{ .Cluster }} — target {{ .Target }}</h3>
+<table>
+<thead><tr><th>Window</th><th>Availability</th><th>Burn rate</th><th>Error budget left</th><th>Coverage</th></tr></thead>
+<tbody>
+{{- range .Windows }}
+<tr><td>{{ .Name }}</td><td>{{ .Availability }}</td><td>{{ .BurnRate }}</td><td>{{ .BudgetRemaining }}</td><td>{{ .Coverage }}{{ if .Suppressed }} <span class="badge">burn alert suppressed</span>{{ end }}</td></tr>
+{{- end }}
+</tbody>
+</table>
+{{- end }}
+{{- end }}
+
+{{- if .ShowExplanations }}
+<h2>Explanations ({{ len .Explanations }})</h2>
+{{- if .Explanations }}
+{{- range .Explanations }}
+<article>
+<h3>{{ if $.MultiCluster }}{{ .Cluster }} · {{ end }}{{ .Kind }} {{ .Target }}</h3>
+<p class="meta">{{ .Issues }} · {{ .Model }} · {{ .ExplainedAt }}</p>
+<pre class="explanation">{{ .Text }}</pre>
+</article>
+{{- end }}
+{{- else }}
+<p class="empty">No incident has been explained yet.</p>
+{{- end }}
+{{- end }}
+</body>
+</html>

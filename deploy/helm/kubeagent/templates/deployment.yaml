@@ -86,6 +86,9 @@ spec:
             {{- end }}
             - "--slo-target={{ $target }}"
             {{- end }}
+            {{- if .Values.dashboard.enabled }}
+            - "--dashboard"
+            {{- end }}
             {{- if .Values.explain.enabled }}
             {{- if not .Values.explain.existingSecret }}
             {{- fail "explain.existingSecret is required when explain.enabled is true (the API key and any endpoint URL are credentials and must come from a Secret, never from values.yaml)" }}

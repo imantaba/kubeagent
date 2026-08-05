@@ -50,6 +50,8 @@ jobs:
             target: FuzzGlob
           - package: ./internal/safetext
             target: FuzzLine
+          - package: ./internal/dashboard
+            target: FuzzDashboardRender
     name: ${{ matrix.target }}
     steps:
       - uses: actions/checkout@v4

@@ -53,6 +53,8 @@ type Config struct {
 	ExplainAPIKey           string        // bearer token for a local endpoint; ignored by Anthropic
 	ExplainCooldown         time.Duration // per-object minimum gap between explanations
 	ExplainBudget           int           // model calls per hour, and the burst capacity
+	Dashboard               bool          // serve the read-only HTML dashboard at /dashboard
+	Version                 string        // kubeagent version, stamped into the dashboard header
 }
 
 // Run starts the metrics server and one informer-driven control loop per target,
@@ -113,6 +115,10 @@ func Run(ctx context.Context, targets []Target, cfg Config) error {
 	defer func() { noteTeardown("stopExplain"); stopExplain() }()
 
 	m := newMetrics(targetNames(targets))
+	// Set before the HTTP server starts and before any worker exists, and never
+	// written again — which is why these two need no lock.
+	m.dashboard = cfg.Dashboard
+	m.version = cfg.Version
 
 	// Every worker is constructed before any of them runs, so a handler that
 	// cannot be registered still fails the whole daemon at startup.

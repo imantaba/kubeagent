@@ -105,8 +105,8 @@ func TestCommandSurfaceScanDefaults(t *testing.T) {
 // TestCommandSurfaceWatch is TestCommandSurfaceScan's counterpart for
 // `kubeagent watch`.
 func TestCommandSurfaceWatch(t *testing.T) {
-	// Thirteen of watch's flags default from the environment, reading the
-	// twelve keys below — --namespace and -n share KUBEAGENT_NAMESPACE. This
+	// Fourteen of watch's flags default from the environment, reading the
+	// thirteen keys below — --namespace and -n share KUBEAGENT_NAMESPACE. This
 	// is the same set TestParseWatchFlagsCarriesEveryValue clears: a
 	// developer's shell must not decide whether an explicit flag value lands.
 	for _, k := range []string{
@@ -114,6 +114,7 @@ func TestCommandSurfaceWatch(t *testing.T) {
 		"KUBEAGENT_HEARTBEAT", "KUBEAGENT_DEBOUNCE", "KUBEAGENT_ALERT_FORMAT",
 		"KUBEAGENT_ALERT_REPEAT", "KUBEAGENT_SLO_TARGET", "KUBEAGENT_NAMESPACE",
 		"KUBEAGENT_EXPLAIN", "KUBEAGENT_EXPLAIN_COOLDOWN", "KUBEAGENT_EXPLAIN_BUDGET",
+		"KUBEAGENT_DASHBOARD",
 	} {
 		t.Setenv(k, "")
 	}
@@ -135,6 +136,7 @@ func TestCommandSurfaceWatch(t *testing.T) {
 		{"alert-repeat", []string{"--alert-repeat", "2h"}, func(o watchOptions) bool { return o.alertRepeat == 2*time.Hour }},
 		{"slo-target", []string{"--slo-target", "99.9"}, func(o watchOptions) bool { return o.sloTarget == 99.9 }},
 		{"explain", []string{"--explain"}, func(o watchOptions) bool { return o.explain }},
+		{"dashboard", []string{"--dashboard"}, func(o watchOptions) bool { return o.dashboard }},
 		{"explain-cooldown", []string{"--explain-cooldown", "15m"}, func(o watchOptions) bool { return o.explainCooldown == 15*time.Minute }},
 		{"explain-budget", []string{"--explain-budget", "7"}, func(o watchOptions) bool { return o.explainBudget == 7 }},
 		{"model", []string{"--model", "example-model"}, func(o watchOptions) bool { return o.model == "example-model" }},
@@ -152,8 +154,8 @@ func TestCommandSurfaceWatch(t *testing.T) {
 			}
 		})
 	}
-	if len(cases) != 18 {
-		t.Errorf("watch surface table has %d cases, want 18 — one per declared flag", len(cases))
+	if len(cases) != 19 {
+		t.Errorf("watch surface table has %d cases, want 19 — one per declared flag", len(cases))
 	}
 }
 

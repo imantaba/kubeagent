@@ -112,6 +112,17 @@ slo:
   # Availability target as a percentage. Must be greater than 0 and less than 100.
   target: 99.9
 
+# A read-only HTML dashboard at /dashboard on the metrics port: the URL you
+# hand someone who asks what is broken right now. It renders only state the
+# daemon already tracks, so it performs no extra cluster read and needs no
+# extra RBAC. Separately, it makes no model call.
+#
+# It is UNAUTHENTICATED, exactly like /metrics and /issues on the same port,
+# and kubeagent terminates no TLS. The Service is ClusterIP by default; keep it
+# cluster-internal, or put an authenticating proxy in front of it.
+dashboard:
+  enabled: false
+
 # On-incident explanations. Off by default: this is the only feature that sends
 # anything to a model endpoint. It performs no additional cluster reads and needs
 # no additional RBAC — the model sees only findings the daemon already collected.

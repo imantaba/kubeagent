@@ -633,6 +633,16 @@ helm upgrade --install kubeagent deploy/helm/kubeagent \
 API key and any endpoint URL are both credentials and must come from a
 Secret, never from `values.yaml`.
 
+## Dashboard (`--dashboard`)
+
+`--dashboard` serves the same tracked state as an HTML page at `/dashboard` on
+the metrics port — the URL you hand someone instead of a `curl | jq`. It
+performs no extra cluster read and needs no extra RBAC. Separately: a dashboard
+request makes no model call. It is unauthenticated, exactly like `/metrics` and
+`/issues` on the same port.
+
+See [In-cluster dashboard](dashboard.md).
+
 ## Watching several clusters
 
 ```bash

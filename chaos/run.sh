@@ -638,6 +638,7 @@ scenario_11_kubelet() {   # runtime outage: node NotReady, kubelet /healthz stil
 scenario_12_watch() {   # stateful watch daemon: NEW on outage, RESOLVED on repair, /issues while firing
   log "scenario 12: stateful watch daemon (NEW / RESOLVED transitions, /issues)"
   local ns=chaos-watch port=18080 aport=18081 wlog wpid i firing after alerts apid
+  local dash dash_code dash_type dash_webhook
   wlog="$(mktemp)"
   alerts="$(mktemp)"
   # A local receiver proves the alert path end to end. The daemon's only egress
@@ -652,7 +653,7 @@ scenario_12_watch() {   # stateful watch daemon: NEW on outage, RESOLVED on repa
   # A short heartbeat keeps the transition latency inside this scenario's sleeps.
   KUBEAGENT_ALERT_WEBHOOK="http://127.0.0.1:$aport" \
   ./kubeagent watch --context "$CTX" -n "$ns" --metrics-addr "127.0.0.1:$port" \
-    --heartbeat 10s --debounce 2s --alert-format json --alert-repeat 1h >"$wlog" 2>&1 &
+    --heartbeat 10s --debounce 2s --alert-format json --alert-repeat 1h --dashboard >"$wlog" 2>&1 &
   wpid=$!
   for i in $(seq 40); do
     curl -sf "http://127.0.0.1:$port/readyz" >/dev/null 2>&1 && break
@@ -666,6 +667,18 @@ scenario_12_watch() {   # stateful watch daemon: NEW on outage, RESOLVED on repa
   kubectl --context "$CTX" -n "$ns" set image deploy/web web=nginx:does-not-exist-9999 >/dev/null
   sleep 30
   firing="$(curl -s "http://127.0.0.1:$port/issues" 2>/dev/null || echo '<unreachable>')"
+
+  # The dashboard is a face on the same state /issues just served, captured at
+  # the same moment so the two cannot disagree about what was firing.
+  dash_code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/dashboard" 2>/dev/null || echo 000)"
+  dash_type="$(curl -s -o /dev/null -w '%{content_type}' "http://127.0.0.1:$port/dashboard" 2>/dev/null || true)"
+  dash="$(curl -s "http://127.0.0.1:$port/dashboard" 2>/dev/null || echo '<unreachable>')"
+  # Count, never quote: assert.sh embeds a needle in its own PASS/FAIL line, so
+  # an expect_absent here would write the endpoint into the report on every
+  # passing run — the leak the assertion exists to rule out. The webhook
+  # redaction check twenty lines above and scenario 20 both count for the same
+  # reason.
+  dash_webhook="$(printf '%s\n' "$dash" | grep -cF -- "127.0.0.1:$aport" || true)"
 
   # Repair and let the tracker observe the issue clear.
   kubectl --context "$CTX" -n "$ns" set image deploy/web web=nginx:1.27-alpine >/dev/null
@@ -731,6 +744,11 @@ scenario_12_watch() {   # stateful watch daemon: NEW on outage, RESOLVED on repa
     echo '--- write-path check: the daemon issued no mutating calls ---'
     printf 'log lines mentioning a write verb: %s\n' "$write_verbs"
     echo
+    echo '--- dashboard served while the outage was firing ---'
+    printf 'status: %s\ncontent type: %s\npage bytes: %s\n' \
+      "$dash_code" "$dash_type" "$(printf '%s' "$dash" | wc -c | tr -d ' ')"
+    printf 'page lines naming the webhook endpoint host: %s\n' "$dash_webhook"
+    echo
     echo '--- assertions ---'
     expect_contains "NEW transition for the broken Deployment" "$transitions" "NEW Deployment/$ns/web"
     expect_contains "RESOLVED transition after the repair"     "$transitions" "RESOLVED Deployment/$ns/web"
@@ -738,7 +756,17 @@ scenario_12_watch() {   # stateful watch daemon: NEW on outage, RESOLVED on repa
     expect_eq "distinct objects alerted"            "$distinct_n" 2
     expect_eq "resolved notifications (one per object)" "$resolved_n" 2
     expect_eq "daemon log mentions no write verb"   "$write_verbs" 0
-  } | record "12. Stateful watch daemon (NEW on outage, RESOLVED on repair, /issues)" "expect: one NEW line naming Deployment/$ns/web, one RESOLVED line with the firing duration, the incident listed under /issues while firing and under resolved afterwards, and exactly one resolved alert per broken object — two objects break here (Deployment/$ns/web and its Service), so two objects alert and each resolves once. The Deployment's firing alert must survive the whole Degraded -> ErrImagePull -> ImagePullBackOff walk without a resolved notification, even though the per-issue transition log reports RESOLVED for each superseded mode."
+    expect_eq       "dashboard returns 200 while an incident is firing" "$dash_code" 200
+    expect_contains "dashboard content type is HTML"                    "$dash_type" "text/html"
+    expect_contains "dashboard names the broken workload"               "$dash"      "$ns/web"
+    # A webhook URL is a credential, and this scenario is the only place in the
+    # suite where the daemon actually holds one. Asserting it never reaches the
+    # page is a stronger test of the "URLs are credentials" rule than a generic
+    # path grep would be, because the value is really there to leak. The
+    # assertion carries a count rather than the endpoint itself, so a passing
+    # run does not print what it just proved absent.
+    expect_eq       "dashboard body carries no alert webhook URL"       "$dash_webhook" 0
+  } | record "12. Stateful watch daemon (NEW on outage, RESOLVED on repair, /issues)" "expect: one NEW line naming Deployment/$ns/web, one RESOLVED line with the firing duration, the incident listed under /issues while firing and under resolved afterwards, and exactly one resolved alert per broken object — two objects break here (Deployment/$ns/web and its Service), so two objects alert and each resolves once. The Deployment's firing alert must survive the whole Degraded -> ErrImagePull -> ImagePullBackOff walk without a resolved notification, even though the per-issue transition log reports RESOLVED for each superseded mode. The dashboard is served from the same snapshot at the same moment: 200, HTML, naming the broken workload, and carrying none of the webhook URL the daemon holds in memory."
 
   rm -f "$wlog" "$alerts"
   kubectl --context "$CTX" delete ns "$ns" --wait=true --timeout=120s >/dev/null 2>&1 || true

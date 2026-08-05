@@ -84,6 +84,7 @@ type watchOptions struct {
 	explainCooldown time.Duration
 	explainBudget   int
 	model           string
+	dashboard       bool
 	namespace       string
 }
 
@@ -114,11 +115,12 @@ func bindWatchFlags(cmd *cobra.Command, o *watchOptions) {
 	f.DurationVar(&o.explainCooldown, "explain-cooldown", envDur("KUBEAGENT_EXPLAIN_COOLDOWN", time.Hour), "minimum gap between explanations for the same object (0 = no per-object gap)")
 	f.IntVar(&o.explainBudget, "explain-budget", envInt("KUBEAGENT_EXPLAIN_BUDGET", 20), "model calls per hour, and the burst capacity")
 	f.StringVar(&o.model, "model", "", "model for --explain (default: $KUBEAGENT_MODEL or claude-opus-4-8; the local model name when KUBEAGENT_EXPLAIN_ENDPOINT is set)")
+	f.BoolVar(&o.dashboard, "dashboard", envBool("KUBEAGENT_DASHBOARD", false), "serve a read-only HTML dashboard at /dashboard on --metrics-addr (unauthenticated, like /metrics and /issues on the same port)")
 	f.StringVarP(&o.namespace, "namespace", "n", envOr("KUBEAGENT_NAMESPACE", ""), "namespace to watch (default: all)")
 }
 
 // parseWatchFlags parses `kubeagent watch`'s command line. Pure: it reads the
-// environment for the nine env-defaulted flags and nothing else, contacts no
+// environment for the env-defaulted flags and nothing else, contacts no
 // cluster, and writes nothing. It builds a throwaway command so the flag
 // declarations have exactly one home, in bindWatchFlags.
 func parseWatchFlags(args []string) (watchOptions, error) {
@@ -236,6 +238,8 @@ func runWatchOpts(o watchOptions) error {
 		ExplainAPIKey:           os.Getenv("KUBEAGENT_EXPLAIN_API_KEY"),
 		ExplainCooldown:         o.explainCooldown,
 		ExplainBudget:           o.explainBudget,
+		Dashboard:               o.dashboard,
+		Version:                 version,
 	})
 }
 

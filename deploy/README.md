@@ -213,6 +213,20 @@ producing a daemon that starts and immediately errors. See the
 [watch mode docs](https://k8sproject.top/features/watch-mode/#slo-burn-rate)
 for the SLI definition, the fixed windows/thresholds, and the restart caveat.
 
+## In-cluster dashboard (opt-in)
+
+Serve the read-only dashboard on the metrics port:
+
+```bash
+helm upgrade --install kubeagent deploy/helm/kubeagent \
+  --namespace kubeagent --create-namespace \
+  --set dashboard.enabled=true
+```
+
+It is unauthenticated, exactly like `/metrics` and `/issues` on the same port,
+and kubeagent terminates no TLS. Keep the Service `ClusterIP`, or put an
+authenticating proxy in front. It adds no Service port and no RBAC rule.
+
 ## Multi-cluster hub (opt-in)
 
 The daemon can watch several clusters from one process: one informer set per

@@ -88,13 +88,23 @@ Documented keys in `deploy/helm/kubeagent/values.yaml` keep their names and
 meanings within 1.x. New keys may be added. The chart's own `version` moves
 independently of the application's `appVersion`.
 
+### The watch daemon's `/dashboard` endpoint
+
+`watch --dashboard` serves an HTML page at `/dashboard` on the metrics port.
+Within 1.x that endpoint keeps its path, keeps returning HTML when the flag is
+set, and keeps returning `404` when it is not. The flag, its
+`KUBEAGENT_DASHBOARD` spelling and the `dashboard.enabled` chart value are
+stable under the three rules above, like every other flag, variable and chart
+key. **The page's markup is not** — it is listed under unstable surfaces below.
+
 ## Unstable surfaces — do not build on these
 
 - **The text report's wording and layout.** `internal/report/testdata/golden-scan.txt`
   is a regression guard so a change to the report is always deliberate — it is
   not a promise to consumers. Parse `--output json`, never the text.
-- **The HTML report's markup.** It is a shareable artifact for a human, and its
-  structure will change.
+- **The HTML report's and the dashboard's markup.** Both are artifacts for a
+  human to look at — a shareable file in one case, a page in a browser in the
+  other — and their structure will change. Parse `--output json` or `/issues`.
 - **Every `internal/` package.** Go's `internal/` rule already enforces this:
   nothing outside the module can import them, and the layout is free to move.
   kubeagent is a binary, not a library.
@@ -110,7 +120,7 @@ kubeagent supports **v1.32, v1.33, and v1.34**.
 This is an evidenced window rather than an asserted one. A nightly GitHub
 Actions matrix runs the full 22-scenario chaos suite — real injected outages, on
 a real cluster — once per supported minor, each on its own disposable kind
-cluster, with 124 machine-checked assertions per cell. A minor is listed here
+cluster, with 128 machine-checked assertions per cell. A minor is listed here
 because that suite passes on it, and it stops being listed when the suite stops
 being run against it.
 

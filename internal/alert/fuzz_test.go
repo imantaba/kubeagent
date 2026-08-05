@@ -9,12 +9,13 @@ import (
 	"github.com/imantaba/kubeagent/internal/alertstate"
 )
 
-// FuzzEncodePagerDuty asserts the three properties the receiver depends on, for
+// FuzzEncodePagerDuty asserts the four properties the receiver depends on, for
 // any object name and any explanation prose: the encoder never panics, it always
-// produces valid JSON, and dedup_key never exceeds PagerDuty's cap. The third is
-// the one worth fuzzing — a Kubernetes name may be 253 characters on its own, so
-// the cluster/kind/namespace/name concatenation reaches the cap with entirely
-// legal input.
+// produces valid JSON, dedup_key never exceeds PagerDuty's cap, and the same
+// notification always encodes to the same bytes. The third is the one worth
+// fuzzing — a Kubernetes name may be 253 characters on its own, so the
+// cluster/kind/namespace/name concatenation reaches the cap with entirely legal
+// input.
 //
 // The count is in characters, not bytes: json.Marshal replaces an invalid UTF-8
 // byte with U+FFFD, so the marshalled key can be longer in bytes than what

@@ -358,6 +358,34 @@ PROBE
   log "capabilities: ${CAPS:-<none>}"
 }
 
+# created_header — the report header for a cluster the harness created.
+#
+# Distro-specific because the two clusters differ in exactly the ways a reader of
+# this report needs to know: which CNI enforces (or does not enforce)
+# NetworkPolicy, whether metrics-server is present, and whether a LoadBalancer
+# Service can ever get an address. Those three are what decide which scenarios
+# run at all, so naming the add-ons is naming the shape of the run.
+#
+# Neither form names a node. The harness owns these node names, so they are not
+# the credential a foreign cluster's are — but a header that carries one is one
+# copy-paste away from a portable report, and there is no reason for it to.
+created_header() {
+  printf '# kubeagent chaos-test results\n\n'
+  case "$DISTRO" in
+    k3s)
+      printf -- '- Cluster: k3d %s, k3s stock defaults (Flannel CNI, Traefik + ServiceLB, metrics-server, local-path), 1 server + 2 agents\n' \
+        "$(k3d version 2>/dev/null | awk 'NR==1 {print $3}')"
+      ;;
+    *)
+      printf -- '- Cluster: Kind %s, Calico CNI, 1 control-plane + 2 workers\n' \
+        "$(kind version 2>/dev/null | awk '{print $2}')"
+      ;;
+  esac
+  printf -- '- Kubernetes: %s\n' "$(kubectl --context "$CTX" version -o json 2>/dev/null \
+    | python3 -c 'import sys,json; print(json.load(sys.stdin).get("serverVersion",{}).get("gitVersion",""))' 2>/dev/null)"
+  printf -- '- explain: %s\n' "$([ -n "${ANTHROPIC_API_KEY:-}" ] && echo enabled || echo 'disabled (no ANTHROPIC_API_KEY)')"
+}
+
 # portable_header — describe the target cluster in the report WITHOUT naming it.
 #
 # A kubeconfig context name is a credential under this project's rules, and on a

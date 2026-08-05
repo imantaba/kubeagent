@@ -5,9 +5,13 @@ name: chaos-matrix
 # defends a pull request is CI's fast job, which runs the harness's own
 # cluster-free self-tests.
 #
-# One job per supported Kubernetes minor. fail-fast is off on purpose: the
-# whole point of a matrix is to learn that v1.32 broke while v1.34 is fine, and
-# a cancelled sibling job teaches nothing.
+# One job per supported Kubernetes minor on kind, plus one job for k3s at the
+# newest supported minor. The axis is deliberately not a cross product: the
+# kind cells already cover the minor dimension and the single k3s cell covers
+# the distribution dimension, so multiplying the two would double runner cost
+# for mostly redundant signal. fail-fast is off on purpose: the whole point of
+# a matrix is to learn that v1.32 broke while v1.34 is fine, and a cancelled
+# sibling job teaches nothing.
 #
 # No secrets are needed and none are granted. ANTHROPIC_API_KEY is never set,
 # so every ordinary scenario's scan runs without --explain — the deterministic
@@ -56,13 +60,22 @@ jobs:
           . chaos/versions.sh
           picked="${INPUT_VERSIONS:-}"
           [ -n "$picked" ] || picked="$(chaos_versions)"
-          # Validate every requested minor through the same resolver the
+          # Validate every requested minor through the same resolvers the
           # harness uses, so a typo in a dispatch input fails here — in
           # seconds — instead of after a cluster has been built.
           for v in $picked; do chaos_image "$v" >/dev/null; done
-          json="$(printf '%s\n' $picked | jq -R . | jq -sc .)"
+          # The distribution axis is deliberately NOT a cross product: the kind
+          # cells cover the minor dimension and one k3s cell covers the
+          # distribution dimension, so a full product would double runner cost
+          # for mostly redundant signal. The k3s cell runs the newest supported
+          # minor, resolved from chaos/versions.env so it cannot go stale.
+          newest="$(chaos_newest)"
+          chaos_k3s_image "$newest" >/dev/null
+          json="$(printf '%s\n' $picked \
+            | jq -R '{version: ., distro: "kind"}' \
+            | jq -sc --arg newest "$newest" '{include: (. + [{version: $newest, distro: "k3s"}])}')"
           printf 'matrix=%s\n' "$json" >> "$GITHUB_OUTPUT"
-          printf 'running: %s\n' "$picked"
+          printf 'running: %s (kind) + %s (k3s)\n' "$picked" "$newest"
 
   chaos:
     needs: versions
@@ -70,9 +83,8 @@ jobs:
     timeout-minutes: 120
     strategy:
       fail-fast: false
-      matrix:
-        version: ${{ fromJson(needs.versions.outputs.matrix) }}
-    name: chaos (${{ matrix.version }})
+      matrix: ${{ fromJson(needs.versions.outputs.matrix) }}
+    name: chaos (${{ matrix.distro }} ${{ matrix.version }})
     steps:
       - uses: actions/checkout@v4
 
@@ -82,6 +94,7 @@ jobs:
           cache: true
 
       - name: Install kind
+        if: matrix.distro == 'kind'
         env:
           # kind-linux-amd64.sha256sum, the kubernetes-sigs/kind v0.30.0 release
           # asset (https://github.com/kubernetes-sigs/kind/releases/tag/v0.30.0).
@@ -96,25 +109,63 @@ jobs:
           sudo mv /tmp/kind /usr/local/bin/kind
           kind version
 
+      - name: Install k3d
+        if: matrix.distro == 'k3s'
+        env:
+          # k3d-linux-amd64, the k3d-io/k3d v5.9.0 release asset. k3d publishes
+          # no checksums asset, so this value was recorded from the downloaded
+          # binary. Bumping the k3d version means re-fetching the asset and
+          # updating this value alongside it — never dropping the check.
+          K3D_SHA256: 06d8f25bc3a971c4eb29e0ff08429b180402db0f4dec838c9eac427e296800a0
+        run: |
+          set -euo pipefail
+          curl -sSLo /tmp/k3d https://github.com/k3d-io/k3d/releases/download/v5.9.0/k3d-linux-amd64
+          printf '%s  /tmp/k3d\n' "$K3D_SHA256" | sha256sum -c -
+          chmod +x /tmp/k3d
+          sudo mv /tmp/k3d /usr/local/bin/k3d
+          k3d version
+
       # A kind node's kubelet, kube-proxy and controllers all draw inotify
-      # instances from a host-wide budget, and a runner ships with kind's
-      # pre-recommendation defaults. One cluster usually still boots at those
-      # values, which is exactly what makes the failure intermittent rather
-      # than obvious. Raise them before anything is created.
+      # instances from a host-wide budget — a k3d node draws from the same
+      # budget, which is why this step stays unconditional — and a runner
+      # ships with kind's pre-recommendation defaults. One cluster usually
+      # still boots at those values, which is exactly what makes the failure
+      # intermittent rather than obvious. Raise them before anything is
+      # created.
       - name: Raise inotify limits for kind
         run: |
           sudo sysctl -w fs.inotify.max_user_instances=512
           sudo sysctl -w fs.inotify.max_user_watches=524288
 
       - name: Preflight tools
+        env:
+          DISTRO: ${{ matrix.distro }}
         run: |
-          for b in docker kind kubectl helm go curl python3; do
+          set -euo pipefail
+          tool=kind; [ "$DISTRO" = k3s ] && tool=k3d
+          for b in docker "$tool" kubectl helm go curl python3; do
             command -v "$b" >/dev/null || { echo "missing required tool: $b" >&2; exit 1; }
           done
           docker info >/dev/null
 
-      - name: Run the chaos suite on ${{ matrix.version }}
-        run: ./chaos/run.sh --k8s-version '${{ matrix.version }}' --recreate --teardown
+      # The report path is derived exactly the way run.sh derives it, so the
+      # scan and the upload below can never read a path the harness did not
+      # write.
+      - name: Resolve the report path
+        id: report
+        env:
+          DISTRO: ${{ matrix.distro }}
+          VERSION: ${{ matrix.version }}
+        run: |
+          set -euo pipefail
+          if [ "$DISTRO" = k3s ]; then
+            printf 'path=docs/testing/chaos-results-k3s-%s.md\n' "$VERSION" >> "$GITHUB_OUTPUT"
+          else
+            printf 'path=docs/testing/chaos-results-%s.md\n' "$VERSION" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run the chaos suite on ${{ matrix.distro }} ${{ matrix.version }}
+        run: ./chaos/run.sh --distro '${{ matrix.distro }}' --k8s-version '${{ matrix.version }}' --recreate --teardown
 
       # Locally these reports are gitignored; uploaded, they leave the machine.
       # Scenario 20 already asserts that a refused read is reported in
@@ -131,7 +182,7 @@ jobs:
         if: always()
         run: |
           set -uo pipefail
-          rep="docs/testing/chaos-results-${{ matrix.version }}.md"
+          rep='${{ steps.report.outputs.path }}'
           [ -f "$rep" ] || { echo "no report at $rep — nothing to scan"; exit 0; }
           hits=0
           scan() {   # scan <what> <extended-regexp>
@@ -178,6 +229,6 @@ jobs:
         if: ${{ !cancelled() && steps.scan.outcome != 'failure' }}
         uses: actions/upload-artifact@v4
         with:
-          name: chaos-report-${{ matrix.version }}
-          path: docs/testing/chaos-results-${{ matrix.version }}.md
+          name: chaos-report-${{ matrix.distro }}-${{ matrix.version }}
+          path: ${{ steps.report.outputs.path }}
           if-no-files-found: warn

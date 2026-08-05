@@ -159,6 +159,9 @@ func TestMarketplaceEntryResolves(t *testing.T) {
 var pluginDocFiles = []string{
 	"skills/triaging-a-cluster/SKILL.md",
 	"skills/reading-kubeagent-findings/SKILL.md",
+	"commands/triage.md",
+	"commands/why.md",
+	"commands/preflight.md",
 }
 
 // toolNameRE matches an MCP tool name wherever it appears — in a Go

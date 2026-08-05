@@ -55,6 +55,27 @@ assert_skip() {
   return 0
 }
 
+# scenario_title <function name> — the report heading for a skipped scenario,
+# derived from the scenario's own function name: scenario_05_coredns -> "5.
+# coredns", scenario_14 -> "14.". Deriving it means a skip heading can never
+# drift from the scenario it names, which passing the title in as a second
+# argument would eventually allow.
+#
+# 10# forces base 10 on the number: a leading-zero numeral is octal to $(( )),
+# so a bare $((08)) is an error rather than 8 — the same trap run.sh's --only
+# normalization already documents.
+#
+# It lives here, not in run.sh, so chaos/assert-selftest.sh can exercise it with
+# no cluster; it touches nothing outside its own arguments.
+scenario_title() {
+  local rest="${1#scenario_}" num word
+  case "$rest" in
+    *_*) num="${rest%%_*}"; word="${rest#*_}" ;;
+    *)   num="$rest";       word="" ;;
+  esac
+  printf '%s.%s\n' "$((10#$num))" "${word:+ $word}"
+}
+
 # expect_eq <label> <actual> <want> — exact string equality.
 expect_eq() {
   if [ "$2" = "$3" ]; then

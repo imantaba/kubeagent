@@ -131,6 +131,33 @@ check 'the report lists every skip'  "$(grep -c '^SKIP	' "$rep")" 3
 check 'the report still lists the failure' "$(grep -c '^FAIL	' "$rep")" 1
 rm -f "$rep"
 
+# --- scenario_title: the skip heading, derived from the function name --------
+# Every real scenario name in run.sh, so a rename that breaks the derivation is
+# caught here rather than in a report heading nobody diffs.
+check 'scenario_title 01' "$(scenario_title scenario_01_etcd)"          '1. etcd'
+check 'scenario_title 02' "$(scenario_title scenario_02_certs)"         '2. certs'
+check 'scenario_title 03' "$(scenario_title scenario_03_diskfull)"      '3. diskfull'
+check 'scenario_title 04' "$(scenario_title scenario_04_networkpolicy)" '4. networkpolicy'
+check 'scenario_title 05' "$(scenario_title scenario_05_coredns)"       '5. coredns'
+check 'scenario_title 06' "$(scenario_title scenario_06_lb)"            '6. lb'
+check 'scenario_title 07' "$(scenario_title scenario_07_oom)"           '7. oom'
+check 'scenario_title 08' "$(scenario_title scenario_08_nsdelete)"      '8. nsdelete'
+check 'scenario_title 09' "$(scenario_title scenario_09_rollout)"       '9. rollout'
+check 'scenario_title 10' "$(scenario_title scenario_10_credleak)"      '10. credleak'
+check 'scenario_title 11' "$(scenario_title scenario_11_kubelet)"       '11. kubelet'
+check 'scenario_title 12' "$(scenario_title scenario_12_watch)"         '12. watch'
+check 'scenario_title 13' "$(scenario_title scenario_13_slo)"           '13. slo'
+check 'scenario_title 14 (no trailing word)' "$(scenario_title scenario_14)" '14.'
+check 'scenario_title 15' "$(scenario_title scenario_15_multicluster)"  '15. multicluster'
+check 'scenario_title 16' "$(scenario_title scenario_16_operators)"     '16. operators'
+check 'scenario_title 17' "$(scenario_title scenario_17_gitops)"        '17. gitops'
+check 'scenario_title 18' "$(scenario_title scenario_18_capacity)"      '18. capacity'
+check 'scenario_title 19' "$(scenario_title scenario_19_mcp)"           '19. mcp'
+check 'scenario_title 20' "$(scenario_title scenario_20_rbac)"          '20. rbac'
+check 'scenario_title 21' "$(scenario_title scenario_21_controlplane)"  '21. controlplane'
+check 'scenario_title 22' "$(scenario_title scenario_22_dnshealth)"     '22. dnshealth'
+check 'scenario_title 23' "$(scenario_title scenario_23_pagerduty)"     '23. pagerduty'
+
 printf '\n%s\n' "$([ "$fails" -eq 0 ] && echo 'assert-selftest: all checks passed' \
                                      || echo "assert-selftest: $fails check(s) failed")"
 [ "$fails" -eq 0 ]

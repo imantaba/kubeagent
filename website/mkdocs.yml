@@ -76,6 +76,7 @@ nav:
       - Shell completion: features/completion.md
       - Policy as code: features/policy.md
       - In-cluster dashboard: features/dashboard.md
+      - Claude Code plugin: features/claude-plugin.md
   - Install: install.md
   - Verifying a release: verify.md
   - Compatibility and support: compatibility.md

@@ -209,6 +209,18 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   and the interactive TUI (`kubeagent tui`), documented in
   [website/docs/features/tui.md](website/docs/features/tui.md). The rest of
   Theme G — an optional in-cluster dashboard — remains ahead.
+  A third distribution surface now sits alongside the MCP server and the krew
+  plugin: kubeagent installs into Claude Code as a plugin
+  (`.claude-plugin/plugin.json` + `marketplace.json`, with user-facing skills
+  under `skills/` and commands under `commands/`), documented in
+  [website/docs/features/claude-plugin.md](website/docs/features/claude-plugin.md).
+  It ships no Go production code and is **read-only**: no tool, skill, or
+  command reaches `--fix`. Note the two skills directories — `.claude/skills/`
+  is dev-facing (it holds `release` and `update-demo-gif`); root-level
+  `skills/` is what the plugin ships to users. Claude Code
+  auto-discovers only the former. `plugin_manifest_test.go` and
+  `internal/cli/plugin_flags_test.go` fail the build when the manifests or the
+  shipped skill text drift from the flags and tool names kubeagent registers.
 - **Theme H slice 1 has shipped (v0.68.0):** supply-chain integrity for
   releases — byte-reproducible archives (`scripts/build-release-archives.sh`,
   regression-tested by `release_archives_test.go`), keyless cosign signatures

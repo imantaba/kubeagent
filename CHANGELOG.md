@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Claude Code plugin.** kubeagent installs into Claude Code with
+  `/plugin marketplace add imantaba/kubeagent`, wiring the existing
+  `kubeagent mcp` server together with two skills and three commands
+  (`/kubeagent:triage`, `/kubeagent:why`, `/kubeagent:preflight`). The skills
+  are the point rather than the manifest: a model handed the four MCP tools
+  with no instruction reads an absent `coverage` key as good news, which throws
+  away both the coverage block and the least-privilege RBAC blind-spot
+  reporting. Read-only throughout — no tool, skill, or command reaches `--fix`
+  — and no new Go production code, so no import-graph invariant moves and none
+  of the six versioned JSON documents change. Two tests pin the manifests
+  against the chart's `appVersion`, against the real `mcp` flag parser, and
+  against the tool names `internal/mcp` actually registers. See
+  [Claude Code plugin](website/docs/features/claude-plugin.md).
+
 ## [1.2.0] - 2026-08-05
 
 ### Added

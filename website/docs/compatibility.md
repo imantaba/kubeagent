@@ -97,6 +97,19 @@ set, and keeps returning `404` when it is not. The flag, its
 stable under the three rules above, like every other flag, variable and chart
 key. **The page's markup is not** — it is listed under unstable surfaces below.
 
+### The Claude Code plugin manifest
+
+`.claude-plugin/plugin.json` declares the command line that starts the MCP
+server. Because that command line is baked into every installation and re-read
+on upgrade, changing it changes the behaviour of plugins already installed.
+Within 1.x, adding a flag to `mcpServers.kubeagent.args` is MINOR; removing one,
+or changing what an existing flag means, is MAJOR. The plugin's `name` and the
+marketplace entry's `name` are stable — they are what `/plugin install
+kubeagent@kubeagent` names.
+
+**The skill and command text is not stable.** It is instruction for a model and
+will be reworded as the detectors change. Nothing should parse it.
+
 ## Unstable surfaces — do not build on these
 
 - **The text report's wording and layout.** `internal/report/testdata/golden-scan.txt`

@@ -436,6 +436,20 @@ whatever kubeagent could not read, and collapsed detail sections. See
 
 ## Install
 
+### As a Claude Code plugin
+
+Install the binary first by any route below, then, in Claude Code:
+
+```text
+/plugin marketplace add imantaba/kubeagent
+/plugin install kubeagent@kubeagent
+```
+
+You get the `kubeagent mcp` server wired up, two skills that teach the model how
+to read a coverage block, and `/kubeagent:triage`, `/kubeagent:why` and
+`/kubeagent:preflight`. It is read-only: nothing in the plugin reaches `--fix`.
+See [Claude Code plugin](website/docs/features/claude-plugin.md).
+
 ### As a `kubectl` plugin (krew)
 
 With [krew](https://krew.sigs.k8s.io) installed, install kubeagent from the

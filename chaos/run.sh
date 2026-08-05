@@ -130,6 +130,11 @@ fi
 
 log() { printf '\n=== %s ===\n' "$*"; }
 
+# cluster_tool — the binary that creates and deletes this run's cluster. One
+# mapping, read by preflight, by teardown and by the inotify check, so a fourth
+# caller cannot invent a fifth answer.
+cluster_tool() { case "$DISTRO" in k3s) printf 'k3d\n' ;; *) printf 'kind\n' ;; esac; }
+
 # check_inotify_limits — the harness's own diagnosis of a failure mode that
 # otherwise costs four minutes and explains nothing.
 #
@@ -140,10 +145,12 @@ log() { printf '\n=== %s ===\n' "$*"; }
 # kube-proxy dies with "too many open files". kubeadm then waits four minutes
 # for a kubelet that will never be healthy and exits with a Go stack trace
 # naming none of this. The version axis makes that likely rather than rare:
-# per-minor cluster names are exactly what lets two clusters coexist.
+# per-minor cluster names are exactly what lets two clusters coexist. A k3d
+# node is the same shape and draws from the same host-wide budget, which is
+# why only the "other clusters" query below branches on distro.
 #
 # Warn whenever the limits are low; fail only when they are low AND another
-# kind cluster is already up, because that pair is what actually breaks. A
+# cluster is already up, because that pair is what actually breaks. A
 # re-run against this run's own cluster is not another cluster.
 check_inotify_limits() {
   local want_instances=512 want_watches=524288 have_instances have_watches others
@@ -153,19 +160,22 @@ check_inotify_limits() {
   case "$have_instances$have_watches" in *[!0-9]*|'') return 0 ;; esac
   [ "$have_instances" -ge "$want_instances" ] && [ "$have_watches" -ge "$want_watches" ] && return 0
 
-  others="$(kind get clusters 2>/dev/null | grep -vx "$CLUSTER" | tr '\n' ' ' || true)"
+  case "$DISTRO" in
+    k3s) others="$(k3d cluster list --no-headers 2>/dev/null | awk '{print $1}' | grep -vx "$CLUSTER" | tr '\n' ' ' || true)" ;;
+    *)   others="$(kind get clusters 2>/dev/null | grep -vx "$CLUSTER" | tr '\n' ' ' || true)" ;;
+  esac
   others="${others% }"
   {
-    printf 'inotify limits are below what kind needs:\n'
-    printf '  fs.inotify.max_user_instances = %s (kind recommends %s)\n' "$have_instances" "$want_instances"
-    printf '  fs.inotify.max_user_watches   = %s (kind recommends %s)\n' "$have_watches"   "$want_watches"
+    printf 'inotify limits are below what a containerized Kubernetes node needs:\n'
+    printf '  fs.inotify.max_user_instances = %s (recommended: %s)\n' "$have_instances" "$want_instances"
+    printf '  fs.inotify.max_user_watches   = %s (recommended: %s)\n' "$have_watches"   "$want_watches"
     printf 'Raise them with:\n'
     printf '  sudo sysctl -w fs.inotify.max_user_instances=%s\n' "$want_instances"
     printf '  sudo sysctl -w fs.inotify.max_user_watches=%s\n'   "$want_watches"
   } >&2
   if [ -n "${others// /}" ]; then
     {
-      printf 'Refusing to start: these kind clusters are already running and will\n'
+      printf 'Refusing to start: these clusters are already running and will\n'
       printf 'exhaust the budget, so this cluster'"'"'s kubelet would never come up:\n'
       printf '  %s\n' "$others"
       printf 'Delete them, or raise the limits above.\n'
@@ -175,7 +185,7 @@ check_inotify_limits() {
 }
 
 preflight() {
-  for b in docker kind kubectl helm go curl python3; do
+  for b in docker "$(cluster_tool)" kubectl helm go curl python3; do
     command -v "$b" >/dev/null || { echo "missing required tool: $b" >&2; exit 1; }
   done
   docker info >/dev/null 2>&1 || { echo "docker daemon not running" >&2; exit 1; }

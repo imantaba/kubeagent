@@ -300,6 +300,14 @@ check '--distro k3s composes with --recreate, --teardown and --k8s-version' \
   "$(distro_probe --distro k3s --k8s-version v1.33 --recreate --teardown | cut -d'|' -f1,2)" \
   '0|kubeagent-chaos-k3s-v1-33'
 
+# cluster_tool is the single mapping from distro to the binary that creates and
+# deletes the cluster: preflight requires it, teardown calls it, and CI installs
+# it. Three copies of that answer is two too many.
+check 'cluster_tool is kind by default' \
+  "$( ( set --; . chaos/run.sh; cluster_tool ) )" kind
+check 'cluster_tool is k3d on the k3s path' \
+  "$( ( . chaos/run.sh --distro k3s; cluster_tool ) )" k3d
+
 # --- redact_nodes: the portable-mode seam that keeps node AND context names
 # out of $OUT ------------------------------------------------------------
 # redact_nodes is a pure filter once NODE_NAMES and $CTX are set, so it is

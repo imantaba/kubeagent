@@ -2351,9 +2351,25 @@ main() {
     echo "  kind delete cluster --name $CLUSTER"
   fi
 
-  # Non-zero when any assertion failed: this is what makes the harness a gate.
-  # A skipped scenario is counted and named in the summary but never changes it.
-  assert_summary "$OUT"
+  # assert_summary is a second writer to $OUT, alongside record(): its FAIL
+  # block quotes each failed assertion's detail text verbatim, and a scenario
+  # that ever hands a node name to expect_contains as its needle would carry
+  # that name into the report by a route redact_nodes never sees if this
+  # called the append directly. chaos/assert.sh cannot call redact_nodes
+  # itself — it knows nothing of the cluster or the report by design, which is
+  # what lets chaos/assert-selftest.sh source it alone and stay cluster-free —
+  # so the filtering happens here instead: write the summary to a scratch
+  # file nobody else reads, then redact THAT into $OUT.
+  #
+  # Non-zero when any assertion failed: this is what makes the harness a gate,
+  # and that status must survive the detour. A skipped scenario is counted and
+  # named in the summary but never changes it.
+  local sumfile rc=0
+  sumfile="$(mktemp)"
+  assert_summary "$sumfile" || rc=$?
+  redact_nodes < "$sumfile" >> "$OUT"
+  rm -f "$sumfile"
+  return "$rc"
 }
 
 # main() runs only on a direct execution. chaos/assert-selftest.sh sources this

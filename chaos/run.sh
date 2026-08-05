@@ -12,6 +12,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 TEARDOWN=0; RECREATE=0; ONLY=""; OUT=""; K8S_VERSION=""; KIND_IMAGE=""
 CAPS=""   # the capabilities this run has; see the capability block below
+PORTABLE=0; CONTEXT=""   # --context selects portable mode; see the block below
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -20,6 +21,7 @@ while [ $# -gt 0 ]; do
     --only) ONLY="$2"; shift ;;
     --out) OUT="$2"; shift ;;
     --k8s-version) K8S_VERSION="$2"; shift ;;
+    --context) CONTEXT="$2"; shift ;;
     *) echo "unknown flag: $1" >&2; exit 2 ;;
   esac; shift
 done
@@ -28,6 +30,34 @@ done
 # 10# forces base 10: printf reads a leading-zero numeral as octal, so a plain
 # --only 08 or --only 09 errored and normalized to 00, silently matching nothing.
 if [ -n "$ONLY" ] && printf '%s' "$ONLY" | grep -qE '^[0-9]+$'; then ONLY=$(printf '%02d' "$((10#$ONLY))"); fi
+
+# Portable mode. --context runs the namespaced-only subset of the suite against
+# a cluster the harness did NOT create: it creates and deletes chaos-* namespaces
+# and nothing else, and every scenario that would write a cluster-scoped object
+# or shell into a node refuses to run.
+#
+# Three flags are REFUSED rather than ignored. All three manage a kind cluster's
+# lifecycle or its node image, and silently accepting one against someone else's
+# production cluster is exactly the trap this mode exists to avoid. They fire
+# here, before the version axis derives any name, so an operator who typed a
+# contradiction learns it before docker is touched.
+if [ -n "$CONTEXT" ]; then
+  PORTABLE=1
+  if [ "$RECREATE" = 1 ]; then
+    echo "--context and --recreate are mutually exclusive: the harness will not delete and rebuild a cluster it does not own" >&2
+    exit 2
+  fi
+  if [ "$TEARDOWN" = 1 ]; then
+    echo "--context and --teardown are mutually exclusive: the harness deletes only clusters it created" >&2
+    exit 2
+  fi
+  if [ -n "$K8S_VERSION" ]; then
+    echo "--context and --k8s-version are mutually exclusive: the version axis picks a kind node image, which says nothing about a cluster that already exists" >&2
+    exit 2
+  fi
+  CTX="$CONTEXT"
+  : "${OUT:=docs/testing/chaos-results-portable.md}"
+fi
 
 # Kubernetes version axis: chaos_versions / chaos_image / chaos_suffix, backed by
 # the digest-pinned set in chaos/versions.env.

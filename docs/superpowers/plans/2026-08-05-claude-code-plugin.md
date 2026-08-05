@@ -601,10 +601,17 @@ most common way to report a cluster healthy when it is not.
 
 ## Step 3: escalate from the findings, not from intuition
 
-For each finding with severity `critical` or `high`, call `kubeagent_inspect`
-using the `kind`, `namespace`, and `name` the finding already gave you. It
-returns that object's status, its pods, kubeagent's findings for it, and its
-recent Kubernetes events.
+Every finding carries a `severity` of `critical` (a detector matched a concrete
+failure mode) or `warning` (a health check flagged something that needs a
+human). Those are the only two values.
+
+Call `kubeagent_inspect` on every `critical` finding, using the `kind`,
+`namespace`, and `name` the finding already gave you. It returns that object's
+status, its pods, kubeagent's findings for it, and its recent Kubernetes events.
+Inspect a `warning` when it sits inside the scope the user asked about — most of
+kubeagent's Service, Ingress, PVC, PodDisruptionBudget, HPA and quota findings
+are warnings, so skipping them wholesale is how a real problem gets dismissed as
+noise.
 
 Do not inspect objects no finding pointed at. Do not invent names.
 
@@ -630,7 +637,8 @@ Stop when either is true:
 
 - The verdict is `healthy` and `coverage.partial` is empty. Say so and stop.
   Continuing to dig produces noise, not confidence.
-- You have inspected every critical and high finding and reported them.
+- You have inspected every `critical` finding, plus the `warning` findings in
+  the user's scope, and reported them.
 
 Then write the report: the verdict, the findings ranked by severity, and — always
 — what was not checked, in the user's words rather than as a raw JSON dump.
@@ -787,11 +795,16 @@ metrics-server installed at all.
 
 ## severity and confidence are independent
 
-`severity` is how bad it would be. `confidence` is how sure kubeagent is.
+`severity` is how bad it would be: `critical` when a detector matched a concrete
+failure mode, `warning` when a health check flagged something that needs a
+human. Those are the only two values. `confidence` is how sure kubeagent is:
+`high` when the state is one Kubernetes itself asserts, `medium` when it is a
+kubeagent heuristic. The two vocabularies do not overlap — there is no `high`
+severity and no `critical` confidence.
 
-High severity with low confidence is a **lead to verify**, not a conclusion to
-report. Escalate it with `kubeagent_inspect` and read the object's events before
-you tell the user their production database is failing.
+A `critical` finding carrying `medium` confidence is a **lead to verify**, not a
+conclusion to report. Escalate it with `kubeagent_inspect` and read the object's
+events before you tell the user their production database is failing.
 
 ## verdict is derived, not separate
 
@@ -888,8 +901,10 @@ Follow the `triaging-a-cluster` skill for the workflow and the
    commands.
 2. Call `kubeagent_triage`, passing `namespace` only if $1 is non-empty.
 3. Read the `coverage` block before the findings.
-4. For every finding with severity `critical` or `high`, call
-   `kubeagent_inspect` with that finding's `kind`, `namespace`, and `name`.
+4. Call `kubeagent_inspect` on every `critical` finding, and on each `warning`
+   finding inside the namespace scope, passing that finding's `kind`,
+   `namespace`, and `name`. `critical` and `warning` are the only two
+   severities kubeagent emits.
 5. Do not call `kubeagent_advisory` unless a finding points at a specific
    section.
 
@@ -964,15 +979,15 @@ skill.
    and is there room to schedule what is about to land. Both are requested
    unconditionally here — unlike ordinary triage — because that is what makes
    this a gate.
-4. Inspect any `critical` finding with `kubeagent_inspect`. Skip `high` and
-   below unless a `critical` one points at them; this is a gate, not a full
-   audit.
+4. Inspect any `critical` finding with `kubeagent_inspect`. Leave the `warning`
+   findings uninspected unless a `critical` one points at them; this is a gate,
+   not a full audit.
 
 Report a single **GO** or **NO-GO**, then the reasoning:
 
 - NO-GO if there is any `critical` finding, or if `drift` shows the target
   namespace already diverging from Git.
-- GO with caveats if the only findings are `medium` or below.
+- GO with caveats if the only findings are `warning`.
 - **Always** list the blind spots: every entry in `coverage.partial`, and
   `metricsServer` if it is not `available` — a capacity verdict without
   metrics-server is a guess, and say so.

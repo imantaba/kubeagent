@@ -175,7 +175,7 @@ func (s *Sink) Stats() Stats {
 
 // deliver encodes and POSTs one notification, retrying server-side failures.
 func (s *Sink) deliver(ctx context.Context, n alertstate.Notification) {
-	body, err := encode(s.format, n)
+	body, err := encode(s.format, "", n)
 	if err != nil {
 		log.Printf("kubeagent: encoding alert for %s: %v", n.Object, err)
 		s.record(n, false)

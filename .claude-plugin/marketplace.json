@@ -1,0 +1,11 @@
+{
+  "name": "kubeagent",
+  "owner": { "name": "imantaba", "url": "https://github.com/imantaba" },
+  "plugins": [
+    {
+      "name": "kubeagent",
+      "source": "./",
+      "description": "Read-only Kubernetes troubleshooting over MCP, with skills that teach a model how to read a coverage block."
+    }
+  ]
+}

@@ -173,12 +173,13 @@ or condition message reaches the report.
 
 ## Alerting (opt-in)
 
-The daemon can POST one alert per broken object to a webhook — generic JSON, a
-Slack incoming webhook, or Alertmanager's `/api/v2/alerts`. It stays read-only
-toward the cluster; the webhook is its only other egress.
+The daemon can POST one alert per broken object to a receiver — generic JSON, a
+Slack incoming webhook, Alertmanager's `/api/v2/alerts`, or PagerDuty's Events
+API v2. It stays read-only toward the cluster; the receiver is its only other
+egress.
 
-The URL is a credential, so it is read from `KUBEAGENT_ALERT_WEBHOOK` and never
-passed as a flag:
+The credential is read from the environment and never passed as a flag. For
+JSON, Slack and Alertmanager that is the webhook URL:
 
 ```bash
 kubectl -n kubeagent create secret generic kubeagent-alerts \
@@ -190,9 +191,23 @@ helm upgrade --install kubeagent deploy/helm/kubeagent \
   --set alerts.existingSecret=kubeagent-alerts
 ```
 
-Only `scheme://host` is ever logged. See the
-[watch mode docs](https://k8sproject.top/features/watch-mode/) for the payload
-shapes and the Alertmanager cadence rule.
+For PagerDuty it is the integration key, in the same Secret shape — the chart
+grows no new values, and the endpoint defaults to PagerDuty's published one:
+
+```bash
+kubectl -n kubeagent create secret generic kubeagent-pagerduty \
+  --from-literal=routing-key=<ROUTING_KEY>
+
+helm upgrade --install kubeagent deploy/helm/kubeagent \
+  --set alerts.enabled=true \
+  --set alerts.format=pagerduty \
+  --set alerts.existingSecret=kubeagent-pagerduty \
+  --set alerts.secretKey=routing-key
+```
+
+Only `scheme://host` is ever logged, and the routing key is never logged at all.
+See the [watch mode docs](https://k8sproject.top/features/watch-mode/) for the
+payload shapes and the Alertmanager cadence rule.
 
 ## SLO burn rate (opt-in)
 

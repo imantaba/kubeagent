@@ -436,8 +436,8 @@ These are the north star; every item below is measured against them.
   do), and rollback (`--rollback`). Theme D is complete; guarded, policy-gated
   autonomous remediation inside `watch` moves to Theme E.
 - **E · Continuous operations** ✅ — `watch` gains state (regressions, flapping,
-  MTTR, "new since last"), webhook alerting (JSON / Slack / Alertmanager
-  shipped; PagerDuty remains an open receiver), SLO burn-rate signals
+  MTTR, "new since last"), webhook alerting (JSON / Slack / Alertmanager /
+  PagerDuty, all shipped), SLO burn-rate signals
   (shipped), rate-limited on-incident `--explain` (shipped), and a
   multi-cluster hub (shipped). Theme E is complete; guarded, policy-gated
   autonomous remediation inside `watch` is a separate, future track.

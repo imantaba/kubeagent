@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **PagerDuty as a fourth alert receiver (`kubeagent watch --alert-format
+  pagerduty`).** The watch daemon posts [Events API v2](https://developer.pagerduty.com/docs/events-api-v2-overview)
+  events directly, so being paged by kubeagent no longer means first deploying a
+  Prometheus stack to reach PagerDuty through Alertmanager. A firing object is a
+  `trigger` and a recovered one a `resolve`, both on a `dedup_key` derived from
+  the object's identity — so a daemon restart re-triggers onto the open incident
+  instead of opening a second one. The integration key is a credential and
+  inherits the webhook URL's rule: it comes from `KUBEAGENT_ALERT_ROUTING_KEY`
+  with no flag, because a flag would put it in the pod spec's args and in `ps`
+  output, and it never reaches a log line, a metric label, an error message or a
+  rendered manifest. `KUBEAGENT_ALERT_WEBHOOK` stays the endpoint for all four
+  formats and becomes optional for this one, defaulting to PagerDuty's published
+  URL. The Helm chart grows **no new values**: the existing
+  `alerts.existingSecret` / `alerts.secretKey` pair feeds the routing key when
+  `alerts.format` is `pagerduty`. Closes Theme E's last open receiver. See
+  [watch mode](https://k8sproject.top/features/watch-mode/).
+
 ## [1.2.0] - 2026-08-05
 
 ### Added

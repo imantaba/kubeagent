@@ -195,8 +195,13 @@ check 'requires records a skip for every one of the six names' \
 
 # An unknown capability name is a harness bug, not a silent skip: a typo in a
 # guard would otherwise turn a scenario off and read as a passing run.
+#
+# These sourcing subshells sit at the script's top level, so $@ here is this
+# script's own argv rather than captured positional params — same reason as
+# requires_probe above, so they get the same `set --` guard before sourcing.
 unknown_rc="$(
   (
+    set --
     . chaos/run.sh
     CAPS=''
     scenario_99_probe() { requires no_such_capability; }
@@ -208,18 +213,18 @@ check 'requires exits 2 on an unknown capability name' "$unknown_rc" 2
 # capability_reason is the single source of a skip's wording, so two guards on
 # the same capability cannot describe it differently.
 check 'capability_reason knows cluster_write' \
-  "$( ( . chaos/run.sh; capability_reason cluster_write ) )" \
+  "$( ( set --; . chaos/run.sh; capability_reason cluster_write ) )" \
   'writes cluster-scoped objects, which the harness will not do on a cluster it does not own'
 check 'capability_reason rejects an unknown name' \
-  "$( ( . chaos/run.sh; capability_reason nope >/dev/null ) && echo 0 || echo 1 )" 1
+  "$( ( set --; . chaos/run.sh; capability_reason nope >/dev/null ) && echo 0 || echo 1 )" 1
 
 # capability_add is idempotent and validates, so a typo cannot silently switch
 # a scenario on.
 check 'capability_add is idempotent' \
-  "$( ( . chaos/run.sh; CAPS=''; capability_add node_exec; capability_add node_exec; printf '%s' "$CAPS" ) )" \
+  "$( ( set --; . chaos/run.sh; CAPS=''; capability_add node_exec; capability_add node_exec; printf '%s' "$CAPS" ) )" \
   'node_exec'
 check 'capability_add exits 2 on an unknown name' \
-  "$( ( . chaos/run.sh; capability_add nope ) >/dev/null 2>&1 && echo 0 || echo $? )" 2
+  "$( ( set --; . chaos/run.sh; capability_add nope ) >/dev/null 2>&1 && echo 0 || echo $? )" 2
 
 printf '\n%s\n' "$([ "$fails" -eq 0 ] && echo 'assert-selftest: all checks passed' \
                                      || echo "assert-selftest: $fails check(s) failed")"

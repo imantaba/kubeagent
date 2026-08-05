@@ -307,7 +307,8 @@ PROBE
     sleep 1
   done
   [ -n "$addr" ] || capability_add no_loadbalancer
-  kubectl --context "$CTX" delete ns "$pns" --wait=true --timeout=120s >/dev/null 2>&1 || true
+  kubectl --context "$CTX" delete ns "$pns" --wait=true --timeout=120s >/dev/null 2>&1 \
+    || log "probe: could not delete namespace $pns"
 
   log "capabilities: ${CAPS:-<none>}"
 }

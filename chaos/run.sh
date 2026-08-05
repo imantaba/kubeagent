@@ -13,6 +13,7 @@ cd "$ROOT"
 TEARDOWN=0; RECREATE=0; ONLY=""; OUT=""; K8S_VERSION=""; KIND_IMAGE=""
 CAPS=""   # the capabilities this run has; see the capability block below
 PORTABLE=0; CONTEXT=""   # --context selects portable mode; see the block below
+NODE_SED=""   # sed script redacting node names from portable-mode report text
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -290,6 +291,39 @@ print("- Kubelet: %s" % uniq("kubeletVersion"))
   printf -- '- explain: %s\n' "$([ -n "${ANTHROPIC_API_KEY:-}" ] && echo enabled || echo 'disabled (no ANTHROPIC_API_KEY)')"
 }
 
+# portable_node_redaction — build the sed script that keeps node names out of $OUT.
+#
+# A node name is a credential under this project's rules: on EKS it is routinely
+# an ip-10-x-x-x.ec2.internal, a private address and an internal hostname in one
+# string. kubeagent's own scan output names nodes on purpose — an operator
+# reading their terminal needs to know which node to fix — but this harness
+# copies that text into a file meant to be read elsewhere, so it redacts on the
+# way in.
+#
+# Names are DNS-1123 subdomains, so `.` is the only metacharacter to escape.
+# Substitutions are applied longest-first: with both `node1` and `node10`
+# present, the short name would otherwise eat the prefix of the long one and
+# leave a stray `0` behind. The number in the placeholder comes from the sorted
+# order instead, so `<node-1>` names the same node on every run.
+portable_node_redaction() {
+  local names
+  names="$(kubectl --context "$CTX" get nodes -o name 2>/dev/null)" || names=""
+  NODE_SED="$(printf '%s\n' "$names" | sed 's|^node/||' | LC_ALL=C sort | python3 -c '
+import sys
+names = [l.strip() for l in sys.stdin if l.strip()]
+place = {n: i + 1 for i, n in enumerate(names)}
+parts = []
+for n in sorted(names, key=len, reverse=True):
+    parts.append("s/%s/<node-%d>/g" % (n.replace(".", "\\."), place[n]))
+print(";".join(parts))
+' 2>/dev/null || true)"
+  if [ -z "$NODE_SED" ]; then
+    printf 'refusing to start: could not read the node list on the target cluster.\n' >&2
+    printf 'Portable mode redacts node names from the report, and it will not write one it cannot redact.\n' >&2
+    exit 1
+  fi
+}
+
 build_kubeagent() { log "build kubeagent"; go build -o ./kubeagent .; ./kubeagent version; }
 
 create_cluster() {
@@ -441,6 +475,16 @@ worker_node() {
   printf '%s\n' "$n"
 }
 
+# redact_nodes — filter report text through the portable-mode node redaction.
+#
+# In kind mode there is nothing to redact: the harness created those nodes and
+# named them itself, and NODE_SED is empty, so this is a passthrough and the
+# kind path's bytes do not move. In portable mode NODE_SED is never empty —
+# portable_node_redaction exits rather than let it be.
+redact_nodes() {
+  if [ -z "$NODE_SED" ]; then cat; else sed -E "$NODE_SED"; fi
+}
+
 # record <title> <verdict> ; reads scan (and optional --explain) output from stdin.
 # Scan output is wrapped in a code fence; any --explain markdown (after the
 # "── Explanation ──" marker kubeagent prints) is emitted raw so its own code
@@ -454,7 +498,7 @@ record() {
       { print }
       END { if (!seen) print "```" }
     '
-  } >> "$OUT"
+  } | redact_nodes >> "$OUT"
 }
 
 # --- capabilities -----------------------------------------------------------
@@ -2214,6 +2258,7 @@ run_scenarios() {
 main() {
   if [ "$PORTABLE" = 1 ]; then
     portable_preflight
+    portable_node_redaction
     build_kubeagent
   else
     preflight
@@ -2287,9 +2332,10 @@ main() {
     capability_add clean_baseline
   fi
 
-  # The probes run AFTER the baseline: the LoadBalancer probe creates and deletes
-  # a namespace, and a namespace still terminating during the baseline scan would
-  # dirty a verdict the gate depends on.
+  # probe_capabilities is a no-op today (Task 7 gives it a body), but it already
+  # runs AFTER the baseline: the LoadBalancer probe it will add creates and
+  # deletes a namespace, and a namespace still terminating during the baseline
+  # scan would dirty a verdict the gate depends on.
   probe_capabilities
 
   run_scenarios

@@ -11,6 +11,7 @@ COREDNS_BACKUP=/tmp/kubeagent-chaos-coredns.yaml   # pristine Corefile, captured
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 TEARDOWN=0; RECREATE=0; ONLY=""; OUT=""; K8S_VERSION=""; KIND_IMAGE=""
+CAPS=""   # the capabilities this run has; see the capability block below
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -280,6 +281,76 @@ record() {
       END { if (!seen) print "```" }
     '
   } >> "$OUT"
+}
+
+# --- capabilities -----------------------------------------------------------
+#
+# A scenario declares what it needs; the run decides what it has. The
+# vocabulary is a CLOSED SET of six names, each with exactly one reason string,
+# so two guards on the same capability can never describe it differently in two
+# reports.
+#
+# Two of them are POLICY, not probe. The question `cluster_write` and
+# `node_exec` answer is not whether the harness COULD write a cluster-scoped
+# object or shell into a node — with an admin kubeconfig against a managed
+# cluster it very often could — but whether it MAY. On a cluster the harness
+# created and can delete, it may. On a cluster it merely has credentials for, it
+# may not, and the refusal is the safety property this whole seam exists for.
+#
+# The other four are facts about the target cluster, decided by probe_capabilities
+# and by the baseline scan.
+
+# capability_reason <name> — the one canonical reason a scenario is skipped for
+# want of this capability. Returns 1 for a name outside the vocabulary.
+capability_reason() {
+  case "$1" in
+    node_exec)         printf 'needs shell access to a node container, which exists only on a cluster the harness created\n' ;;
+    cluster_write)     printf 'writes cluster-scoped objects, which the harness will not do on a cluster it does not own\n' ;;
+    clean_baseline)    printf 'asserts whole-cluster health, which is only meaningful on a cluster that reported none before the run\n' ;;
+    no_loadbalancer)   printf 'asserts a LoadBalancer Service never gets an address, which is false on a cluster with a provider\n' ;;
+    no_metrics_server) printf 'asserts the structural-rules-only path, which metrics-server would take instead\n' ;;
+    netpol_enforced)   printf 'needs a CNI that enforces NetworkPolicy\n' ;;
+    *) return 1 ;;
+  esac
+}
+
+# capability_add <name> — mark a capability available for this run. Idempotent,
+# and it validates: a typo here would silently switch a scenario ON, which is
+# the failure mode this seam must never have.
+capability_add() {
+  capability_reason "$1" >/dev/null || {
+    printf 'capability_add: unknown capability %s\n' "$1" >&2
+    exit 2
+  }
+  case " $CAPS " in *" $1 "*) ;; *) CAPS="${CAPS:+$CAPS }$1" ;; esac
+}
+
+# requires <capability> — the guard clause at the top of a scenario body:
+#
+#   scenario_05_coredns() {
+#     requires cluster_write || return 0
+#     log "scenario 5: ..."
+#
+# Returns 0 when the capability is available and the scenario proceeds
+# unchanged. Otherwise it records the skip three ways — in $SKIPLOG so the
+# summary counts it, in $OUT so the report names it, and on the console so a
+# watching operator sees it — and returns 1, so `|| return 0` leaves the
+# scenario without having touched the cluster.
+#
+# An unknown capability name EXITS rather than skipping. A silent skip on a
+# typo'd guard would look exactly like a passing run, which is precisely the
+# defect this seam was built to remove.
+requires() {
+  local cap="$1" reason title
+  reason="$(capability_reason "$cap")" || {
+    printf 'requires: unknown capability %s (called from %s)\n' "$cap" "${FUNCNAME[1]}" >&2
+    exit 2
+  }
+  case " $CAPS " in *" $cap "*) return 0 ;; esac
+  title="$(scenario_title "${FUNCNAME[1]}")"
+  assert_skip "$title" "$reason"
+  printf 'Skipped: %s\n' "$reason" | record "$title" "skipped ($reason)"
+  return 1
 }
 
 # A failed teardown must not abort main before assert_summary runs: the exit
@@ -2013,4 +2084,7 @@ main() {
   assert_summary "$OUT"
 }
 
-main
+# main() runs only on a direct execution. chaos/assert-selftest.sh sources this
+# file to exercise the pure helpers above — the capability table, requires — with
+# no cluster and no docker, which is the only way those get a test at all.
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then main; fi

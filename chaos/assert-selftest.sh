@@ -158,6 +158,69 @@ check 'scenario_title 21' "$(scenario_title scenario_21_controlplane)"  '21. con
 check 'scenario_title 22' "$(scenario_title scenario_22_dnshealth)"     '22. dnshealth'
 check 'scenario_title 23' "$(scenario_title scenario_23_pagerduty)"     '23. pagerduty'
 
+# --- requires: the capability gate, from the real run.sh ---------------------
+# run.sh calls main() only when executed directly, so it can be sourced here to
+# exercise its pure helpers with no cluster. Each probe runs in a SUBSHELL:
+# sourcing run.sh sets the harness's own globals, and they must not leak into
+# the checks around this block.
+requires_probe() {   # requires_probe <available caps> <capability> -> "<rc>|<skip lines>|<report sections>"
+  (
+    # A subshell inherits the enclosing function's positional parameters, so a
+    # bare `. chaos/run.sh` here would hand run.sh's own --flag parser "$1"
+    # and "$2" as if they were its argv. Capture them first and clear $@
+    # before sourcing.
+    local caps="$1" cap="$2"
+    set --
+    . chaos/run.sh
+    ASSERTLOG="$(mktemp)"; SKIPLOG="$(mktemp)"; OUT="$(mktemp)"
+    : > "$ASSERTLOG"; : > "$SKIPLOG"; : > "$OUT"
+    trap 'rm -f "$ASSERTLOG" "$SKIPLOG" "$OUT"' EXIT
+    CAPS="$caps"
+    scenario_99_probe() { requires "$cap" || return 1; return 0; }
+    scenario_99_probe >/dev/null 2>&1 && rc=0 || rc=$?
+    printf '%s|%s|%s\n' "$rc" \
+      "$(wc -l < "$SKIPLOG" | tr -d ' ')" \
+      "$(grep -c '^## ' "$OUT" || true)"
+  )
+}
+
+check 'requires returns 0 for an available capability' \
+  "$(requires_probe 'node_exec cluster_write' cluster_write)" '0|0|0'
+check 'requires returns 1 and records one skip for an unavailable capability' \
+  "$(requires_probe 'node_exec' cluster_write)" '1|1|1'
+check 'requires records a skip for every one of the six names' \
+  "$(for c in node_exec cluster_write clean_baseline no_loadbalancer no_metrics_server netpol_enforced; do
+       requires_probe '' "$c"
+     done | sort -u | tr -d '\n')" '1|1|1'
+
+# An unknown capability name is a harness bug, not a silent skip: a typo in a
+# guard would otherwise turn a scenario off and read as a passing run.
+unknown_rc="$(
+  (
+    . chaos/run.sh
+    CAPS=''
+    scenario_99_probe() { requires no_such_capability; }
+    scenario_99_probe
+  ) >/dev/null 2>&1 && echo 0 || echo $?
+)"
+check 'requires exits 2 on an unknown capability name' "$unknown_rc" 2
+
+# capability_reason is the single source of a skip's wording, so two guards on
+# the same capability cannot describe it differently.
+check 'capability_reason knows cluster_write' \
+  "$( ( . chaos/run.sh; capability_reason cluster_write ) )" \
+  'writes cluster-scoped objects, which the harness will not do on a cluster it does not own'
+check 'capability_reason rejects an unknown name' \
+  "$( ( . chaos/run.sh; capability_reason nope >/dev/null ) && echo 0 || echo 1 )" 1
+
+# capability_add is idempotent and validates, so a typo cannot silently switch
+# a scenario on.
+check 'capability_add is idempotent' \
+  "$( ( . chaos/run.sh; CAPS=''; capability_add node_exec; capability_add node_exec; printf '%s' "$CAPS" ) )" \
+  'node_exec'
+check 'capability_add exits 2 on an unknown name' \
+  "$( ( . chaos/run.sh; capability_add nope ) >/dev/null 2>&1 && echo 0 || echo $? )" 2
+
 printf '\n%s\n' "$([ "$fails" -eq 0 ] && echo 'assert-selftest: all checks passed' \
                                      || echo "assert-selftest: $fails check(s) failed")"
 [ "$fails" -eq 0 ]

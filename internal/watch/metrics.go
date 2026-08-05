@@ -825,17 +825,15 @@ func (m *metrics) dashboardInput(version string, now time.Time) dashboard.Input 
 			in.Active = append(in.Active, dashboard.Incident{
 				Cluster: n, Kind: r.Key.Kind, Namespace: r.Key.Namespace,
 				Name: r.Key.Name, Issue: r.Key.Issue,
-				FiringSince: rfc3339(r.FiringSince),
-				Firings:     r.Firings,
-				Flapping:    r.Flapping,
-				AgeSeconds:  ageSeconds(r.FiringSince, c.issues.At),
+				Firings:    r.Firings,
+				Flapping:   r.Flapping,
+				AgeSeconds: ageSeconds(r.FiringSince, c.issues.At),
 			})
 		}
 		for _, r := range c.issues.Resolved {
 			in.Resolved = append(in.Resolved, dashboard.Incident{
 				Cluster: n, Kind: r.Key.Kind, Namespace: r.Key.Namespace,
 				Name: r.Key.Name, Issue: r.Key.Issue,
-				FiringSince:       rfc3339(r.FiringSince),
 				Firings:           r.Firings,
 				Flapping:          r.Flapping,
 				ResolvedAt:        rfc3339(r.ResolvedAt),

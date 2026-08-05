@@ -30,17 +30,17 @@ func goldenInput() Input {
 		},
 		Active: []Incident{
 			{Cluster: "example-a", Kind: "Deployment", Namespace: "example-ns", Name: "web", Issue: "ImagePullBackOff",
-				FiringSince: "2026-08-02T09:00:00Z", Firings: 2, AgeSeconds: 1800},
+				Firings: 2, AgeSeconds: 1800},
 			{Cluster: "example-a", Kind: "Pod", Namespace: "example-ns", Name: "worker-0", Issue: "CrashLoopBackOff",
-				FiringSince: "2026-08-02T08:30:00Z", Firings: 7, Flapping: true, AgeSeconds: 3600},
+				Firings: 7, Flapping: true, AgeSeconds: 3600},
 			{Cluster: "example-b", Kind: "Node", Name: "node-1", Issue: "NotReady",
-				FiringSince: "2026-08-02T09:25:00Z", Firings: 1, AgeSeconds: 300},
+				Firings: 1, AgeSeconds: 300},
 		},
 		Resolved: []Incident{
 			{Cluster: "example-a", Kind: "StatefulSet", Namespace: "example-ns", Name: "cache", Issue: "Degraded",
-				FiringSince: "2026-08-02T07:00:00Z", Firings: 1, ResolvedAt: "2026-08-02T07:45:00Z", ResolutionSeconds: 2700},
+				Firings: 1, ResolvedAt: "2026-08-02T07:45:00Z", ResolutionSeconds: 2700},
 			{Cluster: "example-b", Kind: "Service", Namespace: "example-ns", Name: "api", Issue: "NoEndpoints",
-				FiringSince: "2026-08-02T08:10:00Z", Firings: 3, ResolvedAt: "2026-08-02T08:20:00Z", ResolutionSeconds: 600},
+				Firings: 3, ResolvedAt: "2026-08-02T08:20:00Z", ResolutionSeconds: 600},
 		},
 		Stats: Stats{
 			NewTotal: 9, ResolvedTotal: 6, FlapTotal: 2, DroppedTotal: 1,

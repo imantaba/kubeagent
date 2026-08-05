@@ -105,7 +105,6 @@ type Incident struct {
 	Namespace         string
 	Name              string
 	Issue             string
-	FiringSince       string
 	Firings           int
 	Flapping          bool
 	AgeSeconds        int64

@@ -120,7 +120,7 @@ func bindWatchFlags(cmd *cobra.Command, o *watchOptions) {
 }
 
 // parseWatchFlags parses `kubeagent watch`'s command line. Pure: it reads the
-// environment for the nine env-defaulted flags and nothing else, contacts no
+// environment for the env-defaulted flags and nothing else, contacts no
 // cluster, and writes nothing. It builds a throwaway command so the flag
 // declarations have exactly one home, in bindWatchFlags.
 func parseWatchFlags(args []string) (watchOptions, error) {

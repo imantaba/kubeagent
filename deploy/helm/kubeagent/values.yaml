@@ -115,7 +115,7 @@ slo:
 # A read-only HTML dashboard at /dashboard on the metrics port: the URL you
 # hand someone who asks what is broken right now. It renders only state the
 # daemon already tracks, so it performs no extra cluster read and needs no
-# extra RBAC, and it makes no model call.
+# extra RBAC. Separately, it makes no model call.
 #
 # It is UNAUTHENTICATED, exactly like /metrics and /issues on the same port,
 # and kubeagent terminates no TLS. The Service is ClusterIP by default; keep it

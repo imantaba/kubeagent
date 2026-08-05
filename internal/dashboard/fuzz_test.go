@@ -92,11 +92,11 @@ func fuzzInput(version, cluster, clusterErr, kind, namespace, name, issue, text 
 		Clusters: []Cluster{{Name: cluster, Up: false, LastScan: "2026-08-02T09:29:00Z", Error: clusterErr}},
 		Active: []Incident{{
 			Cluster: cluster, Kind: kind, Namespace: namespace, Name: name, Issue: issue,
-			FiringSince: "2026-08-02T09:00:00Z", Firings: 2, Flapping: true, AgeSeconds: age,
+			Firings: 2, Flapping: true, AgeSeconds: age,
 		}},
 		Resolved: []Incident{{
 			Cluster: cluster, Kind: kind, Namespace: namespace, Name: name, Issue: issue,
-			FiringSince: "2026-08-02T08:00:00Z", Firings: 1,
+			Firings:    1,
 			ResolvedAt: "2026-08-02T08:30:00Z", ResolutionSeconds: resolution,
 		}},
 		Stats: Stats{ResolutionSecondsSum: sum, ResolutionSecondsCount: count},

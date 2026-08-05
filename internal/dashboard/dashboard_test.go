@@ -37,12 +37,12 @@ func payloadInput(payload string) Input {
 		}},
 		Active: []Incident{{
 			Cluster: payload, Kind: payload, Namespace: payload, Name: payload,
-			Issue: payload, FiringSince: "2026-08-02T09:00:00Z",
+			Issue:   payload,
 			Firings: 3, Flapping: true, AgeSeconds: 1800,
 		}},
 		Resolved: []Incident{{
 			Cluster: payload, Kind: payload, Namespace: payload, Name: payload,
-			Issue: payload, FiringSince: "2026-08-02T08:00:00Z",
+			Issue:   payload,
 			Firings: 1, ResolvedAt: "2026-08-02T08:30:00Z", ResolutionSeconds: 1800,
 		}},
 		Stats: Stats{

@@ -65,10 +65,10 @@ article { margin-bottom: 1.2rem; }
 <h2>Resolved incidents ({{ len .Resolved }})</h2>
 {{- if .Resolved }}
 <table>
-<thead><tr>{{ if .MultiCluster }}<th>Cluster</th>{{ end }}<th>Kind</th><th>Object</th><th>Issue</th><th>Resolved at</th><th>Time to resolution</th><th>Firings</th></tr></thead>
+<thead><tr>{{ if .MultiCluster }}<th>Cluster</th>{{ end }}<th>Kind</th><th>Object</th><th>Issue</th><th>Resolved at</th><th>Time to resolution</th><th>Firings</th><th>Flapping</th></tr></thead>
 <tbody>
 {{- range .Resolved }}
-<tr>{{ if $.MultiCluster }}<td>{{ .Cluster }}</td>{{ end }}<td>{{ .Kind }}</td><td>{{ .Target }}</td><td>{{ .Issue }}</td><td>{{ .ResolvedAt }}</td><td>{{ .Resolution }}</td><td>{{ .Firings }}</td></tr>
+<tr>{{ if $.MultiCluster }}<td>{{ .Cluster }}</td>{{ end }}<td>{{ .Kind }}</td><td>{{ .Target }}</td><td>{{ .Issue }}</td><td>{{ .ResolvedAt }}</td><td>{{ .Resolution }}</td><td>{{ .Firings }}</td><td>{{ if .Flapping }}<span class="badge">flapping</span>{{ else }}—{{ end }}</td></tr>
 {{- end }}
 </tbody>
 </table>

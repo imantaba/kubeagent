@@ -218,6 +218,16 @@ check 'capability_reason knows cluster_write' \
 check 'capability_reason rejects an unknown name' \
   "$( ( set --; . chaos/run.sh; capability_reason nope >/dev/null ) && echo 0 || echo 1 )" 1
 
+# node_exec's reason is about the control plane's SHAPE, not about ownership.
+# The harness owns a k3d cluster as fully as it owns a kind one, so an
+# ownership-shaped reason would be simply false on the k3s path — and a skip
+# reason that is false in the report is worse than no reason at all.
+check 'capability_reason grounds node_exec in shape, not ownership' \
+  "$( ( set --; . chaos/run.sh; capability_reason node_exec ) )" \
+  'needs shell access to a node running a kubeadm-shaped control plane, where etcd and kubelet are separately stoppable units'
+check 'the node_exec reason makes no ownership claim' \
+  "$( ( set --; . chaos/run.sh; capability_reason node_exec ) | grep -ci 'harness created\|does not own' || true)" 0
+
 # capability_add is idempotent and validates, so a typo cannot silently switch
 # a scenario on.
 check 'capability_add is idempotent' \

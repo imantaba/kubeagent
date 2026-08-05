@@ -676,22 +676,30 @@ print(doc)
 ' "$2" 2>/dev/null || printf '<unparseable>\n'
 }
 
-# worker_node — the name of the first worker node.
+# worker_node — the name of the first node that is not the control plane.
 #
-# Two scenarios cordon or docker-exec into a worker by name. Reading it with a
-# bare `kubectl get nodes | grep worker` fails badly when nothing matches: under
-# `set -o pipefail` the unmatched grep aborts the run at the assignment, with no
+# Two scenarios cordon or docker-exec into a worker by name. Selecting on the
+# ABSENCE of the control-plane role label is what makes this work on both
+# distributions: kind names its workers <cluster>-worker and <cluster>-worker2,
+# k3d names its agents k3d-<cluster>-agent-0, and only the label is common to
+# both. (Matching the literal string "worker" silently found nothing on k3d.)
+#
+# Reading it with a bare pipeline fails badly when nothing matches: under
+# `set -o pipefail` an empty result aborts the run at the assignment, with no
 # message and no assertion summary, so a single-node or renamed cluster looks
 # like a harness crash. Diagnose it instead — this is an environment problem, in
 # the same class as a missing binary, not a kubeagent finding.
 worker_node() {
   local n
-  n="$(kubectl --context "$CTX" get nodes -o name | grep -m1 worker | cut -d/ -f2)" || true
+  n="$(kubectl --context "$CTX" get nodes \
+        -l '!node-role.kubernetes.io/control-plane' -o name 2>/dev/null \
+        | sed -n '1s|^node/||p')" || true
   if [ -z "$n" ]; then
     {
       printf 'no worker node found in context %s.\n' "$CTX"
-      printf 'The harness creates 1 control-plane + 2 workers; scenarios 3 and 11 need one.\n'
-      printf 'Re-create the cluster with: %s --recreate\n' "$0"
+      printf 'The harness creates one control-plane node and two workers (k3d: one server, two agents); scenarios 3 and 11 need one.\n'
+      printf 'Re-create the cluster with: %s%s --recreate\n' "$0" \
+        "$([ "$DISTRO" = kind ] || printf ' --distro %s' "$DISTRO")"
     } >&2
     exit 1
   fi
@@ -836,6 +844,12 @@ record() {
 # created and can delete, it may. On a cluster it merely has credentials for, it
 # may not, and the refusal is the safety property this whole seam exists for.
 #
+# That ownership question is still exactly `cluster_write`'s whole story.
+# `node_exec` is narrower: the harness owns a k3d cluster exactly as fully as
+# it owns a kind one, but k3s has no separately stoppable etcd or kubelet, so
+# granting `node_exec` there would let scenarios 1 and 11 run and fail —
+# strictly worse than a named skip.
+#
 # The other four are facts about the target cluster, decided by probe_capabilities
 # and by the baseline scan.
 
@@ -843,7 +857,7 @@ record() {
 # want of this capability. Returns 1 for a name outside the vocabulary.
 capability_reason() {
   case "$1" in
-    node_exec)         printf 'needs shell access to a node container, which exists only on a cluster the harness created\n' ;;
+    node_exec)         printf 'needs shell access to a node running a kubeadm-shaped control plane, where etcd and kubelet are separately stoppable units\n' ;;
     cluster_write)     printf 'writes cluster-scoped objects, which the harness will not do on a cluster it does not own\n' ;;
     clean_baseline)    printf 'asserts whole-cluster health, which is only meaningful on a cluster that reported none before the run\n' ;;
     no_loadbalancer)   printf 'asserts a LoadBalancer Service never gets an address, which is false on a cluster with a provider\n' ;;

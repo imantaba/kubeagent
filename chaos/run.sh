@@ -243,9 +243,74 @@ portable_sweep() {
   return 0
 }
 
-# probe_capabilities — decide the capabilities that are facts about the target
-# cluster rather than policy. Implemented in the next commit.
-probe_capabilities() { :; }
+# probe_capabilities — decide the capabilities that are facts about the TARGET
+# CLUSTER rather than policy.
+#
+# It runs in both modes. On kind every one of these is present, which is what
+# keeps the gate path's assertion count unchanged AND exercises the probe code
+# on the path that gates releases — a probe only ever run in portable mode would
+# be a probe nothing tests.
+probe_capabilities() {
+  log "probe cluster capabilities"
+
+  # no_metrics_server — scenario 18 asserts the structural-rules-only capacity
+  # path. On a cluster with metrics-server, kubeagent takes the metrics path
+  # instead and the assertion would fail rather than skip: a false alarm, which
+  # is strictly worse than a stated gap.
+  if ! kubectl --context "$CTX" get apiservice v1beta1.metrics.k8s.io >/dev/null 2>&1; then
+    capability_add no_metrics_server
+  fi
+
+  # netpol_enforced — scenario 4 needs a CNI that actually enforces
+  # NetworkPolicy. This is a HEURISTIC with exactly two failure modes: an
+  # enforcing CNI whose DaemonSet is not on this list gives a false SKIP (safe
+  # — the summary names it), and a listed CNI deliberately configured not to
+  # enforce gives a false FAILURE in scenario 4. There is no cheap probe that
+  # avoids both, and a wrong guess in the safe direction is the one to prefer.
+  local ds
+  for ds in calico-node cilium weave-net kube-router antrea-agent; do
+    if kubectl --context "$CTX" -n kube-system get ds "$ds" >/dev/null 2>&1; then
+      capability_add netpol_enforced
+      break
+    fi
+  done
+
+  # no_loadbalancer — scenario 6 asserts a LoadBalancer Service never gets an
+  # external address. A cluster with a provider assigns one within seconds and
+  # the assertion would fail rather than skip.
+  #
+  # The Service selects nothing on purpose: a provider assigns an address to a
+  # Service with no endpoints just the same, so there is no image to pull and
+  # nothing to schedule. The address, if one arrives, is read and discarded —
+  # it is never printed, because an external address is exactly the kind of
+  # thing this project does not write into a forwarded artifact.
+  local pns=chaos-probe addr="" i
+  kubectl --context "$CTX" create ns "$pns" --dry-run=client -o yaml \
+    | kubectl --context "$CTX" apply -f - >/dev/null 2>&1 || true
+  kubectl --context "$CTX" -n "$pns" apply -f - >/dev/null 2>&1 <<'PROBE' || true
+apiVersion: v1
+kind: Service
+metadata:
+  name: probe
+spec:
+  type: LoadBalancer
+  selector:
+    app: chaos-probe-selects-nothing
+  ports:
+    - port: 80
+      targetPort: 80
+PROBE
+  for i in $(seq 30); do
+    addr="$(kubectl --context "$CTX" -n "$pns" get svc probe \
+      -o jsonpath='{.status.loadBalancer.ingress[0].ip}{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)"
+    [ -n "$addr" ] && break
+    sleep 1
+  done
+  [ -n "$addr" ] || capability_add no_loadbalancer
+  kubectl --context "$CTX" delete ns "$pns" --wait=true --timeout=120s >/dev/null 2>&1 || true
+
+  log "capabilities: ${CAPS:-<none>}"
+}
 
 # portable_header — describe the target cluster in the report WITHOUT naming it.
 #
@@ -2332,10 +2397,9 @@ main() {
     capability_add clean_baseline
   fi
 
-  # probe_capabilities is a no-op today (Task 7 gives it a body), but it already
-  # runs AFTER the baseline: the LoadBalancer probe it will add creates and
-  # deletes a namespace, and a namespace still terminating during the baseline
-  # scan would dirty a verdict the gate depends on.
+  # probe_capabilities runs AFTER the baseline: its LoadBalancer probe creates
+  # and deletes a namespace, and a namespace still terminating during the
+  # baseline scan would dirty a verdict the gate depends on.
   probe_capabilities
 
   run_scenarios

@@ -291,15 +291,35 @@ Three consequences:
    precisely (`Amazon Linux 2`, `containerd://1.7.x`) and are not names. Node
    names are not printed.
 
-3. **Scenario 19 has a pre-existing leak on this path and is fixed as part of
-   the slice.** It asserts
+3. **Two scenarios write the context name into the report today, and both are
+   fixed as part of the slice.** Each is harmless only because
+   `kind-kubeagent-chaos` happens not to be sensitive; in portable mode each
+   would be the operator's real context name. Both are genuine defects
+   independent of portable mode, and both fixes hold the assertion count and the
+   assertion meanings unchanged.
+
+   **Scenario 19 (three places).** It prints
+   `tools/call (id 3) coverage.context: <name>` into the gate-checks block;
+   asserts
    `expect_eq "the server's context round-trips into the response" "$got_context" "$CTX"`,
-   and `expect_eq` prints its actual value on **PASS** — so the context name
-   lands in the report. Today that is `kind-kubeagent-chaos` and harmless; in
-   portable mode it would be the operator's real context. The fix compares a
-   derived match indicator (`yes`/`no`) instead of the two names, which removes
-   the name from both branches on both paths and holds the assertion count
-   unchanged. This is a genuine defect independent of portable mode.
+   and `expect_eq` echoes its actual value on **PASS**; and interpolates `$CTX`
+   into the `record` verdict string. Fix: compare a derived match indicator
+   (`yes`/`no`) rather than the two names, print the indicator rather than the
+   name, and reword the verdict to say *the context the server was started with*
+   without naming it.
+
+   **Scenario 15 (structural).** The multi-cluster daemon labels each cluster's
+   metric series by its context name, and the scenario dumps
+   `kubeagent_cluster_up{cluster="…"}` lines, the `/issues` cluster roster and a
+   per-cluster issue count straight into the report — so the context name reaches
+   `$OUT` as data, not just as prose. It also interpolates `$CTX` into its
+   `record` verdict twice. Fix at the source: the scenario already writes a
+   temporary kubeconfig and adds an `alias-b` and a `dead` context to it, so it
+   adds a third harness-named alias for the real cluster and passes
+   `--context alias-a --context alias-b --context dead` — never handing the
+   daemon the operator's context name at all. Every label in the metrics, in
+   `/issues` and in the report is then harness-chosen. The scenario still targets
+   the same cluster through the same credentials; only the label changes.
 
 `.github/workflows/chaos-matrix.yml` already scans the report for credential
 material before uploading it and refuses the upload on a hit. That gate is
@@ -331,7 +351,7 @@ material in the first place.
 |---|---|
 | `chaos/assert.sh` | `$SKIPLOG` in `assert_init` and its trap; `assert_skip`; `assert_summary` reports and lists skips |
 | `chaos/assert-selftest.sh` | coverage for `assert_skip`, the new summary output, and `scenario_title` |
-| `chaos/run.sh` | `--context` and its three refusals; `PORTABLE`; the capability table, `requires`, `scenario_title`; `portable_preflight`, `portable_sweep`; the `main()` setup branch, header and baseline branch; `requires` guards in nine scenarios; scenario 02 rewired; scenario 19's context-echo fix |
+| `chaos/run.sh` | `--context` and its three refusals; `PORTABLE`; the capability table, `requires`, `scenario_title`; `portable_preflight`, `portable_sweep`; the `main()` setup branch, header and baseline branch; `requires` guards in nine scenarios; scenario 02 rewired; the context-name fixes in scenarios 15 and 19 |
 | `chaos/README.md` | portable mode: what it runs, what it refuses, the preflight, the two documented behaviours |
 | `website/docs/compatibility.md` | amend the "not gated in CI" paragraph — accurately, without claiming CI coverage this slice does not add |
 | `website/docs/roadmap.md` | the cross-distribution item: seam built, CI gating still ahead |

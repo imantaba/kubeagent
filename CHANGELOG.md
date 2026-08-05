@@ -18,9 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   away both the coverage block and the least-privilege RBAC blind-spot
   reporting. Read-only throughout — no tool, skill, or command reaches `--fix`
   — and no new Go production code, so no import-graph invariant moves and none
-  of the six versioned JSON documents change. Two tests pin the manifests
-  against the chart's `appVersion`, against the real `mcp` flag parser, and
-  against the tool names `internal/mcp` actually registers. See
+  of the six versioned JSON documents change. Tests pin the manifests against
+  the chart's `appVersion`, against the real `mcp` flag parser, against the tool
+  names `internal/mcp` actually registers, and against `bump-version.sh`. See
   [Claude Code plugin](website/docs/features/claude-plugin.md).
 
 ## [1.2.0] - 2026-08-05

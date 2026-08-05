@@ -1267,7 +1267,7 @@ looked.
 
 | Command | What it does |
 |---|---|
-| `/kubeagent:triage [namespace]` | Sweeps, auto-inspects every critical and high finding, reports with its coverage caveats stated |
+| `/kubeagent:triage [namespace]` | Sweeps, auto-inspects every critical and warning finding, reports with its coverage caveats stated |
 | `/kubeagent:why <kind>/<name> [-n ns]` | Root-causes one object: its findings, its events, and the one advisory section its failure implies |
 | `/kubeagent:preflight [namespace]` | A pre-deploy gate: triage plus `drift` and `capacity` → one GO/NO-GO with blind spots listed |
 

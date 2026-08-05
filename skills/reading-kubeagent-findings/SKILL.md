@@ -24,10 +24,13 @@ was checked". Read it before the findings.
 did not, each with a reason. A skipped check produced no finding because it never
 ran.
 
-Seven checks are skipped on **every** `kubeagent_triage` call. Three of them —
-kubelet health, control-plane health, DNS health — are not reachable through the
-MCP server at all. Only the CLI's `--kubelet-health`, `--control-plane-health`,
-and `--dns-health` flags run them.
+Seven checks are skipped on **every** `kubeagent_triage` call, and they fall
+into two groups.
+
+Five are not reachable through the MCP server at all — kubelet health,
+control-plane health, DNS health, credential lint, and disk usage. Only the
+CLI's `--kubelet-health`, `--control-plane-health`, `--dns-health`,
+`--lint-secrets`, and `--disk-usage` flags run them.
 
 So a triage result is never grounds for saying "DNS is fine". If the user asks
 about DNS, tell them the tool did not check and give them the CLI command:
@@ -36,8 +39,8 @@ about DNS, tell them the tool did not check and give them the CLI command:
 kubeagent scan --dns-health
 ```
 
-Two more — the security and certificate sections — are skipped by triage but
-*are* reachable: call `kubeagent_advisory` with the section you need.
+The other two — the security and certificate sections — are skipped by triage
+but *are* reachable: call `kubeagent_advisory` with the section you need.
 
 ### partial is a blind spot
 

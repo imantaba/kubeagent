@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`kubeagent fleet` — sweep many clusters in one read-only pass.** Selects
+  kubeconfig contexts with `--context` (repeatable) or `--all-contexts` plus an
+  optional `--match` glob, reads them through a bounded worker pool
+  (`--workers`, default 8, `KUBEAGENT_FLEET_WORKERS`) with a per-cluster budget
+  (`--cluster-timeout`, default 60s, `KUBEAGENT_FLEET_CLUSTER_TIMEOUT`), and
+  prints one row per cluster worst first. Each cluster runs exactly the
+  evaluation `kubeagent gate` runs, so the two can never disagree. Exit codes
+  match `gate`'s, and `inconclusive` outranks `fail` for the same reason it
+  does there. Separately: fleet makes no LLM call. `--output json` writes the
+  eighth versioned document, `fleet` at schema 1.0; `scan` stays at 1.2 and
+  `gate` at 1.1. The report names contexts and issue kinds — never a node,
+  namespace, pod or workload.
+
+### Changed
+
+- `internal/policy`'s unexported glob matcher moved to `internal/glob`, a
+  stdlib-only leaf `internal/policy` and `internal/cli` now share. Behaviour is
+  unchanged: the table test, the blow-up test and `FuzzGlob` moved with it.
+
 ## [1.6.0] - 2026-08-06
 
 ### Added

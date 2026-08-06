@@ -1,6 +1,6 @@
 # JSON schema contract
 
-kubeagent writes seven machine-readable JSON documents. Each one now declares a
+kubeagent writes eight machine-readable JSON documents. Each one now declares a
 `schemaVersion`, and each has a published [JSON Schema](https://json-schema.org/)
 generated straight from the Go types that produce it. This page is the
 contract: what is versioned, what a version number promises, how to pin to
@@ -9,7 +9,7 @@ a lie.
 
 ## What is versioned
 
-Five independent surfaces, seven documents:
+Six independent surfaces, eight documents:
 
 | Document | Surface | Emitted by |
 |---|---|---|
@@ -20,6 +20,7 @@ Five independent surfaces, seven documents:
 | `watch-issues` | watch | the watch daemon's `GET /issues` |
 | `watch-explanations` | watch | the watch daemon's `GET /explanations` |
 | `baseline` | baseline | `kubeagent baseline capture` |
+| `fleet` | fleet | `kubeagent fleet --output json` |
 
 `rbac-print` and `rbac-check` share the `rbac` surface's version: a consumer
 that scripts one usually scripts both, so they move together.
@@ -46,9 +47,10 @@ is a choice, not an oversight:
 
 ## What MINOR and MAJOR mean
 
-Every `schemaVersion` is `MAJOR.MINOR`. All five surfaces started at `1.0`;
+Every `schemaVersion` is `MAJOR.MINOR`. Every surface starts at `1.0`;
 `gate` is at `1.1` today, having gained one optional field; `scan` is at
-`1.2`, having gained two; and **the schema version is not the kubeagent
+`1.2`, having gained two; `fleet` is the newest surface and enters at `1.0`
+unchanged — and **the schema version is not the kubeagent
 release version** — a surface's number moves only when its own document's
 shape moves, so a new `scan` field does not disturb a script reading the
 `gate` document.
@@ -108,6 +110,7 @@ https://k8sproject.top/schemas/rbac-check-v1.json
 https://k8sproject.top/schemas/watch-issues-v1.json
 https://k8sproject.top/schemas/watch-explanations-v1.json
 https://k8sproject.top/schemas/baseline-v1.json
+https://k8sproject.top/schemas/fleet-v1.json
 ```
 
 A MINOR bump edits the file at the same URL in place — a pinned URL never

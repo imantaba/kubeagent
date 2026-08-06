@@ -36,7 +36,7 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
 - **The CLI is a Cobra command tree in `internal/cli`**, one file per command;
   `main.go` holds only the `version` symbol the release workflow stamps with
   `-ldflags "-X main.version=<tag>"`. Flags are declared per command and never
-  as persistent flags: `--kubeconfig` appears on seven commands, and two of the
+  as persistent flags: `--kubeconfig` appears on eight commands, and two of the
   remaining ones deliberately do not accept it. pflag rejects the single-dash
   long-flag form the standard library accepted, so `internal/cli.Normalize`
   rewrites a leading `-longname` to `--longname` for names the target command
@@ -128,6 +128,21 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   call — two separate promises. `internal/findings` and `internal/report` import
   it; it imports neither of them
   (see [website/docs/features/baseline.md](website/docs/features/baseline.md)).
+  `internal/glob` joins the same stdlib-only list: a two-metacharacter
+  matcher (`*` any run including `/`, `?` one byte, everything else literal)
+  with exactly two callers, `internal/policy` and `internal/cli`.
+  `internal/glob/imports_test.go` enforces both halves — no kubeagent import
+  and stdlib-only — the same pattern `internal/baseline/imports_test.go`
+  established.
+  `internal/fleet` (the `kubeagent fleet` sweep) is a ninth case, and like
+  `gate` it is one-shot, not long-lived: it runs once and exits. It is
+  **read-only toward every cluster it sweeps** — `get`/`list` only, the exact
+  calls the per-cluster `gate` evaluation it reuses already makes against
+  that one context — and no `--fix` path. Separately: it makes **no LLM
+  call**. It must never import `internal/remediate` or `internal/explain`.
+  Its report names kubeconfig context names and issue kinds — never a node,
+  namespace, pod or workload name
+  (see [website/docs/features/fleet.md](website/docs/features/fleet.md)).
 - **Untrusted API text is sanitized at ingress, not at each renderer.** Every
   value read from a field the API server does not validate — `waiting.Message`,
   `terminated.Reason`, condition and event messages, `involvedObject.fieldPath`,
@@ -146,21 +161,23 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
 - **`internal/jsonschema` imports nothing from kubeagent** — it is the schema
   generator, importable by every surface package including the ones that may not
   import `internal/remediate` or `internal/explain`. `internal/schemadoc` is the
-  opposite case and deliberately so: it imports the five surface packages to
-  name the seven document roots, so it transitively reaches `remediate` and
+  opposite case and deliberately so: it imports the six surface packages to
+  name the eight document roots, so it transitively reaches `remediate` and
   `explain`. That is allowed — the invariants constrain what those packages
   import, not who imports them — and only `main.go` and `schemadoc`'s own tests
   import it. It holds no client and no context and makes no call.
-- **The seven JSON documents are a versioned contract.** Changing a field name, a
+- **The eight JSON documents are a versioned contract.** Changing a field name, a
   type, or an enum value in `report.ScanReport`, `gate.Verdict`,
   `rbacprofile.RulesDocument`, `rbacprofile.CheckDocument`,
-  `watch.IssuesReport`, `watch.ExplanationsReport` or `baseline.Document` means
+  `watch.IssuesReport`, `watch.ExplanationsReport`, `baseline.Document` or
+  `fleet.Report` means
   bumping the surface's version in `internal/jsonschema` and regenerating with
   `go test ./internal/schemadoc -run TestSchemaDrift -update`. The drift test
   says whether the change was additive (MINOR) or breaking (MAJOR). `scan` is
   at schema version **1.2** (added `policy`, then `baseline`, both
   `omitempty`) and `gate` is at **1.1** (added `policyNotEvaluated`,
-  `omitempty`) — both additive; `baseline` enters at **1.0**. A run without
+  `omitempty`) — both additive; `baseline` enters at **1.0**, and `fleet`
+  enters at **1.0** alongside it. A run without
   `--policy` or `--baseline` encodes none of those keys and every existing
   consumer is unaffected.
 

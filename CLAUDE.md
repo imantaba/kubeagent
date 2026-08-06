@@ -144,9 +144,12 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   nothing, so it lives in `internal/diagnose/knownissues_test.go`, where both
   the registry and the detectors are in scope: a `go/parser` walk over every
   `Issue:` literal, a fixture table driving all nine detectors to all
-  thirteen kinds, and a reverse check. The vocabulary is closed at thirteen
-  because both apparently-dynamic sites — `imagepull.go` and
-  `initcontainer.go` — are guarded to two reasons each
+  thirteen kinds, a reverse check, and a second parser walk that reads the
+  *guards* on the two sites that build a kind from a runtime value. The
+  vocabulary is closed at thirteen because both apparently-dynamic sites —
+  `imagepull.go` and `initcontainer.go` — are guarded to two reasons each,
+  and that fourth test is what makes widening either guard fail the suite
+  instead of quietly admitting a fourteenth kind
   (see [website/docs/features/known-issues.md](website/docs/features/known-issues.md)).
   `internal/fleet` (the `kubeagent fleet` sweep) is a ninth case, and like
   `gate` it is one-shot, not long-lived: it runs once and exits. It is
@@ -371,10 +374,11 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   `kubeagent known-issues [kind]` prints kubeagent's own reference for the
   thirteen kinds `diagnose.DefaultDetectors` can emit, from a curated Go
   slice literal in `internal/knownissues` — no cluster, no kubeconfig, no
-  network, no flags, and no model call. The vocabulary is closed and proved
-  closed: three tests in `internal/diagnose` fail the suite if a detector
-  emits a kind the reference does not document, or the reference documents a
-  kind no detector emits
+  network, no flags, and no model call. The vocabulary is closed, and four
+  tests in `internal/diagnose` keep it closed: they fail the suite if a
+  detector emits a kind the reference does not document, if the reference
+  documents a kind no detector emits, or if either of the two runtime-valued
+  `Issue:` sites has its guard widened to admit a new reason
   (see [website/docs/features/known-issues.md](website/docs/features/known-issues.md)).
   The remaining post-1.0 work is the rest of fleet-scale — cross-cluster
   correlation, and selection from something other than a kubeconfig — and

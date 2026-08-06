@@ -16,12 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   object names are placeholders. No cluster, no kubeconfig, no network, and no
   flags at all. Separately: it makes no LLM call — the text is curated prose
   compiled into the binary, not generated.
-- **The detector issue vocabulary is now machine-checked.** Three tests in
+- **The detector issue vocabulary is now machine-checked.** Four tests in
   `internal/diagnose` keep the reference and the detectors in step: a
   `go/parser` walk over every string literal reaching a finding's issue field, a
-  fixture table driving all nine detectors to produce all thirteen kinds, and a
-  reverse check refusing an entry for a kind nothing emits. A new detector that
-  emits an undocumented kind fails the suite.
+  fixture table driving all nine detectors to produce all thirteen kinds, a
+  reverse check refusing an entry for a kind nothing emits, and a second parser
+  walk over the two sites that build a kind from a runtime value, which reads
+  the guards rather than the output so widening one fails the suite. A new
+  detector that emits an undocumented kind fails the suite.
 
 ## [1.7.0] - 2026-08-06
 

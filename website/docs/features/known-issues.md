@@ -65,19 +65,31 @@ it.
 ## The vocabulary is closed
 
 `kubeagent known-issues` documents exactly the thirteen kinds the
-deterministic detector set can report, and the repository proves it rather
-than asserting it. Three tests in `internal/diagnose` run on every `go test`:
+deterministic detector set can report, and the repository checks that rather
+than asserting it. Four tests in `internal/diagnose` run on every `go test`:
 
 - a `go/parser` walk over the detector sources, checking every string literal
   that reaches a finding's issue field;
 - a fixture table that drives all nine detectors to produce all thirteen
   kinds and looks each one up in the registry — this is what covers the kinds
   composed at run time, which the parser cannot see;
-- the reverse check, refusing an entry for a kind no detector emits.
+- the reverse check, refusing an entry for a kind no detector emits;
+- a second parser walk for the two sites that build a kind from a runtime
+  value rather than a literal. It reads the *guards* instead of the output:
+  every string those functions compare against a `.Reason` field is composed
+  with the site's prefix and looked up. Widening a guard therefore fails the
+  suite immediately, which the fixture table alone would not — a fixture only
+  covers the path someone remembered to write.
 
 Adding a detector that emits a new kind fails the build's tests until the kind
 is documented. That is the point of the slice: the reference cannot drift from
 the code.
+
+The honest boundary: these tests cover `internal/diagnose`, the pod-level
+detectors. Other packages report their own findings — `FailedCreate`,
+`RolloutStuck`, `JobFailed` — and those are deliberately outside this
+vocabulary, with their prose on the [Failure diagnostics](diagnostics.md)
+page.
 
 ## What a kind is
 

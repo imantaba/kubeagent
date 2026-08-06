@@ -427,6 +427,52 @@ func TestCommandSurfaceBaselineCaptureDefaults(t *testing.T) {
 	}
 }
 
+// TestFleetFlagSurface is TestCommandSurfaceScan's counterpart for
+// `kubeagent fleet`.
+func TestFleetFlagSurface(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want func(fleetOptions) bool
+	}{
+		{"kubeconfig", []string{"--kubeconfig", "/nonexistent/kubeconfig"}, func(o fleetOptions) bool { return o.kubeconfig == "/nonexistent/kubeconfig" }},
+		{"context", []string{"--context", "example-a"}, func(o fleetOptions) bool { return len(o.contexts) == 1 && o.contexts[0] == "example-a" }},
+		{"repeated context", []string{"--context", "example-a", "--context", "example-b"}, func(o fleetOptions) bool { return len(o.contexts) == 2 }},
+		{"all-contexts", []string{"--all-contexts"}, func(o fleetOptions) bool { return o.allContexts }},
+		{"match", []string{"--match", "example-*"}, func(o fleetOptions) bool { return o.match == "example-*" }},
+		{"fail-on", []string{"--fail-on", "warning"}, func(o fleetOptions) bool { return o.failOn == "warning" }},
+		{"workers", []string{"--workers", "16"}, func(o fleetOptions) bool { return o.workers == 16 }},
+		{"cluster-timeout", []string{"--cluster-timeout", "2m"}, func(o fleetOptions) bool { return o.clusterTimeout == 2*time.Minute }},
+		{"output", []string{"--output", "json"}, func(o fleetOptions) bool { return o.output == "json" }},
+		{"namespace shorthand", []string{"-n", "example-ns"}, func(o fleetOptions) bool { return o.namespace == "example-ns" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o, err := parseFleetFlags(tc.args)
+			if err != nil {
+				t.Fatalf("parseFleetFlags(%v) error = %v", tc.args, err)
+			}
+			if !tc.want(o) {
+				t.Errorf("parseFleetFlags(%v) = %+v; the flag did not reach its field", tc.args, o)
+			}
+		})
+	}
+}
+
+// The flags fleet deliberately does not offer. Multiplying a proxied per-node
+// read by three hundred clusters is a shape this command will not have, and
+// --fix, --rollback, --explain and --investigate would each break a promise the
+// package doc makes.
+func TestFleetRefusesTheFlagsItDoesNotOffer(t *testing.T) {
+	for _, flag := range []string{"--logs", "--disk-usage", "--certs", "--capacity",
+		"--explain", "--investigate", "--fix", "--rollback", "--policy"} {
+		t.Run(flag, func(t *testing.T) {
+			if _, err := parseFleetFlags([]string{flag}); err == nil {
+				t.Errorf("parseFleetFlags(%q) error = nil, want an unknown-flag error", flag)
+			}
+		})
+	}
+}
+
 // TestErrorStrings pins every validation message and the exit code it
 // produces. These are kubeagent's public contract at v1.0; the Cobra
 // migration must not reword one of them.

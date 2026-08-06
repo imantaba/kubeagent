@@ -36,7 +36,7 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
 - **The CLI is a Cobra command tree in `internal/cli`**, one file per command;
   `main.go` holds only the `version` symbol the release workflow stamps with
   `-ldflags "-X main.version=<tag>"`. Flags are declared per command and never
-  as persistent flags: `--kubeconfig` appears on eight commands, and two of the
+  as persistent flags: `--kubeconfig` appears on eight commands, and three of the
   remaining ones deliberately do not accept it. pflag rejects the single-dash
   long-flag form the standard library accepted, so `internal/cli.Normalize`
   rewrites a leading `-longname` to `--longname` for names the target command
@@ -134,6 +134,42 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   `internal/glob/imports_test.go` enforces both halves — no kubeagent import
   and stdlib-only — the same pattern `internal/baseline/imports_test.go`
   established.
+  `internal/knownissues` (the `known-issues` reference) joins the same
+  stdlib-only list: the curated entry per issue kind the detector set can
+  emit, as a Go slice literal — no data file, no parser, no dependency.
+  `internal/knownissues/imports_test.go` enforces both halves, on
+  `internal/baseline/imports_test.go`'s pattern. It holds no client and no
+  context, issues no cluster call and makes no model call — two separate
+  promises. The completeness check cannot live inside a package that imports
+  nothing, so it lives in `internal/diagnose/knownissues_test.go`, where both
+  the registry and the detectors are in scope: a `go/parser` walk over every
+  `Issue:` literal, a fixture table driving all nine detectors to all
+  thirteen kinds, a reverse check, and a second parser walk that reads the
+  *guards* on the two sites that build a kind from a runtime value. The
+  vocabulary is closed at thirteen because both apparently-dynamic sites —
+  `imagepull.go` and `initcontainer.go` — are guarded to two reasons each,
+  and that fourth test is what makes widening either guard fail the suite
+  instead of quietly admitting a fourteenth kind. It understands a closed
+  set of guard and value shapes — an `==` or `switch` against a string
+  literal, and an `Issue` that is a `.Reason` field or a literal prefix
+  added to one — and **refuses** every other shape by name rather than
+  skipping it, so a guard rewritten out of its reach or compared against a
+  named constant fails the suite too; widening the set is a deliberate edit
+  to that test. Refusal is closed rather than best-effort: a value reaches
+  that field only by naming it (every `Issue` occurrence must be a
+  composite-literal key or an assignment's left side, inside a function
+  declaration — a read is refused too, and so is a second type declaring an
+  `Issue` field of its own), by not naming it (a positional literal, and a
+  second name for the type, `type f = Finding`), or by bypassing syntax —
+  which is why the detectors' import set is **pinned** to six packages
+  rather than filtered for `reflect` and `unsafe`, since
+  `json.Unmarshal(payload, &f)` writes the field importing neither. The
+  closure is over `internal/diagnose` only, and deliberately: `scan`'s
+  workload passes build their own `diagnose.Finding`s carrying
+  `RolloutStuck`, `FailedCreate` and `JobFailed`, kinds the reference does
+  not document. Each of those three was added after a shape slipped
+  through with all four tests green
+  (see [website/docs/features/known-issues.md](website/docs/features/known-issues.md)).
   `internal/fleet` (the `kubeagent fleet` sweep) is a ninth case, and like
   `gate` it is one-shot, not long-lived: it runs once and exits. It is
   **read-only toward every cluster it sweeps** — `get`/`list` only, the exact
@@ -353,6 +389,20 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   merely gone lands in `unreachable` with a reason from a fixed two-entry
   vocabulary, never an `err.Error()`
   (see [website/docs/features/fleet.md](website/docs/features/fleet.md)).
+- **Post-1.0 — the known-issues knowledge base, slice 1 has shipped:**
+  `kubeagent known-issues [kind]` prints kubeagent's own reference for the
+  thirteen kinds `diagnose.DefaultDetectors` can emit, from a curated Go
+  slice literal in `internal/knownissues` — no cluster, no kubeconfig, no
+  network, no flags, and no model call. The vocabulary is closed, and four
+  tests in `internal/diagnose` keep it closed: they fail the suite if a
+  detector emits a kind the reference does not document, if the reference
+  documents a kind no detector emits, or if either of the two runtime-valued
+  `Issue:` sites has its guard widened to admit a new reason — or rewritten
+  into a shape the fourth test cannot read, which it refuses rather than
+  skips. That refusal is closed rather than best-effort: a kind reaches a
+  finding only by naming the field, by not naming it, or by bypassing syntax,
+  and the fourth test checks all three
+  (see [website/docs/features/known-issues.md](website/docs/features/known-issues.md)).
   The remaining post-1.0 work is the rest of fleet-scale — cross-cluster
-  correlation, and selection from something other than a kubeconfig — and a
-  curated community detector library with a known-issues knowledge base.
+  correlation, and selection from something other than a kubeconfig — and
+  the second half of this item: a curated community detector library.

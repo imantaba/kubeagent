@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`kubeagent known-issues [kind]` — an offline reference for every failure
+  kind the detectors report.** With no argument it lists all thirteen kinds
+  with a one-line summary; with a kind it prints that failure in full — what it
+  means, its likely causes most common first, and read-only next steps whose
+  object names are placeholders. No cluster, no kubeconfig, no network, and no
+  flags at all. Separately: it makes no LLM call — the text is curated prose
+  compiled into the binary, not generated.
+- **The detector issue vocabulary is now machine-checked.** Four tests in
+  `internal/diagnose` keep the reference and the detectors in step: a
+  `go/parser` walk over every string literal reaching a finding's issue field, a
+  fixture table driving all nine detectors to produce all thirteen kinds, a
+  reverse check refusing an entry for a kind nothing emits, and a second parser
+  walk over the two sites that build a kind from a runtime value, which reads
+  the guards rather than the output so widening one fails the suite. That
+  fourth walk understands a closed set of guard shapes and refuses every other
+  shape by name rather than skipping it, so a guard rewritten out of its reach —
+  or compared against a named constant rather than a string literal — fails too.
+  Refusal is closed rather than best-effort: a value reaches that field only by
+  naming it — every `Issue` occurrence must be a composite-literal key or an
+  assignment's left side, inside a function declaration, and a second type
+  declaring its own `Issue` field is refused as well — by not naming it, which is
+  a positional literal or a second name for the type, or by bypassing syntax, for
+  which the detectors' import set is pinned to six packages rather than filtered
+  for `reflect` and `unsafe`, since `json.Unmarshal(payload, &f)` writes the
+  field importing neither. The closure is over `internal/diagnose`'s own
+  detectors, which is what the reference documents. A new detector that emits an
+  undocumented kind fails the suite.
+
 ## [1.7.0] - 2026-08-06
 
 ### Added

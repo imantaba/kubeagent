@@ -1060,7 +1060,6 @@ import (
 	"go/token"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"testing"
 )
 
@@ -1118,13 +1117,13 @@ func packageFiles(t *testing.T) []string {
 	}
 	return files
 }
-
-var _ = strings.TrimSpace
 ```
 
-Then delete the `var _ = strings.TrimSpace` line and the `strings` import — they
-are here only to show the import block shape; `strings` is genuinely unused in
-this file. Run `go vet ./internal/fleet/` to confirm.
+Note the two helpers are byte-identical to `internal/glob/imports_test.go`'s.
+That duplication is deliberate and unavoidable: a Go test helper cannot be
+shared across packages without a non-test package to hold it, and
+`internal/baseline/imports_test.go` already established this form. Do not
+extract them.
 
 - [ ] **Step 12: Run the package**
 

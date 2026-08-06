@@ -389,7 +389,7 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   merely gone lands in `unreachable` with a reason from a fixed two-entry
   vocabulary, never an `err.Error()`
   (see [website/docs/features/fleet.md](website/docs/features/fleet.md)).
-- **Post-1.0 — the known-issues knowledge base, slice 1 has shipped:**
+- **Post-1.0 — the known-issues knowledge base, slice 1 has shipped (v1.8.0):**
   `kubeagent known-issues [kind]` prints kubeagent's own reference for the
   thirteen kinds `diagnose.DefaultDetectors` can emit, from a curated Go
   slice literal in `internal/knownissues` — no cluster, no kubeconfig, no

@@ -78,32 +78,53 @@ func TestNoPackRuleIsCritical(t *testing.T) {
 	}
 }
 
-// hostMarkers are the substrings that would mean a host or a URL had reached
-// a rule's message — the same list internal/knownissues checks its prose
-// fields against, plus "k8sproject": internal/policypack has no field
-// equivalent to knownissues' Docs, so unlike that package there is no field
-// here allowed to carry a host, not even the project's own.
-var hostMarkers = []string{"://", "http", "www.", ".com", ".net", ".org", ".io", "k8sproject"}
-
-// dottedQuad matches a bare IPv4 address.
+// dottedQuad matches a bare IPv4 address. Used only for the whole-file scan
+// below — a rule Message is held to a stricter, list-free rule instead (see
+// TestPackCarriesNoHostOrAddress).
 var dottedQuad = regexp.MustCompile(`\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b`)
 
 // TestPackCarriesNoHostOrAddress runs two checks of deliberately different
 // strength, not one blanket scan.
 //
 // A rule's Message is prose: it is what reaches a terminal, a JSON document,
-// a SARIF upload and an HTML report, so it is checked against the full
-// hostMarkers list plus dottedQuad — nothing that looks like a URL, a
-// domain-shaped word or an address may reach it.
+// a SARIF upload and an HTML report. No closed list of markers can do this
+// job — the project's concern is chiefly an *internal* hostname, and an
+// internal hostname is exactly what a public-suffix list cannot enumerate;
+// every list is only as good as its last update, and the next missing
+// suffix passes silently. So a Message is held to an open-ended shape rule
+// instead of a list: it may contain no dot, and no "://", at all. A URL
+// need not contain a dot (a bare host and port has none), which is why
+// "://" is still checked separately. Together the two catch every dotted or
+// schemed form a host or address can take — every FQDN, every IPv4 literal
+// and every URL — with nothing to maintain.
 //
-// The whole pack YAML is checked only for "://" and dottedQuad, never the
-// full marker list. The YAML's structural fields legitimately contain dotted
-// text that is not a host: a match.labels selector such as
-// app.kubernetes.io/name contains ".io", and a path such as
-// spec.template.spec.containers[*].readinessProbe is made of dotted
-// segments. "://" and a dotted quad cannot appear in a legitimate kind, path,
-// label key or level, so they stay meaningful checks over the whole file —
-// the wider marker list would false-positive on the file's own shape.
+// What they do not catch: a bare single-label word, such as "backend," with
+// no dot and no scheme. That limit is real and deliberate, not an
+// oversight — a single label is indistinguishable from an ordinary English
+// noun, so no textual check can separate the two, and a single label
+// carries no domain and identifies no infrastructure on its own. The
+// fourteen shipped messages already rely on ordinary single words like
+// "Service," "container" and "node"; that is the concrete reason a
+// single-label check is impossible here, not merely unattempted.
+//
+// This is deliberately STRICTER than the rule it enforces: it also refuses
+// an innocent dotted token that names no host at all, such as a field path
+// like spec.replicas. That is the intended trade, not an oversight — an
+// allowlist of "permitted dots" is the same treadmill in reverse, and a
+// curated one-clause message never needs one; an author who wants to name a
+// field writes "the replicas field" rather than the path itself. A
+// maintainer who hits this failure on a message that names no host has
+// found a false positive by design, and the fix is to reword the message
+// to drop the dot, not to weaken this check.
+//
+// The whole pack YAML, by contrast, is checked only for "://" and
+// dottedQuad — never a blanket dot ban. Unlike a Message, the YAML's
+// structural fields legitimately contain dotted text that is not a host: a
+// match.labels selector such as app.kubernetes.io/name contains ".io", and
+// a path such as spec.template.spec.containers[*].readinessProbe is made of
+// dotted segments. "://" and a dotted quad cannot appear in a legitimate
+// kind, path, label key or level, so they stay meaningful checks over the
+// whole file without banning dots outright.
 func TestPackCarriesNoHostOrAddress(t *testing.T) {
 	for _, p := range policypack.All() {
 		t.Run(p.Name, func(t *testing.T) {
@@ -116,14 +137,11 @@ func TestPackCarriesNoHostOrAddress(t *testing.T) {
 				t.Errorf("the pack carries %q — a rule may not name an address", loc)
 			}
 			for _, r := range loadPack(t, p.Name) {
-				lower := strings.ToLower(r.Message)
-				for _, m := range hostMarkers {
-					if strings.Contains(lower, m) {
-						t.Errorf("rule %q message contains %q: %q", r.ID, m, r.Message)
-					}
+				if strings.Contains(r.Message, ".") {
+					t.Errorf("rule %q message contains a dot — it may be a host, so the message must be reworded without one: %q", r.ID, r.Message)
 				}
-				if loc := dottedQuad.FindString(r.Message); loc != "" {
-					t.Errorf("rule %q message carries an address: %q", r.ID, loc)
+				if strings.Contains(r.Message, "://") {
+					t.Errorf("rule %q message contains a URL scheme: %q", r.ID, r.Message)
 				}
 			}
 		})

@@ -252,7 +252,7 @@ Nine of the 23 scenarios are skipped on a cluster the harness does not own:
 
 | Skipped | Why |
 |---|---|
-| 1, 11 | need shell access to a node container, which exists only on a cluster the harness created |
+| 1, 11 | need shell access to a node the harness owns, whose control plane runs etcd and kubelet as separately stoppable units |
 | 3, 5, 16, 17, 20, 22 | write cluster-scoped objects (node conditions, the CoreDNS ConfigMap, CRDs, ClusterRoles) |
 | 2 | control-plane certificate expiry cannot be forced quickly or safely — skipped everywhere, including on Kind |
 

@@ -20,9 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **`node_exec`'s skip reason now names the control plane's shape rather than
-  cluster ownership**, and `worker_node` selects a node by its role label
-  instead of a name pattern, so both hold unchanged on a k3d cluster as well
+- **`node_exec`'s skip reason now names the control plane's shape alongside
+  cluster ownership**: a k3s cluster the harness created is still refused,
+  because an embedded datastore and a kubelet inside the single k3s process
+  are not separately stoppable units. `worker_node` selects a node by its
+  role label instead of a name pattern, so it holds on a k3d cluster as well
   as a kind one.
 - **The `--fix` then `--rollback` audit-log round trip (scenario 9b) now
   records in the report which branch kubeagent took and dumps the audit

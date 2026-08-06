@@ -18,9 +18,11 @@ it at a cluster you already have; that mode is described under
 
 ## Prerequisites
 
-- **Docker** (the Kind nodes run as containers)
+- **Docker** (the Kind and k3d nodes both run as containers)
 - **kind** ≥ v0.30 — install:
   `curl -sSLo kind https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-amd64 && chmod +x kind && sudo mv kind /usr/local/bin/`
+- **k3d** v5.9.0 — needed **only** for `--distro k3s` — install:
+  `curl -sSLo k3d https://github.com/k3d-io/k3d/releases/download/v5.9.0/k3d-linux-amd64 && chmod +x k3d && sudo mv k3d /usr/local/bin/`
 - **kubectl**, **helm**, **go**, **python3**
 - **inotify headroom.** Every kubelet, kube-proxy and controller inside a Kind
   node draws inotify instances from a **host-wide** budget — containers do not
@@ -28,7 +30,8 @@ it at a cluster you already have; that mode is described under
   boots, so the machine looks fine, and the *second* one starves: kube-proxy
   dies with `too many open files`, the kubelet never reaches healthy, and
   kubeadm gives up four minutes later with a Go stack trace naming none of it.
-  Raise them once:
+  A k3d node draws from the same host-wide budget — it is a container too — so
+  this paragraph applies whichever distribution you create. Raise them once:
 
   ```bash
   sudo sysctl -w fs.inotify.max_user_instances=512
@@ -49,6 +52,7 @@ it at a cluster you already have; that mode is described under
 ./chaos/run.sh --only 7        # run a single scenario (1..23) for debugging
 ./chaos/run.sh --out path.md   # write the report somewhere specific
 ./chaos/run.sh --k8s-version v1.33   # pin the Kubernetes minor (see below)
+./chaos/run.sh --distro k3s   # create a k3s cluster (k3d) instead of kind
 ```
 
 The report is written to `docs/testing/chaos-results.md` by default (the
@@ -107,6 +111,39 @@ docker, in under a second: every listed minor resolves to a digest-pinned
 merely prefix-matching value (`v1.3` against `v1.33`) is refused with nothing on
 stdout.
 
+### Distributions
+
+`--distro kind|k3s` selects which Kubernetes distribution the harness creates.
+`kind` is the default, so every command line written before this flag existed
+means exactly what it always did.
+
+The two paths pin node images differently. Omitting `--k8s-version` on the kind
+path still lets kind pick its own node image, unchanged from before `--distro`
+existed. The k3s path has no such default to fall back to — k3d bundles a k3s
+version that moves with the k3d release — so it **always** pins a digest-pinned
+`rancher/k3s` image from [`versions.env`](versions.env), whether or not
+`--k8s-version` is given.
+
+The report path is derived from the distribution the same way it is derived
+from the version:
+
+| Distribution | default report | `--k8s-version v1.33` |
+| ------------ | --------------- | ---------------------- |
+| kind | `docs/testing/chaos-results.md` | `docs/testing/chaos-results-v1.33.md` |
+| k3s | `docs/testing/chaos-results-k3s.md` | `docs/testing/chaos-results-k3s-v1.33.md` |
+
+`--distro` is refused together with `--context`, the same way `--recreate`,
+`--teardown` and `--k8s-version` are: `--context` points the harness at a
+cluster it did not create, and `--distro` says which distribution to create —
+the two answer contradictory questions, and the flag is refused before
+anything touches docker.
+
+**The harness must not disable Traefik on the k3s path.** Traefik holds port
+80, and holding port 80 is what lets k3s's built-in ServiceLB publish an
+address for a `LoadBalancer` Service — which is what makes scenario 6 run
+instead of skip. Disabling Traefik would silently turn scenario 6 from a real
+assertion into a skip on every k3s run.
+
 ### What this matrix does and does not cover
 
 The nightly workflow (`.github/workflows/chaos-matrix.yml`) runs the full
@@ -120,18 +157,31 @@ specific injected outages. That is **not** a claim that kubeagent is correct in
 general, and the axes below are the ones a three-minor matrix could easily be
 mistaken for covering:
 
-- **Kubernetes distribution.** Only kind. EKS, GKE, AKS, OpenShift, k3s and
-  RKE2 are untested, and so is any managed control plane — a kind
-  control-plane container has none of a cloud provider's admission chain,
-  IAM-mapped auth, or managed upgrade behaviour.
+- **Kubernetes distribution.** The matrix covers **kind** on every supported
+  minor and **k3s** (via k3d) on the newest one. The k3s cell skips five of
+  the twenty-three scenarios, each naming why in its assertion summary:
+  scenario 2 (certs) for the same reason it skips on kind — control-plane
+  certificate expiry cannot be forced quickly or safely; scenarios 1 (etcd)
+  and 11 (kubelet) because k3s's control plane has no separately stoppable
+  etcd (it uses an embedded sqlite datastore) and its kubelet is part of the
+  single k3s process rather than a unit the harness can stop on its own;
+  scenario 4 (networkpolicy) because k3s ships Flannel, which does not
+  enforce NetworkPolicy; and scenario 18 (capacity) because k3s ships
+  metrics-server by default, so the structural-rules-only path scenario 18
+  asserts is not the path kubeagent takes. EKS, GKE, AKS, OpenShift and RKE2
+  remain untested, and so does any managed control plane — neither kind nor
+  k3d has a cloud provider's admission chain, IAM-mapped auth, or managed
+  upgrade behaviour.
 - **CPU architecture.** Only amd64. The runner is GitHub's `ubuntu-latest`
   and the workflow installs the `kind-linux-amd64` binary; arm64 and every
   other architecture are untested.
-- **CNI.** Only Calico (`chaos/kind-config.yaml` disables kind's default CNI
-  so Calico can enforce NetworkPolicy). Cilium, kindnet's own default, and
-  every other CNI are untested — scenario 4's NetworkPolicy assertion in
-  particular exercises Calico's enforcement, not a behaviour every CNI
-  guarantees identically.
+- **CNI.** Calico on the kind cells (`chaos/kind-config.yaml` disables kind's
+  default CNI so Calico can enforce NetworkPolicy), Flannel on the k3s cell —
+  Flannel does not enforce NetworkPolicy, which is exactly why the k3s cell
+  skips scenario 4 rather than running it there. Cilium, kindnet's own
+  default, and every other CNI remain untested; scenario 4's NetworkPolicy
+  assertion runs only where a CNI enforces it, never against a behaviour
+  every CNI guarantees identically.
 - **Container runtime.** Only containerd, because that is what a kind node
   ships (scenario 11 stops it by name to test the boundary). CRI-O and other
   runtimes are untested.
@@ -148,9 +198,10 @@ mistaken for covering:
   redaction, not the real Anthropic backend, which stays covered by unit
   tests only.
 
-Each cell runs 134 assertions. On a GitHub-hosted runner a cell takes roughly
-17 minutes; locally it's 35-40. All three supported
-minors have gone green on real runners.
+Each **kind** cell runs 134 assertions. The k3s cell runs 110 — fewer because
+five scenarios skip for the reasons named above, not because anything is
+weaker. On a GitHub-hosted runner a cell takes roughly 17 minutes; locally
+it's 35-40. All three supported minors have gone green on real runners.
 
 ### `--explain`
 

@@ -266,7 +266,9 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   end), `--k8s-version <minor>` pins it to a
   digest-pinned kind node image from `chaos/versions.env`,
   `.github/workflows/chaos-matrix.yml` runs the full suite nightly once per
-  supported minor, and
+  supported minor, and now also runs one k3s cell at the newest supported
+  minor — `--distro kind|k3s` selects which distribution the harness creates —
+  and
   [website/docs/compatibility.md](website/docs/compatibility.md) writes down
   which surfaces are stable within 1.x, which are deliberately not, and what
   deprecating one costs. From 1.0 onward a MAJOR release is the only one that

@@ -529,8 +529,10 @@ These are the north star; every item below is measured against them.
   scenario that only reads — against a cluster the harness did not create,
   refuses every scenario that would write a
   cluster-scoped object or shell into a node, and names each skip and its reason in
-  the assertion summary. Pointing it at a distribution is now a hand-run away;
-  **gating one in CI is still ahead** — see
+  the assertion summary. A second distribution — **k3s**, via k3d — is now
+  **gated nightly** alongside kind, closing that promise; the remaining
+  distributions (EKS, GKE, AKS, OpenShift and RKE2) stay ungated in CI and
+  reachable only by hand — see
   [the chaos harness](https://github.com/imantaba/kubeagent/tree/main/chaos).
   Slice 9 — the production contract itself — has shipped (v1.0.0) and closes
   Theme H: [Compatibility and support](compatibility.md) writes down which

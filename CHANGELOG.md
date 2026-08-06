@@ -30,9 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   naming it — every `Issue` occurrence must be a composite-literal key or an
   assignment's left side, inside a function declaration, and a second type
   declaring its own `Issue` field is refused as well — by not naming it, which is
-  a positional literal or a second name for the type, or by bypassing syntax, so
-  the package importing `reflect` or `unsafe` fails the test too. A new detector
-  that emits an undocumented kind fails the suite.
+  a positional literal or a second name for the type, or by bypassing syntax, for
+  which the detectors' import set is pinned to six packages rather than filtered
+  for `reflect` and `unsafe`, since `json.Unmarshal(payload, &f)` writes the
+  field importing neither. The closure is over `internal/diagnose`'s own
+  detectors, which is what the reference documents. A new detector that emits an
+  undocumented kind fails the suite.
 
 ## [1.7.0] - 2026-08-06
 

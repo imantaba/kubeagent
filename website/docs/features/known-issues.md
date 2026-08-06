@@ -104,21 +104,27 @@ three ways, and each has its own check:
   token for any of that to match, so a positional literal is refused outright,
   as is a second name for the type itself, `type f = Finding`, which would give
   one a type name the check does not recognise;
-- **syntax is bypassed** — `reflect` and `unsafe` could set the field with
-  nothing at all to read, so the package importing either fails the test.
+- **syntax is bypassed** — an import can write the field without the writer
+  naming it. `reflect` and `unsafe` are the obvious two, but
+  `json.Unmarshal(payload, &f)` does it as readily and imports neither, and so
+  would the next decoder anyone reached for. So the detectors' import set is
+  **pinned** rather than filtered: six packages, and a seventh fails the test
+  until someone widens the list on purpose.
 
-There is no fourth way from inside the package, and none from outside it: a
-struct built elsewhere is convertible only if its resources field has the
-detectors' own type, so that package would have to import `internal/diagnose`,
-which would have to import it back. The compiler refuses the cycle.
+That third check earns its keep twice, because a pinned import set also refuses
+the package that would hand back a finding built where the walk cannot see it.
 
-That closure is what makes the refusal worth stating. Each of those checks was
-added after a shape slipped through: a `switch` that admitted a fourteenth kind,
-a kind assigned on the line after the finding was built, a finding written with
-no field names, a second struct of the same shape converted to one. Every one of
-them left all four tests green, which is precisely the failure mode — a walk
-that skips what it does not understand reports nothing, and three sibling tests
-agree with it.
+Within `internal/diagnose` there is no fourth way. Outside it there is, and by
+design — see the honest boundary below. The closure is over the pod-level
+detectors, which is what the reference documents; it was never a claim about
+every finding kubeagent can print.
+
+Each of those checks was added after a shape slipped through: a `switch` that
+admitted a fourteenth kind, a kind assigned on the line after the finding was
+built, a finding written with no field names, a second struct of the same shape
+converted to one, a decoder. Every one of them left all four tests green, which
+is precisely the failure mode — a walk that skips what it does not understand
+reports nothing, and three sibling tests agree with it.
 
 Adding a detector that emits a new kind fails the build's tests until the kind
 is documented. That is the point of the slice: the reference cannot drift from

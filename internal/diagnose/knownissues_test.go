@@ -298,11 +298,12 @@ func producedKinds(t *testing.T) []string {
 // signal because they stay green. That is the failure this design exists to
 // prevent, and it is why a new shape is refused until it is taught.
 //
-// One boundary is not a shape at all: this walk reads syntax, so code that names
-// a field at run time would leave nothing to read. The package importing reflect
-// or unsafe is therefore a failure in its own right (syntaxDefeatingImports),
-// which is what lets the paragraph above speak for the whole package rather than
-// for the part of it written plainly.
+// One boundary is not a shape at all: this walk reads syntax, so a package that
+// writes a field without the writer naming it — reflect, unsafe, encoding/json,
+// any decoder — would leave nothing to read. That is why the import set is
+// pinned rather than filtered (unpinnedImports), and it is what lets the
+// paragraph above speak for the whole package rather than for the part of it
+// written plainly.
 //
 // Within a recognised shape it over-approximates on purpose: a .Reason literal
 // tested for some unrelated purpose in the same function still counts as a
@@ -315,10 +316,11 @@ func TestDynamicIssueSitesProduceOnlyDocumentedKinds(t *testing.T) {
 		documented[k] = true
 	}
 
-	for _, use := range syntaxDefeatingImports(t) {
-		t.Errorf("%s, which can set a field with no syntax for this walk to read; "+
-			"a set of pure functions over API objects needs neither, and while one is "+
-			"imported this test can no longer speak for the whole package", use)
+	for _, use := range unpinnedImports(t) {
+		t.Errorf("%s, which the detectors' pinned import set does not list; an import "+
+			"can set a field with no syntax for this walk to read, as encoding/json "+
+			"does, or hand back a Finding built where this walk cannot see it, so the "+
+			"set is widened deliberately or not at all", use)
 	}
 
 	for _, use := range unclassifiedIssueIdents(t) {
@@ -474,7 +476,7 @@ const issueField = "Issue"
 // So the question is asked from the other side. A value can reach the field in
 // exactly three ways: the field is named, the field is not named (a positional
 // literal, unkeyedFindingLiteral), or syntax is bypassed altogether
-// (syntaxDefeatingImports). This function owns the first: wherever the field is
+// (unpinnedImports). This function owns the first: wherever the field is
 // named, the occurrence must sit in a position the walk reads — a key in a
 // composite literal, or the left-hand side of an assignment — inside a function
 // declaration, where reasonLiterals can see the guards. Every other position is
@@ -589,9 +591,20 @@ func unreadableIssuePosition(id *ast.Ident, stack []ast.Node) string {
 }
 
 // declaresFinding reports whether stack, an ancestor chain outermost-first,
-// passes through the type declaration of Finding itself.
+// passes through the package-level declaration of Finding itself.
+//
+// A type declared inside a function body can be spelled Finding too, and its
+// own Issue field would then be exempt for no better reason than the spelling.
+// So a function boundary crossed on the way down ends the search: only a
+// TypeSpec reached from the file is the type this file is about.
 func declaresFinding(stack []ast.Node) bool {
 	for _, n := range stack {
+		if _, ok := n.(*ast.FuncDecl); ok {
+			return false
+		}
+		if _, ok := n.(*ast.FuncLit); ok {
+			return false
+		}
 		if spec, ok := n.(*ast.TypeSpec); ok && spec.Name != nil && spec.Name.Name == findingType {
 			return true
 		}
@@ -612,11 +625,17 @@ func declaresFinding(stack []ast.Node) bool {
 // That leaves one way to reach the field without naming either the type or the
 // field: a conversion from a second struct of identical layout,
 // Finding(other{…}). Go requires the field names to match, so that struct must
-// declare an Issue field of its own, which unreadableIssuePosition refuses. It
-// cannot be declared in another package either — the layouts match only if its
-// Resources field has Finding's own *ContainerResources type, so that package
-// would have to import internal/diagnose, which would have to import it back.
-// The compiler refuses the cycle.
+// declare an Issue field of its own, which unreadableIssuePosition refuses —
+// and it must be declared here, because unpinnedImports refuses the import that
+// would bring one in from elsewhere.
+//
+// Elsewhere is where this file's claim stops, and deliberately. internal/scan
+// builds diagnose.Findings of its own in rollouthealth, createhealth and
+// batchhealth, carrying RolloutStuck, FailedCreate and JobFailed — kinds
+// internal/knownissues does not document and is not meant to. The vocabulary
+// closed here is the vocabulary of internal/diagnose's own detectors, which is
+// what the reference is about; see the honest boundary in
+// website/docs/features/known-issues.md.
 func findingAliasDecls(t *testing.T) []string {
 	t.Helper()
 	files, err := filepath.Glob("*.go")
@@ -648,16 +667,41 @@ func findingAliasDecls(t *testing.T) []string {
 	return out
 }
 
-// syntaxDefeatingImports returns one "file imports pkg" string per non-test file
-// in this package that imports reflect or unsafe, sorted.
+// pinnedImports is every package internal/diagnose's non-test sources may
+// import. Nine pure functions over API objects need this much and no more.
+var pinnedImports = map[string]bool{
+	"fmt":                true,
+	"sort":               true,
+	"strings":            true,
+	"time":               true,
+	"k8s.io/api/core/v1": true,
+
+	"github.com/imantaba/kubeagent/internal/safetext": true,
+}
+
+// unpinnedImports returns one "file imports pkg" string per non-test file in
+// this package that imports something pinnedImports does not list, sorted.
 //
-// Every check in this file reads syntax. Code that can name a field at run time
-// can set Issue with no Issue token to read, and no walk over an AST would see
-// it — not as a refused shape, but as nothing at all. Neither import is needed
-// by a set of pure functions over API objects, so their absence is asserted
-// rather than assumed. That is what keeps the refusal rule a whole claim about
-// the package instead of a claim about the part of it written plainly.
-func syntaxDefeatingImports(t *testing.T) []string {
+// Every check in this file reads syntax, so any package that can write a field
+// without the writer naming it defeats all of them at once — not as a refused
+// shape, but as nothing at all. reflect and unsafe are the obvious two, and
+// banning those two is what this check used to do; it was wrong, and a review
+// proved it with four lines that no test noticed:
+//
+//	var f Finding
+//	json.Unmarshal([]byte(`{"issue":"Undocumented"}`), &f)
+//
+// encoding/json reflects on kubeagent's behalf. So does encoding/gob, and so
+// does every decoder anyone might reach for next. Naming the packages that must
+// not appear is the same open enumeration this file gave up on elsewhere, for
+// the same reason: the language keeps offering more of them.
+//
+// So the set is pinned from the other side. These six are what the detectors
+// use; a seventh fails the test until someone looks at it and widens the list on
+// purpose. That closes the decoder class, and with it the second way an import
+// could undermine this file — a package handing back a Finding it built
+// somewhere this walk cannot see.
+func unpinnedImports(t *testing.T) []string {
 	t.Helper()
 	files, err := filepath.Glob("*.go")
 	if err != nil {
@@ -678,7 +722,7 @@ func syntaxDefeatingImports(t *testing.T) []string {
 			if err != nil {
 				t.Fatalf("%s: unquote import %s: %v", path, spec.Path.Value, err)
 			}
-			if p == "reflect" || p == "unsafe" {
+			if !pinnedImports[p] {
 				out = append(out, path+" imports "+p)
 			}
 		}

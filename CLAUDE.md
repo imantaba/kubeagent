@@ -160,12 +160,15 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   composite-literal key or an assignment's left side, inside a function
   declaration — a read is refused too, and so is a second type declaring an
   `Issue` field of its own), by not naming it (a positional literal, and a
-  second name for the type, `type f = Finding`), or by bypassing syntax
-  (`reflect` or `unsafe` imported anywhere in the package fails the test).
-  There is no fourth way from outside the package either: a convertible
-  struct needs `*ContainerResources`, so it would have to import
-  `internal/diagnose`, which would have to import it back. Each of those
-  three was added after a shape slipped through with all four tests green
+  second name for the type, `type f = Finding`), or by bypassing syntax —
+  which is why the detectors' import set is **pinned** to six packages
+  rather than filtered for `reflect` and `unsafe`, since
+  `json.Unmarshal(payload, &f)` writes the field importing neither. The
+  closure is over `internal/diagnose` only, and deliberately: `scan`'s
+  workload passes build their own `diagnose.Finding`s carrying
+  `RolloutStuck`, `FailedCreate` and `JobFailed`, kinds the reference does
+  not document. Each of those three was added after a shape slipped
+  through with all four tests green
   (see [website/docs/features/known-issues.md](website/docs/features/known-issues.md)).
   `internal/fleet` (the `kubeagent fleet` sweep) is a ninth case, and like
   `gate` it is one-shot, not long-lived: it runs once and exits. It is

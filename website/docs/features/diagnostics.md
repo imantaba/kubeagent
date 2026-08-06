@@ -11,10 +11,12 @@ are failing — covering the most common pod failure modes.
 
 ## Failure modes detected
 
-Every kind in this section is also in the binary's own offline reference —
-`kubeagent known-issues <kind>` prints what it means, what usually causes it,
-and what to check, with no cluster and no network. See
-[Known issues reference](known-issues.md).
+Thirteen of the failure modes below — the pod-level ones a detector reports as
+an issue kind — are also in the binary's own offline reference:
+`kubeagent known-issues <kind>` prints what one means, what usually causes it,
+and what to check, with no cluster and no network. Run it with no argument to
+see exactly which thirteen; the rest of this page keeps its prose only here.
+See [Known issues reference](known-issues.md).
 
 ### CrashLoopBackOff
 

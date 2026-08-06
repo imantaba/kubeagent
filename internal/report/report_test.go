@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/imantaba/kubeagent/internal/baseline"
 	"github.com/imantaba/kubeagent/internal/certhealth"
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/controlplane"
@@ -2233,5 +2234,88 @@ func TestPrintInventoryStampsTheSchemaVersion(t *testing.T) {
 	}
 	if doc.SchemaVersion != jsonschema.ScanVersion {
 		t.Errorf("schemaVersion = %q, want %q", doc.SchemaVersion, jsonschema.ScanVersion)
+	}
+}
+
+func TestPrintBaselineRendersDeviationsAndTotals(t *testing.T) {
+	var buf bytes.Buffer
+	err := printBaseline(&baseline.Report{
+		Deviations: []baseline.Deviation{
+			{Kind: "Deployment", Namespace: "prod", Name: "api", BaselineRate: 0.12, CurrentRate: 2.40, Pods: 3},
+			{Kind: "StatefulSet", Namespace: "prod", Name: "cache", BaselineRate: 0, CurrentRate: 0.80, Pods: 2},
+		},
+		Compared: 42, NotInBaseline: 3, GoneFromCluster: 1,
+	}, &buf)
+	if err != nil {
+		t.Fatalf("printBaseline: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{
+		"Baseline deviations (confidence: medium — a learned rate, not a detector)",
+		"Deployment prod/api",
+		"0.12 → 2.40 restarts/hour",
+		"(20x baseline, 3 pods)",
+		"StatefulSet prod/cache",
+		"0.00 → 0.80 restarts/hour",
+		"(2 pods)",
+		"42 workloads compared, 3 not in the baseline, 1 no longer present.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output is missing %q:\n%s", want, out)
+		}
+	}
+	// A zero baseline has no multiple: "0x baseline" is not a number anyone can act on.
+	if strings.Contains(out, "x baseline, 2 pods") {
+		t.Errorf("a zero baseline was rendered with a multiple:\n%s", out)
+	}
+}
+
+func TestPrintBaselineSaysSoWhenItFoundNothing(t *testing.T) {
+	var buf bytes.Buffer
+	if err := printBaseline(&baseline.Report{Deviations: []baseline.Deviation{}, Compared: 7}, &buf); err != nil {
+		t.Fatalf("printBaseline: %v", err)
+	}
+	if !strings.Contains(buf.String(), "none") {
+		t.Errorf("an empty comparison rendered nothing an operator can read:\n%s", buf.String())
+	}
+}
+
+func TestPrintBaselineIsSilentWithoutTheFlag(t *testing.T) {
+	var buf bytes.Buffer
+	if err := printBaseline(nil, &buf); err != nil {
+		t.Fatalf("printBaseline(nil): %v", err)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("printBaseline(nil) wrote %q; the section must be entirely conditional", buf.String())
+	}
+}
+
+// omitempty: a default scan's JSON must be byte-identical to what it was before.
+func TestJSONReportOmitsBaselineWhenAbsent(t *testing.T) {
+	var buf bytes.Buffer
+	if err := PrintInventory(Input{}, "json", &buf); err != nil {
+		t.Fatalf("PrintInventory: %v", err)
+	}
+	if strings.Contains(buf.String(), "baseline") {
+		t.Errorf("clean scan emitted a baseline key:\n%s", buf.String())
+	}
+}
+
+func TestJSONReportCarriesBaselineWhenPresent(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{Baseline: &baseline.Report{Compared: 5}}
+	if err := PrintInventory(in, "json", &buf); err != nil {
+		t.Fatalf("PrintInventory: %v", err)
+	}
+	var got struct {
+		Baseline *struct {
+			Compared int `json:"compared"`
+		} `json:"baseline"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Baseline == nil || got.Baseline.Compared != 5 {
+		t.Errorf("got %+v, want baseline.compared = 5: %s", got.Baseline, buf.String())
 	}
 }

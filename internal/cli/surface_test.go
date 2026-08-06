@@ -44,6 +44,9 @@ func TestCommandSurfaceScan(t *testing.T) {
 		{"drift", []string{"--drift"}, func(o scanOptions) bool { return o.drift }},
 		{"drift-age", []string{"--drift-age", "30m"}, func(o scanOptions) bool { return o.driftAge == 30*time.Minute }},
 		{"capacity", []string{"--capacity"}, func(o scanOptions) bool { return o.capacity }},
+		{"baseline", []string{"--baseline", "/nonexistent/baseline.json"}, func(o scanOptions) bool { return o.baselinePath == "/nonexistent/baseline.json" }},
+		{"baseline-factor", []string{"--baseline-factor", "5"}, func(o scanOptions) bool { return o.baselineFactor == 5 }},
+		{"baseline-floor", []string{"--baseline-floor", "0.25"}, func(o scanOptions) bool { return o.baselineFloor == 0.25 }},
 		{"logs", []string{"--logs"}, func(o scanOptions) bool { return o.logs }},
 		{"node-heartbeat-threshold", []string{"--node-heartbeat-threshold", "90s"}, func(o scanOptions) bool { return o.nodeHeartbeatThreshold == 90*time.Second }},
 		{"expected-nodes", []string{"--expected-nodes", "node-a,node-b"}, func(o scanOptions) bool { return o.expectedNodes == "node-a,node-b" }},
@@ -69,8 +72,8 @@ func TestCommandSurfaceScan(t *testing.T) {
 			}
 		})
 	}
-	if len(cases) != 34 {
-		t.Errorf("scan surface table has %d cases, want 34 — one per declared flag", len(cases))
+	if len(cases) != 37 {
+		t.Errorf("scan surface table has %d cases, want 37 — one per declared flag", len(cases))
 	}
 }
 
@@ -101,6 +104,12 @@ func TestCommandSurfaceScanDefaults(t *testing.T) {
 	}
 	if o.nodeHeartbeatThreshold != 40*time.Second {
 		t.Errorf("nodeHeartbeatThreshold default = %v, want 40s", o.nodeHeartbeatThreshold)
+	}
+	if o.baselineFactor != baseline.DefaultFactor {
+		t.Errorf("--baseline-factor default = %v, want %v", o.baselineFactor, baseline.DefaultFactor)
+	}
+	if o.baselineFloor != baseline.DefaultFloor {
+		t.Errorf("--baseline-floor default = %v, want %v", o.baselineFloor, baseline.DefaultFloor)
 	}
 }
 

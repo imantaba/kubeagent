@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imantaba/kubeagent/internal/baseline"
 	"github.com/imantaba/kubeagent/internal/capacity"
 	"github.com/imantaba/kubeagent/internal/certhealth"
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
@@ -70,6 +71,7 @@ type ScanReport struct {
 	WebhookIssues      []webhookhealth.Issue       `json:"webhookIssues,omitempty"`
 	QuotaIssues        []quotahealth.Issue         `json:"quotaIssues,omitempty"`
 	Policy             *PolicyView                 `json:"policy,omitempty"`
+	Baseline           *baseline.Report            `json:"baseline,omitempty"`
 	BlindSpots         []scan.ReadFailure          `json:"blindSpots,omitempty"`
 	Explanation        string                      `json:"explanation,omitempty"`
 	Investigation      *InvestigationView          `json:"investigation,omitempty"`
@@ -163,7 +165,11 @@ type Input struct {
 	Capacity *capacity.Report
 	// Policy is the custom-check view (opt-in --policy). Nil when the flag is
 	// absent, so a default scan's text and JSON are unchanged.
-	Policy           *PolicyView
+	Policy *PolicyView
+	// Baseline is the restart-rate comparison (opt-in --baseline). Nil when the
+	// flag is absent, so a default scan's text and JSON are unchanged — which is
+	// what keeps testdata/golden-scan.txt byte-identical.
+	Baseline         *baseline.Report
 	StuckTerminating []termhealth.Issue
 	PDBIssues        []pdbhealth.Issue
 	HPAIssues        []hpahealth.Issue
@@ -214,6 +220,7 @@ func PrintInventory(in Input, format string, w io.Writer) error {
 			WebhookIssues:      in.WebhookIssues,
 			QuotaIssues:        in.QuotaIssues,
 			Policy:             in.Policy,
+			Baseline:           in.Baseline,
 			BlindSpots:         in.Blind,
 			Explanation:        in.Explanation,
 			Investigation:      investigationOf(in),
@@ -328,6 +335,10 @@ func printInventoryText(in Input, w io.Writer) error {
 	}
 
 	if err := printPolicy(in.Policy, w); err != nil {
+		return err
+	}
+
+	if err := printBaseline(in.Baseline, w); err != nil {
 		return err
 	}
 
@@ -1574,6 +1585,53 @@ func printPolicy(v *PolicyView, w io.Writer) error {
 
 	_, err := fmt.Fprintln(w)
 	return err
+}
+
+// printBaseline renders the restart-rate comparison. Like printPolicy it prints
+// even when it found nothing: the operator passed --baseline by name, and
+// silence would be indistinguishable from the flag not working.
+//
+// The heading states the section's confidence in internal/confidence's
+// vocabulary. A learned rate is an inference, not a detector match on a named
+// failure mode, and internal/confidence is explicit that such a signal is
+// informational only — it never affects priority and it never affects the
+// cluster verdict, which this section does not touch.
+func printBaseline(r *baseline.Report, w io.Writer) error {
+	if r == nil {
+		return nil
+	}
+	if _, err := fmt.Fprint(w, "Baseline deviations (confidence: medium — a learned rate, not a detector)\n\n"); err != nil {
+		return err
+	}
+	if len(r.Deviations) == 0 {
+		if _, err := fmt.Fprintln(w, "  none"); err != nil {
+			return err
+		}
+	}
+	for _, d := range r.Deviations {
+		target := fmt.Sprintf("%s %s/%s", d.Kind, d.Namespace, d.Name)
+		if _, err := fmt.Fprintf(w, "  %-28s %.2f → %.2f restarts/hour   (%s)\n",
+			target, d.BaselineRate, d.CurrentRate, deviationDetail(d)); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintf(w, "\n  %d %s compared, %d not in the baseline, %d no longer present.\n",
+		r.Compared, plural(r.Compared, "workload", "workloads"), r.NotInBaseline, r.GoneFromCluster); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintln(w)
+	return err
+}
+
+// deviationDetail describes the size of the change. A zero baseline has no
+// multiple — "0x baseline" is not a number anyone can act on — so it reports
+// only how many pods are behind the current rate.
+func deviationDetail(d baseline.Deviation) string {
+	pods := fmt.Sprintf("%d %s", d.Pods, plural(d.Pods, "pod", "pods"))
+	if d.BaselineRate <= 0 {
+		return pods
+	}
+	return fmt.Sprintf("%.0fx baseline, %s", d.CurrentRate/d.BaselineRate, pods)
 }
 
 // policyTarget names the offending object. A cluster-scoped kind has no

@@ -62,13 +62,19 @@ func RenderText(w io.Writer, rep Report) error {
 		}
 	}
 
-	fmt.Fprintf(w, "FLEET  %d clusters, %d failing, %d unreachable\n\n",
-		len(rep.Clusters)+len(rep.Unreachable), failing, len(rep.Unreachable))
+	if _, err := fmt.Fprintf(w, "FLEET  %d clusters, %d failing, %d unreachable\n\n",
+		len(rep.Clusters)+len(rep.Unreachable), failing, len(rep.Unreachable)); err != nil {
+		return err
+	}
 
-	writeRow(w, width, row{context: "CLUSTER", verdict: "VERDICT",
-		crit: "CRIT", warn: "WARN", info: "INFO", detail: "TOP ISSUES"})
+	if err := writeRow(w, width, row{context: "CLUSTER", verdict: "VERDICT",
+		crit: "CRIT", warn: "WARN", info: "INFO", detail: "TOP ISSUES"}); err != nil {
+		return err
+	}
 	for _, r := range rows {
-		writeRow(w, width, r)
+		if err := writeRow(w, width, r); err != nil {
+			return err
+		}
 	}
 
 	_, err := fmt.Fprintf(w, "\nverdict: %s (exit %d)\n", rep.Verdict, rep.Code)
@@ -82,10 +88,11 @@ type row struct {
 	context, verdict, crit, warn, info, detail string
 }
 
-func writeRow(w io.Writer, width int, r row) {
+func writeRow(w io.Writer, width int, r row) error {
 	line := fmt.Sprintf("%-*s  %-*s  %4s  %4s  %4s  %s",
 		width, r.context, verdictWidth, r.verdict, r.crit, r.warn, r.info, r.detail)
-	fmt.Fprintln(w, strings.TrimRight(line, " "))
+	_, err := fmt.Fprintln(w, strings.TrimRight(line, " "))
+	return err
 }
 
 // detailOf builds the TOP ISSUES cell for a judged cluster. A blind-spot count

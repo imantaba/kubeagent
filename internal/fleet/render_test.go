@@ -3,6 +3,7 @@ package fleet
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -163,5 +164,43 @@ func TestRenderJSONIsAValidDocument(t *testing.T) {
 	// package that can actually check that promise held.
 	if failOn, ok := doc["failOn"].(string); !ok || failOn != "critical" {
 		t.Errorf("failOn = %#v, want the string %q, not a number", doc["failOn"], "critical")
+	}
+}
+
+// flakyWriter fails the nth write and succeeds on every other one. A writer
+// that stays failed once it fails would not prove anything here: the final
+// write would fail too, so a renderer that checked only its last call would
+// still return an error and look correct.
+type flakyWriter struct {
+	failAt int
+	n      int
+	err    error
+}
+
+func (f *flakyWriter) Write(p []byte) (int, error) {
+	f.n++
+	if f.n == f.failAt {
+		return 0, f.err
+	}
+	return len(p), nil
+}
+
+func TestRenderTextReportsAFailedWrite(t *testing.T) {
+	boom := errors.New("disk full")
+
+	// How many writes a full render makes, so the loop below covers every one.
+	counter := &flakyWriter{failAt: -1}
+	if err := RenderText(counter, sampleReport()); err != nil {
+		t.Fatalf("counting writes: %v", err)
+	}
+	if counter.n < 3 {
+		t.Fatalf("counted %d writes; the fixture should render a header and several rows", counter.n)
+	}
+
+	for i := 1; i <= counter.n; i++ {
+		w := &flakyWriter{failAt: i, err: boom}
+		if err := RenderText(w, sampleReport()); !errors.Is(err, boom) {
+			t.Errorf("write %d of %d failed: err = %v, want %v", i, counter.n, err, boom)
+		}
 	}
 }

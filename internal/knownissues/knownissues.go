@@ -46,13 +46,26 @@ type Entry struct {
 
 // All returns every entry, sorted by Kind.
 //
-// The result is a fresh slice each call: a caller that sorts, filters or
-// truncates it must not be able to corrupt the registry for the next one. The
-// Causes and Checks slices inside each Entry are still shared, which is why
-// this package hands out no way to mutate them and every consumer only ranges.
+// The result is independent of the registry, all the way down: the slice, each
+// Entry, and each Entry's Causes and Checks are fresh. A caller may sort,
+// filter, truncate or rewrite what it is handed without any of it reaching the
+// next caller.
 func All() []Entry {
 	out := make([]Entry, len(entries))
-	copy(out, entries)
+	for i, e := range entries {
+		out[i] = clone(e)
+	}
+	return out
+}
+
+// clone returns an Entry that shares nothing with the registry: the Causes and
+// Checks slices are copied too, not just the struct header. Without this, a
+// caller that reordered or rewrote a returned Entry's Causes would silently
+// rewrite the registry for every later caller.
+func clone(e Entry) Entry {
+	out := e
+	out.Causes = append([]string(nil), e.Causes...)
+	out.Checks = append([]string(nil), e.Checks...)
 	return out
 }
 
@@ -76,7 +89,7 @@ func Kinds() []string {
 func Lookup(kind string) (Entry, bool) {
 	for _, e := range entries {
 		if e.Kind == kind {
-			return e, true
+			return clone(e), true
 		}
 	}
 	return Entry{}, false

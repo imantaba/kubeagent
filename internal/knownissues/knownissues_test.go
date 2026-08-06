@@ -83,6 +83,39 @@ func TestAllReturnsACopy(t *testing.T) {
 	}
 }
 
+// The copy goes all the way down. A caller that rewrites a returned entry's
+// Causes must not rewrite the registry — the shallow copy of the []Entry header
+// alone does not prevent that, because the Causes slice inside each Entry would
+// still point at the registry's own backing array.
+func TestAllCopiesTheNestedSlices(t *testing.T) {
+	first := All()
+	if len(first) == 0 || len(first[0].Causes) == 0 || len(first[0].Checks) == 0 {
+		t.Fatal("All() is empty, or its first entry has no causes or checks")
+	}
+	first[0].Causes[0] = "mutated"
+	first[0].Checks[0] = "mutated"
+	again := All()
+	if again[0].Causes[0] == "mutated" {
+		t.Error("All() shares its Causes slice with the registry")
+	}
+	if again[0].Checks[0] == "mutated" {
+		t.Error("All() shares its Checks slice with the registry")
+	}
+}
+
+// Lookup hands out an Entry by value and has the same nested aliasing.
+func TestLookupCopiesTheNestedSlices(t *testing.T) {
+	e, ok := Lookup("OOMKilled")
+	if !ok {
+		t.Fatal("OOMKilled missing")
+	}
+	e.Causes[0] = "mutated"
+	again, _ := Lookup("OOMKilled")
+	if again.Causes[0] == "mutated" {
+		t.Error("Lookup shares its Causes slice with the registry")
+	}
+}
+
 // Lookup is an exact match. No case folding, no Init: stripping, no fuzz.
 func TestLookupIsExact(t *testing.T) {
 	for _, k := range wantKinds {

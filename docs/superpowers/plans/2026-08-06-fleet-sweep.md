@@ -1651,27 +1651,40 @@ func TestRenderTextElidesNothing(t *testing.T) {
 	}
 }
 
-func TestRenderJSONRoundTrips(t *testing.T) {
+// The decode is generic because the document's consumers are pipelines, not Go
+// programs: internal/fleet cannot be imported outside this module, so no caller
+// can ever hold a fleet.Report. Reading the bytes the way jq would is both the
+// honest test and the only one that can check the failOn spelling below —
+// findings.Level defines MarshalJSON and no UnmarshalJSON, so a typed decode
+// would fail on that field alone.
+func TestRenderJSONIsAValidDocument(t *testing.T) {
 	var buf bytes.Buffer
 	if err := RenderJSON(&buf, sampleReport()); err != nil {
 		t.Fatalf("RenderJSON() error = %v", err)
 	}
 
-	var got Report
-	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+	var doc map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &doc); err != nil {
 		t.Fatalf("unmarshalling: %v", err)
 	}
-	if got.Verdict != "inconclusive" || got.Code != 2 {
-		t.Errorf("verdict = %q/%d, want inconclusive/2", got.Verdict, got.Code)
+
+	if doc["verdict"] != "inconclusive" || doc["exitCode"] != float64(2) {
+		t.Errorf("verdict/exitCode = %v/%v, want inconclusive/2", doc["verdict"], doc["exitCode"])
 	}
-	if len(got.Unreachable) != 1 {
-		t.Errorf("Unreachable = %+v, want the one unreachable cluster as its own array — a "+
+	if unreachable, ok := doc["unreachable"].([]any); !ok || len(unreachable) != 1 {
+		t.Errorf("unreachable = %#v, want the one unreachable cluster as its own array — a "+
 			"consumer filtering clusters[] must not have to know some entries have no counts",
-			got.Unreachable)
+			doc["unreachable"])
 	}
 	// A passing cluster carries no topIssues key at all.
 	if strings.Contains(buf.String(), `"topIssues": []`) {
 		t.Error("an empty topIssues array reached the document; omitempty must drop the key")
+	}
+	// findings.Level.MarshalJSON exists to guarantee the spelling reaches the
+	// wire, never the ordinal — a generic decode is the only place in this
+	// package that can actually check that promise held.
+	if failOn, ok := doc["failOn"].(string); !ok || failOn != "critical" {
+		t.Errorf("failOn = %#v, want the string %q, not a number", doc["failOn"], "critical")
 	}
 }
 ```

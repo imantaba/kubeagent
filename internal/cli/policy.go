@@ -14,6 +14,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/cluster"
 	"github.com/imantaba/kubeagent/internal/collect"
 	"github.com/imantaba/kubeagent/internal/policy"
+	"github.com/imantaba/kubeagent/internal/policypack"
 	"github.com/imantaba/kubeagent/internal/report"
 	"github.com/imantaba/kubeagent/internal/scan"
 )
@@ -149,6 +150,65 @@ func runPolicyValidate(args []string, w io.Writer) error {
 	return nil
 }
 
+// packDocuments turns pack names into documents internal/policy can load.
+// Source is "pack:<name>", not a path: a pack has no filesystem location, so
+// there is none to reach an error message, a JSON document or a report.
+//
+// An unknown name is refused rather than skipped. Silently ignoring it would
+// run fewer rules than the operator asked for and say nothing.
+func packDocuments(names []string) ([]policy.Document, error) {
+	var out []policy.Document
+	for _, name := range names {
+		data, ok := policypack.Bytes(name)
+		if !ok {
+			return nil, fmt.Errorf("unknown policy pack %q (want %s)",
+				name, strings.Join(policypack.Names(), ", "))
+		}
+		out = append(out, policy.Document{Source: "pack:" + name, Data: data})
+	}
+	return out, nil
+}
+
+// runPolicyPacks lists the curated packs, or prints one when printName names
+// it. It contacts nothing: no cluster, no kubeconfig, no network, and no model
+// — the packs are compiled into the binary.
+//
+// The rule count is computed by loading rather than stored beside the name, so
+// it cannot disagree with the file it describes.
+func runPolicyPacks(args []string, printName string, w io.Writer) error {
+	if len(args) > 0 {
+		return fmt.Errorf("usage: %s policy packs [--print name]", invokedAs)
+	}
+	if printName != "" {
+		data, ok := policypack.Bytes(printName)
+		if !ok {
+			return fmt.Errorf("unknown policy pack %q (want %s)",
+				printName, strings.Join(policypack.Names(), ", "))
+		}
+		_, err := w.Write(data)
+		return err
+	}
+	for _, p := range policypack.All() {
+		rules, err := policy.Load([]policy.Document{{Source: "pack:" + p.Name, Data: mustPackBytes(p.Name)}})
+		if err != nil {
+			// The packs ship with the binary and their tests load every one,
+			// so this is unreachable outside a broken build.
+			return fmt.Errorf("pack %q: %w", p.Name, err)
+		}
+		fmt.Fprintf(w, "  %-14s %s — %s\n", p.Name, plural(len(rules), "rule", "rules"), p.Summary)
+	}
+	fmt.Fprintf(w, "\nPrint one to fork it:\n  %s policy packs --print <name>\n", invokedAs)
+	return nil
+}
+
+// mustPackBytes reads a pack that policypack.All just named. The lookup cannot
+// miss; returning nil rather than panicking keeps a broken build a load error
+// with the pack's name in it.
+func mustPackBytes(name string) []byte {
+	data, _ := policypack.Bytes(name)
+	return data
+}
+
 // newPolicyCommand builds `kubeagent policy validate`. Like `schema`, it keeps
 // its own argument handling rather than cobra.MinimumNArgs(1), which would
 // reword the usage error runPolicyValidate produces.
@@ -159,7 +219,7 @@ func newPolicyCommand() *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("usage: %s policy validate <file>…", invokedAs)
+			return fmt.Errorf("usage: %s policy validate <file>… | %s policy packs [--print name]", invokedAs, invokedAs)
 		},
 	}
 	cmd.AddCommand(&cobra.Command{
@@ -172,6 +232,19 @@ func newPolicyCommand() *cobra.Command {
 			return runPolicyValidate(args, os.Stdout)
 		},
 	})
+	packs := &cobra.Command{
+		Use:           "packs",
+		Short:         "List the curated policy packs compiled into this binary",
+		Args:          cobra.ArbitraryArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+	}
+	var printName string
+	packs.Flags().StringVar(&printName, "print", "", "print this pack's rules as YAML instead of listing")
+	packs.RunE = func(cmd *cobra.Command, args []string) error {
+		return runPolicyPacks(args, printName, os.Stdout)
+	}
+	cmd.AddCommand(packs)
 	return cmd
 }
 

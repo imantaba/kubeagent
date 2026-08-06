@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/imantaba/kubeagent/internal/policy"
 )
 
 const validPolicy = `- id: registry-allowlist
@@ -227,5 +229,85 @@ func TestEvaluatePolicyFailsOnABadFile(t *testing.T) {
 
 	if _, err := evaluatePolicy(context.Background(), []string{p}, "", "", ""); err == nil {
 		t.Fatal("a bad policy file did not stop the command")
+	}
+}
+
+func TestPolicyPacksListsWhatShips(t *testing.T) {
+	var buf bytes.Buffer
+	if err := runPolicyPacks(nil, "", &buf); err != nil {
+		t.Fatalf("runPolicyPacks: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "reliability") {
+		t.Errorf("the listing does not name the reliability pack:\n%s", out)
+	}
+	// The count comes from loading, so it cannot drift from the file.
+	if !strings.Contains(out, "14 rules") {
+		t.Errorf("the listing does not carry a rule count:\n%s", out)
+	}
+	if !strings.Contains(out, "kubeagent policy packs --print") {
+		t.Errorf("the listing does not say how to print one:\n%s", out)
+	}
+}
+
+func TestPolicyPacksPrintEmitsLoadableYAML(t *testing.T) {
+	var buf bytes.Buffer
+	if err := runPolicyPacks(nil, "reliability", &buf); err != nil {
+		t.Fatalf("runPolicyPacks --print: %v", err)
+	}
+	// What is printed must be what the flag would run: load it back.
+	rules, err := policy.Load([]policy.Document{{Source: "stdin", Data: buf.Bytes()}})
+	if err != nil {
+		t.Fatalf("the printed pack does not load: %v", err)
+	}
+	if len(rules) != 14 {
+		t.Errorf("printed pack has %d rules, want 14", len(rules))
+	}
+}
+
+func TestPolicyPacksPrintUnknownNameIsRefused(t *testing.T) {
+	var buf bytes.Buffer
+	err := runPolicyPacks(nil, "no-such-pack", &buf)
+	if err == nil {
+		t.Fatal("an unknown pack name was accepted")
+	}
+	if !strings.Contains(err.Error(), `"no-such-pack"`) {
+		t.Errorf("the error does not quote the name given: %v", err)
+	}
+	if !strings.Contains(err.Error(), "reliability") {
+		t.Errorf("the error does not name the packs that do exist: %v", err)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("a refused name still wrote to stdout: %q", buf.String())
+	}
+}
+
+func TestPolicyPacksRefusesPositionalArguments(t *testing.T) {
+	var buf bytes.Buffer
+	err := runPolicyPacks([]string{"reliability"}, "", &buf)
+	if err == nil {
+		t.Fatal("a positional argument was accepted; the pack name goes to --print")
+	}
+	if !strings.Contains(err.Error(), "usage:") {
+		t.Errorf("the error is not a usage error: %v", err)
+	}
+}
+
+func TestPackDocumentsCarryNoFilesystemPath(t *testing.T) {
+	docs, err := packDocuments([]string{"reliability"})
+	if err != nil {
+		t.Fatalf("packDocuments: %v", err)
+	}
+	if len(docs) != 1 {
+		t.Fatalf("packDocuments returned %d documents, want 1", len(docs))
+	}
+	if docs[0].Source != "pack:reliability" {
+		t.Errorf("Source = %q, want %q — a pack has no path, so none may leak", docs[0].Source, "pack:reliability")
+	}
+}
+
+func TestPackDocumentsRefusesAnUnknownName(t *testing.T) {
+	if _, err := packDocuments([]string{"no-such-pack"}); err == nil {
+		t.Fatal("an unknown pack name was accepted")
 	}
 }

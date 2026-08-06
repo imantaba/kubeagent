@@ -311,3 +311,45 @@ func TestPackDocumentsRefusesAnUnknownName(t *testing.T) {
 		t.Fatal("an unknown pack name was accepted")
 	}
 }
+
+// policy.Load treats empty or nil YAML as a valid, empty document rather
+// than an error, so nothing downstream of requirePackBytes would ever catch
+// a broken embed on its own. This drives the guard directly with empty
+// bytes, since no shipped pack is ever actually empty: there is no way to
+// reach this branch through packDocuments or runPolicyPacks against the
+// real embedded registry.
+func TestRequirePackBytesRefusesEmptyBytes(t *testing.T) {
+	_, err := requirePackBytes("reliability", nil)
+	if err == nil {
+		t.Fatal("empty pack bytes were accepted")
+	}
+	if !strings.Contains(err.Error(), `"reliability"`) {
+		t.Errorf("the error does not name the pack: %v", err)
+	}
+}
+
+func TestRequirePackBytesAcceptsNonEmptyBytes(t *testing.T) {
+	data, err := requirePackBytes("reliability", []byte("- id: x\n"))
+	if err != nil {
+		t.Fatalf("requirePackBytes: %v", err)
+	}
+	if string(data) != "- id: x\n" {
+		t.Errorf("requirePackBytes changed the bytes: got %q", data)
+	}
+}
+
+// The two surfaces that can miss a pack name — packDocuments and
+// runPolicyPacks --print — must describe the same miss the same way, so a
+// future edit to one cannot quietly drift from the other.
+func TestUnknownPackErrorIsIdenticalAcrossBothSurfaces(t *testing.T) {
+	_, docErr := packDocuments([]string{"no-such-pack"})
+	var buf bytes.Buffer
+	printErr := runPolicyPacks(nil, "no-such-pack", &buf)
+	if docErr == nil || printErr == nil {
+		t.Fatal("expected both surfaces to refuse the unknown name")
+	}
+	if docErr.Error() != printErr.Error() {
+		t.Errorf("packDocuments error = %q, runPolicyPacks --print error = %q, want identical",
+			docErr.Error(), printErr.Error())
+	}
+}

@@ -150,19 +150,45 @@ func runPolicyValidate(args []string, w io.Writer) error {
 	return nil
 }
 
+// unknownPackErr reports a pack name that policypack does not have, naming
+// the packs that do exist so the operator can pick a real one. packDocuments
+// and runPolicyPacks's --print both reach an unknown name through
+// policypack.Bytes's ok return; sharing the wording keeps the two from
+// quietly drifting apart on how they describe the same miss.
+func unknownPackErr(name string) error {
+	return fmt.Errorf("unknown policy pack %q (want %s)", name, strings.Join(policypack.Names(), ", "))
+}
+
+// requirePackBytes turns a pack's raw bytes into either the bytes unchanged
+// or an error naming the pack. policy.Load treats empty or nil YAML as a
+// valid, empty document, not an error — so an empty result passed through
+// unchecked would silently run, list, or print zero rules under the pack's
+// own name instead of failing loudly. No pack that ships is ever empty; this
+// only fires if a registry entry and its embedded file drift apart.
+func requirePackBytes(name string, data []byte) ([]byte, error) {
+	if len(data) == 0 {
+		return nil, fmt.Errorf("pack %q: embedded pack is empty (broken build)", name)
+	}
+	return data, nil
+}
+
 // packDocuments turns pack names into documents internal/policy can load.
 // Source is "pack:<name>", not a path: a pack has no filesystem location, so
 // there is none to reach an error message, a JSON document or a report.
 //
 // An unknown name is refused rather than skipped. Silently ignoring it would
-// run fewer rules than the operator asked for and say nothing.
+// run fewer rules than the operator asked for and say nothing. So is a name
+// that resolves but whose embedded bytes are empty — see requirePackBytes.
 func packDocuments(names []string) ([]policy.Document, error) {
 	var out []policy.Document
 	for _, name := range names {
 		data, ok := policypack.Bytes(name)
 		if !ok {
-			return nil, fmt.Errorf("unknown policy pack %q (want %s)",
-				name, strings.Join(policypack.Names(), ", "))
+			return nil, unknownPackErr(name)
+		}
+		data, err := requirePackBytes(name, data)
+		if err != nil {
+			return nil, err
 		}
 		out = append(out, policy.Document{Source: "pack:" + name, Data: data})
 	}
@@ -182,14 +208,21 @@ func runPolicyPacks(args []string, printName string, w io.Writer) error {
 	if printName != "" {
 		data, ok := policypack.Bytes(printName)
 		if !ok {
-			return fmt.Errorf("unknown policy pack %q (want %s)",
-				printName, strings.Join(policypack.Names(), ", "))
+			return unknownPackErr(printName)
 		}
-		_, err := w.Write(data)
+		data, err := requirePackBytes(printName, data)
+		if err != nil {
+			return err
+		}
+		_, err = w.Write(data)
 		return err
 	}
 	for _, p := range policypack.All() {
-		rules, err := policy.Load([]policy.Document{{Source: "pack:" + p.Name, Data: mustPackBytes(p.Name)}})
+		data, err := requirePackBytes(p.Name, mustPackBytes(p.Name))
+		if err != nil {
+			return err
+		}
+		rules, err := policy.Load([]policy.Document{{Source: "pack:" + p.Name, Data: data}})
 		if err != nil {
 			// The packs ship with the binary and their tests load every one,
 			// so this is unreachable outside a broken build.
@@ -201,9 +234,12 @@ func runPolicyPacks(args []string, printName string, w io.Writer) error {
 	return nil
 }
 
-// mustPackBytes reads a pack that policypack.All just named. The lookup cannot
-// miss; returning nil rather than panicking keeps a broken build a load error
-// with the pack's name in it.
+// mustPackBytes reads a pack that policypack.All just named, so the lookup
+// itself cannot miss. Returning nil rather than panicking on the impossible
+// case means the caller — requirePackBytes — can turn a broken build into a
+// load error that names the pack, rather than a bare panic or (since
+// policy.Load treats empty or nil YAML as a valid, empty document) a
+// healthy-looking zero.
 func mustPackBytes(name string) []byte {
 	data, _ := policypack.Bytes(name)
 	return data

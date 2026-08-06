@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/imantaba/kubeagent/internal/baseline"
 )
 
 // TestCommandSurfaceScan asserts that every flag on every command reaches the
@@ -42,6 +44,9 @@ func TestCommandSurfaceScan(t *testing.T) {
 		{"drift", []string{"--drift"}, func(o scanOptions) bool { return o.drift }},
 		{"drift-age", []string{"--drift-age", "30m"}, func(o scanOptions) bool { return o.driftAge == 30*time.Minute }},
 		{"capacity", []string{"--capacity"}, func(o scanOptions) bool { return o.capacity }},
+		{"baseline", []string{"--baseline", "/nonexistent/baseline.json"}, func(o scanOptions) bool { return o.baselinePath == "/nonexistent/baseline.json" }},
+		{"baseline-factor", []string{"--baseline-factor", "5"}, func(o scanOptions) bool { return o.baselineFactor == 5 }},
+		{"baseline-floor", []string{"--baseline-floor", "0.25"}, func(o scanOptions) bool { return o.baselineFloor == 0.25 }},
 		{"logs", []string{"--logs"}, func(o scanOptions) bool { return o.logs }},
 		{"node-heartbeat-threshold", []string{"--node-heartbeat-threshold", "90s"}, func(o scanOptions) bool { return o.nodeHeartbeatThreshold == 90*time.Second }},
 		{"expected-nodes", []string{"--expected-nodes", "node-a,node-b"}, func(o scanOptions) bool { return o.expectedNodes == "node-a,node-b" }},
@@ -67,8 +72,8 @@ func TestCommandSurfaceScan(t *testing.T) {
 			}
 		})
 	}
-	if len(cases) != 34 {
-		t.Errorf("scan surface table has %d cases, want 34 — one per declared flag", len(cases))
+	if len(cases) != 37 {
+		t.Errorf("scan surface table has %d cases, want 37 — one per declared flag", len(cases))
 	}
 }
 
@@ -99,6 +104,12 @@ func TestCommandSurfaceScanDefaults(t *testing.T) {
 	}
 	if o.nodeHeartbeatThreshold != 40*time.Second {
 		t.Errorf("nodeHeartbeatThreshold default = %v, want 40s", o.nodeHeartbeatThreshold)
+	}
+	if o.baselineFactor != baseline.DefaultFactor {
+		t.Errorf("--baseline-factor default = %v, want %v", o.baselineFactor, baseline.DefaultFactor)
+	}
+	if o.baselineFloor != baseline.DefaultFloor {
+		t.Errorf("--baseline-floor default = %v, want %v", o.baselineFloor, baseline.DefaultFloor)
 	}
 }
 
@@ -179,6 +190,9 @@ func TestCommandSurfaceGate(t *testing.T) {
 		}},
 		{"namespace", []string{"--namespace", "example-ns"}, func(o gateOptions) bool { return o.namespace == "example-ns" }},
 		{"n", []string{"-n", "example-ns"}, func(o gateOptions) bool { return o.namespace == "example-ns" }},
+		{"baseline", []string{"--baseline", "/nonexistent/baseline.json"}, func(o gateOptions) bool { return o.baselinePath == "/nonexistent/baseline.json" }},
+		{"baseline-factor", []string{"--baseline-factor", "5"}, func(o gateOptions) bool { return o.baselineFactor == 5 }},
+		{"baseline-floor", []string{"--baseline-floor", "0.25"}, func(o gateOptions) bool { return o.baselineFloor == 0.25 }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.flag, func(t *testing.T) {
@@ -191,8 +205,8 @@ func TestCommandSurfaceGate(t *testing.T) {
 			}
 		})
 	}
-	if len(cases) != 10 {
-		t.Errorf("gate surface table has %d cases, want 10 — one per declared flag", len(cases))
+	if len(cases) != 13 {
+		t.Errorf("gate surface table has %d cases, want 13 — one per declared flag", len(cases))
 	}
 }
 
@@ -213,6 +227,12 @@ func TestCommandSurfaceGateDefaults(t *testing.T) {
 	}
 	if o.pollInterval != 2*time.Second {
 		t.Errorf("pollInterval default = %v, want 2s", o.pollInterval)
+	}
+	if o.baselineFactor != baseline.DefaultFactor {
+		t.Errorf("--baseline-factor default = %v, want %v", o.baselineFactor, baseline.DefaultFactor)
+	}
+	if o.baselineFloor != baseline.DefaultFloor {
+		t.Errorf("--baseline-floor default = %v, want %v", o.baselineFloor, baseline.DefaultFloor)
 	}
 }
 
@@ -363,6 +383,47 @@ func TestCommandSurfaceRBACCheckDefaults(t *testing.T) {
 	}
 	if o.output != "text" {
 		t.Errorf("output default = %q, want text", o.output)
+	}
+}
+
+// TestCommandSurfaceBaselineCapture asserts every flag on `baseline capture`
+// reaches the field it configures, the same guard the scan and gate tables give
+// those commands.
+func TestCommandSurfaceBaselineCapture(t *testing.T) {
+	cases := []struct {
+		flag  string
+		args  []string
+		check func(baselineOptions) bool
+	}{
+		{"kubeconfig", []string{"--kubeconfig", "/nonexistent/kubeconfig"}, func(o baselineOptions) bool { return o.kubeconfig == "/nonexistent/kubeconfig" }},
+		{"context", []string{"--context", "example-context"}, func(o baselineOptions) bool { return o.contextName == "example-context" }},
+		{"namespace", []string{"--namespace", "example-ns"}, func(o baselineOptions) bool { return o.namespace == "example-ns" }},
+		{"min-pod-age", []string{"--min-pod-age", "15m"}, func(o baselineOptions) bool { return o.minPodAge == 15*time.Minute }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.flag, func(t *testing.T) {
+			o, err := parseBaselineCaptureFlags(tc.args)
+			if err != nil {
+				t.Fatalf("parseBaselineCaptureFlags(%v): %v", tc.args, err)
+			}
+			if !tc.check(o) {
+				t.Errorf("--%s did not reach its field; got %+v", tc.flag, o)
+			}
+		})
+	}
+	if len(cases) != 4 {
+		t.Errorf("baseline capture surface table has %d cases, want 4 — one per declared flag", len(cases))
+	}
+}
+
+// TestCommandSurfaceBaselineCaptureDefaults asserts the one non-zero default.
+func TestCommandSurfaceBaselineCaptureDefaults(t *testing.T) {
+	o, err := parseBaselineCaptureFlags(nil)
+	if err != nil {
+		t.Fatalf("parseBaselineCaptureFlags(nil): %v", err)
+	}
+	if o.minPodAge != baseline.DefaultMinPodAge {
+		t.Errorf("--min-pod-age default = %s, want %s", o.minPodAge, baseline.DefaultMinPodAge)
 	}
 }
 

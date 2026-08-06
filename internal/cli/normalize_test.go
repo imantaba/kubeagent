@@ -15,6 +15,7 @@ var knownTakesValue = map[string]bool{
 	"output":         true,
 	"namespace":      true,
 	"disk-threshold": true,
+	"baseline":       true,
 	"explain":        false,
 	"dry-run":        false,
 	"verbose":        false,
@@ -85,6 +86,7 @@ func TestNormalize(t *testing.T) {
 		{"two booleans in a row",
 			[]string{"-explain", "-dry-run"},
 			[]string{"--explain", "--dry-run"}},
+		{"new baseline flag in single-dash form", []string{"-baseline", "cluster-baseline.json"}, []string{"--baseline", "cluster-baseline.json"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := Normalize(tc.in, known)

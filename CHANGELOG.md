@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A learned restart-rate baseline — "what's normal for *this* cluster".**
+  `kubeagent baseline capture` prints a JSON document recording each workload's
+  restart rate, normalised across its pods' observed lifetimes; `scan --baseline
+  <file>` and `gate --baseline <file>` compare a later run against it and report
+  workloads that restart much more than their own normal. A workload deviates
+  only when both thresholds hold — at least `--baseline-factor` times its
+  baseline rate (default 3.0) **and** at least `--baseline-floor` restarts/hour
+  above it (default 0.5) — so a rise from 0.001 to 0.01 is not a 10× alarm.
+  Pods younger than `--min-pod-age` (default 1h) are excluded from both sides of
+  the rate.
+- **The baseline document is the seventh versioned JSON document**, published at
+  version 1.0 as `website/docs/schemas/baseline-v1.json` and printable with
+  `kubeagent schema baseline`.
+- `kubeagent baseline capture` is read-only toward the cluster (List calls only,
+  all of them already in the `scan` RBAC profile) and makes no model call. It
+  writes no file: the document goes to stdout, so an operator reviews it before
+  deciding where it goes.
+
+### Changed
+
+- **`scan`'s JSON schema moves 1.1 → 1.2**, additively: `ScanReport` gains an
+  optional `baseline` object, present only when `--baseline` was passed. Every
+  existing consumer is unaffected. `gate`'s schema does not move — deviations
+  are ordinary findings at the `info` level, so they land in the `failing` and
+  `reported` arrays that already exist, and because `--fail-on` defaults to
+  `critical` a deviation never fails a gate unless an operator asks for it with
+  `--fail-on info`.
+- The static `--expected-nodes` list is now called the **expected-node list**
+  rather than the "expected-node baseline", so "baseline" names one thing.
+
 ## [1.5.0] - 2026-08-06
 
 ### Added
@@ -1276,9 +1308,9 @@ of them touches a kubeagent-authored error string or an exit code.
 
 ### Added
 
-- **Expected-node baseline.** Opt-in `scan --expected-nodes nova-worker-1,…`
+- **Expected-node baseline.** Opt-in `scan --expected-nodes node-a,node-b,…`
   declares the node names you expect; kubeagent flags each declared node that has
-  **no `Node` object** in the cluster — `node nova-worker-2 expected but absent
+  **no `Node` object** in the cluster — `node node-b expected but absent
   from the cluster` — catching a node that never registered or dropped out. It
   degrades the cluster verdict, and the watch daemon exposes
   `kubeagent_nodes_expected_absent` (set `KUBEAGENT_EXPECTED_NODES`). A node that

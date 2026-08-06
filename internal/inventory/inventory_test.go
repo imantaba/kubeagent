@@ -1,6 +1,7 @@
 package inventory
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
@@ -703,5 +704,66 @@ func TestPrioritize_CensusCountsScaledToZeroAsGood(t *testing.T) {
 	}
 	if res.Census.Good != 1 {
 		t.Errorf("Census.Good = %d, want 1: a scaled-to-zero workload is intentional, not an outage", res.Census.Good)
+	}
+}
+
+func TestPodOwnersResolvesEveryOwnershipShape(t *testing.T) {
+	in := Inputs{
+		Pods: []corev1.Pod{
+			pod("prod", "api-abc-1", ctrlRef("ReplicaSet", "api-abc"), 0, "app:1.0"),
+			pod("prod", "orphan-rs-1", ctrlRef("ReplicaSet", "unknown-rs"), 0, "app:1.0"),
+			pod("prod", "cache-0", ctrlRef("StatefulSet", "cache"), 0, "app:1.0"),
+			pod("prod", "nightly-1-x", ctrlRef("Job", "nightly-1"), 0, "app:1.0"),
+			pod("prod", "oneoff-x", ctrlRef("Job", "oneoff"), 0, "app:1.0"),
+			pod("prod", "detached-x", ctrlRef("Job", "detached"), 0, "app:1.0"),
+			pod("prod", "bare", nil, 0, "app:1.0"),
+		},
+		ReplicaSets: []appsv1.ReplicaSet{{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "prod", Name: "api-abc",
+				OwnerReferences: ctrlRef("Deployment", "api")},
+		}},
+		Jobs: []batchv1.Job{
+			{ObjectMeta: metav1.ObjectMeta{Namespace: "prod", Name: "nightly-1",
+				OwnerReferences: ctrlRef("CronJob", "nightly")}},
+			{ObjectMeta: metav1.ObjectMeta{Namespace: "prod", Name: "oneoff"}},
+			// detached names a CronJob that is not in in.CronJobs, so its pod
+			// must roll up to the Job, not to a CronJob nothing lists.
+			{ObjectMeta: metav1.ObjectMeta{Namespace: "prod", Name: "detached",
+				OwnerReferences: ctrlRef("CronJob", "vanished")}},
+		},
+		CronJobs: []batchv1.CronJob{{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "prod", Name: "nightly"},
+		}},
+	}
+
+	got := PodOwners(in)
+	want := map[string]Owner{
+		"prod/api-abc-1":   {Kind: "Deployment", Namespace: "prod", Name: "api"},
+		"prod/orphan-rs-1": {Kind: "ReplicaSet", Namespace: "prod", Name: "unknown-rs"},
+		"prod/cache-0":     {Kind: "StatefulSet", Namespace: "prod", Name: "cache"},
+		"prod/nightly-1-x": {Kind: "CronJob", Namespace: "prod", Name: "nightly"},
+		"prod/oneoff-x":    {Kind: "Job", Namespace: "prod", Name: "oneoff"},
+		"prod/detached-x":  {Kind: "Job", Namespace: "prod", Name: "detached"},
+		"prod/bare":        {Kind: "Pod", Namespace: "prod", Name: "bare"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("PodOwners returned %d entries, want %d: %+v", len(got), len(want), got)
+	}
+	for k, w := range want {
+		if got[k] != w {
+			t.Errorf("PodOwners[%q] = %+v, want %+v", k, got[k], w)
+		}
+	}
+}
+
+func TestPodOwnersKeepsEveryPodOfAJob(t *testing.T) {
+	// Assemble truncates a Job's pod list at jobPodCap so a report stays
+	// readable. PodOwners must not: a baseline needs every pod's restarts.
+	in := Inputs{Jobs: []batchv1.Job{{ObjectMeta: metav1.ObjectMeta{Namespace: "prod", Name: "batch"}}}}
+	for i := 0; i < jobPodCap+4; i++ {
+		in.Pods = append(in.Pods, pod("prod", "batch-"+strconv.Itoa(i), ctrlRef("Job", "batch"), 0, "app:1.0"))
+	}
+	if got := len(PodOwners(in)); got != jobPodCap+4 {
+		t.Errorf("PodOwners returned %d entries, want %d — every pod must be resolved", got, jobPodCap+4)
 	}
 }

@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/imantaba/kubeagent/internal/baseline"
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/policy"
@@ -224,6 +225,44 @@ func FromPolicy(violations []policy.Violation, notEvaluated []policy.Unevaluated
 		})
 	}
 	return out
+}
+
+// FromBaseline maps restart-rate deviations to findings at Info.
+//
+// Info is where the level's own comment reserved it: "no detector emits it yet,
+// but --fail-on info must have a meaning". This is that meaning. A deviation is
+// an inference from a learned rate, not a detector match on a concrete named
+// failure mode, so it is reported at every --fail-on setting and fails a gate
+// only at --fail-on info — which is the operator opting in. Because
+// --fail-on defaults to critical, no existing pipeline changes behavior.
+//
+// It carries no Owner: the deviation already names the workload itself in
+// Kind/Namespace/Name, which is the first branch a --wait-for-scoped gate
+// matches on.
+func FromBaseline(r *baseline.Report) []Finding {
+	if r == nil {
+		return nil
+	}
+	out := make([]Finding, 0, len(r.Deviations))
+	for _, d := range r.Deviations {
+		out = append(out, Finding{
+			Level: Info, Kind: d.Kind, Namespace: d.Namespace, Name: d.Name,
+			Issue:  "RestartRateDeviation",
+			Reason: baselineReason(d),
+		})
+	}
+	return out
+}
+
+// baselineReason renders the two rates and the size of the change. A zero
+// baseline has no multiple, so it reports only how many pods are behind the
+// current rate.
+func baselineReason(d baseline.Deviation) string {
+	if d.BaselineRate <= 0 {
+		return fmt.Sprintf("%.2f -> %.2f restarts/hour (%d pods)", d.BaselineRate, d.CurrentRate, d.Pods)
+	}
+	return fmt.Sprintf("%.2f -> %.2f restarts/hour (%.0fx baseline, %d pods)",
+		d.BaselineRate, d.CurrentRate, d.CurrentRate/d.BaselineRate, d.Pods)
 }
 
 // Sort imposes a total order so an unchanged cluster renders byte-identical

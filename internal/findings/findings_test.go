@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/imantaba/kubeagent/internal/baseline"
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/policy"
@@ -279,5 +280,35 @@ func TestFromPolicyTurnsAnUnevaluatedRuleIntoAFindingAtItsOwnLevel(t *testing.T)
 func TestFromPolicyWithNothingReturnsNothing(t *testing.T) {
 	if got := FromPolicy(nil, nil); len(got) != 0 {
 		t.Errorf("got %d findings from no policy results", len(got))
+	}
+}
+
+func TestFromBaselineMapsDeviationsToInfo(t *testing.T) {
+	got := FromBaseline(&baseline.Report{Deviations: []baseline.Deviation{
+		{Kind: "Deployment", Namespace: "prod", Name: "api", BaselineRate: 0.12, CurrentRate: 2.40, Pods: 3},
+		{Kind: "StatefulSet", Namespace: "prod", Name: "cache", BaselineRate: 0, CurrentRate: 0.80, Pods: 2},
+	}})
+	if len(got) != 2 {
+		t.Fatalf("FromBaseline returned %d findings, want 2", len(got))
+	}
+	for _, f := range got {
+		if f.Level != Info {
+			t.Errorf("%s is at %v, want Info — a learned rate is an inference, not a detector match", f.Name, f.Level)
+		}
+		if f.Issue != "RestartRateDeviation" {
+			t.Errorf("Issue = %q, want RestartRateDeviation", f.Issue)
+		}
+	}
+	if got[0].Reason != "0.12 -> 2.40 restarts/hour (20x baseline, 3 pods)" {
+		t.Errorf("Reason = %q", got[0].Reason)
+	}
+	if got[1].Reason != "0.00 -> 0.80 restarts/hour (2 pods)" {
+		t.Errorf("zero-baseline Reason = %q, want no multiple", got[1].Reason)
+	}
+}
+
+func TestFromBaselineIsEmptyWithoutAReport(t *testing.T) {
+	if got := FromBaseline(nil); len(got) != 0 {
+		t.Errorf("FromBaseline(nil) = %+v, want nothing", got)
 	}
 }

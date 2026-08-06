@@ -5,13 +5,15 @@ import (
 	"strconv"
 
 	"k8s.io/apimachinery/pkg/api/resource"
+
+	"github.com/imantaba/kubeagent/internal/glob"
 )
 
 // maxMatchLen bounds what the glob operators will look at. Every value a
 // policy realistically matches on — an image reference, a label value, a
 // storage class name — is far below this; the cap exists for the annotation
-// nobody expected. Do not remove it on the belief that globMatch is linear:
-// it is not, and glob.go says so.
+// nobody expected. Do not remove it on the belief that glob.Match is linear:
+// it is not, and internal/glob says so.
 const maxMatchLen = 4096
 
 // checkOp applies one operator to one slot.
@@ -59,7 +61,7 @@ func checkOp(op Op, s Slot, values []string) (ok, skip bool) {
 		}
 		return true, false
 	case OpMatches, OpNotMatches:
-		// globMatch is O(len(pattern) * len(got)) in the worst case — a single
+		// glob.Match is O(len(pattern) * len(got)) in the worst case — a single
 		// star followed by a long partly-matching literal run. `got` comes from
 		// the cluster and an annotation value can reach hundreds of kilobytes,
 		// so an unbounded call is a workload author's denial of service against
@@ -69,7 +71,7 @@ func checkOp(op Op, s Slot, values []string) (ok, skip bool) {
 			return false, true
 		}
 		for _, v := range values {
-			if globMatch(v, got) {
+			if glob.Match(v, got) {
 				return op == OpMatches, false
 			}
 		}

@@ -46,7 +46,7 @@ jobs:
             target: FuzzEvaluatePolicy
           - package: ./internal/policy
             target: FuzzResolvePath
-          - package: ./internal/policy
+          - package: ./internal/glob
             target: FuzzGlob
           - package: ./internal/safetext
             target: FuzzLine

@@ -1,4 +1,4 @@
-package policy
+package glob
 
 import (
 	"strings"
@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func TestGlobMatch(t *testing.T) {
+func TestMatch(t *testing.T) {
 	cases := []struct {
 		pattern string
 		input   string
@@ -36,37 +36,37 @@ func TestGlobMatch(t *testing.T) {
 		{"prod-*", "prod-", true, "trailing star may match nothing"},
 	}
 	for _, c := range cases {
-		if got := globMatch(c.pattern, c.input); got != c.want {
-			t.Errorf("globMatch(%q, %q) = %v, want %v (%s)", c.pattern, c.input, got, c.want, c.why)
+		if got := Match(c.pattern, c.input); got != c.want {
+			t.Errorf("Match(%q, %q) = %v, want %v (%s)", c.pattern, c.input, got, c.want, c.why)
 		}
 	}
 }
 
-// TestGlobMatchHasNoCatastrophicBlowup guards the matcher against the
+// TestMatchHasNoCatastrophicBlowup guards the matcher against the
 // exponential backtracking a naive recursive implementation shows, and
 // against the (non-exponential, but still worst-case quadratic) blowup this
-// iterative implementation does have. globMatch is not linear: a single star
+// iterative implementation does have. Match is not linear: a single star
 // followed by a long, almost-matching literal run is O(len(pattern) *
 // len(s)), because each mismatch re-scans nearly the whole literal — see the
-// doc comment on globMatch. This test does not claim linearity; it only
+// doc comment on Match. This test does not claim linearity; it only
 // asserts that two shapes finish well inside a generous deadline, so a
 // regression to true exponential blowup (which would take far longer than
 // this deadline even for these small sizes) is caught without making the
 // test flaky on a loaded machine.
-func TestGlobMatchHasNoCatastrophicBlowup(t *testing.T) {
+func TestMatchHasNoCatastrophicBlowup(t *testing.T) {
 	const deadline = 2 * time.Second
 
 	t.Run("many adjacent stars", func(t *testing.T) {
 		pattern := "*a*a*a*a*a*a*a*a*a*a*a*a*a*a*a*a*b"
 		input := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 		start := time.Now()
-		got := globMatch(pattern, input)
+		got := Match(pattern, input)
 		elapsed := time.Since(start)
 		if got {
 			t.Error("no trailing b, so no match")
 		}
 		if elapsed > deadline {
-			t.Errorf("globMatch took %v, want under %v (possible exponential regression)", elapsed, deadline)
+			t.Errorf("Match took %v, want under %v (possible exponential regression)", elapsed, deadline)
 		}
 	})
 
@@ -80,13 +80,13 @@ func TestGlobMatchHasNoCatastrophicBlowup(t *testing.T) {
 		pattern := "*" + strings.Repeat("a", n/2) + "b"
 		input := strings.Repeat("a", n) // no 'b' anywhere
 		start := time.Now()
-		got := globMatch(pattern, input)
+		got := Match(pattern, input)
 		elapsed := time.Since(start)
 		if got {
 			t.Error("no trailing b, so no match")
 		}
 		if elapsed > deadline {
-			t.Errorf("globMatch took %v, want under %v (possible exponential regression)", elapsed, deadline)
+			t.Errorf("Match took %v, want under %v (possible exponential regression)", elapsed, deadline)
 		}
 	})
 }

@@ -268,6 +268,17 @@ check 'remediation_outcome never echoes the audit log path' \
   "$( ( set --; . chaos/run.sh
         remediation_outcome 'No applied remediation found in /tmp/tmp.EXAMPLE; nothing to roll back.' ) \
       | grep -c 'tmp.EXAMPLE' || true )" 0
+check 'remediation_outcome reports an error' \
+  "$( ( set --; . chaos/run.sh
+        remediation_outcome '  ERROR: update deployment: etcdserver: request timed out' ) )" \
+  'ERROR: update deployment: etcdserver: request timed out'
+# The inverse of a recorded fix can fail to derive at all — an audit record written by
+# a version that did not carry revisions, or an action kind with no inverse. kubeagent
+# prints that on its own line, without the two-space outcome indent.
+check 'remediation_outcome reports an inverse that could not be derived' \
+  "$( ( set --; . chaos/run.sh
+        remediation_outcome 'Cannot roll back the last applied fix (RolloutUndo chaos-rollout/web (Deployment)): no revision recorded' ) )" \
+  'Cannot roll back the last applied fix (RolloutUndo chaos-rollout/web (Deployment)): no revision recorded'
 check 'remediation_outcome says so when nothing was printed' \
   "$( ( set --; . chaos/run.sh; remediation_outcome 'Cluster: Healthy' ) )" \
   '(no outcome line printed)'

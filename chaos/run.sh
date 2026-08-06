@@ -653,18 +653,19 @@ ready_replicas() {
 scan_body() { printf '%s\n' "$1" | awk '/── Explanation ──/ { exit } { print }'; }
 
 # remediation_outcome <output> — the one line of a --fix or --rollback run that says
-# which branch kubeagent took: applied, refused, preflight-denied, an error, or no
-# recorded fix to roll back at all.
+# which branch kubeagent took: applied, refused, preflight-denied, an error, an inverse
+# that could not be derived, or no recorded fix to roll back at all.
 #
 # Scenario 9b asserts on two image names and an audit-log count. Those say THAT the
-# round trip failed and nothing about WHY: every branch above leaves the same two
-# image names behind. The deciding line belongs in the report.
+# round trip failed and nothing about WHY: no branch that makes no write leaves anything
+# behind to tell it from the others. The deciding line belongs in the report.
 #
 # The whole run is deliberately NOT echoed. kubeagent's no-record line names the audit
 # log's filesystem path, and a path is a credential the report must never carry — so
 # that one case is answered by a sentence of the harness's own, which states the fact
 # without the value. Every other line it returns carries a namespace, a workload, a
-# revision number or a refusal reason, all of which the report already holds.
+# revision number, a node name or a refusal reason — the same material the report
+# already holds for the scenario that called it.
 #
 # It never fails: a caller under `set -euo pipefail` must not lose the run here, and an
 # output with no outcome line at all says so rather than returning empty.

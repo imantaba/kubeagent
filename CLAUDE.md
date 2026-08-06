@@ -170,6 +170,17 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   not document. Each of those three was added after a shape slipped
   through with all four tests green
   (see [website/docs/features/known-issues.md](website/docs/features/known-issues.md)).
+  `internal/policypack` joins the same stdlib-only list: the curated YAML rule
+  packs a `--policy-pack` flag evaluates, embedded via `go:embed` — no parser,
+  no dependency beyond `embed` and `sort`.
+  `internal/policypack/imports_test.go` enforces both halves — no kubeagent
+  import and stdlib-only — the same pattern `internal/baseline/imports_test.go`
+  established. It holds no client and no context, issues no cluster call and
+  makes no model call — two separate promises, and neither implies the other.
+  It cannot parse its own YAML — a stdlib-only package has no YAML decoder —
+  which is why `Pack` stores no rule count; `kubeagent policy packs` counts a
+  pack by loading it through `internal/policy.Load` and reporting the length
+  (see [website/docs/features/policy-packs.md](website/docs/features/policy-packs.md)).
   `internal/fleet` (the `kubeagent fleet` sweep) is a ninth case, and like
   `gate` it is one-shot, not long-lived: it runs once and exits. It is
   **read-only toward every cluster it sweeps** — `get`/`list` only, the exact
@@ -403,6 +414,17 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   finding only by naming the field, by not naming it, or by bypassing syntax,
   and the fourth test checks all three
   (see [website/docs/features/known-issues.md](website/docs/features/known-issues.md)).
+- **Post-1.0 — curated policy packs, slice 1 has shipped:** the second half
+  of the known-issues item's "curated community detector library" ambition
+  now has a first form — not new Go detector code, but `kubeagent policy
+  packs`: a kubeagent-curated `reliability` pack of fourteen rules, compiled
+  into `internal/policypack` and evaluated by the existing `--policy` engine
+  via `scan --policy-pack`/`gate --policy-pack`. It is opt-in — omitting the
+  flag renders the same bytes as before — moves no `schemaVersion` (`scan`
+  stays 1.2, `gate` stays 1.1), and ships no `critical` rule, so adding it to
+  a pipeline that passed yesterday cannot fail it today
+  (see [website/docs/features/policy-packs.md](website/docs/features/policy-packs.md)).
   The remaining post-1.0 work is the rest of fleet-scale — cross-cluster
-  correlation, and selection from something other than a kubeconfig — and
-  the second half of this item: a curated community detector library.
+  correlation, and selection from something other than a kubeconfig — and the
+  rest of this item's second half: security and cost packs, and a pack
+  contributed by someone other than kubeagent itself.

@@ -174,9 +174,10 @@ This is a safety contract rather than a compatibility one, but it is the one
 most worth being explicit about, and it does not change in 1.x.
 
 kubeagent is **read-only toward your cluster by default**. `scan`, `watch`,
-`gate`, `mcp`, `tui`, `rbac print`, `policy validate`, `schema`, `version`, and
-`completion` issue only `get`, `list`, and `watch` calls. There is no code path
-from a policy rule, an MCP tool call, or a model response into a write.
+`gate`, `mcp`, `tui`, `rbac print`, `policy validate`, `policy packs`,
+`schema`, `version`, and `completion` issue only `get`, `list`, and `watch`
+calls. There is no code path from a policy rule, an MCP tool call, or a model
+response into a write.
 
 Two documented exceptions:
 

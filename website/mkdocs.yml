@@ -76,6 +76,7 @@ nav:
       - Performance tuning: features/tuning.md
       - Shell completion: features/completion.md
       - Policy as code: features/policy.md
+      - Policy packs: features/policy-packs.md
       - In-cluster dashboard: features/dashboard.md
       - Restart-rate baseline: features/baseline.md
       - Fleet sweep: features/fleet.md

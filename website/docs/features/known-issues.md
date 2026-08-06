@@ -82,13 +82,17 @@ than asserting it. Four tests in `internal/diagnose` run on every `go test`:
   covers the path someone remembered to write.
 
 That fourth walk understands a deliberately small set of shapes — an `==`
-comparison against a `.Reason` field, or a `switch` on one; a bare `.Reason`
-as the kind, or a literal prefix added to one — and **refuses** anything
-else rather than ignoring it. A guard rewritten into a shape it cannot read
-fails the suite by name, exactly as widening one does. That refusal is what
-makes the claim above hold: a walk that quietly skipped what it did not
-understand would let the next rewrite reopen the gap it was written to
-close.
+comparison against a `.Reason` field, or a `switch` on one, in both cases
+against a string literal; a bare `.Reason` as the kind, or a literal prefix
+added to one — and **refuses** anything else rather than ignoring it. A
+guard rewritten into a shape it cannot read fails the suite by name, exactly
+as widening one does, and so does a guard that compares against a named
+constant instead of a literal: reading half a guard and reporting only that
+half would be the quieter kind of wrong. That refusal is what makes the
+claim above hold. A walk that skipped what it did not understand would let
+the next rewrite reopen the gap it was written to close — which is exactly
+what a review of the first version of this test demonstrated, with a
+`switch` that admitted a fourteenth kind while every test stayed green.
 
 Adding a detector that emits a new kind fails the build's tests until the kind
 is documented. That is the point of the slice: the reference cannot drift from

@@ -243,11 +243,12 @@ func producedKinds(t *testing.T) []string {
 // A guard it cannot read is a test failure naming the function, not a silent
 // pass — so rewriting a guard into a shape this walk does not understand
 // (extracting the comparison into a helper, inverting it to !=, testing the
-// reason some other way) fails the suite just as widening it does. The two
-// readable shapes are an == comparison against a .Reason field and a switch
-// whose tag is one; the two readable Issue values are a bare .Reason selector
-// and a string literal added to one. Teaching the walk a new shape is a
-// deliberate act, which is the point.
+// reason some other way, comparing it against a named constant) fails the suite
+// just as widening it does. The two readable guards are an == comparison
+// against a .Reason field and a switch whose tag is one, in both cases against a
+// string literal; the two readable Issue values are a bare .Reason selector and
+// a string literal added to one. Teaching the walk a new shape is a deliberate
+// act, which is the point.
 //
 // Within a recognised shape it over-approximates on purpose: a .Reason literal
 // tested for some unrelated purpose in the same function still counts as a
@@ -327,9 +328,12 @@ func dynamicIssueSites(t *testing.T) []issueSite {
 			if len(sites) == 0 {
 				continue
 			}
-			reasons := reasonLiterals(fn)
+			reasons, opaque := reasonLiterals(fn)
 			for _, s := range sites {
 				s.file, s.fn, s.reasons = path, fn.Name.Name, reasons
+				if s.unreadable == "" && opaque != "" {
+					s.unreadable = "a reason guarded by " + opaque + " rather than a string literal"
+				}
 				out = append(out, s)
 			}
 		}
@@ -377,15 +381,26 @@ func dynamicIssueValues(fn *ast.FuncDecl) []issueSite {
 }
 
 // reasonLiterals returns every string literal fn tests a .Reason field against,
-// sorted and deduplicated. Two shapes are read: an == comparison, whichever side
-// the literal is written on, and a switch whose tag is a .Reason field. Any
-// other way of testing a reason is invisible here, which is why the caller
-// treats a site with no literals as a failure rather than as nothing to check.
-func reasonLiterals(fn *ast.FuncDecl) []string {
+// sorted and deduplicated, and separately the first opaque operand it saw one
+// tested against. Two shapes are read: an == comparison, whichever side the
+// literal is written on, and a switch whose tag is a .Reason field.
+//
+// The opaque return is what stops a partial read from passing as a whole one.
+// A guard like w.Reason == "ImagePullBackOff" || w.Reason == reasonBadImage
+// yields one readable literal, and reporting only that would silently bless
+// whatever the named constant holds. Any operand this walk cannot resolve to a
+// string literal — a constant, a variable, a range value, a call — makes the
+// whole site unreadable instead. Any other way of testing a reason yields no
+// literals at all, which the caller also treats as a failure.
+func reasonLiterals(fn *ast.FuncDecl) (lits []string, opaque string) {
 	seen := map[string]bool{}
 	add := func(e ast.Expr) {
 		if lit := leadingStringLit(e); lit != "" {
 			seen[lit] = true
+			return
+		}
+		if opaque == "" {
+			opaque = describeExpr(e)
 		}
 	}
 	ast.Inspect(fn, func(n ast.Node) bool {
@@ -421,5 +436,20 @@ func reasonLiterals(fn *ast.FuncDecl) []string {
 		out = append(out, lit)
 	}
 	sort.Strings(out)
-	return out
+	return out, opaque
+}
+
+// describeExpr names an expression shape for a failure message, without
+// pretending to know what it evaluates to.
+func describeExpr(e ast.Expr) string {
+	switch v := e.(type) {
+	case *ast.Ident:
+		return "the name " + v.Name
+	case *ast.SelectorExpr:
+		return "the field or name ." + v.Sel.Name
+	case *ast.CallExpr:
+		return "a call"
+	default:
+		return "a computed expression"
+	}
 }

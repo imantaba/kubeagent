@@ -1,0 +1,146 @@
+# kubeagent reliability pack.
+#
+# Every rule here catches, before a workload goes live, a failure kubeagent's
+# detectors diagnose after it does: a container with no readiness probe, no
+# memory limit, a floating tag, a single replica with no disruption budget.
+#
+# No rule is `critical`, deliberately. `gate` fails on critical by default, so
+# adding this pack to a pipeline must not fail a build that passed yesterday.
+# An operator who wants these to block raises --fail-on warning.
+#
+# Rule ids are namespaced with the pack name so they cannot collide with an
+# operator's own rules when both are given.
+
+- id: reliability.deploy-readiness-probe
+  match:
+    kind: Deployment
+  assert:
+    path: spec.template.spec.containers[*].readinessProbe
+    op: exists
+  level: warning
+  message: a container has no readiness probe, so its Service sends traffic before it can serve
+
+- id: reliability.deploy-liveness-probe
+  match:
+    kind: Deployment
+  assert:
+    path: spec.template.spec.containers[*].livenessProbe
+    op: exists
+  level: info
+  message: a container has no liveness probe, so a wedged process is never restarted
+
+- id: reliability.statefulset-readiness-probe
+  match:
+    kind: StatefulSet
+  assert:
+    path: spec.template.spec.containers[*].readinessProbe
+    op: exists
+  level: warning
+  message: a container has no readiness probe, so an ordered rollout cannot tell when a replica is ready
+
+- id: reliability.daemonset-readiness-probe
+  match:
+    kind: DaemonSet
+  assert:
+    path: spec.template.spec.containers[*].readinessProbe
+    op: exists
+  level: info
+  message: a container has no readiness probe, so a node-local failure stays invisible
+
+- id: reliability.deploy-memory-limit
+  match:
+    kind: Deployment
+  assert:
+    path: spec.template.spec.containers[*].resources.limits.memory
+    op: exists
+  level: warning
+  message: a container has no memory limit, so a leak is bounded only by the node
+
+- id: reliability.statefulset-memory-limit
+  match:
+    kind: StatefulSet
+  assert:
+    path: spec.template.spec.containers[*].resources.limits.memory
+    op: exists
+  level: warning
+  message: a container has no memory limit, so a leak is bounded only by the node
+
+- id: reliability.deploy-cpu-request
+  match:
+    kind: Deployment
+  assert:
+    path: spec.template.spec.containers[*].resources.requests.cpu
+    op: exists
+  level: info
+  message: a container has no CPU request, so the scheduler places it as if it were free
+
+- id: reliability.deploy-memory-request
+  match:
+    kind: Deployment
+  assert:
+    path: spec.template.spec.containers[*].resources.requests.memory
+    op: exists
+  level: info
+  message: a container has no memory request, so the scheduler places it as if it were free
+
+- id: reliability.deploy-image-not-latest
+  match:
+    kind: Deployment
+  assert:
+    path: spec.template.spec.containers[*].image
+    op: notMatches
+    values:
+      - "*:latest"
+  level: warning
+  message: a container image is pinned to the latest tag, so a restart can change the code that runs
+
+- id: reliability.deploy-image-tagged
+  match:
+    kind: Deployment
+  assert:
+    path: spec.template.spec.containers[*].image
+    op: matches
+    values:
+      - "*:*"
+  level: info
+  message: a container image carries no tag or digest, so the runtime resolves it to latest
+
+- id: reliability.deploy-replicas-min-two
+  match:
+    kind: Deployment
+  assert:
+    path: spec.replicas
+    op: gte
+    values:
+      - "2"
+  level: warning
+  message: the Deployment runs a single replica, so any node drain is an outage
+
+- id: reliability.deploy-pdb
+  match:
+    kind: Deployment
+  assert:
+    relation: hasPodDisruptionBudget
+  level: warning
+  message: no PodDisruptionBudget covers this Deployment, so a drain can evict every replica at once
+
+- id: reliability.cronjob-concurrency-policy
+  match:
+    kind: CronJob
+  assert:
+    path: spec.concurrencyPolicy
+    op: in
+    values:
+      - Forbid
+      - Replace
+  level: info
+  message: the CronJob allows concurrent runs, so a slow job can pile up on itself
+
+- id: reliability.pvc-storage-class
+  match:
+    kind: PersistentVolumeClaim
+  assert:
+    path: spec.storageClassName
+    op: exists
+  level: info
+  message: the claim names no storage class, so it binds only if a default class exists

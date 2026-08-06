@@ -71,15 +71,21 @@ call — two separate promises.
 ```go
 // Pack is one curated rule set, compiled into the binary.
 type Pack struct {
-    Name        string // "reliability"
-    Summary     string // one line, for the list
-    RuleCount   int
+    Name    string // "reliability"
+    Summary string // one line, for the list
 }
 
 func All() []Pack                       // sorted by name
 func Lookup(name string) (Pack, bool)
 func Bytes(name string) ([]byte, bool)  // the YAML, for the loader or --print
 ```
+
+There is deliberately no `RuleCount` field. A stdlib-only package cannot parse
+its own YAML, so the number would be hand-maintained and could disagree with
+the file — a drift a test would then have to police. `kubeagent policy packs`
+counts by loading instead, in `internal/cli`, which already imports
+`internal/policy`. A number that cannot be wrong beats a number that is
+checked.
 
 `Bytes` returns a copy, so a caller cannot mutate the embedded pack — the same
 promise `knownissues.All` makes about its nested slices.
@@ -191,11 +197,9 @@ assert what `Load` does **not**:
 - `internal/policypack/packs_test.go` — imports `internal/policy` (which does
   not import `policypack`, so no cycle) and, for every embedded pack: `Load`
   succeeds on it, which is the whole of the above in one assertion; every rule
-  id carries its pack's prefix; `RuleCount` matches the rules actually loaded,
-  so the listing cannot drift from the YAML; `Bytes` returns a copy, proved by
-  mutating the result and reading again; and **no rule is `critical`**, which
-  is the promise that adding a pack to a gate cannot fail it at default
-  settings.
+  id carries its pack's prefix; `Bytes` returns a copy, proved by mutating the
+  result and reading again; and **no rule is `critical`**, which is the promise
+  that adding a pack to a gate cannot fail it at default settings.
 - Behavioural table per rule: a fixture object that violates and one that
   satisfies, run through `policy.Evaluate` with inputs built by
   `policy.InputsFrom` — the rule table above is proved, not asserted.

@@ -155,16 +155,6 @@ func Sweep(ctx context.Context, targets []Target, opts Options) Report {
 			defer cancel()
 		}
 		res, err := scan.Evaluate(ctx, t.Client, opts.Scan)
-		if err == nil {
-			// scan.Evaluate reads through whatever client the caller handed in.
-			// A real clientset's HTTP round trip already fails once ctx is done,
-			// but nothing here guarantees the client underneath ever looks at
-			// ctx — so the budget is enforced here too, rather than only trusted
-			// to the client. Checked after the call, not before: a read that
-			// finished within budget must not be discarded because the budget
-			// has since ticked over.
-			err = ctx.Err()
-		}
 		if err != nil {
 			return outcome{err: err}
 		}

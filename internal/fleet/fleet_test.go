@@ -9,8 +9,10 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/imantaba/kubeagent/internal/findings"
 	"github.com/imantaba/kubeagent/internal/jsonschema"
@@ -128,15 +130,24 @@ func TestSweepNamesAClusterItCouldNotRead(t *testing.T) {
 	}
 }
 
-// A cancelled context is the shape a per-cluster timeout takes. The reason must
-// come from the fixed vocabulary, not from err.Error(), which can carry a
-// server URL or a filesystem path.
+// A per-cluster timeout is the shape a wedged control plane takes: the read
+// that was in flight comes back with an error wrapping context.DeadlineExceeded.
+// The fake clientset ignores ctx entirely — its List methods never inspect it —
+// so a cancelled or expired context alone cannot produce that error here; a
+// real API server produces it by failing the in-flight request instead. The
+// reactor stands in for that failure at the point collect.Pods makes its List
+// call, which collect.Pods then wraps exactly as it would a real one, so the
+// error reaches reasonFor by the same route a real timeout would: the fixed
+// vocabulary must come from unwrapping that error, never from err.Error(),
+// which can carry a server URL or a filesystem path.
 func TestSweepReportsATimeoutFromTheFixedVocabulary(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	client := fake.NewSimpleClientset()
+	client.PrependReactor("list", "pods", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, context.DeadlineExceeded
+	})
 
-	rep := Sweep(ctx, []Target{{Name: "example-a", Client: healthyClient()}},
-		Options{FailOn: findings.Critical, Workers: 1, ClusterTimeout: time.Nanosecond})
+	rep := Sweep(context.Background(), []Target{{Name: "example-a", Client: client}},
+		Options{FailOn: findings.Critical, Workers: 1, ClusterTimeout: 30 * time.Second})
 
 	if len(rep.Unreachable) != 1 {
 		t.Fatalf("Unreachable = %+v, want one entry", rep.Unreachable)

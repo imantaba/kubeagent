@@ -297,6 +297,12 @@ func producedKinds(t *testing.T) []string {
 // signal because they stay green. That is the failure this design exists to
 // prevent, and it is why a new shape is refused until it is taught.
 //
+// One boundary is not a shape at all: this walk reads syntax, so code that names
+// a field at run time would leave nothing to read. The package importing reflect
+// or unsafe is therefore a failure in its own right (syntaxDefeatingImports),
+// which is what lets the paragraph above speak for the whole package rather than
+// for the part of it written plainly.
+//
 // Within a recognised shape it over-approximates on purpose: a .Reason literal
 // tested for some unrelated purpose in the same function still counts as a
 // producible kind. That direction can only raise a false alarm, and the fix for
@@ -306,6 +312,12 @@ func TestDynamicIssueSitesProduceOnlyDocumentedKinds(t *testing.T) {
 	documented := map[string]bool{}
 	for _, k := range knownissues.Kinds() {
 		documented[k] = true
+	}
+
+	for _, use := range syntaxDefeatingImports(t) {
+		t.Errorf("%s, which can set a field with no syntax for this walk to read; "+
+			"a set of pure functions over API objects needs neither, and while one is "+
+			"imported this test can no longer speak for the whole package", use)
 	}
 
 	sites := dynamicIssueSites(t)
@@ -431,6 +443,44 @@ func dynamicIssueValues(fn *ast.FuncDecl) []issueSite {
 
 // findingType is the struct whose Issue field carries a kind into a report.
 const findingType = "Finding"
+
+// syntaxDefeatingImports returns one "file imports pkg" string per non-test file
+// in this package that imports reflect or unsafe, sorted.
+//
+// Every check in this file reads syntax. Code that can name a field at run time
+// can set Issue with no Issue token to read, and no walk over an AST would see
+// it — not as a refused shape, but as nothing at all. Neither import is needed
+// by a set of pure functions over API objects, so their absence is asserted
+// rather than assumed. That is what keeps the refusal rule a whole claim about
+// the package instead of a claim about the part of it written plainly.
+func syntaxDefeatingImports(t *testing.T) []string {
+	t.Helper()
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	sort.Strings(files)
+	var out []string
+	for _, path := range files {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly)
+		if err != nil {
+			t.Fatalf("parse %s: %v", path, err)
+		}
+		for _, spec := range f.Imports {
+			p, err := strconv.Unquote(spec.Path.Value)
+			if err != nil {
+				t.Fatalf("%s: unquote import %s: %v", path, spec.Path.Value, err)
+			}
+			if p == "reflect" || p == "unsafe" {
+				out = append(out, path+" imports "+p)
+			}
+		}
+	}
+	return out
+}
 
 // unkeyedFindingLiteral names the reason n is a Finding written positionally,
 // or returns "" when n is anything else.

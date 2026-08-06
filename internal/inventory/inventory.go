@@ -244,8 +244,8 @@ type Owner struct {
 
 // PodOwners resolves every pod in in.Pods to the workload it belongs to, keyed
 // by the pod's "namespace/name". It is kubeagent's single implementation of the
-// pod-to-workload rule: Assemble calls it, and a future `kubeagent baseline
-// capture` will too, rather than each keeping its own copy that can drift.
+// pod-to-workload rule: Assemble calls it, and so does `kubeagent baseline
+// capture`, rather than each keeping its own copy that can drift.
 //
 // baseline capture cannot read that rule off Assemble's output. Prioritize
 // drops healthy-quiet workloads from the report and Assemble truncates a Job's

@@ -338,7 +338,10 @@ Deliberately absent, and not planned for this slice:
   those flags set.
 - No mapping of findings back to repository YAML (Helm values, kustomize
   overlays, the manifest that actually produced the object).
-- No baseline/diff mode (comparing this run against a previous one).
+- Diff mode covers restart rates only: `--baseline` compares this run's restart
+  rates against a [captured baseline](baseline.md). Nothing else is compared
+  against a previous run — findings, inventory and resource usage are judged
+  fresh each time.
 - No JUnit XML output.
 - No packaged GitHub Action — the example above is a plain shell invocation
   a workflow can call directly.

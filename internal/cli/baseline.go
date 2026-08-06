@@ -165,15 +165,16 @@ func podSamples(in inventory.Inputs, now time.Time) []baseline.PodSample {
 }
 
 // loadBaseline reads and parses a baseline document from path. It returns a
-// nil document and nil error for an empty path, so a caller with nothing to
-// compare against gets nothing back, rather than a zero-value document that
-// would silently compare as "no restarts were ever expected".
+// nil document and nil error for an empty path, so `scan --baseline` and
+// `gate --baseline` — its two callers, when the flag is left unset — get
+// nothing back, rather than a zero-value document that would silently
+// compare as "no restarts were ever expected".
 //
 // Parsing is a fallible step of its own, kept separate from any comparison
 // that follows it: an unreadable or wrong-version file is bad input and
-// should stop a caller before it does anything else. The path appears in the
-// error, which reaches stderr only — the same carve-out --policy already has
-// — and it never enters a report.
+// should stop the caller before it does anything else. The path appears in
+// the error, which reaches stderr only — the same carve-out --policy already
+// has — and it never enters a report.
 func loadBaseline(path string) (*baseline.Document, error) {
 	if path == "" {
 		return nil, nil
@@ -190,9 +191,10 @@ func loadBaseline(path string) (*baseline.Document, error) {
 }
 
 // baselineReport compares pod samples against a loaded document. Nil when doc
-// is nil, so a caller with no document to compare against renders nothing for
-// it, rather than a report claiming every workload is a fresh deviation. A
-// zero factor or floor takes the package default.
+// is nil, so `scan --baseline` and `gate --baseline` — its two callers —
+// render nothing for it when the flag was left unset, rather than a report
+// claiming every workload is a fresh deviation. A zero factor or floor takes
+// the package default.
 func baselineReport(doc *baseline.Document, factor, floor float64, in inventory.Inputs, now time.Time) *baseline.Report {
 	if doc == nil {
 		return nil

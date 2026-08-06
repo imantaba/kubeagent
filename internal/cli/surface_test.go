@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/imantaba/kubeagent/internal/baseline"
 )
 
 // TestCommandSurfaceScan asserts that every flag on every command reaches the
@@ -363,6 +365,47 @@ func TestCommandSurfaceRBACCheckDefaults(t *testing.T) {
 	}
 	if o.output != "text" {
 		t.Errorf("output default = %q, want text", o.output)
+	}
+}
+
+// TestCommandSurfaceBaselineCapture asserts every flag on `baseline capture`
+// reaches the field it configures, the same guard the scan and gate tables give
+// those commands.
+func TestCommandSurfaceBaselineCapture(t *testing.T) {
+	cases := []struct {
+		flag  string
+		args  []string
+		check func(baselineOptions) bool
+	}{
+		{"kubeconfig", []string{"--kubeconfig", "/nonexistent/kubeconfig"}, func(o baselineOptions) bool { return o.kubeconfig == "/nonexistent/kubeconfig" }},
+		{"context", []string{"--context", "example-context"}, func(o baselineOptions) bool { return o.contextName == "example-context" }},
+		{"namespace", []string{"--namespace", "example-ns"}, func(o baselineOptions) bool { return o.namespace == "example-ns" }},
+		{"min-pod-age", []string{"--min-pod-age", "15m"}, func(o baselineOptions) bool { return o.minPodAge == 15*time.Minute }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.flag, func(t *testing.T) {
+			o, err := parseBaselineCaptureFlags(tc.args)
+			if err != nil {
+				t.Fatalf("parseBaselineCaptureFlags(%v): %v", tc.args, err)
+			}
+			if !tc.check(o) {
+				t.Errorf("--%s did not reach its field; got %+v", tc.flag, o)
+			}
+		})
+	}
+	if len(cases) != 4 {
+		t.Errorf("baseline capture surface table has %d cases, want 4 — one per declared flag", len(cases))
+	}
+}
+
+// TestCommandSurfaceBaselineCaptureDefaults asserts the one non-zero default.
+func TestCommandSurfaceBaselineCaptureDefaults(t *testing.T) {
+	o, err := parseBaselineCaptureFlags(nil)
+	if err != nil {
+		t.Fatalf("parseBaselineCaptureFlags(nil): %v", err)
+	}
+	if o.minPodAge != baseline.DefaultMinPodAge {
+		t.Errorf("--min-pod-age default = %s, want %s", o.minPodAge, baseline.DefaultMinPodAge)
 	}
 }
 

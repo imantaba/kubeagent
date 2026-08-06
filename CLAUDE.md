@@ -336,5 +336,23 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   can see the workloads `Prioritize` drops and the Job pods `Assemble`
   truncates (see
   [website/docs/features/baseline.md](website/docs/features/baseline.md)).
-  The remaining post-1.0 work is fleet-scale (hundreds of clusters) and a
+- **Post-1.0 — fleet-scale, slice 1 has shipped (v1.7.0):** `kubeagent fleet`
+  sweeps every selected kubeconfig context in bounded parallel and prints one
+  row per cluster, worst first. The per-cluster pipeline is exactly `gate`'s —
+  `scan.Evaluate` then the pure `gate.Decide` — so a sweep and a single-cluster
+  `gate` can never disagree about the same cluster, and fleet adds no diagnosis
+  of its own. Selection is `--context` (repeatable) or `--all-contexts` plus an
+  optional `--match` glob; `--workers` (8) bounds concurrency and
+  `--cluster-timeout` (60s) bounds each cluster, and a non-positive budget is
+  refused rather than read as "no deadline", because the worker pool returns
+  only once every worker has. `inconclusive` outranks `fail` for the same
+  reason it does in `gate`: one unreachable cluster must not hide behind
+  another cluster's failure. A client that cannot be built is fatal at exit 4
+  — `cluster.NewClient` does no network I/O, so a failure there is a
+  configuration defect, never a reachability event — while a cluster that is
+  merely gone lands in `unreachable` with a reason from a fixed two-entry
+  vocabulary, never an `err.Error()`
+  (see [website/docs/features/fleet.md](website/docs/features/fleet.md)).
+  The remaining post-1.0 work is the rest of fleet-scale — cross-cluster
+  correlation, and selection from something other than a kubeconfig — and a
   curated community detector library with a known-issues knowledge base.

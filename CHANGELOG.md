@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-08-06
+
 ### Added
 
 - **`kubeagent fleet` — sweep many clusters in one read-only pass.** Selects
@@ -1634,7 +1636,8 @@ infrastructure (a documentation site and a pre-release chaos-test harness).
 - CI (vet/test/build on push & PR) and a release workflow publishing a
   linux/amd64 tarball + `SHA256SUMS` to a GitHub Release.
 
-[Unreleased]: https://github.com/imantaba/kubeagent/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/imantaba/kubeagent/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/imantaba/kubeagent/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/imantaba/kubeagent/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/imantaba/kubeagent/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/imantaba/kubeagent/compare/v1.3.0...v1.4.0

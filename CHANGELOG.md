@@ -27,8 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shape by name rather than skipping it, so a guard rewritten out of its reach —
   or compared against a named constant rather than a string literal — fails too.
   Both walks read the issue field wherever it is set, as a composite-literal key
-  and as an assignment, so filling it in on the next line is refused rather than
-  unseen. A new detector that emits an undocumented kind fails the suite.
+  and as an assignment, and refuse a finding written positionally with no field
+  names, so neither way of setting the kind without writing `Issue` goes unseen.
+  A new detector that emits an undocumented kind fails the suite.
 
 ## [1.7.0] - 2026-08-06
 

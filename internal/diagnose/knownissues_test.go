@@ -287,12 +287,15 @@ func producedKinds(t *testing.T) []string {
 // a string literal added to one. Teaching the walk a new shape is a deliberate
 // act, which is the point.
 //
-// The same rule governs where the field is set, not only what it is set to: a
-// key in a composite literal and an assignment to the field are both read, and a
-// compound or multi-value assignment to it is refused. Reading only the composite
-// literal would have left f.Issue = w.Reason invisible rather than refused —
-// a category the walk never saw, which is the failure this design exists to
-// prevent. See issueValues.
+// The same rule governs where the field is set, not only what it is set to.
+// A key in a composite literal and an assignment to the field are both read
+// (issueValues); a compound or multi-value assignment is refused; and a Finding
+// written positionally, with no field names at all, is refused too
+// (unkeyedFindingLiteral) because it names no field for either walk to match.
+// Each of those was invisible rather than refused at some point in this test's
+// history — a category the walk never saw, which the other three tests cannot
+// signal because they stay green. That is the failure this design exists to
+// prevent, and it is why a new shape is refused until it is taught.
 //
 // Within a recognised shape it over-approximates on purpose: a .Reason literal
 // tested for some unrelated purpose in the same function still counts as a
@@ -392,6 +395,9 @@ func dynamicIssueSites(t *testing.T) []issueSite {
 func dynamicIssueValues(fn *ast.FuncDecl) []issueSite {
 	var out []issueSite
 	ast.Inspect(fn, func(n ast.Node) bool {
+		if reason := unkeyedFindingLiteral(n); reason != "" {
+			out = append(out, issueSite{unreadable: reason})
+		}
 		values, unreadable := issueValues(n)
 		if unreadable != "" {
 			out = append(out, issueSite{unreadable: unreadable})
@@ -421,6 +427,76 @@ func dynamicIssueValues(fn *ast.FuncDecl) []issueSite {
 		return true
 	})
 	return out
+}
+
+// findingType is the struct whose Issue field carries a kind into a report.
+const findingType = "Finding"
+
+// unkeyedFindingLiteral names the reason n is a Finding written positionally,
+// or returns "" when n is anything else.
+//
+// Go lets a struct literal give its fields in declaration order with no names —
+// &Finding{pod, kind, reason, evidence, nil, "", "", "", ""} — and `go vet` does
+// not flag that for a type declared in the same package. Issue is the second
+// field, so such a literal sets a kind with no Issue token anywhere for a parser
+// to find: a third invisible category, alongside the assignment form, rather
+// than a refused shape. It is refused here by name.
+//
+// Two forms are read: the literal itself, and a slice, array or map of Findings
+// whose elements elide the type ([]Finding{{...}}), which is checked from the
+// container because the elements alone no longer say what they are.
+func unkeyedFindingLiteral(n ast.Node) string {
+	lit, ok := n.(*ast.CompositeLit)
+	if !ok {
+		return ""
+	}
+	const reason = "a Finding written positionally, without field names"
+	if namesFinding(lit.Type) {
+		if hasUnkeyedElement(lit) {
+			return reason
+		}
+		return ""
+	}
+	var elem ast.Expr
+	switch t := lit.Type.(type) {
+	case *ast.ArrayType:
+		elem = t.Elt
+	case *ast.MapType:
+		elem = t.Value
+	}
+	if !namesFinding(elem) {
+		return ""
+	}
+	for _, e := range lit.Elts {
+		if kv, ok := e.(*ast.KeyValueExpr); ok {
+			e = kv.Value
+		}
+		if inner, ok := e.(*ast.CompositeLit); ok && inner.Type == nil && hasUnkeyedElement(inner) {
+			return reason
+		}
+	}
+	return ""
+}
+
+// namesFinding reports whether e writes the Finding type, with or without a
+// pointer star.
+func namesFinding(e ast.Expr) bool {
+	if star, ok := e.(*ast.StarExpr); ok {
+		e = star.X
+	}
+	id, ok := e.(*ast.Ident)
+	return ok && id.Name == findingType
+}
+
+// hasUnkeyedElement reports whether lit gives any field without naming it. An
+// empty literal has none and is fine.
+func hasUnkeyedElement(lit *ast.CompositeLit) bool {
+	for _, e := range lit.Elts {
+		if _, ok := e.(*ast.KeyValueExpr); !ok {
+			return true
+		}
+	}
+	return false
 }
 
 // reasonLiterals returns every string literal fn tests a .Reason field against,

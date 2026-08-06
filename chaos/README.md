@@ -1,8 +1,9 @@
 # kubeagent chaos-test harness
 
-A repeatable, **pre-release** chaos test. It spins up a disposable **Kind**
-cluster, injects the most common production outages, runs `kubeagent scan`
-against each, and asserts — with the `expect_eq` / `expect_ge` /
+A repeatable, **pre-release** chaos test. It spins up a disposable cluster —
+**kind** by default, or **k3s** (via k3d) with `--distro k3s` — injects the
+most common production outages, runs `kubeagent scan` against each, and
+asserts — with the `expect_eq` / `expect_ge` /
 `expect_contains` / `expect_absent` helpers in `chaos/assert.sh` — that
 kubeagent's own contract held for each one. It is a **gate**, not just a
 report: `./chaos/run.sh` exits non-zero the moment any assertion fails, so a

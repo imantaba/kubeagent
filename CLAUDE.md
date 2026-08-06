@@ -115,7 +115,7 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   `template.URL` and their four siblings appear nowhere, so contextual
   auto-escaping is the package's single escape boundary. It holds no client and
   no context, issues no cluster call and makes no model call — two separate
-  promises. The page it renders is HTML, not one of the seven versioned JSON
+  promises. The page it renders is HTML, not one of the eight versioned JSON
   documents, so no `schemaVersion` moves
   (see [website/docs/features/dashboard.md](website/docs/features/dashboard.md)).
   `internal/baseline` (the learned restart-rate package) is an eighth case and

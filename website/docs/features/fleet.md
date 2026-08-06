@@ -83,11 +83,13 @@ timeout, and `fleet` has no `--wait-for` equivalent.
 **`inconclusive` outranks `fail`.** A single cluster whose own verdict is
 `inconclusive` — or a single cluster that could not be reached at all — makes
 the whole sweep `inconclusive`, no matter how many other clusters failed
-outright. This mirrors `gate.Decide`'s own ordering, where a blind spot is
-judged before a failing finding: when kubeagent could not see enough, a
-`fail` verdict might understate what is actually wrong, so the honest answer
-is that the run could not judge. Inverting this at fleet scope would let one
-unreachable cluster hide behind another cluster's failure.
+outright. Only the ordering of those two outcomes carries over from
+`gate.Decide` — not its case list, which reaches `fail` by two routes and
+evaluates one of them ahead of the blind case. The reasoning is the same
+either way: when kubeagent could not see enough, a `fail` verdict might
+understate what is actually wrong, so the honest answer is that the run could
+not judge. Inverting this at fleet scope would let one unreachable cluster
+hide behind another cluster's failure.
 
 ## Cluster selection
 

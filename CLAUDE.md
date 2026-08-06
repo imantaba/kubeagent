@@ -36,7 +36,7 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
 - **The CLI is a Cobra command tree in `internal/cli`**, one file per command;
   `main.go` holds only the `version` symbol the release workflow stamps with
   `-ldflags "-X main.version=<tag>"`. Flags are declared per command and never
-  as persistent flags: `--kubeconfig` appears on six commands, and two of the
+  as persistent flags: `--kubeconfig` appears on seven commands, and two of the
   remaining ones deliberately do not accept it. pflag rejects the single-dash
   long-flag form the standard library accepted, so `internal/cli.Normalize`
   rewrites a leading `-longname` to `--longname` for names the target command

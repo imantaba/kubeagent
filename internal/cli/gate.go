@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/imantaba/kubeagent/internal/baseline"
 	"github.com/imantaba/kubeagent/internal/cluster"
 	"github.com/imantaba/kubeagent/internal/connectivity"
 	"github.com/imantaba/kubeagent/internal/findings"
@@ -57,6 +58,9 @@ type gateOptions struct {
 	pollInterval     time.Duration
 	allowPartialRead []string
 	policyPaths      []string
+	baselinePath     string
+	baselineFactor   float64
+	baselineFloor    float64
 	namespace        string
 }
 
@@ -79,6 +83,11 @@ func bindGateFlags(cmd *cobra.Command, o *gateOptions) {
 	f.DurationVar(&o.pollInterval, "poll-interval", 2*time.Second, "with --wait-for: how often to re-read the workload")
 	f.StringArrayVar(&o.allowPartialRead, "allow-partial-read", nil, "accept that this resource cannot be read, instead of exiting 2 (repeatable, e.g. leases)")
 	f.StringArrayVar(&o.policyPaths, "policy", nil, "evaluate organization-specific checks from this policy file or directory (repeatable)")
+	f.StringVar(&o.baselinePath, "baseline", "", "compare restart rates against this captured baseline (see "+invokedAs+" baseline capture)")
+	f.Float64Var(&o.baselineFactor, "baseline-factor", envFloat("KUBEAGENT_BASELINE_FACTOR", baseline.DefaultFactor),
+		"with --baseline: flag a workload at this multiple of its baseline rate (KUBEAGENT_BASELINE_FACTOR)")
+	f.Float64Var(&o.baselineFloor, "baseline-floor", envFloat("KUBEAGENT_BASELINE_FLOOR", baseline.DefaultFloor),
+		"with --baseline: also require this absolute rise in restarts/hour (KUBEAGENT_BASELINE_FLOOR)")
 	f.StringVarP(&o.namespace, "namespace", "n", "", "namespace to judge (default: all namespaces)")
 }
 
@@ -123,6 +132,15 @@ func runGateOpts(o gateOptions) error {
 		if err != nil {
 			return &exitError{code: gate.CodeUsage, msg: err.Error()}
 		}
+	}
+
+	// Exit 4 for a bad baseline file, for the same reason a bad policy file
+	// takes it: bad input, in the same class as a bad flag, and nothing was
+	// attempted against the cluster. Exit 1 would claim kubeagent looked and
+	// found problems.
+	baselineDoc, err := loadBaseline(o.baselinePath)
+	if err != nil {
+		return &exitError{code: gate.CodeUsage, msg: err.Error()}
 	}
 
 	// Exit 4, not 1: cluster.NewClient builds a rest.Config and a clientset
@@ -186,6 +204,8 @@ func runGateOpts(o gateOptions) error {
 		}
 		return &exitError{code: gate.CodeInconclusive, msg: err.Error()}
 	}
+
+	opts.Baseline = baselineReport(baselineDoc, o.baselineFactor, o.baselineFloor, scanRes.Inputs, time.Now())
 
 	verdict := gate.Decide(scanRes, opts)
 

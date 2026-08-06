@@ -190,6 +190,9 @@ func TestCommandSurfaceGate(t *testing.T) {
 		}},
 		{"namespace", []string{"--namespace", "example-ns"}, func(o gateOptions) bool { return o.namespace == "example-ns" }},
 		{"n", []string{"-n", "example-ns"}, func(o gateOptions) bool { return o.namespace == "example-ns" }},
+		{"baseline", []string{"--baseline", "/nonexistent/baseline.json"}, func(o gateOptions) bool { return o.baselinePath == "/nonexistent/baseline.json" }},
+		{"baseline-factor", []string{"--baseline-factor", "5"}, func(o gateOptions) bool { return o.baselineFactor == 5 }},
+		{"baseline-floor", []string{"--baseline-floor", "0.25"}, func(o gateOptions) bool { return o.baselineFloor == 0.25 }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.flag, func(t *testing.T) {
@@ -202,8 +205,8 @@ func TestCommandSurfaceGate(t *testing.T) {
 			}
 		})
 	}
-	if len(cases) != 10 {
-		t.Errorf("gate surface table has %d cases, want 10 — one per declared flag", len(cases))
+	if len(cases) != 13 {
+		t.Errorf("gate surface table has %d cases, want 13 — one per declared flag", len(cases))
 	}
 }
 
@@ -224,6 +227,12 @@ func TestCommandSurfaceGateDefaults(t *testing.T) {
 	}
 	if o.pollInterval != 2*time.Second {
 		t.Errorf("pollInterval default = %v, want 2s", o.pollInterval)
+	}
+	if o.baselineFactor != baseline.DefaultFactor {
+		t.Errorf("--baseline-factor default = %v, want %v", o.baselineFactor, baseline.DefaultFactor)
+	}
+	if o.baselineFloor != baseline.DefaultFloor {
+		t.Errorf("--baseline-floor default = %v, want %v", o.baselineFloor, baseline.DefaultFloor)
 	}
 }
 

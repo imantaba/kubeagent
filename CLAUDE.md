@@ -152,12 +152,16 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   instead of quietly admitting a fourteenth kind. It understands a closed
   set of guard and value shapes — an `==` or `switch` against a string
   literal, and an `Issue` that is a `.Reason` field or a literal prefix
-  added to one, set either as a composite-literal key or by assignment —
-  and **refuses** every other shape by name rather than
-  skipping it, so a guard rewritten out of its reach, compared against a
-  named constant, or a finding written positionally with no field names,
-  fails the suite too; widening the set is a deliberate edit
-  to that test
+  added to one — and **refuses** every other shape by name rather than
+  skipping it, so a guard rewritten out of its reach or compared against a
+  named constant fails the suite too; widening the set is a deliberate edit
+  to that test. Refusal is closed rather than best-effort: a value reaches
+  that field only by naming it (every `Issue` occurrence must be a
+  composite-literal key or an assignment's left side, inside a function
+  declaration — a read is refused too), by not naming it (a positional
+  literal, refused outright), or by bypassing syntax (`reflect` or `unsafe`
+  imported anywhere in the package fails the test). Each of those three was
+  added after a shape slipped through with all four tests green
   (see [website/docs/features/known-issues.md](website/docs/features/known-issues.md)).
   `internal/fleet` (the `kubeagent fleet` sweep) is a ninth case, and like
   `gate` it is one-shot, not long-lived: it runs once and exits. It is
@@ -388,7 +392,9 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   documents a kind no detector emits, or if either of the two runtime-valued
   `Issue:` sites has its guard widened to admit a new reason — or rewritten
   into a shape the fourth test cannot read, which it refuses rather than
-  skips
+  skips. That refusal is closed rather than best-effort: a kind reaches a
+  finding only by naming the field, by not naming it, or by bypassing syntax,
+  and the fourth test checks all three
   (see [website/docs/features/known-issues.md](website/docs/features/known-issues.md)).
   The remaining post-1.0 work is the rest of fleet-scale — cross-cluster
   correlation, and selection from something other than a kubeconfig — and

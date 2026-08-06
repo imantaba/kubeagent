@@ -26,10 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fourth walk understands a closed set of guard shapes and refuses every other
   shape by name rather than skipping it, so a guard rewritten out of its reach —
   or compared against a named constant rather than a string literal — fails too.
-  Both walks read the issue field wherever it is set, as a composite-literal key
-  and as an assignment, and refuse a finding written positionally with no field
-  names, so neither way of setting the kind without writing `Issue` goes unseen.
-  A new detector that emits an undocumented kind fails the suite.
+  Refusal is closed rather than best-effort: a value reaches that field only by
+  naming it — every `Issue` occurrence must be a composite-literal key or an
+  assignment's left side, inside a function declaration — by not naming it, which
+  is a positional literal and refused outright, or by bypassing syntax, so the
+  package importing `reflect` or `unsafe` fails the test too. A new detector that
+  emits an undocumented kind fails the suite.
 
 ## [1.7.0] - 2026-08-06
 

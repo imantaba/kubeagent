@@ -84,18 +84,31 @@ than asserting it. Four tests in `internal/diagnose` run on every `go test`:
 That fourth walk understands a deliberately small set of shapes — an `==`
 comparison against a `.Reason` field, or a `switch` on one, in both cases
 against a string literal; a bare `.Reason` as the kind, or a literal prefix
-added to one, written either as a key in the finding's composite literal or
-assigned to the field afterwards — and **refuses** anything else rather than
-ignoring it, including a finding written positionally, with no field names for
-either walk to match. A
-guard rewritten into a shape it cannot read fails the suite by name, exactly
-as widening one does, and so does a guard that compares against a named
-constant instead of a literal: reading half a guard and reporting only that
-half would be the quieter kind of wrong. That refusal is what makes the
-claim above hold. A walk that skipped what it did not understand would let
-the next rewrite reopen the gap it was written to close — which is exactly
-what a review of the first version of this test demonstrated, with a
-`switch` that admitted a fourteenth kind while every test stayed green.
+added to one — and **refuses** anything else rather than ignoring it. A guard
+rewritten into a shape it cannot read fails the suite by name, exactly as
+widening one does, and so does a guard that compares against a named constant
+instead of a literal: reading half a guard and reporting only that half would be
+the quieter kind of wrong.
+
+Refusing is only worth something if nothing can slip past unnoticed, so the
+question is also asked from the other side. A value reaches that field in one of
+three ways, and each has its own check:
+
+- **the field is named** — every occurrence of `Issue` in the package must sit
+  where the walk reads it, as a key in a composite literal or the left side of
+  an assignment, inside a function declaration whose guards it can see. Anything
+  else is named and refused, a plain read included;
+- **the field is not named** — a finding written positionally has no `Issue`
+  token for any of that to match, so a positional literal is refused outright;
+- **syntax is bypassed** — `reflect` and `unsafe` could set the field with
+  nothing at all to read, so the package importing either fails the test.
+
+There is no fourth way, and that is what makes the refusal worth stating. Each
+of those checks was added after a shape slipped through: a `switch` that
+admitted a fourteenth kind, a kind assigned on the line after the finding was
+built, a finding written with no field names. Every one of them left all four
+tests green, which is precisely the failure mode — a walk that skips what it
+does not understand reports nothing, and three sibling tests agree with it.
 
 Adding a detector that emits a new kind fails the build's tests until the kind
 is documented. That is the point of the slice: the reference cannot drift from

@@ -1,6 +1,7 @@
 package diagnose
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -320,6 +321,12 @@ func TestDynamicIssueSitesProduceOnlyDocumentedKinds(t *testing.T) {
 			"imported this test can no longer speak for the whole package", use)
 	}
 
+	for _, use := range unclassifiedIssueIdents(t) {
+		t.Errorf("%s, and the walk below accounts for neither; it reads an Issue field "+
+			"named as a composite-literal key or assigned to, inside a function "+
+			"declaration, and refuses anything else rather than passing it over", use)
+	}
+
 	sites := dynamicIssueSites(t)
 	if len(sites) == 0 {
 		t.Fatal("found no dynamic Issue: site; the walk is broken and would pass vacuously")
@@ -443,6 +450,126 @@ func dynamicIssueValues(fn *ast.FuncDecl) []issueSite {
 
 // findingType is the struct whose Issue field carries a kind into a report.
 const findingType = "Finding"
+
+// issueField is the field name every check in this file is about.
+const issueField = "Issue"
+
+// unclassifiedIssueIdents returns "file:line: <what it is>" for every place the
+// package's non-test sources write the identifier Issue in a position none of
+// the shapes below accounts for.
+//
+// This is the check that closes the class rather than another shape. The walks
+// below enumerate the ways a value can be put into the field, and Go keeps
+// offering more of them than an enumeration holds: a range assignment,
+// for f.Issue = range c, and the address of the field handed to a helper,
+// setIssue(&f.Issue, w.Reason), are both writes that no case matched — skipped
+// rather than refused, which is the one outcome this design does not tolerate.
+//
+// So the question is asked from the other side. A value can reach the field in
+// exactly three ways: the field is named, the field is not named (a positional
+// literal, unkeyedFindingLiteral), or syntax is bypassed altogether
+// (syntaxDefeatingImports). This function owns the first: wherever the field is
+// named, the occurrence must sit in a position the walk reads — a key in a
+// composite literal, or the left-hand side of an assignment — inside a function
+// declaration, where reasonLiterals can see the guards. Every other position is
+// named and refused, whether it is a write this walk has never met or an
+// ordinary read someone added.
+//
+// The one exception is the field's own declaration in the Finding struct.
+func unclassifiedIssueIdents(t *testing.T) []string {
+	t.Helper()
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	sort.Strings(files)
+	var out []string
+	for _, path := range files {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		fset := token.NewFileSet()
+		f, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", path, err)
+		}
+		var stack []ast.Node
+		ast.Inspect(f, func(n ast.Node) bool {
+			if n == nil {
+				stack = stack[:len(stack)-1]
+				return true
+			}
+			if id, ok := n.(*ast.Ident); ok && id.Name == issueField {
+				if why := unreadableIssuePosition(id, stack); why != "" {
+					out = append(out, fmt.Sprintf("%s: %s", fset.Position(id.Pos()), why))
+				}
+			}
+			stack = append(stack, n)
+			return true
+		})
+	}
+	return out
+}
+
+// unreadableIssuePosition names why the identifier id, whose ancestors are
+// stack outermost-first, sits somewhere the walk does not read — or returns ""
+// when it sits somewhere the walk does.
+func unreadableIssuePosition(id *ast.Ident, stack []ast.Node) string {
+	if len(stack) == 0 {
+		return "the name Issue stands alone"
+	}
+	parent := stack[len(stack)-1]
+
+	// The field's own declaration in the Finding struct.
+	if field, ok := parent.(*ast.Field); ok {
+		for _, name := range field.Names {
+			if name == id {
+				return ""
+			}
+		}
+	}
+
+	inFuncDecl := false
+	for _, n := range stack {
+		if _, ok := n.(*ast.FuncDecl); ok {
+			inFuncDecl = true
+			break
+		}
+	}
+	outside := " outside a function declaration, where this walk cannot read the guards"
+
+	switch p := parent.(type) {
+	case *ast.KeyValueExpr:
+		if p.Key != id {
+			return "an Issue field used as a composite-literal value rather than a key"
+		}
+		if !inFuncDecl {
+			return "an Issue field set" + outside
+		}
+		return ""
+	case *ast.SelectorExpr:
+		if p.Sel != id {
+			return "an Issue field used to qualify another name"
+		}
+		if len(stack) < 2 {
+			return "an Issue field selected with nothing enclosing it"
+		}
+		assign, ok := stack[len(stack)-2].(*ast.AssignStmt)
+		if !ok {
+			return "an Issue field reached by something other than an assignment to it"
+		}
+		for _, lhs := range assign.Lhs {
+			if lhs == p {
+				if !inFuncDecl {
+					return "an Issue field assigned" + outside
+				}
+				return ""
+			}
+		}
+		return "an Issue field read rather than assigned"
+	}
+	return "the name Issue in a position this walk does not read"
+}
 
 // syntaxDefeatingImports returns one "file imports pkg" string per non-test file
 // in this package that imports reflect or unsafe, sorted.

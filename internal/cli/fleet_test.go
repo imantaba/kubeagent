@@ -128,7 +128,8 @@ func TestParseFleetFlagsRejectsAnUnknownOutput(t *testing.T) {
 // single cluster whose API server accepts the connection and then never answers
 // would block the whole sweep forever, rendering nothing at all for any cluster.
 // A hang with no output is a worse answer than an error, so the CLI refuses the
-// value that makes it possible. The same guard gate applies to --poll-interval.
+// value that makes it possible. `gate` already applies the same guard to
+// --poll-interval.
 func TestValidateFleetOptionsRejectsANonPositiveClusterTimeout(t *testing.T) {
 	for _, spelling := range []string{"0", "-1s"} {
 		o, err := parseFleetFlags([]string{"--cluster-timeout", spelling})

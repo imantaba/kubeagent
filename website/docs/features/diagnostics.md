@@ -11,6 +11,11 @@ are failing — covering the most common pod failure modes.
 
 ## Failure modes detected
 
+Every kind in this section is also in the binary's own offline reference —
+`kubeagent known-issues <kind>` prints what it means, what usually causes it,
+and what to check, with no cluster and no network. See
+[Known issues reference](known-issues.md).
+
 ### CrashLoopBackOff
 
 The container keeps restarting. Kubernetes backs off exponentially between

@@ -55,6 +55,7 @@ nav:
   - Quickstart: quickstart.md
   - Features:
       - Failure diagnostics: features/diagnostics.md
+      - Known issues reference: features/known-issues.md
       - Resource context: features/resource-context.md
       - Platform facts: features/platform-facts.md
       - Operator health: features/operators.md

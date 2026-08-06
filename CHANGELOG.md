@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`kubeagent known-issues [kind]` — an offline reference for every failure
+  kind the detectors report.** With no argument it lists all thirteen kinds
+  with a one-line summary; with a kind it prints that failure in full — what it
+  means, its likely causes most common first, and read-only next steps whose
+  object names are placeholders. No cluster, no kubeconfig, no network, and no
+  flags at all. Separately: it makes no LLM call — the text is curated prose
+  compiled into the binary, not generated.
+- **The detector issue vocabulary is now machine-checked.** Three tests in
+  `internal/diagnose` keep the reference and the detectors in step: a
+  `go/parser` walk over every string literal reaching a finding's issue field, a
+  fixture table driving all nine detectors to produce all thirteen kinds, and a
+  reverse check refusing an entry for a kind nothing emits. A new detector that
+  emits an undocumented kind fails the suite.
+
 ## [1.7.0] - 2026-08-06
 
 ### Added

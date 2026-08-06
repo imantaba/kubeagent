@@ -327,6 +327,12 @@ func TestDynamicIssueSitesProduceOnlyDocumentedKinds(t *testing.T) {
 			"declaration, and refuses anything else rather than passing it over", use)
 	}
 
+	for _, decl := range findingAliasDecls(t) {
+		t.Errorf("%s is a second name for a %s, so a positional literal of it names "+
+			"neither the type nor the field for any check here to match; the package "+
+			"needs no second name for it", decl, findingType)
+	}
+
 	sites := dynamicIssueSites(t)
 	if len(sites) == 0 {
 		t.Fatal("found no dynamic Issue: site; the walk is broken and would pass vacuously")
@@ -475,7 +481,10 @@ const issueField = "Issue"
 // named and refused, whether it is a write this walk has never met or an
 // ordinary read someone added.
 //
-// The one exception is the field's own declaration in the Finding struct.
+// The one exception is the field's own declaration in the Finding struct. A
+// second type declaring an Issue field is not exempt: see
+// unreadableIssuePosition, and findingAliasDecls for the other half of that
+// argument.
 func unclassifiedIssueIdents(t *testing.T) []string {
 	t.Helper()
 	files, err := filepath.Glob("*.go")
@@ -520,12 +529,20 @@ func unreadableIssuePosition(id *ast.Ident, stack []ast.Node) string {
 	}
 	parent := stack[len(stack)-1]
 
-	// The field's own declaration in the Finding struct.
+	// The field's own declaration, in the Finding struct and nowhere else. A
+	// second type that declares an Issue field is refused rather than exempted:
+	// Go converts between struct types whose field names and types match, so
+	// Finding(other{pod, w.Reason, …}) would carry a kind into the field with no
+	// Issue token at the site that sets it for anything here to match.
 	if field, ok := parent.(*ast.Field); ok {
 		for _, name := range field.Names {
-			if name == id {
+			if name != id {
+				continue
+			}
+			if declaresFinding(stack) {
 				return ""
 			}
+			return "the name Issue declared somewhere other than the " + findingType + " struct"
 		}
 	}
 
@@ -569,6 +586,66 @@ func unreadableIssuePosition(id *ast.Ident, stack []ast.Node) string {
 		return "an Issue field read rather than assigned"
 	}
 	return "the name Issue in a position this walk does not read"
+}
+
+// declaresFinding reports whether stack, an ancestor chain outermost-first,
+// passes through the type declaration of Finding itself.
+func declaresFinding(stack []ast.Node) bool {
+	for _, n := range stack {
+		if spec, ok := n.(*ast.TypeSpec); ok && spec.Name != nil && spec.Name.Name == findingType {
+			return true
+		}
+	}
+	return false
+}
+
+// findingAliasDecls returns "file:line: name" for every type this package's
+// non-test sources declare as a second name for Finding — an alias,
+// type f = Finding, or a defined type, type f Finding.
+//
+// Either one gives a composite literal a type name that is not the word
+// Finding, so a positional f{pod, w.Reason, …} sets the field with nothing for
+// unkeyedFindingLiteral to recognise and no Issue token for
+// unclassifiedIssueIdents to see. The package needs neither name, so their
+// absence is asserted rather than assumed.
+//
+// That leaves one way to reach the field without naming either the type or the
+// field: a conversion from a second struct of identical layout,
+// Finding(other{…}). Go requires the field names to match, so that struct must
+// declare an Issue field of its own, which unreadableIssuePosition refuses. It
+// cannot be declared in another package either — the layouts match only if its
+// Resources field has Finding's own *ContainerResources type, so that package
+// would have to import internal/diagnose, which would have to import it back.
+// The compiler refuses the cycle.
+func findingAliasDecls(t *testing.T) []string {
+	t.Helper()
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	sort.Strings(files)
+	var out []string
+	for _, path := range files {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		fset := token.NewFileSet()
+		f, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", path, err)
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			spec, ok := n.(*ast.TypeSpec)
+			if !ok || spec.Name == nil || spec.Name.Name == findingType {
+				return true
+			}
+			if id, ok := spec.Type.(*ast.Ident); ok && id.Name == findingType {
+				out = append(out, fmt.Sprintf("%s: %s", fset.Position(spec.Pos()), spec.Name.Name))
+			}
+			return true
+		})
+	}
+	return out
 }
 
 // syntaxDefeatingImports returns one "file imports pkg" string per non-test file

@@ -97,18 +97,28 @@ three ways, and each has its own check:
 - **the field is named** — every occurrence of `Issue` in the package must sit
   where the walk reads it, as a key in a composite literal or the left side of
   an assignment, inside a function declaration whose guards it can see. Anything
-  else is named and refused, a plain read included;
+  else is named and refused, a plain read included, and so is a second type
+  declaring an `Issue` field of its own — Go converts between structs whose
+  fields match, so that one could be built positionally and converted;
 - **the field is not named** — a finding written positionally has no `Issue`
-  token for any of that to match, so a positional literal is refused outright;
+  token for any of that to match, so a positional literal is refused outright,
+  as is a second name for the type itself, `type f = Finding`, which would give
+  one a type name the check does not recognise;
 - **syntax is bypassed** — `reflect` and `unsafe` could set the field with
   nothing at all to read, so the package importing either fails the test.
 
-There is no fourth way, and that is what makes the refusal worth stating. Each
-of those checks was added after a shape slipped through: a `switch` that
-admitted a fourteenth kind, a kind assigned on the line after the finding was
-built, a finding written with no field names. Every one of them left all four
-tests green, which is precisely the failure mode — a walk that skips what it
-does not understand reports nothing, and three sibling tests agree with it.
+There is no fourth way from inside the package, and none from outside it: a
+struct built elsewhere is convertible only if its resources field has the
+detectors' own type, so that package would have to import `internal/diagnose`,
+which would have to import it back. The compiler refuses the cycle.
+
+That closure is what makes the refusal worth stating. Each of those checks was
+added after a shape slipped through: a `switch` that admitted a fourteenth kind,
+a kind assigned on the line after the finding was built, a finding written with
+no field names, a second struct of the same shape converted to one. Every one of
+them left all four tests green, which is precisely the failure mode — a walk
+that skips what it does not understand reports nothing, and three sibling tests
+agree with it.
 
 Adding a detector that emits a new kind fails the build's tests until the kind
 is documented. That is the point of the slice: the reference cannot drift from

@@ -28,10 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or compared against a named constant rather than a string literal — fails too.
   Refusal is closed rather than best-effort: a value reaches that field only by
   naming it — every `Issue` occurrence must be a composite-literal key or an
-  assignment's left side, inside a function declaration — by not naming it, which
-  is a positional literal and refused outright, or by bypassing syntax, so the
-  package importing `reflect` or `unsafe` fails the test too. A new detector that
-  emits an undocumented kind fails the suite.
+  assignment's left side, inside a function declaration, and a second type
+  declaring its own `Issue` field is refused as well — by not naming it, which is
+  a positional literal or a second name for the type, or by bypassing syntax, so
+  the package importing `reflect` or `unsafe` fails the test too. A new detector
+  that emits an undocumented kind fails the suite.
 
 ## [1.7.0] - 2026-08-06
 

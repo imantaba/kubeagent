@@ -102,10 +102,13 @@ func sortSummaries(s []ClusterSummary) {
 
 // decide derives the fleet verdict and its exit code.
 //
-// inconclusive outranks fail, mirroring gate.Decide's own switch at
-// internal/gate/gate.go:229-240, where the blind case is evaluated before the
-// failing case. The reasoning carries over exactly: when kubeagent could not
-// see enough, a "fail" may understate what is actually wrong.
+// inconclusive outranks fail, carrying over the reasoning behind gate.Decide's
+// own switch: when kubeagent could not see enough, a "fail" may understate what
+// is actually wrong. Only the ordering of those two outcomes carries over, not
+// gate.Decide's case list — it reaches "fail" by two routes, one of them (an
+// in-scope policy rule that never ran) evaluated ahead of the blind case. Both
+// routes have already collapsed to the string "fail" by the time a per-cluster
+// verdict arrives here, so this function sees one fail outcome, not two.
 func decide(clusters []ClusterSummary, unreachable []Unreachable) (string, int) {
 	failing := false
 	for _, c := range clusters {

@@ -5,6 +5,7 @@ import (
 	"go/token"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -22,7 +23,11 @@ func TestNoRemediateOrExplainImport(t *testing.T) {
 	for _, file := range packageFiles(t) {
 		for _, imp := range importsOf(t, file) {
 			for _, b := range banned {
-				if imp == b {
+				// The prefix arm covers a subpackage neither banned package has
+				// today. Both are flat, so the arm is dead — and it is here so
+				// that adding internal/remediate/foo tomorrow does not silently
+				// open the wall.
+				if imp == b || strings.HasPrefix(imp, b+"/") {
 					t.Errorf("%s imports %s; internal/fleet must never import it", file, b)
 				}
 			}

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/imantaba/kubeagent/internal/baseline"
 	"github.com/imantaba/kubeagent/internal/jsonschema"
 )
 
@@ -41,8 +42,20 @@ func TestDocumentsTableIsWellFormed(t *testing.T) {
 			t.Errorf("%s: %v", d.Name, err)
 		}
 	}
-	if len(Documents) != 6 {
-		t.Errorf("Documents has %d entries, want the six documented surfaces", len(Documents))
+	if len(Documents) != 7 {
+		t.Errorf("Documents has %d entries, want the seven documented surfaces", len(Documents))
+	}
+}
+
+// TestBaselineSchemaVersionMatches pins internal/baseline's own SchemaVersion
+// constant to the one internal/jsonschema publishes. internal/baseline imports
+// nothing from kubeagent, so it cannot reference jsonschema.BaselineVersion
+// directly; this is where the two spellings are held together. Every other
+// surface sets its schemaVersion from jsonschema and needs no such test.
+func TestBaselineSchemaVersionMatches(t *testing.T) {
+	if baseline.SchemaVersion != jsonschema.BaselineVersion {
+		t.Errorf("baseline.SchemaVersion = %q, jsonschema.BaselineVersion = %q — they must agree",
+			baseline.SchemaVersion, jsonschema.BaselineVersion)
 	}
 }
 

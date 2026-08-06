@@ -25,10 +25,11 @@ type Schema = map[string]any
 // release version: a surface's version moves only when its own shape does, so a
 // new scan field does not disturb a CI pipeline reading the gate document.
 const (
-	ScanVersion  = "1.1"
-	GateVersion  = "1.1"
-	RBACVersion  = "1.0"
-	WatchVersion = "1.0"
+	ScanVersion     = "1.1"
+	GateVersion     = "1.1"
+	RBACVersion     = "1.0"
+	WatchVersion    = "1.0"
+	BaselineVersion = "1.0"
 )
 
 // baseID is where the generated files are published. The $id carries the MAJOR

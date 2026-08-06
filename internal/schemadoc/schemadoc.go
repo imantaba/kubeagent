@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/imantaba/kubeagent/internal/baseline"
 	"github.com/imantaba/kubeagent/internal/capacity"
 	"github.com/imantaba/kubeagent/internal/findings"
 	"github.com/imantaba/kubeagent/internal/gate"
@@ -75,9 +76,15 @@ var Documents = []Document{
 		Title:       "kubeagent watch explanations",
 		Description: "The document served by the watch daemon's GET /explanations: the latest model explanation per object, and the explain budget's totals.",
 	},
+	{
+		Name: "baseline", Surface: "baseline", Version: jsonschema.BaselineVersion,
+		Root:        reflect.TypeOf(baseline.Document{}),
+		Title:       "kubeagent restart-rate baseline",
+		Description: "The document a future `kubeagent baseline capture` will write: one learned restart rate per workload, the minimum pod age behind it, and when it was captured. A future `scan --baseline` and `gate --baseline` will read it back.",
+	},
 }
 
-// enums is every named type in the six graphs whose values are a closed set.
+// enums is every named type in the seven graphs whose values are a closed set.
 // Written from the packages' own constants, so a rename is a compile error
 // rather than a schema that quietly drifts.
 var enums = map[string][]string{

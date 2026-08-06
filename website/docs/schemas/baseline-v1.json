@@ -1,0 +1,70 @@
+{
+  "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+  "$defs": {
+    "baseline.Entry": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "observedSeconds": {
+          "type": "number"
+        },
+        "pods": {
+          "type": "integer"
+        },
+        "restartsPerHour": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "kind",
+        "name",
+        "namespace",
+        "observedSeconds",
+        "pods",
+        "restartsPerHour"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://k8sproject.top/schemas/baseline-v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The document a future `kubeagent baseline capture` will write: one learned restart rate per workload, the minimum pod age behind it, and when it was captured. A future `scan --baseline` and `gate --baseline` will read it back.",
+  "properties": {
+    "capturedAt": {
+      "type": "string"
+    },
+    "minPodAgeSeconds": {
+      "type": "number"
+    },
+    "schemaVersion": {
+      "description": "This document's schema version, MAJOR.MINOR. Treat an unknown MINOR as compatible.",
+      "pattern": "^1\\.[0-9]+$",
+      "type": "string"
+    },
+    "workloads": {
+      "items": {
+        "$ref": "#/$defs/baseline.Entry"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "capturedAt",
+    "minPodAgeSeconds",
+    "schemaVersion",
+    "workloads"
+  ],
+  "title": "kubeagent restart-rate baseline",
+  "type": "object"
+}

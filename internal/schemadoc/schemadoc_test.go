@@ -42,8 +42,8 @@ func TestDocumentsTableIsWellFormed(t *testing.T) {
 			t.Errorf("%s: %v", d.Name, err)
 		}
 	}
-	if len(Documents) != 7 {
-		t.Errorf("Documents has %d entries, want the seven documented surfaces", len(Documents))
+	if len(Documents) != 8 {
+		t.Errorf("Documents has %d entries, want the eight documented surfaces", len(Documents))
 	}
 }
 

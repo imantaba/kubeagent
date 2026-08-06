@@ -311,8 +311,14 @@ with distinctive markers contains none of those markers.
 
 `Unreachable.Reason` comes from a fixed vocabulary — `"connecting to the
 cluster"`, `"timed out"` — and never from `err.Error()`, which can carry a server
-URL or a path. The underlying error is still available to the operator on
-**stderr**, the accepted carve-out, from the CLI layer.
+URL or a path. The underlying error is dropped rather than routed somewhere
+safer: a fleet report is written to be forwarded, and there is no stream on
+which `fleet` could publish a per-cluster error without also publishing it to
+whoever receives the report. An operator who needs the detail runs `kubeagent
+gate --context <name>` against the one cluster. (This is a different mechanism
+from `buildFleetTargets`'s kubeconfig-path carve-out, which does write to
+stderr, from `internal/cli`, and aborts before a sweep ever starts — the two are
+mutually exclusive.)
 
 **Unreachable is not the same as refused, and the two must not be conflated.** A
 cluster kubeagent reached but was not allowed to read fully is *not* unreachable:

@@ -212,7 +212,7 @@ func TestPolicyValidateRejectsADuplicateRuleIDAcrossFiles(t *testing.T) {
 }
 
 func TestEvaluatePolicyWithNoPathsReturnsNil(t *testing.T) {
-	got, err := evaluatePolicy(context.Background(), nil, "", "", "")
+	got, err := evaluatePolicy(context.Background(), nil, nil, "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +227,7 @@ func TestEvaluatePolicyFailsOnABadFile(t *testing.T) {
 	dir := t.TempDir()
 	p := writeFile(t, dir, "broken.yaml", "- id: no-level\n  match:\n    kind: Pod\n")
 
-	if _, err := evaluatePolicy(context.Background(), []string{p}, "", "", ""); err == nil {
+	if _, err := evaluatePolicy(context.Background(), []string{p}, nil, "", "", ""); err == nil {
 		t.Fatal("a bad policy file did not stop the command")
 	}
 }
@@ -351,5 +351,56 @@ func TestUnknownPackErrorIsIdenticalAcrossBothSurfaces(t *testing.T) {
 	if docErr.Error() != printErr.Error() {
 		t.Errorf("packDocuments error = %q, runPolicyPacks --print error = %q, want identical",
 			docErr.Error(), printErr.Error())
+	}
+}
+
+func TestLoadPolicyPutsPacksBeforeFiles(t *testing.T) {
+	rules, err := loadPolicy(nil, []string{"reliability"})
+	if err != nil {
+		t.Fatalf("loadPolicy: %v", err)
+	}
+	if len(rules) != 14 {
+		t.Fatalf("loaded %d rules from the pack alone, want 14", len(rules))
+	}
+	if !strings.HasPrefix(rules[0].ID, "reliability.") {
+		t.Errorf("first rule is %q, want a pack rule first", rules[0].ID)
+	}
+}
+
+func TestLoadPolicyRejectsAFileThatDuplicatesAPackRuleID(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "mine.yaml")
+	body := []byte("- id: reliability.deploy-pdb\n" +
+		"  match:\n    kind: Deployment\n" +
+		"  assert:\n    path: spec.replicas\n    op: exists\n" +
+		"  level: info\n  message: mine\n")
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatalf("writing the fixture: %v", err)
+	}
+	_, err := loadPolicy([]string{path}, []string{"reliability"})
+	if err == nil {
+		t.Fatal("a file reusing a pack rule id was accepted")
+	}
+	// Load's text is `%s: rule id %q is already defined in %s` — the second
+	// %s is the document that defined it FIRST. Packs load first, so the
+	// error reads "<your file>: rule id … is already defined in
+	// pack:reliability": the pack is the fixed thing.
+	if !strings.Contains(err.Error(), "pack:reliability") {
+		t.Errorf("the error does not say which pack the id came from: %v", err)
+	}
+}
+
+// evaluatePolicy's early return must gate on paths AND packs together. A
+// run with only --policy-pack and no --policy has an empty paths slice, so
+// gating on paths alone would silently skip evaluation and return (nil,
+// nil) — the same shape a run with no policy at all produces. Proving that
+// does not happen needs an attempt to reach past loadPolicy: KUBECONFIG
+// points at a path that does not exist, so cluster.NewDynamicClients fails
+// deterministically, and any error at all here is proof the early return
+// did not fire.
+func TestEvaluatePolicyDoesNotSkipWhenOnlyPacksAreGiven(t *testing.T) {
+	t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "does-not-exist"))
+	if _, err := evaluatePolicy(context.Background(), nil, []string{"reliability"}, "", "", ""); err == nil {
+		t.Fatal("packs-only returned no error; the early return may still be gating on paths alone")
 	}
 }

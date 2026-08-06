@@ -1,6 +1,9 @@
 package cli
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestGateRegistersPolicyAsARepeatableFlag(t *testing.T) {
 	cmd := newGateCommand()
@@ -20,5 +23,15 @@ func TestPolicyIsNotAPersistentFlag(t *testing.T) {
 		if err := Run([]string{name, "--policy", "x.yaml"}); err == nil {
 			t.Errorf("%s accepted --policy", name)
 		}
+	}
+}
+
+func TestGatePolicyPackFlagReachesItsField(t *testing.T) {
+	o, err := parseGateFlags([]string{"--policy-pack", "reliability"})
+	if err != nil {
+		t.Fatalf("parseGateFlags: %v", err)
+	}
+	if !slices.Equal(o.policyPackNames, []string{"reliability"}) {
+		t.Errorf("policyPackNames = %v, want [reliability]", o.policyPackNames)
 	}
 }

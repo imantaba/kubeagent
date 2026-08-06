@@ -113,15 +113,27 @@ func policyDocuments(paths []string) ([]policy.Document, error) {
 	return namedPolicyDocuments(paths, "--policy")
 }
 
-// loadPolicy reads and validates the files the --policy flag Task 15 adds to
-// scan and gate will name. It goes through policyDocuments, so a rejected
-// path is reported the same way the flag itself reports it.
-func loadPolicy(paths []string) ([]policy.Rule, error) {
-	docs, err := policyDocuments(paths)
+// loadPolicy reads and validates the packs named by --policy-pack and the
+// files named by --policy, as one rule set.
+//
+// Packs load FIRST, and deliberately: policy.Load reports a duplicate id
+// against the document that defined it earlier, so a collision reads as "your
+// file reuses a pack's id" rather than the other way round. The pack is the
+// fixed thing.
+//
+// Both go into the SAME document slice, which is what lets that collision be
+// caught at all — Load detects duplicates across documents, not only within
+// one.
+func loadPolicy(paths, packs []string) ([]policy.Rule, error) {
+	docs, err := packDocuments(packs)
 	if err != nil {
 		return nil, err
 	}
-	return policy.Load(docs)
+	fileDocs, err := policyDocuments(paths)
+	if err != nil {
+		return nil, err
+	}
+	return policy.Load(append(docs, fileDocs...))
 }
 
 // runPolicyValidate checks policy files and prints a count. It contacts
@@ -292,21 +304,22 @@ func plural(n int, one, many string) string {
 	return fmt.Sprintf("%d %s", n, many)
 }
 
-// evaluatePolicy is the whole --policy path, and the only one. scan and gate
+// evaluatePolicy is the whole policy path, and the only one. scan and gate
 // both call it, so neither can load a policy the other would reject, and
 // neither can drop the unreadable set — which is the difference between "the
 // rule passed" and "the rule never ran".
 //
-// Returns nil when no --policy was given, so a run without the flag renders
-// exactly the bytes it rendered before the flag existed.
+// Returns nil when neither --policy nor --policy-pack was given, so a run
+// without them renders exactly the bytes it rendered before either existed.
 //
 // Read-only toward the cluster: ReadPlan names the kinds, collect.PolicyObjects
-// lists them, and nothing here writes. There is no --fix path from a policy.
-func evaluatePolicy(ctx context.Context, paths []string, kubeconfig, contextName, namespace string) (*report.PolicyView, error) {
-	if len(paths) == 0 {
+// lists them, and nothing here writes. There is no --fix path from a policy,
+// and a curated pack is a policy like any other. Separately: no model call.
+func evaluatePolicy(ctx context.Context, paths, packs []string, kubeconfig, contextName, namespace string) (*report.PolicyView, error) {
+	if len(paths) == 0 && len(packs) == 0 {
 		return nil, nil
 	}
-	rules, err := loadPolicy(paths)
+	rules, err := loadPolicy(paths, packs)
 	if err != nil {
 		return nil, err
 	}

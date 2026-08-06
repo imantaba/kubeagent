@@ -111,13 +111,17 @@ three ways, and each has its own check:
   **pinned** rather than filtered: six packages, and a seventh fails the test
   until someone widens the list on purpose.
 
-That third check earns its keep twice, because a pinned import set also refuses
-the package that would hand back a finding built where the walk cannot see it.
+That third check earns its keep twice over these sources: a detector that
+imported something to hand it back a ready-made finding would be reaching past
+the walk as surely as a decoder does, and the pin refuses that import too. What
+a pinned import set cannot do is constrain a package that imports
+`internal/diagnose` and builds a finding of its own. Nothing here tries to.
 
-Within `internal/diagnose` there is no fourth way. Outside it there is, and by
-design — see the honest boundary below. The closure is over the pod-level
-detectors, which is what the reference documents; it was never a claim about
-every finding kubeagent can print.
+Within `internal/diagnose` there is no fourth way. Outside it there is — that
+last shape is not an evasion but the ordinary way `scan`'s workload passes
+report, and it is why the boundary below is drawn where it is. The closure is
+over the pod-level detectors, which is what the reference documents; it was
+never a claim about every finding kubeagent can print.
 
 Each of those checks was added after a shape slipped through: a `switch` that
 admitted a fourteenth kind, a kind assigned on the line after the finding was

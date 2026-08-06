@@ -305,3 +305,19 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   `--distro kind|k3s` selects which distribution the harness creates, and the
   nightly matrix now runs a k3s cell at the newest supported minor alongside
   the per-minor kind cells.
+- **Post-1.0 — anomaly/baseline learning, slice 1 has shipped (v1.6.0):** a
+  learned restart rate, the first answer to "what's normal for *this* cluster".
+  `kubeagent baseline capture` prints a per-workload rate to **stdout** — it
+  writes no file, so the only file write in the repository is still
+  `scan --audit-log` — and `scan --baseline` / `gate --baseline` compare a later
+  run against it. A workload deviates only when it clears **both** thresholds,
+  `--baseline-factor` (3.0) and `--baseline-floor` (0.5/hour), so a rise from
+  0.001 to 0.01 is not a 10× alarm. A learned rate is a heuristic, not a
+  detector, so a deviation is a finding at `findings.Info` and never fails a
+  gate at the default `--fail-on critical`; `internal/inventory.PodOwners` is
+  the one implementation of the pod-to-workload rule, extracted so a baseline
+  can see the workloads `Prioritize` drops and the Job pods `Assemble`
+  truncates (see
+  [website/docs/features/baseline.md](website/docs/features/baseline.md)).
+  The remaining post-1.0 work is fleet-scale (hundreds of clusters) and a
+  curated community detector library with a known-issues knowledge base.

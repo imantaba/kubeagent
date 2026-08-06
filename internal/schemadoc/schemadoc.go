@@ -80,7 +80,7 @@ var Documents = []Document{
 		Name: "baseline", Surface: "baseline", Version: jsonschema.BaselineVersion,
 		Root:        reflect.TypeOf(baseline.Document{}),
 		Title:       "kubeagent restart-rate baseline",
-		Description: "The document a future `kubeagent baseline capture` will write: one learned restart rate per workload, the minimum pod age behind it, and when it was captured. A future `scan --baseline` and `gate --baseline` will read it back.",
+		Description: "kubeagent's learned restart-rate baseline for a cluster: one learned restart rate per workload, the minimum pod age behind it, and when it was captured.",
 	},
 }
 

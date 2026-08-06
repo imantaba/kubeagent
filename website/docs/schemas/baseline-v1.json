@@ -36,7 +36,7 @@
   },
   "$id": "https://k8sproject.top/schemas/baseline-v1.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "The document a future `kubeagent baseline capture` will write: one learned restart rate per workload, the minimum pod age behind it, and when it was captured. A future `scan --baseline` and `gate --baseline` will read it back.",
+  "description": "kubeagent's learned restart-rate baseline for a cluster: one learned restart rate per workload, the minimum pod age behind it, and when it was captured.",
   "properties": {
     "capturedAt": {
       "type": "string"

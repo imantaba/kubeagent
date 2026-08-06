@@ -78,23 +78,52 @@ func TestNoPackRuleIsCritical(t *testing.T) {
 	}
 }
 
-// hostish matches anything that looks like a URL or a bare IPv4 address.
-var hostish = regexp.MustCompile(`://|\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b`)
+// hostMarkers are the substrings that would mean a host or a URL had reached
+// a rule's message — the same list internal/knownissues checks its prose
+// fields against, plus "k8sproject": internal/policypack has no field
+// equivalent to knownissues' Docs, so unlike that package there is no field
+// here allowed to carry a host, not even the project's own.
+var hostMarkers = []string{"://", "http", "www.", ".com", ".net", ".org", ".io", "k8sproject"}
 
-// TestPackCarriesNoHostOrAddress is the credential wall. A violation's message
-// reaches a terminal, a JSON document, a SARIF upload and an HTML report — all
-// of them forwarded artifacts — so no rule may carry a host, a URL or an
-// address. The rules assert about shapes, not about anyone's infrastructure.
+// dottedQuad matches a bare IPv4 address.
+var dottedQuad = regexp.MustCompile(`\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b`)
+
+// TestPackCarriesNoHostOrAddress runs two checks of deliberately different
+// strength, not one blanket scan.
+//
+// A rule's Message is prose: it is what reaches a terminal, a JSON document,
+// a SARIF upload and an HTML report, so it is checked against the full
+// hostMarkers list plus dottedQuad — nothing that looks like a URL, a
+// domain-shaped word or an address may reach it.
+//
+// The whole pack YAML is checked only for "://" and dottedQuad, never the
+// full marker list. The YAML's structural fields legitimately contain dotted
+// text that is not a host: a match.labels selector such as
+// app.kubernetes.io/name contains ".io", and a path such as
+// spec.template.spec.containers[*].readinessProbe is made of dotted
+// segments. "://" and a dotted quad cannot appear in a legitimate kind, path,
+// label key or level, so they stay meaningful checks over the whole file —
+// the wider marker list would false-positive on the file's own shape.
 func TestPackCarriesNoHostOrAddress(t *testing.T) {
 	for _, p := range policypack.All() {
 		t.Run(p.Name, func(t *testing.T) {
 			data, _ := policypack.Bytes(p.Name)
-			if loc := hostish.FindString(string(data)); loc != "" {
-				t.Errorf("the pack carries %q — a rule may not name a host or an address", loc)
+			text := string(data)
+			if strings.Contains(text, "://") {
+				t.Error(`the pack carries "://" — a rule may not name a URL`)
+			}
+			if loc := dottedQuad.FindString(text); loc != "" {
+				t.Errorf("the pack carries %q — a rule may not name an address", loc)
 			}
 			for _, r := range loadPack(t, p.Name) {
-				if loc := hostish.FindString(r.Message); loc != "" {
-					t.Errorf("rule %q message carries %q", r.ID, loc)
+				lower := strings.ToLower(r.Message)
+				for _, m := range hostMarkers {
+					if strings.Contains(lower, m) {
+						t.Errorf("rule %q message contains %q: %q", r.ID, m, r.Message)
+					}
+				}
+				if loc := dottedQuad.FindString(r.Message); loc != "" {
+					t.Errorf("rule %q message carries an address: %q", r.ID, loc)
 				}
 			}
 		})

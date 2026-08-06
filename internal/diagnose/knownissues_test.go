@@ -26,6 +26,10 @@ import (
 // documented kind beneath it; the exact set it can produce is not knowable
 // statically, which is what the behavioural test below covers.
 //
+// Both ways of setting the field are read — a key in a composite literal and an
+// assignment to the field afterwards — so a refactor that builds the common
+// fields first and sets Issue on the next line cannot slip past. See issueValues.
+//
 // The honest limit, written down rather than implied: this test enumerates
 // literals, not kinds. An Issue field assigned a bare variable (imagepull.go's
 // Issue: w.Reason) contributes nothing here. It is a guard against a new
@@ -64,15 +68,15 @@ func anyKindHasPrefix(documented map[string]bool, p string) bool {
 	return false
 }
 
-// issueLiterals collects every string literal assigned to an Issue field in a
-// composite literal in this package's non-test files, including the left
-// operand of a concatenation.
+// issueLiterals collects every string literal that reaches an Issue field in
+// this package's non-test files, including the left operand of a concatenation.
 func issueLiterals(t *testing.T) []string {
 	t.Helper()
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatalf("glob: %v", err)
 	}
+	sort.Strings(files)
 	var out []string
 	for _, path := range files {
 		if strings.HasSuffix(path, "_test.go") {
@@ -83,21 +87,54 @@ func issueLiterals(t *testing.T) []string {
 			t.Fatalf("parse %s: %v", path, err)
 		}
 		ast.Inspect(f, func(n ast.Node) bool {
-			kv, ok := n.(*ast.KeyValueExpr)
-			if !ok {
-				return true
-			}
-			key, ok := kv.Key.(*ast.Ident)
-			if !ok || key.Name != "Issue" {
-				return true
-			}
-			if lit := leadingStringLit(kv.Value); lit != "" {
-				out = append(out, lit)
+			values, _ := issueValues(n)
+			for _, v := range values {
+				if lit := leadingStringLit(v); lit != "" {
+					out = append(out, lit)
+				}
 			}
 			return true
 		})
 	}
 	return out
+}
+
+// issueValues returns the expressions n gives to a Finding's Issue field, and a
+// reason when n reaches the field in a way this walk will not read.
+//
+// Go offers two ways to set a field and both are read here: a key in a composite
+// literal, Issue: x, and an assignment to the field, f.Issue = x. Reading only
+// the first is how a real gap survived two rounds of review — a natural refactor
+// that builds the common fields and sets Issue afterwards was not refused,
+// it was never seen.
+//
+// The left-hand side is matched on the field name alone, so f.Issue,
+// found[i].Issue and p.q.Issue all count. A compound assignment or a
+// multi-value assignment whose sides do not line up one to one is reported as
+// unreadable rather than guessed at.
+func issueValues(n ast.Node) (values []ast.Expr, unreadable string) {
+	switch v := n.(type) {
+	case *ast.KeyValueExpr:
+		if key, ok := v.Key.(*ast.Ident); ok && key.Name == "Issue" {
+			return []ast.Expr{v.Value}, ""
+		}
+	case *ast.AssignStmt:
+		for i, lhs := range v.Lhs {
+			sel, ok := lhs.(*ast.SelectorExpr)
+			if !ok || sel.Sel.Name != "Issue" {
+				continue
+			}
+			switch {
+			case v.Tok != token.ASSIGN:
+				unreadable = "a compound assignment to an Issue field"
+			case len(v.Rhs) != len(v.Lhs):
+				unreadable = "a multi-value assignment to an Issue field"
+			default:
+				values = append(values, v.Rhs[i])
+			}
+		}
+	}
+	return values, unreadable
 }
 
 // leadingStringLit unwraps a string literal, or the leftmost operand of a
@@ -250,6 +287,13 @@ func producedKinds(t *testing.T) []string {
 // a string literal added to one. Teaching the walk a new shape is a deliberate
 // act, which is the point.
 //
+// The same rule governs where the field is set, not only what it is set to: a
+// key in a composite literal and an assignment to the field are both read, and a
+// compound or multi-value assignment to it is refused. Reading only the composite
+// literal would have left f.Issue = w.Reason invisible rather than refused —
+// a category the walk never saw, which is the failure this design exists to
+// prevent. See issueValues.
+//
 // Within a recognised shape it over-approximates on purpose: a .Reason literal
 // tested for some unrelated purpose in the same function still counts as a
 // producible kind. That direction can only raise a false alarm, and the fix for
@@ -343,37 +387,36 @@ func dynamicIssueSites(t *testing.T) []issueSite {
 
 // dynamicIssueValues returns one entry per Issue field in fn whose value is not
 // a plain string literal, reading the two shapes the detectors use and marking
-// every other shape unreadable rather than guessing at it.
+// every other shape unreadable rather than guessing at it. Both ways of setting
+// the field are read, via issueValues.
 func dynamicIssueValues(fn *ast.FuncDecl) []issueSite {
 	var out []issueSite
 	ast.Inspect(fn, func(n ast.Node) bool {
-		kv, ok := n.(*ast.KeyValueExpr)
-		if !ok {
-			return true
+		values, unreadable := issueValues(n)
+		if unreadable != "" {
+			out = append(out, issueSite{unreadable: unreadable})
 		}
-		key, ok := kv.Key.(*ast.Ident)
-		if !ok || key.Name != "Issue" {
-			return true
-		}
-		switch v := kv.Value.(type) {
-		case *ast.BasicLit:
-			// A fully static kind; TestEveryIssueLiteralIsDocumented owns it.
-		case *ast.SelectorExpr:
-			if v.Sel.Name != "Reason" {
-				out = append(out, issueSite{unreadable: "a ." + v.Sel.Name + " field"})
-				break
+		for _, value := range values {
+			switch v := value.(type) {
+			case *ast.BasicLit:
+				// A fully static kind; TestEveryIssueLiteralIsDocumented owns it.
+			case *ast.SelectorExpr:
+				if v.Sel.Name != "Reason" {
+					out = append(out, issueSite{unreadable: "a ." + v.Sel.Name + " field"})
+					break
+				}
+				out = append(out, issueSite{})
+			case *ast.BinaryExpr:
+				prefix := leadingStringLit(v.X)
+				sel, ok := v.Y.(*ast.SelectorExpr)
+				if v.Op != token.ADD || prefix == "" || !ok || sel.Sel.Name != "Reason" {
+					out = append(out, issueSite{unreadable: "an expression other than a literal prefix and a .Reason field"})
+					break
+				}
+				out = append(out, issueSite{prefix: prefix})
+			default:
+				out = append(out, issueSite{unreadable: "neither a .Reason field nor a literal prefix added to one"})
 			}
-			out = append(out, issueSite{})
-		case *ast.BinaryExpr:
-			prefix := leadingStringLit(v.X)
-			sel, ok := v.Y.(*ast.SelectorExpr)
-			if v.Op != token.ADD || prefix == "" || !ok || sel.Sel.Name != "Reason" {
-				out = append(out, issueSite{unreadable: "an expression other than a literal prefix and a .Reason field"})
-				break
-			}
-			out = append(out, issueSite{prefix: prefix})
-		default:
-			out = append(out, issueSite{unreadable: "neither a .Reason field nor a literal prefix added to one"})
 		}
 		return true
 	})

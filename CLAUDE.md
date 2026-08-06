@@ -151,8 +151,9 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   and that fourth test is what makes widening either guard fail the suite
   instead of quietly admitting a fourteenth kind. It understands a closed
   set of guard and value shapes — an `==` or `switch` against a string
-  literal, and an `Issue:` that is a `.Reason` field or a literal prefix
-  added to one — and **refuses** every other shape by name rather than
+  literal, and an `Issue` that is a `.Reason` field or a literal prefix
+  added to one, set either as a composite-literal key or by assignment —
+  and **refuses** every other shape by name rather than
   skipping it, so a guard rewritten out of its reach, or compared against a
   named constant, fails the suite too; widening the set is a deliberate edit
   to that test

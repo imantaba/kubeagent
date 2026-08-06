@@ -84,7 +84,9 @@ than asserting it. Four tests in `internal/diagnose` run on every `go test`:
 That fourth walk understands a deliberately small set of shapes — an `==`
 comparison against a `.Reason` field, or a `switch` on one, in both cases
 against a string literal; a bare `.Reason` as the kind, or a literal prefix
-added to one — and **refuses** anything else rather than ignoring it. A
+added to one, written either as a key in the finding's composite literal or
+assigned to the field afterwards — and **refuses** anything else rather than
+ignoring it. A
 guard rewritten into a shape it cannot read fails the suite by name, exactly
 as widening one does, and so does a guard that compares against a named
 constant instead of a literal: reading half a guard and reporting only that

@@ -26,7 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fourth walk understands a closed set of guard shapes and refuses every other
   shape by name rather than skipping it, so a guard rewritten out of its reach —
   or compared against a named constant rather than a string literal — fails too.
-  A new detector that emits an undocumented kind fails the suite.
+  Both walks read the issue field wherever it is set, as a composite-literal key
+  and as an assignment, so filling it in on the next line is refused rather than
+  unseen. A new detector that emits an undocumented kind fails the suite.
 
 ## [1.7.0] - 2026-08-06
 

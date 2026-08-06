@@ -122,6 +122,46 @@ func TestParseFleetFlagsRejectsAnUnknownOutput(t *testing.T) {
 	}
 }
 
+// A non-positive --cluster-timeout is refused rather than accepted as "no
+// deadline". fleet.Sweep attaches a deadline only when the budget is positive,
+// and internal/parallel's pool returns only after every worker returns — so a
+// single cluster whose API server accepts the connection and then never answers
+// would block the whole sweep forever, rendering nothing at all for any cluster.
+// A hang with no output is a worse answer than an error, so the CLI refuses the
+// value that makes it possible. The same guard gate applies to --poll-interval.
+func TestValidateFleetOptionsRejectsANonPositiveClusterTimeout(t *testing.T) {
+	for _, spelling := range []string{"0", "-1s"} {
+		o, err := parseFleetFlags([]string{"--cluster-timeout", spelling})
+		if err != nil {
+			t.Fatalf("parseFleetFlags(--cluster-timeout %s) error = %v", spelling, err)
+		}
+		err = validateFleetOptions(o)
+		if err == nil || !strings.Contains(err.Error(), "--cluster-timeout") {
+			t.Errorf("--cluster-timeout %s: error = %v, want it to name the flag", spelling, err)
+			continue
+		}
+		if exitCodeFor(err) != 4 {
+			t.Errorf("--cluster-timeout %s: exit code = %d, want 4", spelling, exitCodeFor(err))
+		}
+	}
+}
+
+// The default is positive, so an operator who passes no budget at all is never
+// refused. Without this the guard above could be satisfied by rejecting every
+// value.
+func TestValidateFleetOptionsAcceptsTheDefaultClusterTimeout(t *testing.T) {
+	o, err := parseFleetFlags(nil)
+	if err != nil {
+		t.Fatalf("parseFleetFlags(nil) error = %v", err)
+	}
+	if o.clusterTimeout <= 0 {
+		t.Fatalf("default --cluster-timeout = %v, want a positive budget", o.clusterTimeout)
+	}
+	if err := validateFleetOptions(o); err != nil {
+		t.Errorf("validateFleetOptions(defaults) = %v, want nil", err)
+	}
+}
+
 // TestBuildFleetTargetsNaming pins the one naming rule buildFleetTargets has:
 // one client per selected context, in the order given. It reuses the same
 // hermetic fixture watch's TestBuildTargetsNaming uses — every server in it is

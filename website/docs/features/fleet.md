@@ -124,9 +124,12 @@ The command refuses anything ambiguous rather than guessing:
   look like good news.
 
 Every one of these is exit `4`, discovered before any cluster is touched.
-Building a client for a selected context is the same class of failure: a
-misspelled context name never dials an API server, so it is fatal before the
-sweep starts, not an `unreachable` entry.
+Building a client for a selected context is the same class of failure, and for
+a precise reason: `cluster.NewClient` performs no network I/O at all — it reads
+the kubeconfig and constructs a clientset. A failure there is therefore always a
+configuration defect, never a reachability event, and re-running will not change
+it. A cluster that is merely gone builds a client without complaint and lands in
+`unreachable` on the graceful path, where it belongs.
 
 ## `--output json`
 
@@ -222,9 +225,18 @@ populate with one, and no filter for a future change to accidentally bypass.
 `Unreachable.Reason` comes from a fixed, two-entry vocabulary —
 `"connecting to the cluster"`, `"timed out"` — never from `err.Error()`,
 which can carry a server URL or a filesystem path. The underlying error is
-still available to the operator on stderr, kubeagent's usual channel for
-exactly this kind of detail, from the CLI layer that built the client in the
-first place.
+dropped rather than routed somewhere safer: a fleet report is written to be
+forwarded, and there is no stream on which `fleet` could publish a per-cluster
+error without also publishing it to whoever receives the report. That is a
+deliberate trade of detail for safety, and it leaves a gap the fixed vocabulary
+cannot fill. When you need the detail, run the single-cluster command against
+that one context:
+
+```bash
+kubeagent gate --context example-eu-1
+```
+
+`gate` reports the failure in full, to the operator running it.
 
 ## Unreachable is not the same as refused
 

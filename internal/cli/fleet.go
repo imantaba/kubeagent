@@ -64,6 +64,15 @@ func validateFleetOptions(o fleetOptions) error {
 	if _, err := findings.Parse(o.failOn); err != nil {
 		return &exitError{code: gate.CodeUsage, msg: fmt.Sprintf("unsupported --fail-on %q: use critical, warning or info", o.failOn)}
 	}
+	// A non-positive budget is refused rather than read as "no deadline".
+	// fleet.Sweep attaches a deadline only when the budget is positive, and the
+	// worker pool returns only once every worker has returned — so one cluster
+	// whose API server accepts the connection and then never answers would block
+	// the sweep forever and render nothing at all, for any cluster. A hang with
+	// no output is a worse answer than an error.
+	if o.clusterTimeout <= 0 {
+		return &exitError{code: gate.CodeUsage, msg: fmt.Sprintf("--cluster-timeout must be positive, got %s: a sweep with no per-cluster budget can hang forever on one unresponsive API server", o.clusterTimeout)}
+	}
 	return nil
 }
 

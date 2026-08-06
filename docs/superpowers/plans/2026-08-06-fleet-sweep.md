@@ -811,7 +811,11 @@ type Unreachable struct {
 
 	// Reason is drawn from the fixed vocabulary below and is never an
 	// err.Error(), which can carry a server URL or a filesystem path. The
-	// underlying error still reaches the operator on stderr, from internal/cli.
+	// underlying error is dropped rather than routed somewhere safer: this
+	// document is written to be forwarded, and there is no stream on which
+	// fleet could publish a per-cluster error without also publishing it to
+	// whoever receives the report. An operator who needs the detail runs
+	// `kubeagent gate --context <name>` against the one cluster.
 	Reason string `json:"reason"`
 }
 
@@ -1438,8 +1442,9 @@ var errClientUnavailable = errors.New("no client")
 // reasonFor maps a read failure to the fixed Unreachable.Reason vocabulary.
 // Deliberately not err.Error(): a client-go error routinely carries the API
 // server URL, and a wrapped one can carry a kubeconfig path. Either would put a
-// credential into a document written to be forwarded. The operator still gets
-// the underlying error, on stderr, from internal/cli.
+// credential into a document written to be forwarded. The error is dropped
+// here, not logged somewhere safer — this package writes to no stream at all,
+// and any stream it did write to would reach the report's readers too.
 func reasonFor(err error) string {
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		return ReasonTimedOut
@@ -2184,6 +2189,15 @@ func validateFleetOptions(o fleetOptions) error {
 	}
 	if _, err := findings.Parse(o.failOn); err != nil {
 		return &exitError{code: gate.CodeUsage, msg: fmt.Sprintf("unsupported --fail-on %q: use critical, warning or info", o.failOn)}
+	}
+	// A non-positive budget is refused rather than read as "no deadline".
+	// fleet.Sweep attaches a deadline only when the budget is positive, and the
+	// worker pool returns only once every worker has returned — so one cluster
+	// whose API server accepts the connection and then never answers would block
+	// the sweep forever and render nothing at all, for any cluster. A hang with
+	// no output is a worse answer than an error.
+	if o.clusterTimeout <= 0 {
+		return &exitError{code: gate.CodeUsage, msg: fmt.Sprintf("--cluster-timeout must be positive, got %s: a sweep with no per-cluster budget can hang forever on one unresponsive API server", o.clusterTimeout)}
 	}
 	return nil
 }

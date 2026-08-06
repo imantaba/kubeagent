@@ -60,6 +60,13 @@ type Options struct {
 
 	// ClusterTimeout is the per-cluster budget. A cluster that overruns it is
 	// unreachable with ReasonTimedOut, and the other clusters keep going.
+	//
+	// A non-positive value attaches no deadline at all, and Sweep does not
+	// second-guess that: imposing a budget the caller did not ask for would be
+	// the worse surprise. It does mean one API server that accepts a connection
+	// and then never answers blocks the whole sweep, because the worker pool
+	// returns only once every worker has — so internal/cli refuses a
+	// non-positive --cluster-timeout rather than passing it through.
 	ClusterTimeout time.Duration
 }
 
@@ -102,7 +109,11 @@ type Unreachable struct {
 
 	// Reason is drawn from the fixed vocabulary below and is never an
 	// err.Error(), which can carry a server URL or a filesystem path. The
-	// underlying error still reaches the operator on stderr, from internal/cli.
+	// underlying error is dropped rather than routed somewhere safer: this
+	// document is written to be forwarded, and there is no stream on which
+	// fleet could publish a per-cluster error without also publishing it to
+	// whoever receives the report. An operator who needs the detail runs
+	// `kubeagent gate --context <name>` against the one cluster.
 	Reason string `json:"reason"`
 }
 
@@ -194,8 +205,9 @@ var errClientUnavailable = errors.New("no client")
 // reasonFor maps a read failure to the fixed Unreachable.Reason vocabulary.
 // Deliberately not err.Error(): a client-go error routinely carries the API
 // server URL, and a wrapped one can carry a kubeconfig path. Either would put a
-// credential into a document written to be forwarded. The operator still gets
-// the underlying error, on stderr, from internal/cli.
+// credential into a document written to be forwarded. The error is dropped
+// here, not logged somewhere safer — this package writes to no stream at all,
+// and any stream it did write to would reach the report's readers too.
 func reasonFor(err error) string {
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		return ReasonTimedOut

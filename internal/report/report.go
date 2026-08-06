@@ -1600,7 +1600,7 @@ func printBaseline(r *baseline.Report, w io.Writer) error {
 	if r == nil {
 		return nil
 	}
-	if _, err := fmt.Fprint(w, "Baseline deviations (confidence: medium — a learned rate, not a detector)\n\n"); err != nil {
+	if _, err := fmt.Fprint(w, "BASELINE DEVIATIONS  (confidence: medium — a learned rate, not a detector)\n\n"); err != nil {
 		return err
 	}
 	if len(r.Deviations) == 0 {

@@ -2251,7 +2251,7 @@ func TestPrintBaselineRendersDeviationsAndTotals(t *testing.T) {
 	}
 	out := buf.String()
 	for _, want := range []string{
-		"Baseline deviations (confidence: medium — a learned rate, not a detector)",
+		"BASELINE DEVIATIONS  (confidence: medium — a learned rate, not a detector)",
 		"Deployment prod/api",
 		"0.12 → 2.40 restarts/hour",
 		"(20x baseline, 3 pods)",

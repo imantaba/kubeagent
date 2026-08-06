@@ -361,7 +361,7 @@ func TestRun_UsageMentionsCapacityFlag(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a usage error with no args")
 	}
-	if !strings.Contains(err.Error(), "[--drift-age dur] [--capacity] [--policy path (repeatable)] [--logs]") {
+	if !strings.Contains(err.Error(), "[--drift-age dur] [--capacity] [--policy path (repeatable)] [--baseline path] [--baseline-factor n] [--baseline-floor n] [--logs]") {
 		t.Fatalf("expected the usage string to mention --capacity between --drift-age and --logs, got: %v", err)
 	}
 }

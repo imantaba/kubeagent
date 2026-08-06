@@ -1242,9 +1242,12 @@ func runPolicyPacks(args []string, printName string, w io.Writer) error {
 	return nil
 }
 
-// mustPackBytes reads a pack that policypack.All just named. The lookup cannot
-// miss; returning nil rather than panicking keeps a broken build a load error
-// with the pack's name in it.
+// mustPackBytes reads a pack that policypack.All just named, so the lookup
+// itself cannot miss. Returning nil rather than panicking on the impossible
+// case means the caller — requirePackBytes — can turn a broken build into a
+// load error that names the pack, rather than a bare panic or (since
+// policy.Load treats empty or nil YAML as a valid, empty document) a
+// healthy-looking zero.
 func mustPackBytes(name string) []byte {
 	data, _ := policypack.Bytes(name)
 	return data

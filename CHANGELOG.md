@@ -22,8 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fixture table driving all nine detectors to produce all thirteen kinds, a
   reverse check refusing an entry for a kind nothing emits, and a second parser
   walk over the two sites that build a kind from a runtime value, which reads
-  the guards rather than the output so widening one fails the suite. A new
-  detector that emits an undocumented kind fails the suite.
+  the guards rather than the output so widening one fails the suite. That
+  fourth walk understands a closed set of guard shapes and refuses every other
+  shape by name rather than skipping it, so a guard rewritten out of its reach
+  fails too. A new detector that emits an undocumented kind fails the suite.
 
 ## [1.7.0] - 2026-08-06
 

@@ -233,50 +233,83 @@ func producedKinds(t *testing.T) []string {
 // fourteenth kind reach a report while all three tests stayed green.
 //
 // This test reads the guards instead of the output. For every function that
-// builds an Issue from a non-literal, it collects every string literal that
-// function compares against a .Reason field, composes each with that site's
-// prefix, and requires the result to be documented. Widen a guard and the new
-// kind is computed here, found undocumented, and the test fails.
+// builds an Issue from a runtime value, it collects every string literal that
+// function tests a .Reason field against, composes each with that site's
+// constant prefix, and requires the result to be documented. Widen a guard and
+// the new kind is computed here, found undocumented, and the test fails.
 //
-// It over-approximates on purpose: a .Reason literal compared for some unrelated
-// purpose in the same function is still treated as a producible kind. That
-// direction is the safe one — it can only raise a false alarm, never miss a real
-// kind — and the fix for a false alarm is to document the kind or to split the
-// function, both of which leave the vocabulary honest.
+// The design rule that makes that claim hold is that the walk recognises a
+// closed set of shapes and REFUSES everything else rather than ignoring it.
+// A guard it cannot read is a test failure naming the function, not a silent
+// pass — so rewriting a guard into a shape this walk does not understand
+// (extracting the comparison into a helper, inverting it to !=, testing the
+// reason some other way) fails the suite just as widening it does. The two
+// readable shapes are an == comparison against a .Reason field and a switch
+// whose tag is one; the two readable Issue values are a bare .Reason selector
+// and a string literal added to one. Teaching the walk a new shape is a
+// deliberate act, which is the point.
+//
+// Within a recognised shape it over-approximates on purpose: a .Reason literal
+// tested for some unrelated purpose in the same function still counts as a
+// producible kind. That direction can only raise a false alarm, and the fix for
+// one — document the kind, or split the function — leaves the vocabulary honest
+// either way.
 func TestDynamicIssueSitesProduceOnlyDocumentedKinds(t *testing.T) {
 	documented := map[string]bool{}
 	for _, k := range knownissues.Kinds() {
 		documented[k] = true
 	}
 
-	kinds, sites := dynamicIssueKinds(t)
-	if sites == 0 {
+	sites := dynamicIssueSites(t)
+	if len(sites) == 0 {
 		t.Fatal("found no dynamic Issue: site; the walk is broken and would pass vacuously")
 	}
-	if len(kinds) == 0 {
-		t.Fatalf("found %d dynamic Issue: site(s) but no .Reason literals guarding them; "+
-			"the walk is broken and would pass vacuously", sites)
-	}
-	for _, k := range kinds {
-		if !documented[k] {
-			t.Errorf("a guard admits %q, which a dynamic Issue: site would emit, "+
-				"and it is not in internal/knownissues", k)
+	for _, s := range sites {
+		if s.unreadable != "" {
+			t.Errorf("%s: %s builds an Issue kind from %s, a shape this walk cannot read, "+
+				"so it can no longer tell whether the kinds reaching a report are documented; "+
+				"restore a readable shape or teach the walk this one", s.file, s.fn, s.unreadable)
+			continue
+		}
+		if len(s.reasons) == 0 {
+			t.Errorf("%s: %s builds an Issue kind from a runtime reason but tests no .Reason "+
+				"literal this walk can read, so any reason at all could reach a report; "+
+				"restore a readable guard or teach the walk this one", s.file, s.fn)
+			continue
+		}
+		for _, r := range s.reasons {
+			if kind := s.prefix + r; !documented[kind] {
+				t.Errorf("%s: %s admits %q, which its Issue: field would emit, "+
+					"and it is not in internal/knownissues", s.file, s.fn, kind)
+			}
 		}
 	}
 }
 
-// dynamicIssueKinds returns every kind the package's non-literal Issue sites can
-// compose, and how many such sites it found. The count is returned so the caller
-// can tell "nothing to check" apart from "the walk found nothing because it is
-// broken".
-func dynamicIssueKinds(t *testing.T) ([]string, int) {
+// issueSite is one Issue field whose value is built from a runtime reason.
+// prefix is the constant it composes with — "" for a bare w.Reason, "Init:" for
+// "Init:" + w.Reason — and reasons is every .Reason literal the enclosing
+// function tests, sorted. unreadable is set instead when the value is a shape
+// the walk does not understand, and names that shape for the failure message.
+type issueSite struct {
+	file       string
+	fn         string
+	prefix     string
+	reasons    []string
+	unreadable string
+}
+
+// dynamicIssueSites returns one entry per non-literal Issue field in the
+// package's non-test sources. A site with a fully static kind is left to
+// TestEveryIssueLiteralIsDocumented and is not returned here.
+func dynamicIssueSites(t *testing.T) []issueSite {
 	t.Helper()
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatalf("glob: %v", err)
 	}
-	var out []string
-	sites := 0
+	sort.Strings(files)
+	var out []issueSite
 	for _, path := range files {
 		if strings.HasSuffix(path, "_test.go") {
 			continue
@@ -290,27 +323,25 @@ func dynamicIssueKinds(t *testing.T) ([]string, int) {
 			if !ok {
 				continue
 			}
-			prefixes := dynamicIssuePrefixes(fn)
-			if len(prefixes) == 0 {
+			sites := dynamicIssueValues(fn)
+			if len(sites) == 0 {
 				continue
 			}
-			sites += len(prefixes)
-			for _, p := range prefixes {
-				for _, r := range reasonLiterals(fn) {
-					out = append(out, p+r)
-				}
+			reasons := reasonLiterals(fn)
+			for _, s := range sites {
+				s.file, s.fn, s.reasons = path, fn.Name.Name, reasons
+				out = append(out, s)
 			}
 		}
 	}
-	sort.Strings(out)
-	return out, sites
+	return out
 }
 
-// dynamicIssuePrefixes returns one entry per Issue field in fn whose value is
-// not a plain string literal: the constant prefix it composes with, which is ""
-// for a bare variable and "Init:" for "Init:" + w.Reason.
-func dynamicIssuePrefixes(fn *ast.FuncDecl) []string {
-	var out []string
+// dynamicIssueValues returns one entry per Issue field in fn whose value is not
+// a plain string literal, reading the two shapes the detectors use and marking
+// every other shape unreadable rather than guessing at it.
+func dynamicIssueValues(fn *ast.FuncDecl) []issueSite {
+	var out []issueSite
 	ast.Inspect(fn, func(n ast.Node) bool {
 		kv, ok := n.(*ast.KeyValueExpr)
 		if !ok {
@@ -323,35 +354,72 @@ func dynamicIssuePrefixes(fn *ast.FuncDecl) []string {
 		switch v := kv.Value.(type) {
 		case *ast.BasicLit:
 			// A fully static kind; TestEveryIssueLiteralIsDocumented owns it.
+		case *ast.SelectorExpr:
+			if v.Sel.Name != "Reason" {
+				out = append(out, issueSite{unreadable: "a ." + v.Sel.Name + " field"})
+				break
+			}
+			out = append(out, issueSite{})
 		case *ast.BinaryExpr:
-			out = append(out, leadingStringLit(v))
+			prefix := leadingStringLit(v.X)
+			sel, ok := v.Y.(*ast.SelectorExpr)
+			if v.Op != token.ADD || prefix == "" || !ok || sel.Sel.Name != "Reason" {
+				out = append(out, issueSite{unreadable: "an expression other than a literal prefix and a .Reason field"})
+				break
+			}
+			out = append(out, issueSite{prefix: prefix})
 		default:
-			out = append(out, "")
+			out = append(out, issueSite{unreadable: "neither a .Reason field nor a literal prefix added to one"})
 		}
 		return true
 	})
 	return out
 }
 
-// reasonLiterals returns every string literal fn compares against a .Reason
-// field with ==, whichever side the literal is written on.
+// reasonLiterals returns every string literal fn tests a .Reason field against,
+// sorted and deduplicated. Two shapes are read: an == comparison, whichever side
+// the literal is written on, and a switch whose tag is a .Reason field. Any
+// other way of testing a reason is invisible here, which is why the caller
+// treats a site with no literals as a failure rather than as nothing to check.
 func reasonLiterals(fn *ast.FuncDecl) []string {
-	var out []string
-	ast.Inspect(fn, func(n ast.Node) bool {
-		be, ok := n.(*ast.BinaryExpr)
-		if !ok || be.Op != token.EQL {
-			return true
+	seen := map[string]bool{}
+	add := func(e ast.Expr) {
+		if lit := leadingStringLit(e); lit != "" {
+			seen[lit] = true
 		}
-		for _, pair := range [][2]ast.Expr{{be.X, be.Y}, {be.Y, be.X}} {
-			sel, ok := pair[0].(*ast.SelectorExpr)
-			if !ok || sel.Sel.Name != "Reason" {
-				continue
+	}
+	ast.Inspect(fn, func(n ast.Node) bool {
+		switch v := n.(type) {
+		case *ast.BinaryExpr:
+			if v.Op != token.EQL {
+				return true
 			}
-			if lit := leadingStringLit(pair[1]); lit != "" {
-				out = append(out, lit)
+			for _, pair := range [][2]ast.Expr{{v.X, v.Y}, {v.Y, v.X}} {
+				if sel, ok := pair[0].(*ast.SelectorExpr); ok && sel.Sel.Name == "Reason" {
+					add(pair[1])
+				}
+			}
+		case *ast.SwitchStmt:
+			sel, ok := v.Tag.(*ast.SelectorExpr)
+			if !ok || sel.Sel.Name != "Reason" {
+				return true
+			}
+			for _, stmt := range v.Body.List {
+				cc, ok := stmt.(*ast.CaseClause)
+				if !ok {
+					continue
+				}
+				for _, e := range cc.List {
+					add(e)
+				}
 			}
 		}
 		return true
 	})
+	out := make([]string, 0, len(seen))
+	for lit := range seen {
+		out = append(out, lit)
+	}
+	sort.Strings(out)
 	return out
 }

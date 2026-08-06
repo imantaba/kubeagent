@@ -76,10 +76,19 @@ than asserting it. Four tests in `internal/diagnose` run on every `go test`:
 - the reverse check, refusing an entry for a kind no detector emits;
 - a second parser walk for the two sites that build a kind from a runtime
   value rather than a literal. It reads the *guards* instead of the output:
-  every string those functions compare against a `.Reason` field is composed
+  every string those functions test a `.Reason` field against is composed
   with the site's prefix and looked up. Widening a guard therefore fails the
   suite immediately, which the fixture table alone would not — a fixture only
   covers the path someone remembered to write.
+
+That fourth walk understands a deliberately small set of shapes — an `==`
+comparison against a `.Reason` field, or a `switch` on one; a bare `.Reason`
+as the kind, or a literal prefix added to one — and **refuses** anything
+else rather than ignoring it. A guard rewritten into a shape it cannot read
+fails the suite by name, exactly as widening one does. That refusal is what
+makes the claim above hold: a walk that quietly skipped what it did not
+understand would let the next rewrite reopen the gap it was written to
+close.
 
 Adding a detector that emits a new kind fails the build's tests until the kind
 is documented. That is the point of the slice: the reference cannot drift from

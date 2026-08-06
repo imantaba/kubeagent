@@ -149,7 +149,10 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   vocabulary is closed at thirteen because both apparently-dynamic sites —
   `imagepull.go` and `initcontainer.go` — are guarded to two reasons each,
   and that fourth test is what makes widening either guard fail the suite
-  instead of quietly admitting a fourteenth kind
+  instead of quietly admitting a fourteenth kind. It understands a closed
+  set of guard and value shapes and **refuses** every other shape by name
+  rather than skipping it, so a guard rewritten out of its reach fails the
+  suite too; widening the set is a deliberate edit to that test
   (see [website/docs/features/known-issues.md](website/docs/features/known-issues.md)).
   `internal/fleet` (the `kubeagent fleet` sweep) is a ninth case, and like
   `gate` it is one-shot, not long-lived: it runs once and exits. It is
@@ -378,7 +381,9 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   tests in `internal/diagnose` keep it closed: they fail the suite if a
   detector emits a kind the reference does not document, if the reference
   documents a kind no detector emits, or if either of the two runtime-valued
-  `Issue:` sites has its guard widened to admit a new reason
+  `Issue:` sites has its guard widened to admit a new reason — or rewritten
+  into a shape the fourth test cannot read, which it refuses rather than
+  skips
   (see [website/docs/features/known-issues.md](website/docs/features/known-issues.md)).
   The remaining post-1.0 work is the rest of fleet-scale — cross-cluster
   correlation, and selection from something other than a kubeconfig — and

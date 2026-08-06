@@ -266,7 +266,9 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   end), `--k8s-version <minor>` pins it to a
   digest-pinned kind node image from `chaos/versions.env`,
   `.github/workflows/chaos-matrix.yml` runs the full suite nightly once per
-  supported minor, and
+  supported minor, and now also runs one k3s cell at the newest supported
+  minor — `--distro kind|k3s` selects which distribution the harness creates —
+  and
   [website/docs/compatibility.md](website/docs/compatibility.md) writes down
   which surfaces are stable within 1.x, which are deliberately not, and what
   deprecating one costs. From 1.0 onward a MAJOR release is the only one that
@@ -287,5 +289,7 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   context name are redacted from the results file at a single seam every report
   write passes through (see `chaos/README.md` for the one documented residual),
   and a section that cannot be redacted is withheld rather than shown. This
-  makes a cross-distribution answer obtainable by hand; **gating a second
-  distribution in CI is the follow-up slice and is still ahead.**
+  makes a cross-distribution answer obtainable by hand, and the follow-up
+  slice — gating a second distribution in CI — has since shipped: the nightly
+  matrix now runs a k3s cell at the newest supported minor alongside the
+  per-minor kind cells.

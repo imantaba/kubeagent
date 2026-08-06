@@ -11,6 +11,7 @@ COREDNS_BACKUP=/tmp/kubeagent-chaos-coredns.yaml   # pristine Corefile, captured
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 TEARDOWN=0; RECREATE=0; ONLY=""; OUT=""; K8S_VERSION=""; KIND_IMAGE=""
+DISTRO=kind; DISTRO_SET=0; K3S_IMAGE=""   # the distribution axis; see the block below
 CAPS=""   # the capabilities this run has; see the capability block below
 PORTABLE=0; CONTEXT=""   # --context selects portable mode; see the block below
 NODE_NAMES=""   # sorted, de-duplicated node names redacted from portable-mode report text
@@ -23,6 +24,7 @@ while [ $# -gt 0 ]; do
     --out) OUT="$2"; shift ;;
     --k8s-version) K8S_VERSION="$2"; shift ;;
     --context) CONTEXT="$2"; shift ;;
+    --distro) DISTRO="$2"; DISTRO_SET=1; shift ;;
     *) echo "unknown flag: $1" >&2; exit 2 ;;
   esac; shift
 done
@@ -32,16 +34,31 @@ done
 # --only 08 or --only 09 errored and normalized to 00, silently matching nothing.
 if [ -n "$ONLY" ] && printf '%s' "$ONLY" | grep -qE '^[0-9]+$'; then ONLY=$(printf '%02d' "$((10#$ONLY))"); fi
 
+# The distribution axis. --distro picks which Kubernetes distribution the
+# harness CREATES: kind (the default, and what every command line written before
+# this flag existed means) or k3s, run in containers by k3d.
+#
+# The value is validated HERE, before the --context refusal below and before any
+# name is derived from it, for the same reason chaos_image validates before
+# chaos_suffix derives a name: a value that becomes a cluster name, a context and
+# a report path has no business being unchecked.
+case "$DISTRO" in
+  kind|k3s) ;;
+  *) echo "unknown --distro: $DISTRO (supported: kind, k3s)" >&2; exit 2 ;;
+esac
+
 # Portable mode. --context runs the namespaced-only subset of the suite against
 # a cluster the harness did NOT create: it creates and deletes chaos-* namespaces
 # and nothing else, and every scenario that would write a cluster-scoped object
 # or shell into a node refuses to run.
 #
-# Three flags are REFUSED rather than ignored. All three manage a kind cluster's
+# Four flags are REFUSED rather than ignored. Three manage a kind cluster's
 # lifecycle or its node image, and silently accepting one against someone else's
-# production cluster is exactly the trap this mode exists to avoid. They fire
-# here, before the version axis derives any name, so an operator who typed a
-# contradiction learns it before docker is touched.
+# production cluster is exactly the trap this mode exists to avoid. The fourth,
+# --distro, is refused for a different reason: it is not a lifecycle flag, but
+# --context and --distro answer contradictory questions. They fire here, before
+# the version axis derives any name, so an operator who typed a contradiction
+# learns it before docker is touched.
 if [ -n "$CONTEXT" ]; then
   PORTABLE=1
   if [ "$RECREATE" = 1 ]; then
@@ -56,6 +73,10 @@ if [ -n "$CONTEXT" ]; then
     echo "--context and --k8s-version are mutually exclusive: the version axis picks a kind node image, which says nothing about a cluster that already exists" >&2
     exit 2
   fi
+  if [ "$DISTRO_SET" = 1 ]; then
+    echo "--context and --distro are mutually exclusive: --context runs against a cluster that already exists, and --distro says which distribution to create" >&2
+    exit 2
+  fi
   CTX="$CONTEXT"
   : "${OUT:=docs/testing/chaos-results-portable.md}"
 fi
@@ -65,28 +86,42 @@ fi
 # shellcheck source=chaos/versions.sh
 . "$ROOT/chaos/versions.sh"
 
-# The version axis. Omitting --k8s-version keeps the historical names and lets
-# kind pick its own default image, so the release skill's documented command and
-# an operator's muscle memory keep working byte-for-byte.
+# Two axes, one derivation. Everything cluster-shaped — the cluster name, the
+# context, the report path and the CoreDNS scratch file — is derived here,
+# because two runs that collide on any one of them corrupt each other, and a
+# collision on the last one is the nastiest: it silently restores the wrong
+# Corefile.
 #
-# Everything cluster-shaped is derived from one place: two minors run on one
-# machine otherwise collide on the cluster, the context, the report and the
-# CoreDNS scratch file — and a collision on the last one is the nastiest,
-# because it silently restores the wrong Corefile.
+# The kind path is byte-for-byte what it was before --distro existed. Omitting
+# --k8s-version still lets kind pick its own node image, so the release skill's
+# documented command and an operator's muscle memory keep working.
 #
-# chaos_image runs FIRST because it is the call that validates: an unsupported or
-# malformed minor is refused here, before any name is derived from it and before
-# preflight has touched docker. chaos_suffix therefore cannot fail below.
-if [ -n "$K8S_VERSION" ]; then
-  KIND_IMAGE="$(chaos_image "$K8S_VERSION")" || exit 2
-  suffix="$(chaos_suffix "$K8S_VERSION")"
-  CLUSTER="$CLUSTER$suffix"
-  CTX="kind-$CLUSTER"
+# The k3s path ALWAYS pins an image, even without --k8s-version: k3d bundles a
+# default k3s version that moves with the k3d release, and an unpinned image
+# makes a red cell ambiguous — the whole reason versions.env exists.
+#
+# chaos_k3s_image / chaos_image run FIRST because they are the calls that
+# validate. chaos_suffix therefore cannot fail below.
+#
+# Portable mode is skipped entirely: it has already set CTX from --context and
+# OUT to the portable report, and all three of the flags this block reads are
+# refused above.
+if [ "$PORTABLE" = 0 ]; then
+  if [ "$DISTRO" = k3s ]; then
+    CLUSTER="$CLUSTER-k3s"
+    K3S_IMAGE="$(chaos_k3s_image "${K8S_VERSION:-$(chaos_newest)}")" || exit 2
+  fi
+  if [ -n "$K8S_VERSION" ]; then
+    if [ "$DISTRO" = kind ]; then KIND_IMAGE="$(chaos_image "$K8S_VERSION")" || exit 2; fi
+    suffix="$(chaos_suffix "$K8S_VERSION")"
+    CLUSTER="$CLUSTER$suffix"
+  fi
+  case "$DISTRO" in
+    kind) CTX="kind-$CLUSTER"; : "${OUT:=docs/testing/chaos-results${K8S_VERSION:+-$K8S_VERSION}.md}" ;;
+    k3s)  CTX="k3d-$CLUSTER";  : "${OUT:=docs/testing/chaos-results-k3s${K8S_VERSION:+-$K8S_VERSION}.md}" ;;
+  esac
   COREDNS_BACKUP="/tmp/$CLUSTER-coredns.yaml"
-  : "${OUT:=docs/testing/chaos-results-$K8S_VERSION.md}"
 fi
-
-: "${OUT:=docs/testing/chaos-results.md}"
 
 # Assertion helpers (expect_eq / expect_ge / expect_contains / expect_absent) and
 # the summary that turns their outcomes into this script's exit code.
@@ -94,6 +129,11 @@ fi
 . "$ROOT/chaos/assert.sh"
 
 log() { printf '\n=== %s ===\n' "$*"; }
+
+# cluster_tool — the binary that creates and deletes this run's cluster. One
+# mapping, read by preflight, by teardown and by the inotify check, so a fourth
+# caller cannot invent a fifth answer.
+cluster_tool() { case "$DISTRO" in k3s) printf 'k3d\n' ;; *) printf 'kind\n' ;; esac; }
 
 # check_inotify_limits — the harness's own diagnosis of a failure mode that
 # otherwise costs four minutes and explains nothing.
@@ -105,10 +145,12 @@ log() { printf '\n=== %s ===\n' "$*"; }
 # kube-proxy dies with "too many open files". kubeadm then waits four minutes
 # for a kubelet that will never be healthy and exits with a Go stack trace
 # naming none of this. The version axis makes that likely rather than rare:
-# per-minor cluster names are exactly what lets two clusters coexist.
+# per-minor cluster names are exactly what lets two clusters coexist. A k3d
+# node is the same shape and draws from the same host-wide budget, which is
+# why only the "other clusters" query below branches on distro.
 #
 # Warn whenever the limits are low; fail only when they are low AND another
-# kind cluster is already up, because that pair is what actually breaks. A
+# cluster is already up, because that pair is what actually breaks. A
 # re-run against this run's own cluster is not another cluster.
 check_inotify_limits() {
   local want_instances=512 want_watches=524288 have_instances have_watches others
@@ -118,19 +160,22 @@ check_inotify_limits() {
   case "$have_instances$have_watches" in *[!0-9]*|'') return 0 ;; esac
   [ "$have_instances" -ge "$want_instances" ] && [ "$have_watches" -ge "$want_watches" ] && return 0
 
-  others="$(kind get clusters 2>/dev/null | grep -vx "$CLUSTER" | tr '\n' ' ' || true)"
+  case "$DISTRO" in
+    k3s) others="$(k3d cluster list --no-headers 2>/dev/null | awk '{print $1}' | grep -vx "$CLUSTER" | tr '\n' ' ' || true)" ;;
+    *)   others="$(kind get clusters 2>/dev/null | grep -vx "$CLUSTER" | tr '\n' ' ' || true)" ;;
+  esac
   others="${others% }"
   {
-    printf 'inotify limits are below what kind needs:\n'
-    printf '  fs.inotify.max_user_instances = %s (kind recommends %s)\n' "$have_instances" "$want_instances"
-    printf '  fs.inotify.max_user_watches   = %s (kind recommends %s)\n' "$have_watches"   "$want_watches"
+    printf 'inotify limits are below what a containerized Kubernetes node needs:\n'
+    printf '  fs.inotify.max_user_instances = %s (recommended: %s)\n' "$have_instances" "$want_instances"
+    printf '  fs.inotify.max_user_watches   = %s (recommended: %s)\n' "$have_watches"   "$want_watches"
     printf 'Raise them with:\n'
     printf '  sudo sysctl -w fs.inotify.max_user_instances=%s\n' "$want_instances"
     printf '  sudo sysctl -w fs.inotify.max_user_watches=%s\n'   "$want_watches"
   } >&2
   if [ -n "${others// /}" ]; then
     {
-      printf 'Refusing to start: these kind clusters are already running and will\n'
+      printf 'Refusing to start: these clusters are already running and will\n'
       printf 'exhaust the budget, so this cluster'"'"'s kubelet would never come up:\n'
       printf '  %s\n' "$others"
       printf 'Delete them, or raise the limits above.\n'
@@ -140,7 +185,7 @@ check_inotify_limits() {
 }
 
 preflight() {
-  for b in docker kind kubectl helm go curl python3; do
+  for b in docker "$(cluster_tool)" kubectl helm go curl python3; do
     command -v "$b" >/dev/null || { echo "missing required tool: $b" >&2; exit 1; }
   done
   docker info >/dev/null 2>&1 || { echo "docker daemon not running" >&2; exit 1; }
@@ -313,6 +358,34 @@ PROBE
   log "capabilities: ${CAPS:-<none>}"
 }
 
+# created_header — the report header for a cluster the harness created.
+#
+# Distro-specific because the two clusters differ in exactly the ways a reader of
+# this report needs to know: which CNI enforces (or does not enforce)
+# NetworkPolicy, whether metrics-server is present, and whether a LoadBalancer
+# Service can ever get an address. Those three are what decide which scenarios
+# run at all, so naming the add-ons is naming the shape of the run.
+#
+# Neither form names a node. The harness owns these node names, so they are not
+# the credential a foreign cluster's are — but a header that carries one is one
+# copy-paste away from a portable report, and there is no reason for it to.
+created_header() {
+  printf '# kubeagent chaos-test results\n\n'
+  case "$DISTRO" in
+    k3s)
+      printf -- '- Cluster: k3d %s, k3s stock defaults (Flannel CNI, Traefik + ServiceLB, metrics-server, local-path), 1 server + 2 agents\n' \
+        "$(k3d version 2>/dev/null | awk 'NR==1 {print $3}')"
+      ;;
+    *)
+      printf -- '- Cluster: Kind %s, Calico CNI, 1 control-plane + 2 workers\n' \
+        "$(kind version 2>/dev/null | awk '{print $2}')"
+      ;;
+  esac
+  printf -- '- Kubernetes: %s\n' "$(kubectl --context "$CTX" version -o json 2>/dev/null \
+    | python3 -c 'import sys,json; print(json.load(sys.stdin).get("serverVersion",{}).get("gitVersion",""))' 2>/dev/null)"
+  printf -- '- explain: %s\n' "$([ -n "${ANTHROPIC_API_KEY:-}" ] && echo enabled || echo 'disabled (no ANTHROPIC_API_KEY)')"
+}
+
 # portable_header — describe the target cluster in the report WITHOUT naming it.
 #
 # A kubeconfig context name is a credential under this project's rules, and on a
@@ -411,6 +484,32 @@ create_cluster() {
     ${KIND_IMAGE:+--image "$KIND_IMAGE"}
 }
 
+# create_cluster_k3s — create_cluster's counterpart on the k3s path.
+#
+# k3d runs k3s in containers, so the harness owns this cluster exactly as fully
+# as it owns a kind one: it created it, it can delete it, and nobody else's
+# workload is on it. That ownership is what lets main() grant cluster_write here
+# as honestly as it does on kind.
+#
+# STOCK DEFAULTS ARE LOAD-BEARING, not an aesthetic preference. k3s ships Traefik
+# as a LoadBalancer holding ports 80 and 443 on every node its affinity allows,
+# and that is exactly why ServiceLB never publishes an address for a second
+# port-80 Service — which is what makes probe_capabilities grant no_loadbalancer
+# and scenario 6 RUN rather than skip. Disabling Traefik (`--k3s-arg
+# '--disable=traefik@server:*'`) would free port 80, ServiceLB would assign an
+# address, and scenario 6 would fail. Do not add it.
+create_cluster_k3s() {
+  local existing
+  existing="$(k3d cluster list --no-headers 2>/dev/null | awk '{print $1}')" || existing=""
+  if printf '%s\n' "$existing" | grep -qx "$CLUSTER"; then
+    if [ "$RECREATE" = 1 ]; then k3d cluster delete "$CLUSTER"; else
+      echo "cluster $CLUSTER already exists (use --recreate to rebuild)"; return 0; fi
+  fi
+  log "create k3d cluster $CLUSTER (image $K3S_IMAGE)"
+  k3d cluster create "$CLUSTER" --servers 1 --agents 2 --image "$K3S_IMAGE" \
+    --wait --timeout 300s
+}
+
 # preload_calico_images side-loads the Calico images into the Kind nodes before we
 # apply the CNI. Kind nodes have their own containerd store, so on a cold cluster the
 # kubelet pulls calico/cni + calico/node serially from docker.io (~3-4m each) — and the
@@ -426,6 +525,17 @@ preload_calico_images() {
     # re-adds the docker.io/ prefix in the node store, matching the manifest's image ref.
     kind load docker-image "${ref#docker.io/}" --name "$CLUSTER" || echo "preload: load $ref failed; falling back to in-node pull" >&2
   done
+}
+
+# node_image_load <ref> — side-load an image into this distro's node store.
+#
+# Both node kinds keep their own containerd store, which is the entire reason
+# the preloads exist; only the command differs.
+node_image_load() {
+  case "$DISTRO" in
+    k3s) k3d image import "$1" --cluster "$CLUSTER" ;;
+    *)   kind load docker-image "$1" --name "$CLUSTER" ;;
+  esac
 }
 
 # preload_flux_images <manifest> — side-loads Flux's controller images into the
@@ -449,8 +559,11 @@ preload_flux_images() {
     docker image inspect "$ref" >/dev/null 2>&1 || docker pull "$ref" || { echo "preload: pull $ref failed; falling back to in-node pull" >&2; continue; }
     # Unlike the Calico refs there is no prefix to strip: docker only normalizes
     # away docker.io, so a ghcr.io ref is tagged locally under its full name and
-    # `kind load` puts it in the node store under the name the manifest asks for.
-    kind load docker-image "$ref" --name "$CLUSTER" || echo "preload: load $ref failed; falling back to in-node pull" >&2
+    # node_image_load puts it in the node store under the name the manifest asks
+    # for. That is unchanged from kind; the reason the preload matters on k3d is
+    # the same one it matters on kind — a node's own containerd store, not
+    # anything kind-specific.
+    node_image_load "$ref" || echo "preload: load $ref failed; falling back to in-node pull" >&2
   done
 }
 
@@ -463,16 +576,55 @@ install_calico() {
   kubectl --context "$CTX" wait --for=condition=Ready nodes --all --timeout=600s
 }
 
+# wait_for_deploy <namespace> <name> [seconds] — wait for a Deployment to EXIST,
+# then for it to become Available.
+#
+# `kubectl rollout status` fails outright on a Deployment that is not there yet,
+# and on k3s several of these are created by a HelmChart job some time after the
+# nodes go Ready. Poll for existence first, then hand over to rollout status,
+# which is what actually waits for Available. A Deployment that never appears
+# leaves rollout status to fail loudly, which is the same outcome the kind path
+# has always had.
+wait_for_deploy() {
+  local ns="$1" name="$2" secs="${3:-300}" i
+  for i in $(seq "$secs"); do
+    kubectl --context "$CTX" -n "$ns" get deploy "$name" >/dev/null 2>&1 && break
+    sleep 1
+  done
+  kubectl --context "$CTX" -n "$ns" rollout status "deploy/$name" --timeout="${secs}s"
+}
+
 # wait_system_ready blocks until the core system Deployments are Available, so the
-# baseline scan sees a settled cluster. On a freshly-created cluster CoreDNS,
-# calico-kube-controllers, and local-path-provisioner can still be Pending for a
-# while after the nodes go Ready — scanning too early makes the baseline read
-# Degraded (a harness timing artifact, not a real finding).
+# baseline scan sees a settled cluster. On a freshly-created cluster these can
+# still be Pending for a while after the nodes go Ready — scanning too early makes
+# the baseline read Degraded (a harness timing artifact, not a real finding).
+#
+# The two distributions genuinely ship different workloads: k3s has no Calico
+# controller and no local-path-storage namespace, and runs its own
+# local-path-provisioner, metrics-server and Traefik in kube-system. Waiting for
+# a Deployment the cluster does not have would fail every run.
+#
+# Traefik is on the k3s list for a reason that is easy to mistake for
+# thoroughness: until its LoadBalancer has claimed port 80, ServiceLB can still
+# hand probe_capabilities' probe Service an address, no_loadbalancer would be
+# withheld, and scenario 6 would skip instead of running. Waiting is what makes
+# that answer stable rather than a race.
 wait_system_ready() {
-  log "wait for system workloads to settle (CoreDNS, Calico controllers, local-path)"
-  kubectl --context "$CTX" -n kube-system rollout status deploy/coredns --timeout=300s
-  kubectl --context "$CTX" -n kube-system rollout status deploy/calico-kube-controllers --timeout=300s
-  kubectl --context "$CTX" -n local-path-storage rollout status deploy/local-path-provisioner --timeout=300s
+  case "$DISTRO" in
+    k3s)
+      log "wait for system workloads to settle (CoreDNS, local-path, metrics-server, Traefik)"
+      wait_for_deploy kube-system coredns
+      wait_for_deploy kube-system local-path-provisioner
+      wait_for_deploy kube-system metrics-server
+      wait_for_deploy kube-system traefik
+      ;;
+    *)
+      log "wait for system workloads to settle (CoreDNS, Calico controllers, local-path)"
+      kubectl --context "$CTX" -n kube-system rollout status deploy/coredns --timeout=300s
+      kubectl --context "$CTX" -n kube-system rollout status deploy/calico-kube-controllers --timeout=300s
+      kubectl --context "$CTX" -n local-path-storage rollout status deploy/local-path-provisioner --timeout=300s
+      ;;
+  esac
 }
 
 # Append --explain ONLY when a key is present in the environment (never logged).
@@ -500,6 +652,35 @@ ready_replicas() {
 # objects freely and would break a "must be 0" check whenever a key is set.
 scan_body() { printf '%s\n' "$1" | awk '/── Explanation ──/ { exit } { print }'; }
 
+# remediation_outcome <output> — the one line of a --fix or --rollback run that says
+# which branch kubeagent took: applied, refused, preflight-denied, an error, an inverse
+# that could not be derived, or no recorded fix to roll back at all.
+#
+# Scenario 9b asserts on two image names and an audit-log count. Those say THAT the
+# round trip failed and nothing about WHY: no branch that makes no write leaves anything
+# behind to tell it from the others. The deciding line belongs in the report.
+#
+# The whole run is deliberately NOT echoed. kubeagent's no-record line names the audit
+# log's filesystem path, and a path is a credential the report must never carry — so
+# that one case is answered by a sentence of the harness's own, which states the fact
+# without the value. Every other line it returns carries a namespace, a workload, a
+# revision number, a node name or a refusal reason — the same material the report
+# already holds for the scenario that called it.
+#
+# It never fails: a caller under `set -euo pipefail` must not lose the run here, and an
+# output with no outcome line at all says so rather than returning empty.
+remediation_outcome() {
+  local out="$1" line
+  if printf '%s\n' "$out" | grep -q '^No applied remediation found in '; then
+    printf 'no applied remediation recorded; nothing to roll back\n'
+    return 0
+  fi
+  line="$(printf '%s\n' "$out" \
+    | sed -n 's/^  \(applied\|rolled back\|skipped\|ERROR\): /\1: /p; /^Cannot roll back the last applied fix/p' \
+    | tail -1)"
+  printf '%s\n' "${line:-(no outcome line printed)}"
+}
+
 # json_get <document> <dotted path> — the value at a dotted path in a JSON scan
 # report, or a marker in place of one: "<absent>" when the path is not in the
 # document, "<unparseable>" when the document is not JSON at all.
@@ -524,22 +705,30 @@ print(doc)
 ' "$2" 2>/dev/null || printf '<unparseable>\n'
 }
 
-# worker_node — the name of the first worker node.
+# worker_node — the name of the first node that is not the control plane.
 #
-# Two scenarios cordon or docker-exec into a worker by name. Reading it with a
-# bare `kubectl get nodes | grep worker` fails badly when nothing matches: under
-# `set -o pipefail` the unmatched grep aborts the run at the assignment, with no
+# Two scenarios cordon or docker-exec into a worker by name. Selecting on the
+# ABSENCE of the control-plane role label is what makes this work on both
+# distributions: kind names its workers <cluster>-worker and <cluster>-worker2,
+# k3d names its agents k3d-<cluster>-agent-0, and only the label is common to
+# both. (Matching the literal string "worker" silently found nothing on k3d.)
+#
+# Reading it with a bare pipeline fails badly when nothing matches: under
+# `set -o pipefail` an empty result aborts the run at the assignment, with no
 # message and no assertion summary, so a single-node or renamed cluster looks
 # like a harness crash. Diagnose it instead — this is an environment problem, in
 # the same class as a missing binary, not a kubeagent finding.
 worker_node() {
   local n
-  n="$(kubectl --context "$CTX" get nodes -o name | grep -m1 worker | cut -d/ -f2)" || true
+  n="$(kubectl --context "$CTX" get nodes \
+        -l '!node-role.kubernetes.io/control-plane' -o name 2>/dev/null \
+        | sed -n '1s|^node/||p')" || true
   if [ -z "$n" ]; then
     {
       printf 'no worker node found in context %s.\n' "$CTX"
-      printf 'The harness creates 1 control-plane + 2 workers; scenarios 3 and 11 need one.\n'
-      printf 'Re-create the cluster with: %s --recreate\n' "$0"
+      printf 'The harness creates one control-plane node and two workers (k3d: one server, two agents); scenarios 3 and 11 need one.\n'
+      printf 'Re-create the cluster with: %s%s --recreate\n' "$0" \
+        "$([ "$DISTRO" = kind ] || printf ' --distro %s' "$DISTRO")"
     } >&2
     exit 1
   fi
@@ -684,6 +873,15 @@ record() {
 # created and can delete, it may. On a cluster it merely has credentials for, it
 # may not, and the refusal is the safety property this whole seam exists for.
 #
+# That ownership question is still exactly `cluster_write`'s whole story.
+# `node_exec` is narrower: it needs that same ownership, plus a control plane
+# whose etcd and kubelet are separately stoppable units. The harness owns a
+# k3d cluster exactly as fully as it owns a kind one, but k3s fails the
+# second half, so granting `node_exec` there would let scenarios 1 and 11 run
+# and fail — strictly worse than a named skip. The portable path fails the
+# first half instead, for an unrelated reason: only kind clears both, and
+# only kind is granted.
+#
 # The other four are facts about the target cluster, decided by probe_capabilities
 # and by the baseline scan.
 
@@ -691,7 +889,7 @@ record() {
 # want of this capability. Returns 1 for a name outside the vocabulary.
 capability_reason() {
   case "$1" in
-    node_exec)         printf 'needs shell access to a node container, which exists only on a cluster the harness created\n' ;;
+    node_exec)         printf 'needs shell access to a node the harness owns, whose control plane runs etcd and kubelet as separately stoppable units\n' ;;
     cluster_write)     printf 'writes cluster-scoped objects, which the harness will not do on a cluster it does not own\n' ;;
     clean_baseline)    printf 'asserts whole-cluster health, which is only meaningful on a cluster that reported none before the run\n' ;;
     no_loadbalancer)   printf 'asserts a LoadBalancer Service never gets an address, which is false on a cluster with a provider\n' ;;
@@ -741,9 +939,16 @@ requires() {
 }
 
 # A failed teardown must not abort main before assert_summary runs: the exit
-# code callers read is the assertion gate's, and losing it to kind's would
-# report a delete failure as a scenario failure and drop the report's summary.
-teardown() { log "teardown"; kind delete cluster --name "$CLUSTER" || log "teardown: kind delete cluster failed (cluster may still exist)"; }
+# code callers read is the assertion gate's, and losing it to the cluster tool's
+# would report a delete failure as a scenario failure and drop the report's
+# summary.
+teardown() {
+  log "teardown"
+  case "$DISTRO" in
+    k3s) k3d cluster delete "$CLUSTER" || log "teardown: k3d cluster delete failed (cluster may still exist)" ;;
+    *)   kind delete cluster --name "$CLUSTER" || log "teardown: kind delete cluster failed (cluster may still exist)" ;;
+  esac
+}
 
 # --- scenarios -------------------------------------------------------------
 # Each scenario: inject -> scan (recorded; never aborts the harness) -> revert.
@@ -1015,11 +1220,18 @@ scenario_09_rollout() {   # bad image -> ImagePullBackOff
     expect_contains "bad-image workload named" "$body" "chaos-rollout/web"
     expect_contains "image pull failure diagnosed" "$body" "ImagePullBackOff"
   } | record "9. Faulty rolling deployment (bad image)" "detected: ImagePullBackOff"
-  # slice-4: apply the fix with an audit log, then roll it back and confirm the image returns
+  # slice-4: apply the fix with an audit log, then roll it back and confirm the image returns.
+  #
+  # Both runs' outcome lines and the audit log go into the report. The three assertions
+  # below say THAT a round trip failed; they cannot say which branch kubeagent took,
+  # because a refusal, a preflight denial, an error and an empty audit log all leave the
+  # same two image names behind. remediation_outcome and the log itself say which — and
+  # neither carries a filesystem path, a context name or a node name.
   local alog; alog="$(mktemp)"
-  ./kubeagent scan --context "$CTX" -n chaos-rollout --fix --yes --audit-log "$alog" >/dev/null 2>&1 || true
+  local fixout rbout
+  fixout="$(./kubeagent scan --context "$CTX" -n chaos-rollout --fix --yes --audit-log "$alog" 2>&1)" || true
   local after_fix; after_fix="$(kubectl --context "$CTX" -n chaos-rollout get deploy web -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null)"
-  ./kubeagent scan --context "$CTX" -n chaos-rollout --rollback --yes --audit-log "$alog" >/dev/null 2>&1 || true
+  rbout="$(./kubeagent scan --context "$CTX" -n chaos-rollout --rollback --yes --audit-log "$alog" 2>&1)" || true
   local after_rollback; after_rollback="$(kubectl --context "$CTX" -n chaos-rollout get deploy web -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null)"
   local rollback_records
   rollback_records="$(grep -c '"disposition":"rollback"' "$alog" 2>/dev/null || true)"
@@ -1027,6 +1239,10 @@ scenario_09_rollout() {   # bad image -> ImagePullBackOff
     echo "after --fix:      $after_fix"
     echo "after --rollback: $after_rollback"
     printf 'rollback audit records: %s\n' "$rollback_records"
+    printf -- '--fix outcome:      %s\n' "$(remediation_outcome "$fixout")"
+    printf -- '--rollback outcome: %s\n' "$(remediation_outcome "$rbout")"
+    printf 'audit log:\n'
+    sed 's/^/  /' "$alog" 2>/dev/null || true
     printf '\n--- assertions ---\n'
     expect_eq "--fix restored a working image"      "$after_fix"      "nginx:1.27-alpine"
     expect_eq "--rollback restored the pre-fix image" "$after_rollback" "nginx:does-not-exist-9999"
@@ -2487,9 +2703,10 @@ main() {
   else
     preflight
     build_kubeagent
-    create_cluster
-    preload_calico_images
-    install_calico
+    case "$DISTRO" in
+      k3s) create_cluster_k3s ;;
+      *)   create_cluster; preload_calico_images; install_calico ;;
+    esac
   fi
 
   mkdir -p "$(dirname "$OUT")"
@@ -2498,12 +2715,7 @@ main() {
   if [ "$PORTABLE" = 1 ]; then
     portable_header >> "$OUT"
   else
-    {
-      printf '# kubeagent chaos-test results\n\n'
-      printf -- '- Cluster: Kind %s, Calico CNI, 1 control-plane + 2 workers\n' "$(kind version 2>/dev/null | awk '{print $2}')"
-      printf -- '- Kubernetes: %s\n' "$(kubectl --context "$CTX" version -o json 2>/dev/null | python3 -c 'import sys,json; print(json.load(sys.stdin).get("serverVersion",{}).get("gitVersion",""))' 2>/dev/null)"
-      printf -- '- explain: %s\n' "$([ -n "${ANTHROPIC_API_KEY:-}" ] && echo enabled || echo 'disabled (no ANTHROPIC_API_KEY)')"
-    } >> "$OUT"
+    created_header >> "$OUT"
 
     # Capture the pristine CoreDNS Corefile TEXT now (cluster is healthy) so scenario 5
     # can restore a known-good config via a clean merge-patch (apply of a get-dump is unreliable).
@@ -2512,11 +2724,17 @@ main() {
     wait_system_ready
 
     # POLICY, not probe: on a cluster the harness created and can delete, it may
-    # shell into a node container and write cluster-scoped objects. On a cluster
-    # it merely holds credentials for, it may not — however wide those
-    # credentials happen to be.
-    capability_add node_exec
+    # write cluster-scoped objects. That is true of a k3d cluster exactly as it
+    # is of a kind one — the harness created both.
     capability_add cluster_write
+
+    # node_exec is narrower, and granted on the kind path only. `docker exec`
+    # into a k3d node would work, so this is not about access: k3s defaults to
+    # an embedded sqlite datastore, so there is no etcd to stop, and its kubelet
+    # is part of the single k3s process rather than a separate unit. Granting it
+    # here would make scenarios 1 and 11 RUN AND FAIL, which is strictly worse
+    # than a named skip — see capability_reason's wording.
+    if [ "$DISTRO" = kind ]; then capability_add node_exec; fi
   fi
 
   log "baseline healthy scan"
@@ -2571,7 +2789,10 @@ main() {
     teardown
   else
     echo "cluster left up ($CTX). Re-run with --teardown to delete, or:"
-    echo "  kind delete cluster --name $CLUSTER"
+    case "$DISTRO" in
+      k3s) echo "  k3d cluster delete $CLUSTER" ;;
+      *)   echo "  kind delete cluster --name $CLUSTER" ;;
+    esac
   fi
 
   # assert_summary is a second writer to $OUT, alongside record(): its FAIL

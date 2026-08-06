@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A second Kubernetes distribution in the nightly chaos matrix.**
+  `chaos/run.sh --distro kind|k3s` selects which distribution the harness
+  creates; `kind` remains the default, so every command line written before
+  the flag existed is unchanged. The k3s path (via k3d) resolves a
+  digest-pinned `rancher/k3s` image per supported minor from
+  `chaos/versions.env`, the same way the kind path resolves a `kindest/node`
+  one, and `.github/workflows/chaos-matrix.yml` gains one k3s cell at the
+  newest supported minor alongside the existing per-minor kind cells.
+
+### Changed
+
+- **`node_exec`'s skip reason now names the control plane's shape alongside
+  cluster ownership**: a k3s cluster the harness created is still refused,
+  because an embedded datastore and a kubelet inside the single k3s process
+  are not separately stoppable units. `worker_node` selects a node by its
+  role label instead of a name pattern, so it holds on a k3d cluster as well
+  as a kind one.
+- **The `--fix` then `--rollback` audit-log round trip (scenario 9b) now
+  records in the report which branch kubeagent took and dumps the audit
+  log**, instead of discarding both runs' output — a failed round trip used
+  to be indistinguishable from a refusal, a preflight denial, an error, or an
+  empty audit log.
+
 ## [1.4.0] - 2026-08-05
 
 ### Added

@@ -218,6 +218,18 @@ check 'capability_reason knows cluster_write' \
 check 'capability_reason rejects an unknown name' \
   "$( ( set --; . chaos/run.sh; capability_reason nope >/dev/null ) && echo 0 || echo 1 )" 1
 
+# node_exec is withheld for two different reasons on the two paths where it can
+# be withheld, and the reason a reader sees has to be true on both: a foreign
+# cluster the harness does not own may still be kubeadm-shaped, and a k3d
+# cluster the harness owns outright has no separately stoppable etcd or kubelet.
+# Naming both requirements is what keeps the printed reason honest wherever it
+# appears — a skip reason that is false in the report is worse than none at all.
+check 'capability_reason names both of node_exec requirements' \
+  "$( ( set --; . chaos/run.sh; capability_reason node_exec ) )" \
+  'needs shell access to a node the harness owns, whose control plane runs etcd and kubelet as separately stoppable units'
+check 'the node_exec reason does not rest on ownership alone' \
+  "$( ( set --; . chaos/run.sh; capability_reason node_exec ) | grep -ci 'separately stoppable' || true)" 1
+
 # capability_add is idempotent and validates, so a typo cannot silently switch
 # a scenario on.
 check 'capability_add is idempotent' \
@@ -225,6 +237,133 @@ check 'capability_add is idempotent' \
   'node_exec'
 check 'capability_add exits 2 on an unknown name' \
   "$( ( set --; . chaos/run.sh; capability_add nope ) >/dev/null 2>&1 && echo 0 || echo $? )" 2
+
+# --- remediation_outcome: which branch a --fix/--rollback run took -----------
+# Scenario 9b asserts on two image names and an audit-log count. When the round
+# trip fails, those three say THAT it failed and nothing about WHY — applied,
+# refused, preflight-denied, an error, and "there was no record to roll back"
+# all look identical from the outside. remediation_outcome puts the deciding
+# line in the report, and these checks pin what it may and may not carry.
+check 'remediation_outcome reports an applied fix' \
+  "$( ( set --; . chaos/run.sh
+        remediation_outcome '  applied: rolled back chaos-rollout/web to revision 1 (pod template restored)' ) )" \
+  'applied: rolled back chaos-rollout/web to revision 1 (pod template restored)'
+check 'remediation_outcome reports an applied rollback' \
+  "$( ( set --; . chaos/run.sh
+        remediation_outcome '  rolled back: rolled chaos-rollout/web forward to revision 2 (pre-fix pod template restored)' ) )" \
+  'rolled back: rolled chaos-rollout/web forward to revision 2 (pre-fix pod template restored)'
+check 'remediation_outcome reports a refusal with its reason' \
+  "$( ( set --; . chaos/run.sh
+        remediation_outcome '  skipped: revision 2 no longer exists; no write made' ) )" \
+  'skipped: revision 2 no longer exists; no write made'
+# The no-record line is the one kubeagent prints with the audit log's filesystem
+# path in it. A path is a credential and the report is a forwarded artifact, so
+# this case is answered by a sentence of the harness's own — the value is never
+# echoed, only the fact.
+check 'remediation_outcome names the no-record case' \
+  "$( ( set --; . chaos/run.sh
+        remediation_outcome 'No applied remediation found in /tmp/tmp.EXAMPLE; nothing to roll back.' ) )" \
+  'no applied remediation recorded; nothing to roll back'
+check 'remediation_outcome never echoes the audit log path' \
+  "$( ( set --; . chaos/run.sh
+        remediation_outcome 'No applied remediation found in /tmp/tmp.EXAMPLE; nothing to roll back.' ) \
+      | grep -c 'tmp.EXAMPLE' || true )" 0
+check 'remediation_outcome reports an error' \
+  "$( ( set --; . chaos/run.sh
+        remediation_outcome '  ERROR: update deployment: etcdserver: request timed out' ) )" \
+  'ERROR: update deployment: etcdserver: request timed out'
+# The inverse of a recorded fix can fail to derive at all — an audit record written by
+# a version that did not carry revisions, or an action kind with no inverse. kubeagent
+# prints that on its own line, without the two-space outcome indent.
+check 'remediation_outcome reports an inverse that could not be derived' \
+  "$( ( set --; . chaos/run.sh
+        remediation_outcome 'Cannot roll back the last applied fix (RolloutUndo chaos-rollout/web (Deployment)): no revision recorded' ) )" \
+  'Cannot roll back the last applied fix (RolloutUndo chaos-rollout/web (Deployment)): no revision recorded'
+check 'remediation_outcome says so when nothing was printed' \
+  "$( ( set --; . chaos/run.sh; remediation_outcome 'Cluster: Healthy' ) )" \
+  '(no outcome line printed)'
+
+# --- the distro axis: --distro parses, validates, refuses and derives -------
+# run.sh calls main() only on a direct execution, so sourcing it here runs its
+# flag parser and its name derivation with no cluster and no docker. Unlike the
+# probes above, these WANT positional parameters: `. chaos/run.sh <args>` sets
+# the sourced script's argv explicitly, which is exactly what is under test.
+distro_probe() {   # distro_probe <run.sh args...> -> "<rc>|<CLUSTER>|<CTX>|<OUT>|<COREDNS_BACKUP>|<K3S_IMAGE>"
+  local args=("$@")
+  (
+    . chaos/run.sh "${args[@]}"
+    printf '0|%s|%s|%s|%s|%s\n' "$CLUSTER" "$CTX" "$OUT" "$COREDNS_BACKUP" "${K3S_IMAGE:-}"
+  ) 2>/dev/null || printf '%s|||||\n' "$?"
+}
+
+# The kind path is the one that gates every release. Every derived name on it
+# must be byte-for-byte what it was before --distro existed.
+check 'the default path is kind and derives the historical names' \
+  "$(distro_probe)" \
+  '0|kubeagent-chaos|kind-kubeagent-chaos|docs/testing/chaos-results.md|/tmp/kubeagent-chaos-coredns.yaml|'
+check 'kind with a pinned minor derives the historical names' \
+  "$(distro_probe --k8s-version v1.34)" \
+  '0|kubeagent-chaos-v1-34|kind-kubeagent-chaos-v1-34|docs/testing/chaos-results-v1.34.md|/tmp/kubeagent-chaos-v1-34-coredns.yaml|'
+check '--distro kind is the same thing spelled out' \
+  "$(distro_probe --distro kind)" "$(distro_probe)"
+
+# k3s derives its own everything. A shared name is a corrupted run: two reports
+# overwrite each other, and two runs sharing a CoreDNS scratch file restore the
+# wrong Corefile.
+check 'k3s derives its own cluster, context, report and CoreDNS scratch names' \
+  "$(distro_probe --distro k3s | cut -d'|' -f2-5)" \
+  'kubeagent-chaos-k3s|k3d-kubeagent-chaos-k3s|docs/testing/chaos-results-k3s.md|/tmp/kubeagent-chaos-k3s-coredns.yaml'
+check 'k3s with a pinned minor derives its own names too' \
+  "$(distro_probe --distro k3s --k8s-version v1.33 | cut -d'|' -f2-5)" \
+  'kubeagent-chaos-k3s-v1-33|k3d-kubeagent-chaos-k3s-v1-33|docs/testing/chaos-results-k3s-v1.33.md|/tmp/kubeagent-chaos-k3s-v1-33-coredns.yaml'
+check 'the two distros collide on nothing for the same minor' \
+  "$(comm -12 <(distro_probe --distro kind --k8s-version v1.34 | tr '|' '\n' | tail -n +2 | sort) \
+              <(distro_probe --distro k3s  --k8s-version v1.34 | tr '|' '\n' | tail -n +2 | sort) \
+     | grep -c . || true)" 0
+
+# k3s always pins an image; kind without --k8s-version still lets kind choose,
+# which is what the release gate has always run.
+check 'k3s without a minor pins the newest supported image' \
+  "$(distro_probe --distro k3s | cut -d'|' -f6)" \
+  "$( ( set --; . chaos/versions.sh; chaos_k3s_image "$(chaos_newest)" ) )"
+check 'k3s with a minor pins that minor'\''s image' \
+  "$(distro_probe --distro k3s --k8s-version v1.33 | cut -d'|' -f6)" \
+  "$( ( set --; . chaos/versions.sh; chaos_k3s_image v1.33 ) )"
+check 'the kind path resolves no k3s image at all' \
+  "$(distro_probe --k8s-version v1.34 | cut -d'|' -f6)" ''
+
+# An unrecognised value is refused before anything is derived from it: it would
+# otherwise become a cluster name, a context and a report path unchecked.
+check 'an unknown --distro exits 2' "$(distro_probe --distro k3d | cut -d'|' -f1)" 2
+check 'the unknown-distro message names what is supported' \
+  "$( ( . chaos/run.sh --distro nope ) 2>&1 >/dev/null | grep -c 'supported: kind, k3s' || true)" 1
+check 'an unsupported minor is still refused on the k3s path' \
+  "$(distro_probe --distro k3s --k8s-version v9.99 | cut -d'|' -f1)" 2
+
+# --context means "a cluster I did not create"; --distro means "create one".
+# The fourth refusal joins the three portable mode already has.
+check '--distro is refused with --context' \
+  "$(distro_probe --context some-ctx --distro k3s | cut -d'|' -f1)" 2
+check 'the refusal names both flags' \
+  "$( ( . chaos/run.sh --context some-ctx --distro k3s ) 2>&1 >/dev/null \
+      | grep -c -- '--context and --distro are mutually exclusive' || true)" 1
+check '--context alone is still accepted' \
+  "$(distro_probe --context some-ctx | cut -d'|' -f1,3,4)" \
+  '0|some-ctx|docs/testing/chaos-results-portable.md'
+
+# --distro manages the lifecycle of a cluster the harness owns, so it composes
+# with the three flags that do the same.
+check '--distro k3s composes with --recreate, --teardown and --k8s-version' \
+  "$(distro_probe --distro k3s --k8s-version v1.33 --recreate --teardown | cut -d'|' -f1,2)" \
+  '0|kubeagent-chaos-k3s-v1-33'
+
+# cluster_tool is the single mapping from distro to the binary that creates and
+# deletes the cluster: preflight requires it, teardown calls it, and CI installs
+# it. Three copies of that answer is two too many.
+check 'cluster_tool is kind by default' \
+  "$( ( set --; . chaos/run.sh; cluster_tool ) )" kind
+check 'cluster_tool is k3d on the k3s path' \
+  "$( ( . chaos/run.sh --distro k3s; cluster_tool ) )" k3d
 
 # --- redact_nodes: the portable-mode seam that keeps node AND context names
 # out of $OUT ------------------------------------------------------------

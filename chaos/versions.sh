@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Resolves a Kubernetes minor to the kind node image the chaos harness should
-# boot, and to the suffix that keeps two versions' clusters from colliding.
+# Resolves a Kubernetes minor to the node image for either distribution the
+# chaos harness should boot, and to the suffix that keeps two versions'
+# clusters from colliding.
 # Sourced by chaos/run.sh and by chaos/version-selftest.sh; the data itself
 # lives in chaos/versions.env, so everything that needs to know what "supported"
 # means resolves it from one place rather than keeping its own copy — the
@@ -54,4 +55,31 @@ chaos_suffix() {
     return 1
   }
   printf -- '-%s\n' "${1//./-}"
+}
+
+# chaos_newest — the newest supported minor (the last entry in the list).
+#
+# Two places mean "the newest one": the k3s path's default image, and the CI
+# matrix's single k3s cell. Both resolve it from here rather than naming a
+# minor, so adding or dropping a minor stays the one-line commit it is today.
+chaos_newest() { printf '%s\n' "$KUBEAGENT_CHAOS_VERSIONS" | awk '{print $NF}'; }
+
+# chaos_k3s_image <minor> — the digest-pinned rancher/k3s image for <minor>:
+# chaos_image's counterpart on the k3s path, with the same contract for the
+# same reason. It validates before it derives a variable name, and it never
+# prints a partial answer, because a caller that ignored the status would hand
+# `k3d cluster create` an empty --image and boot whatever k3d defaults to —
+# which, unlike kind's default, moves with the k3d release.
+chaos_k3s_image() {
+  if ! _chaos_known "${1:-}"; then
+    printf 'unsupported --k8s-version: %s (supported: %s)\n' \
+      "${1:-<empty>}" "$KUBEAGENT_CHAOS_VERSIONS" >&2
+    return 1
+  fi
+  local var="KUBEAGENT_CHAOS_K3S_IMAGE_${1//./_}"
+  if [ -z "${!var:-}" ]; then
+    printf 'chaos/versions.env lists %s but defines no k3s image for it\n' "$1" >&2
+    return 1
+  fi
+  printf '%s\n' "${!var}"
 }

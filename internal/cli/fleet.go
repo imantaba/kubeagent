@@ -189,9 +189,9 @@ func newFleetCommand() *cobra.Command {
 		Short: "Sweep many clusters and report one verdict per cluster",
 		Long: "Sweep every selected kubeconfig context in bounded parallel, running the same\n" +
 			"evaluation `kubeagent gate` runs against each, and print one row per cluster\n" +
-			"worst first. Read-only toward every cluster: get and list only, no writes, and\n" +
-			"no model call. The report names contexts and issue kinds — never a node,\n" +
-			"namespace, pod or workload.",
+			"worst first. Read-only toward every cluster (get and list only, no write of any\n" +
+			"kind), and it makes no model call — two separate promises. The report names\n" +
+			"contexts and issue kinds — never a node, namespace, pod or workload.",
 		Args:          cobra.NoArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,

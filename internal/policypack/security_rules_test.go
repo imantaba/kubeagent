@@ -428,3 +428,91 @@ func TestEverySecurityRuleFiresAndPasses(t *testing.T) {
 		})
 	}
 }
+
+// TestPairedRulesDivideTheWork pins the pack's pairing principle. Four
+// properties are unsafe when absent AND unsafe when set to the wrong value,
+// and no single rule can catch both: exists says nothing about a bad value,
+// and notIn SKIPS an absent slot. So each ships as a pair, and each half must
+// cover exactly the case the other cannot.
+//
+// Asserting both directions is the point. A single-direction test would still
+// pass if someone collapsed a pair into one rule, which is precisely the
+// change this exists to fail.
+func TestPairedRulesDivideTheWork(t *testing.T) {
+	rules := loadPack(t, "security")
+
+	cases := []struct {
+		property string
+		unsetID  string
+		valueID  string
+		// unset is missing the field entirely.
+		unset *unstructured.Unstructured
+		// bad sets the field explicitly to the unsafe value.
+		bad *unstructured.Unstructured
+	}{
+		{
+			property: "allowPrivilegeEscalation",
+			unsetID:  "security.deploy-privilege-escalation-unset",
+			valueID:  "security.deploy-privilege-escalation",
+			unset:    hardenedDeployment("unset", hardenedPodSpec(containerMinus(t, "securityContext", "allowPrivilegeEscalation"))),
+			bad:      hardenedDeployment("bad", hardenedPodSpec(containerWithSecurityContext(t, "allowPrivilegeEscalation", true))),
+		},
+		{
+			property: "runAsNonRoot",
+			unsetID:  "security.deploy-run-as-non-root-unset",
+			valueID:  "security.deploy-run-as-non-root",
+			unset:    hardenedDeployment("unset", hardenedPodSpec(containerMinus(t, "securityContext", "runAsNonRoot"))),
+			bad:      hardenedDeployment("bad", hardenedPodSpec(containerWithSecurityContext(t, "runAsNonRoot", false))),
+		},
+		{
+			property: "readOnlyRootFilesystem",
+			unsetID:  "security.deploy-read-only-root-unset",
+			valueID:  "security.deploy-read-only-root",
+			unset:    hardenedDeployment("unset", hardenedPodSpec(containerMinus(t, "securityContext", "readOnlyRootFilesystem"))),
+			bad:      hardenedDeployment("bad", hardenedPodSpec(containerWithSecurityContext(t, "readOnlyRootFilesystem", false))),
+		},
+		{
+			property: "seccompProfile",
+			unsetID:  "security.deploy-seccomp-unset",
+			valueID:  "security.deploy-seccomp-unconfined",
+			unset:    hardenedDeployment("unset", podSpecWithout(hardenedContainer(), "securityContext")),
+			bad:      hardenedDeployment("bad", podSpecWithSeccomp(hardenedContainer(), "Unconfined")),
+		},
+	}
+
+	if len(cases) != 4 {
+		t.Fatalf("%d paired properties, want 4", len(cases))
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.property, func(t *testing.T) {
+			unsetRule := securityRule(t, rules, tc.unsetID)
+			valueRule := securityRule(t, rules, tc.valueID)
+
+			// The unset object: only the exists half may fire.
+			if got := evaluateOne(t, unsetRule, "Deployment", tc.unset); len(got) != 1 {
+				t.Errorf("%s produced %d violations on an object missing %s, want 1", tc.unsetID, len(got), tc.property)
+			}
+			if got := evaluateOne(t, valueRule, "Deployment", tc.unset); len(got) != 0 {
+				t.Errorf("%s produced %d violations on an object missing %s, want 0 — a value operator must skip an absent slot", tc.valueID, len(got), tc.property)
+			}
+
+			// The explicitly-bad object: only the value half may fire.
+			if got := evaluateOne(t, valueRule, "Deployment", tc.bad); len(got) != 1 {
+				t.Errorf("%s produced %d violations on an object setting %s to the unsafe value, want 1", tc.valueID, len(got), tc.property)
+			}
+			if got := evaluateOne(t, unsetRule, "Deployment", tc.bad); len(got) != 0 {
+				t.Errorf("%s produced %d violations on an object that DOES set %s, want 0", tc.unsetID, len(got), tc.property)
+			}
+
+			// The levels are part of the principle, not decoration: the unset
+			// half is advisory, the explicit-bad half is a warning.
+			if unsetRule.Level != policy.LevelInfo {
+				t.Errorf("%s is %q, want info", tc.unsetID, unsetRule.Level)
+			}
+			if valueRule.Level != policy.LevelWarning {
+				t.Errorf("%s is %q, want warning", tc.valueID, valueRule.Level)
+			}
+		})
+	}
+}

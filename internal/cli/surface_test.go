@@ -464,7 +464,7 @@ func TestFleetFlagSurface(t *testing.T) {
 // package doc makes.
 func TestFleetRefusesTheFlagsItDoesNotOffer(t *testing.T) {
 	for _, flag := range []string{"--logs", "--disk-usage", "--certs", "--capacity",
-		"--explain", "--investigate", "--fix", "--rollback", "--policy"} {
+		"--explain", "--investigate", "--fix", "--rollback", "--policy", "--policy-pack"} {
 		t.Run(flag, func(t *testing.T) {
 			if _, err := parseFleetFlags([]string{flag}); err == nil {
 				t.Errorf("parseFleetFlags(%q) error = nil, want an unknown-flag error", flag)

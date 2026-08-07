@@ -56,6 +56,7 @@ type scanOptions struct {
 	driftAge               time.Duration
 	capacity               bool
 	policyPaths            []string
+	policyPackNames        []string
 	baselinePath           string
 	baselineFactor         float64
 	baselineFloor          float64
@@ -106,6 +107,7 @@ func bindScanFlags(cmd *cobra.Command, o *scanOptions) {
 	f.DurationVar(&o.driftAge, "drift-age", envDuration("KUBEAGENT_DRIFT_AGE", time.Hour), "how long an object may differ from Git before --drift calls it stale (e.g. 30m, 2h)")
 	f.BoolVar(&o.capacity, "capacity", envBool("KUBEAGENT_CAPACITY", false), "report scheduling headroom and structurally wrong workload shapes (advisory; uses metrics-server for context when present)")
 	f.StringArrayVar(&o.policyPaths, "policy", nil, "evaluate organization-specific checks from this policy file or directory (repeatable)")
+	f.StringArrayVar(&o.policyPackNames, "policy-pack", nil, "evaluate a curated rule pack compiled into kubeagent (repeatable; see `kubeagent policy packs`)")
 	f.StringVar(&o.baselinePath, "baseline", "", "compare restart rates against this captured baseline (see "+invokedAs+" baseline capture)")
 	f.Float64Var(&o.baselineFactor, "baseline-factor", envFloat("KUBEAGENT_BASELINE_FACTOR", baseline.DefaultFactor),
 		"with --baseline: flag a workload at this multiple of its baseline rate (KUBEAGENT_BASELINE_FACTOR)")
@@ -261,7 +263,7 @@ func runScan(o scanOptions) error {
 	}
 	res.PartialReads = append(res.PartialReads, advisoryBlindSpots(advRes.Degradations)...)
 
-	policyView, err := evaluatePolicy(context.Background(), o.policyPaths, o.kubeconfig, o.contextName, o.namespace)
+	policyView, err := evaluatePolicy(context.Background(), o.policyPaths, o.policyPackNames, o.kubeconfig, o.contextName, o.namespace)
 	if err != nil {
 		return err
 	}

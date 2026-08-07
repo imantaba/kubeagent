@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `kubeagent policy packs` lists the curated policy packs compiled into the
+  binary, and `--print <name>` emits one as YAML to fork. It contacts nothing:
+  no cluster, no kubeconfig, no network, and no model call.
+- `scan --policy-pack <name>` and `gate --policy-pack <name>` evaluate a
+  curated pack (repeatable, and combinable with `--policy`). The first pack,
+  `reliability`, carries fourteen rules covering probes, resource requests and
+  limits, replica counts, disruption-budget coverage and image tags. No rule in
+  it is `critical`, so adding it to a pipeline cannot fail a build that passed
+  yesterday; `--fail-on warning` makes them block.
+- `internal/policypack` holds the packs and imports nothing from kubeagent and
+  nothing outside the standard library, joining `internal/baseline`,
+  `internal/glob` and `internal/knownissues`.
+
 ## [1.8.0] - 2026-08-06
 
 ### Added

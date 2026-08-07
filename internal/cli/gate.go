@@ -58,6 +58,7 @@ type gateOptions struct {
 	pollInterval     time.Duration
 	allowPartialRead []string
 	policyPaths      []string
+	policyPackNames  []string
 	baselinePath     string
 	baselineFactor   float64
 	baselineFloor    float64
@@ -83,6 +84,7 @@ func bindGateFlags(cmd *cobra.Command, o *gateOptions) {
 	f.DurationVar(&o.pollInterval, "poll-interval", 2*time.Second, "with --wait-for: how often to re-read the workload")
 	f.StringArrayVar(&o.allowPartialRead, "allow-partial-read", nil, "accept that this resource cannot be read, instead of exiting 2 (repeatable, e.g. leases)")
 	f.StringArrayVar(&o.policyPaths, "policy", nil, "evaluate organization-specific checks from this policy file or directory (repeatable)")
+	f.StringArrayVar(&o.policyPackNames, "policy-pack", nil, "evaluate a curated rule pack compiled into kubeagent (repeatable; see `kubeagent policy packs`)")
 	f.StringVar(&o.baselinePath, "baseline", "", "compare restart rates against this captured baseline (see "+invokedAs+" baseline capture)")
 	f.Float64Var(&o.baselineFactor, "baseline-factor", envFloat("KUBEAGENT_BASELINE_FACTOR", baseline.DefaultFactor),
 		"with --baseline: flag a workload at this multiple of its baseline rate (KUBEAGENT_BASELINE_FACTOR)")
@@ -159,7 +161,7 @@ func runGateOpts(o gateOptions) error {
 	// Exit 4 for a bad policy file: it is bad input, in the same class as a bad
 	// flag, and nothing was attempted against the cluster. Exit 1 would claim
 	// kubeagent looked and found problems.
-	pv, err := evaluatePolicy(ctx, o.policyPaths, o.kubeconfig, o.contextName, o.namespace)
+	pv, err := evaluatePolicy(ctx, o.policyPaths, o.policyPackNames, o.kubeconfig, o.contextName, o.namespace)
 	if err != nil {
 		return &exitError{code: gate.CodeUsage, msg: err.Error()}
 	}

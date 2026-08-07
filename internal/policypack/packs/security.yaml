@@ -213,3 +213,54 @@
     op: exists
   level: info
   message: the workload does not set automountServiceAccountToken, so an API token is mounted into every container
+
+- id: security.statefulset-privileged
+  match:
+    kind: StatefulSet
+  assert:
+    path: spec.template.spec.containers[*].securityContext.privileged
+    op: notIn
+    values:
+      - "true"
+  level: warning
+  message: a container runs privileged, so it has full access to the host
+
+- id: security.statefulset-host-path-volume
+  match:
+    kind: StatefulSet
+  assert:
+    path: spec.template.spec.volumes[*].hostPath
+    op: notExists
+  level: warning
+  message: a volume mounts a path from the host, so a container can reach the node filesystem
+
+- id: security.daemonset-privileged
+  match:
+    kind: DaemonSet
+  assert:
+    path: spec.template.spec.containers[*].securityContext.privileged
+    op: notIn
+    values:
+      - "true"
+  level: warning
+  message: a container runs privileged, so it has full access to the host
+
+- id: security.daemonset-host-path-volume
+  match:
+    kind: DaemonSet
+  assert:
+    path: spec.template.spec.volumes[*].hostPath
+    op: notExists
+  level: warning
+  message: a volume mounts a path from the host, so a container can reach the node filesystem
+
+- id: security.cronjob-privileged
+  match:
+    kind: CronJob
+  assert:
+    path: spec.jobTemplate.spec.template.spec.containers[*].securityContext.privileged
+    op: notIn
+    values:
+      - "true"
+  level: warning
+  message: a container runs privileged, so it has full access to the host

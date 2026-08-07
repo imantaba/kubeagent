@@ -92,8 +92,13 @@ func TestSweepIsDeterministic(t *testing.T) {
 // pod, workload and container names.
 func TestSweepCarriesNoObjectName(t *testing.T) {
 	rep := Sweep(context.Background(), []Target{
-		{Name: "example-a", Client: fake.NewSimpleClientset(crashingPod("MARKERVALUE"))},
-	}, Options{FailOn: findings.Critical, Workers: 1, ClusterTimeout: 30 * time.Second})
+		{Name: "example-a", Client: fake.NewSimpleClientset(crashingPod("MARKERVALUEA"))},
+		{Name: "example-b", Client: fake.NewSimpleClientset(crashingPod("MARKERVALUEB"))},
+	}, Options{FailOn: findings.Critical, Workers: 2, ClusterTimeout: 30 * time.Second})
+
+	if len(rep.Shared) == 0 {
+		t.Fatalf("rep.Shared is empty — the walk over it below checks nothing unless the fixture actually correlates two clusters")
+	}
 
 	var sb strings.Builder
 	sb.WriteString(rep.SchemaVersion + " " + rep.Verdict)
@@ -106,7 +111,10 @@ func TestSweepCarriesNoObjectName(t *testing.T) {
 	for _, s := range rep.Shared {
 		sb.WriteString(" " + s.Signal + " " + s.Source + " " + strings.Join(s.Clusters, " "))
 	}
-	if strings.Contains(sb.String(), "MARKERVALUE") {
+	if strings.Contains(sb.String(), "MARKERVALUEA") {
+		t.Errorf("report carries an object name: %q", sb.String())
+	}
+	if strings.Contains(sb.String(), "MARKERVALUEB") {
 		t.Errorf("report carries an object name: %q", sb.String())
 	}
 }

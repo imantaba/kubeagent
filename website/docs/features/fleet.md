@@ -457,7 +457,7 @@ Deliberately absent, and not planned for this slice:
 - `--output sarif`, `--policy` and `--baseline` at fleet scope. Each is
   plausible for a later slice; none is needed to answer "which of my
   clusters are broken".
-- **A fleet file** listing clusters with labels, outside a kubeconfig.
-  Selection stays kubeconfig-derived only.
+- **Labels on a fleet-file entry.** An entry carries a name, a context and a
+  kubeconfig path, nothing else — no label, no selector, no grouping to match on.
 - **Per-cluster detail.** `fleet` says which cluster; the operator then runs
   the `scan` or `gate` they already have against that one context.

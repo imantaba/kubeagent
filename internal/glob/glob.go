@@ -5,7 +5,8 @@
 // in the same class as internal/jsonschema, internal/dashboard and
 // internal/baseline. internal/glob/imports_test.go enforces both halves. It has
 // two callers with nothing else in common: a --policy rule matching an image
-// reference, and `kubeagent fleet --match` matching a kubeconfig context name.
+// reference, and `kubeagent fleet --match` matching a row identity — a
+// kubeconfig context name, or the operator's own name from a fleet file.
 package glob
 
 // Match reports whether s matches pattern. Two metacharacters, and only two:

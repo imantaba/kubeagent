@@ -34,7 +34,15 @@ func TestLookupIsExact(t *testing.T) {
 	}
 	// No case folding and no fuzzy match: the name is the join between the
 	// listing and the flag, so a near miss must be refused rather than guessed.
-	for _, miss := range []string{"Reliability", "RELIABILITY", "reliabilit", "", "security"} {
+	// The first four are structurally guaranteed never to become a real pack
+	// name (two case variants, a truncation, and the empty string); "security"
+	// moved out of this list once the security pack was registered, in favor
+	// of "no-such-pack", which proves a distinct property none of the other
+	// four do — that Lookup refuses a well-formed name that is simply not
+	// registered, rather than inventing a pack. internal/cli/policy_test.go's
+	// TestPolicyPacksPrintUnknownNameIsRefused uses the same string for the
+	// same reason, so the two tests agree on what "no such pack" looks like.
+	for _, miss := range []string{"Reliability", "RELIABILITY", "reliabilit", "", "no-such-pack"} {
 		if _, ok := Lookup(miss); ok {
 			t.Errorf("Lookup(%q) = true, want false", miss)
 		}

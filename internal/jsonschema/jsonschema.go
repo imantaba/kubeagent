@@ -31,9 +31,11 @@ const (
 	WatchVersion    = "1.0"
 	BaselineVersion = "1.0"
 
-	// FleetVersion is `kubeagent fleet --output json`. It enters the contract at
-	// 1.0 as the eighth document; no existing surface moves for it.
-	FleetVersion = "1.0"
+	// FleetVersion is `kubeagent fleet --output json`. It entered the contract
+	// at 1.0 as the eighth document. 1.1 adds the optional `shared` property —
+	// the cross-cluster correlation — which is absent from a sweep that found
+	// none, so every 1.0 consumer is unaffected.
+	FleetVersion = "1.1"
 )
 
 // baseID is where the generated files are published. The $id carries the MAJOR

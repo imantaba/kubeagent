@@ -183,7 +183,7 @@
     path: spec.template.spec.securityContext.seccompProfile.type
     op: exists
   level: info
-  message: the pod sets no seccomp profile, so its containers run with syscalls unfiltered
+  message: the pod sets no seccomp profile, so unless every container sets its own, syscalls run unfiltered
 
 - id: security.deploy-seccomp-unconfined
   match:
@@ -194,7 +194,7 @@
     values:
       - Unconfined
   level: warning
-  message: the pod sets its seccomp profile to Unconfined, so syscalls are unfiltered
+  message: the pod sets its seccomp profile to Unconfined, so unless a container overrides it, syscalls are unfiltered
 
 - id: security.deploy-service-account-unset
   match:
@@ -212,7 +212,7 @@
     path: spec.template.spec.automountServiceAccountToken
     op: exists
   level: info
-  message: the workload does not set automountServiceAccountToken, so an API token is mounted into every container
+  message: the workload does not set automountServiceAccountToken, so unless its service account opts out, an API token is mounted into every container
 
 - id: security.statefulset-privileged
   match:

@@ -308,10 +308,12 @@ func TestEverySecurityRuleFiresAndPasses(t *testing.T) {
 			satisfying: hardenedDeployment("ok", hardenedPodSpec(hardenedContainer())),
 		},
 		{
-			id:         "security.deploy-added-capabilities",
-			kind:       "Deployment",
+			id:   "security.deploy-added-capabilities",
+			kind: "Deployment",
+			// The satisfying side adds a capability outside the blocked list, so
+			// it proves the comparison ran rather than that the slot was absent.
 			violating:  hardenedDeployment("sys-admin", hardenedPodSpec(containerWithAddedCapability(t, "SYS_ADMIN"))),
-			satisfying: hardenedDeployment("ok", hardenedPodSpec(hardenedContainer())),
+			satisfying: hardenedDeployment("ok", hardenedPodSpec(containerWithAddedCapability(t, "CHOWN"))),
 		},
 		{
 			id:   "security.deploy-host-path-volume",

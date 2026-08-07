@@ -137,9 +137,8 @@ Paths are shortened below; every `containers[*]` is
 
 ## The security pack — twenty-three rules
 
-Paths are shortened below: `T` is `spec.template.spec`, except for
-`security.cronjob-privileged`, whose pod template lives one level deeper at
-`spec.jobTemplate.spec.template.spec`.
+Paths are shortened below: `T` is `spec.template.spec`. The one `CronJob` rule
+spells its path in full, because its pod template lives one level deeper.
 
 | id | kind | assertion | level |
 | --- | --- | --- | --- |
@@ -165,7 +164,7 @@ Paths are shortened below: `T` is `spec.template.spec`, except for
 | `security.statefulset-host-path-volume` | StatefulSet | `T.volumes[*].hostPath` notExists | warning |
 | `security.daemonset-privileged` | DaemonSet | `T.containers[*].securityContext.privileged` notIn `true` | warning |
 | `security.daemonset-host-path-volume` | DaemonSet | `T.volumes[*].hostPath` notExists | warning |
-| `security.cronjob-privileged` | CronJob | `containers[*].securityContext.privileged` notIn `true` | warning |
+| `security.cronjob-privileged` | CronJob | `spec.jobTemplate.spec.template.spec.containers[*].securityContext.privileged` notIn `true` | warning |
 
 ### Why four properties get two rules each
 
@@ -201,12 +200,17 @@ an engine change, not a pack change.
    a workload kind. `kubeagent scan`'s own detectors still see that pod; the
    pack does not. A controller-owned pod would otherwise repeat its workload's
    violation once per replica.
-2. **Hardening set at *pod* level does not satisfy a *container*-level rule.**
-   The grammar has no OR, so a Deployment that sets `runAsNonRoot` once in
-   `spec.template.spec.securityContext` still reports
-   `security.deploy-run-as-non-root-unset` for each container. This is the
-   pack's most likely false positive. If your workloads harden at pod level,
-   fork the pack and move those paths.
+2. **Hardening set at one level does not satisfy a rule written for the
+   other.** The grammar has no OR, so each path names exactly one level and
+   cannot also accept the other. Both directions are real. A Deployment that
+   sets `runAsNonRoot` once in `spec.template.spec.securityContext` still
+   reports `security.deploy-run-as-non-root-unset` for each container. And a
+   Deployment whose containers each set their own `seccompProfile` still
+   reports `security.deploy-seccomp-unset`, because that pair reads the
+   pod-level field — Kubernetes accepts a seccomp profile at either level, so
+   that workload is hardened and the rule still fires. This is the pack's most
+   likely source of false positives. If your workloads harden at the other
+   level, fork the pack and move those paths.
 3. **`capabilities.drop` cannot be required to include `ALL`.** That needs an
    existential quantifier — "some element equals ALL" — and `[*]` is
    universally quantified with no existential counterpart. The pack checks
@@ -215,9 +219,13 @@ an engine change, not a pack change.
 4. **RBAC bindings, service account objects and Secrets are unreachable.**
    None is a kind a policy may select. A workload's *reference* to a service
    account is reachable, and `security.deploy-service-account-unset` is that
-   rule; the object it names is not. `Secret` is absent deliberately — a
-   violation carries evidence, and evidence drawn from a Secret would be
-   secret material rendered into a report, a JSON document and a SARIF upload.
+   rule; the object it names is not.
+   `security.deploy-automount-token-unset` is bounded the same way: it reads
+   the workload's own field, and cannot see that the service account behind it
+   may already have opted out.
+   `Secret` is absent deliberately — a violation carries evidence, and
+   evidence drawn from a Secret would be secret material rendered into a
+   report, a JSON document and a SARIF upload.
 5. **The added-capability list is curated, not exhaustive.** A capability
    outside the seven passes. Fork the pack to extend it.
 

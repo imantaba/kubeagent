@@ -10,8 +10,8 @@ there is no `--fix` path from a policy, and `--policy` grants kubeagent no
 access it does not already have — the kinds a rule may select are exactly the
 kinds a plain `kubeagent scan` already reads.
 
-Writing rules from scratch is not the only way in: kubeagent also ships a
-curated **policy pack** — a rule set compiled into the binary, evaluated by
+Writing rules from scratch is not the only way in: kubeagent also ships
+curated **policy packs** — rule sets compiled into the binary, evaluated by
 this same engine, with no file of your own to write. See [Policy
 packs](policy-packs.md).
 

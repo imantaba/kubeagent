@@ -187,8 +187,10 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   calls the per-cluster `gate` evaluation it reuses already makes against
   that one context — and no `--fix` path. Separately: it makes **no LLM
   call**. It must never import `internal/remediate` or `internal/explain`.
-  Its report names kubeconfig context names and issue kinds — never a node,
-  namespace, pod or workload name
+  Its report names kubeconfig context names, issue kinds, and the API resource
+  names of refused reads — never a node, namespace, pod or workload name, and
+  never a blind spot's `Reason`, which is a redacted error string rather than a
+  bounded vocabulary
   (see [website/docs/features/fleet.md](website/docs/features/fleet.md)).
 - **Untrusted API text is sanitized at ingress, not at each renderer.** Every
   value read from a field the API server does not validate — `waiting.Message`,

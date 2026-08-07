@@ -12,12 +12,16 @@
 // LLM call. The package accordingly imports neither internal/remediate nor
 // internal/explain, which internal/fleet/imports_test.go enforces.
 //
-// The report names kubeconfig context names and issue kinds. It never names a
-// node, namespace, pod or workload, and that is structural rather than
-// filtered: a summary is counts plus issue kinds, a shape an object name cannot
-// fit into. Nor does it ever carry a kubeconfig path — the one accepted place a
-// path may appear is stderr, from internal/cli, and this package writes no
-// errors of its own.
+// The report names kubeconfig context names, issue kinds, and the API resource
+// names of refused reads. It never names a node, namespace, pod or workload,
+// and that is structural rather than filtered: a summary is counts plus issue
+// kinds, and a correlation is context names plus a signal drawn from one of two
+// closed vocabularies — shapes an object name cannot fit into. In particular a
+// correlation reads gate.Blindspot.Resource and never gate.Blindspot.Reason,
+// which is a redacted error string rather than a bounded vocabulary. Nor does
+// the report ever carry a kubeconfig path — the one accepted place a path may
+// appear is stderr, from internal/cli, and this package writes no errors of its
+// own.
 package fleet
 
 import (

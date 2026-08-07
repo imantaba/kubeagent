@@ -16,7 +16,7 @@
 // the selection source gave one, the kubeconfig context otherwise — plus issue
 // kinds and the API resource names of refused reads. It never names a node,
 // namespace, pod or workload, and that is structural rather than filtered: a
-// summary is counts plus issue kinds, and a correlation is context names plus
+// summary is counts plus issue kinds, and a correlation is row identities plus
 // a signal drawn from one of two closed vocabularies — shapes an object name
 // cannot fit into. In particular a correlation reads gate.Blindspot.Resource
 // and never gate.Blindspot.Reason, which is a redacted error string rather

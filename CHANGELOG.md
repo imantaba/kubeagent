@@ -20,7 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--kubeconfig` becomes the fallback and `--match` filters the row identity.
   `fleet` moves to schema version 1.2 (added the optional `name` on a cluster
   summary and on an unreachable cluster, both `omitempty`), so a sweep selected
-  from a kubeconfig encodes neither key and its document is unchanged.
+  from a kubeconfig encodes neither key, and every existing consumer is
+  unaffected.
 
 ### Fixed
 

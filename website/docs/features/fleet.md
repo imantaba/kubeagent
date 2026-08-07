@@ -207,7 +207,7 @@ documents](json-schema.md):
 
 ```json
 {
-  "schemaVersion": "1.1",
+  "schemaVersion": "1.2",
   "verdict": "inconclusive",
   "exitCode": 2,
   "failOn": "critical",

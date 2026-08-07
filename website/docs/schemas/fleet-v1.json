@@ -16,6 +16,9 @@
         "info": {
           "type": "integer"
         },
+        "name": {
+          "type": "string"
+        },
         "topIssues": {
           "items": {
             "type": "string"
@@ -69,6 +72,9 @@
       "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
       "properties": {
         "context": {
+          "type": "string"
+        },
+        "name": {
           "type": "string"
         },
         "reason": {

@@ -12,7 +12,7 @@ import (
 
 func sampleReport() Report {
 	rep := Report{
-		SchemaVersion: "1.1",
+		SchemaVersion: "1.2",
 		FailOn:        findings.Critical,
 		Clusters: []ClusterSummary{
 			{Context: "example-staging-2", Verdict: "inconclusive", Warning: 1, Blindspots: 2},

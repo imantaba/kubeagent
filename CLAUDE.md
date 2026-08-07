@@ -414,7 +414,7 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   finding only by naming the field, by not naming it, or by bypassing syntax,
   and the fourth test checks all three
   (see [website/docs/features/known-issues.md](website/docs/features/known-issues.md)).
-- **Post-1.0 — curated policy packs, slice 1 has shipped:** the second half
+- **Post-1.0 — curated policy packs, slice 1 has shipped (v1.9.0):** the second half
   of the known-issues item's "curated community detector library" ambition
   now has a first form — not new Go detector code, but `kubeagent policy
   packs`: a kubeagent-curated `reliability` pack of fourteen rules, compiled

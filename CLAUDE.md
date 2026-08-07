@@ -426,7 +426,29 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   stays 1.2, `gate` stays 1.1), and ships no `critical` rule, so adding it to
   a pipeline that passed yesterday cannot fail it today
   (see [website/docs/features/policy-packs.md](website/docs/features/policy-packs.md)).
+- **Post-1.0 — fleet-scale, slice 2 has shipped (v1.10.0):** cross-cluster
+  correlation. Under the per-cluster table, `kubeagent fleet` now names the
+  issue kinds and the refused reads present in two or more of the **judged**
+  clusters, most widespread first — the answer to "is this one problem or
+  five" that a one-row-per-cluster view cannot give. It costs no new cluster
+  read: `correlate` is a pure fold over values the sweep had already computed
+  in memory. Separately: it makes **no LLM call**. Both axes come from
+  bounded vocabularies — `findings.Finding.Issue` and
+  `gate.Blindspot.Resource` — and a `Blindspot`'s `Reason` is never read,
+  because it is a redacted error string rather than a bounded one, which is
+  what keeps the report's promise to name no node, namespace, pod or workload
+  intact. Evidence is a **set**: a kind hitting four hundred pods in one
+  cluster is still one cluster, so a single noisy cluster cannot manufacture a
+  fleet-wide signal. The denominator is the count of clusters judged, never
+  selected — an unreachable cluster produced no verdict and could not have
+  contributed a signal — and the header word "judged" is constant, never
+  conditional. An empty section is omitted entirely, heading included. It
+  changes no verdict: `decide` is untouched, so a sweep still cannot disagree
+  with a single-cluster `gate` about the same cluster. `fleet` moves to schema
+  version **1.1** (added `shared`, `omitempty`), and a sweep that correlates
+  nothing encodes no key
+  (see [website/docs/features/fleet.md](website/docs/features/fleet.md)).
   The remaining post-1.0 work is the rest of fleet-scale — selection from
-  something other than a kubeconfig — and the rest of this item's second
-  half: security and cost packs, and a pack contributed by someone other
-  than kubeagent itself.
+  something other than a kubeconfig — and the rest of the curated-packs
+  item's second half: security and cost packs, and a pack contributed by
+  someone other than kubeagent itself.

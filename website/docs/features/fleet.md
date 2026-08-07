@@ -211,17 +211,19 @@ Under the table, `fleet` names the issue kinds and the refused reads that
 appear in **two or more** of the judged clusters, most widespread first:
 
 ```text
-FLEET  3 clusters, 1 failing, 0 unreachable
+FLEET  5 clusters, 3 failing, 1 unreachable
 
-CLUSTER       VERDICT       CRIT  WARN  INFO  TOP ISSUES
-example-eu-1  inconclusive     2     1     0  ImagePullBackOff, OOMKilled (1 blind spot)
-example-us-3  fail             1     0     0  ImagePullBackOff
-example-eu-2  pass             0     1     0  OOMKilled
+CLUSTER    VERDICT       CRIT  WARN  INFO  TOP ISSUES
+example-e  unreachable                     connecting to the cluster
+example-a  inconclusive     2     0     0  ImagePullBackOff, OOMKilled (1 blind spot)
+example-b  fail             2     0     0  ImagePullBackOff, OOMKilled
+example-c  fail             1     0     0  OOMKilled
+example-d  fail             1     0     0  OOMKilled
 
-SHARED ISSUES  in 2 or more of 3 judged clusters
+SHARED ISSUES  in 2 or more of 4 judged clusters
 
-  2/3  ImagePullBackOff  example-eu-1, example-us-3
-  2/3  OOMKilled         example-eu-1, example-eu-2
+  4/4  OOMKilled         example-a, example-b, example-c, +1 more
+  2/4  ImagePullBackOff  example-a, example-b
 
 verdict: inconclusive (exit 2)
 ```
@@ -229,7 +231,8 @@ verdict: inconclusive (exit 2)
 There is no `SHARED BLIND SPOTS` section above because only one cluster has a
 blind spot, and one cluster is not a correlation. A section with no entries is
 omitted entirely, heading included — a heading over nothing reads as a failed
-render.
+render. `example-e` never answered, so the sweep judged four of the five
+clusters it selected and the denominator is four.
 
 Both sections appear in the JSON document as one `shared` array, each entry
 tagged with which vocabulary its signal came from:
@@ -237,27 +240,29 @@ tagged with which vocabulary its signal came from:
 ```json
   "shared": [
     {
-      "signal": "ImagePullBackOff",
-      "source": "issue",
-      "clusters": [
-        "example-eu-1",
-        "example-us-3"
-      ]
-    },
-    {
       "signal": "OOMKilled",
       "source": "issue",
       "clusters": [
-        "example-eu-1",
-        "example-eu-2"
+        "example-a",
+        "example-b",
+        "example-c",
+        "example-d"
+      ]
+    },
+    {
+      "signal": "ImagePullBackOff",
+      "source": "issue",
+      "clusters": [
+        "example-a",
+        "example-b"
       ]
     }
   ]
 ```
 
 The text names at most three clusters per line and then counts the rest
-(`+2 more`). The document names every one: a `jq` filter asking which clusters
-share a signal must get the answer, not a signpost.
+(`+1 more`, above). The document names every one: a `jq` filter asking which
+clusters share a signal must get the answer, not a signpost.
 
 A repeated blind spot — `source` `blindspot`, rendered under `SHARED BLIND
 SPOTS` — is often the more actionable of the two: it usually means one RBAC

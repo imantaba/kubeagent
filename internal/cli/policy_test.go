@@ -238,12 +238,18 @@ func TestPolicyPacksListsWhatShips(t *testing.T) {
 		t.Fatalf("runPolicyPacks: %v", err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "reliability") {
-		t.Errorf("the listing does not name the reliability pack:\n%s", out)
+	// Every shipped pack must appear. Asserting one pack would still pass with
+	// a second one missing from the registry, which is the failure this is for.
+	for _, want := range []string{"reliability", "security"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the listing does not name the %s pack:\n%s", want, out)
+		}
 	}
-	// The count comes from loading, so it cannot drift from the file.
-	if !strings.Contains(out, "14 rules") {
-		t.Errorf("the listing does not carry a rule count:\n%s", out)
+	// The counts come from loading, so they cannot drift from the files.
+	for _, want := range []string{"14 rules", "23 rules"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the listing does not carry the %q count:\n%s", want, out)
+		}
 	}
 	if !strings.Contains(out, "kubeagent policy packs --print") {
 		t.Errorf("the listing does not say how to print one:\n%s", out)
@@ -274,8 +280,10 @@ func TestPolicyPacksPrintUnknownNameIsRefused(t *testing.T) {
 	if !strings.Contains(err.Error(), `"no-such-pack"`) {
 		t.Errorf("the error does not quote the name given: %v", err)
 	}
-	if !strings.Contains(err.Error(), "reliability") {
-		t.Errorf("the error does not name the packs that do exist: %v", err)
+	for _, want := range []string{"reliability", "security"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error does not name the %s pack, so it does not name the packs that do exist: %v", want, err)
+		}
 	}
 	if buf.Len() != 0 {
 		t.Errorf("a refused name still wrote to stdout: %q", buf.String())

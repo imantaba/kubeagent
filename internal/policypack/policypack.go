@@ -51,6 +51,11 @@ var packs = []Pack{
 		Summary: "probes, resource requests and limits, replica counts, disruption budgets and image tags",
 		file:    "packs/reliability.yaml",
 	},
+	{
+		Name:    "security",
+		Summary: "privileged containers, host namespaces and paths, root filesystems, capabilities and service account tokens",
+		file:    "packs/security.yaml",
+	},
 }
 
 // All returns every pack, sorted by name. The slice is fresh, so a caller may

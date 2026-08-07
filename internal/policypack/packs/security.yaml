@@ -1,0 +1,215 @@
+# kubeagent security pack.
+#
+# Every rule here is about a workload's own hardening: what a container may do
+# to its node, whether it runs as root, whether its root filesystem is
+# writable, and which of the node's namespaces the pod shares.
+#
+# Where a field's absence is itself unsafe there are TWO rules — an `exists`
+# rule at info for the unset case, and a value rule at warning for the
+# explicitly bad one. Every operator except `exists` and `notExists` skips an
+# absent field, so one rule alone could only ever catch one of the two. Where
+# absence is the safe default — privileged, hostNetwork, an added capability —
+# one value rule is enough, and a second would accuse a compliant workload.
+#
+# No rule is `critical`, deliberately. `gate` fails on critical by default, so
+# adding this pack to a pipeline must not fail a build that passed yesterday.
+# An operator who wants these to block raises --fail-on warning.
+#
+# Three things this pack cannot say, for three properties the grammar does not
+# have. With no existential quantifier it cannot require that
+# `capabilities.drop` includes ALL. With no OR it cannot accept a hardening
+# field set at pod level in place of the container-level rule, so a workload
+# hardened only at pod level will report violations. And RBAC bindings,
+# service account objects and Secrets are not kinds a policy may select at
+# all, so nothing here can reach them.
+#
+# Rule ids are namespaced with the pack name so they cannot collide with an
+# operator's own rules when both are given.
+
+- id: security.deploy-privileged
+  match:
+    kind: Deployment
+  assert:
+    path: spec.template.spec.containers[*].securityContext.privileged
+    op: notIn
+    values:
+      - "true"
+  level: warning
+  message: a container runs privileged, so it has full access to the host
+
+- id: security.deploy-privilege-escalation-unset
+  match:
+    kind: Deployment
+  assert:
+    path: spec.template.spec.containers[*].securityContext.allowPrivilegeEscalation
+    op: exists
+  level: info
+  message: a container does not set allowPrivilegeEscalation, so the default lets a process gain more privileges than its parent
+
+- id: security.deploy-privilege-escalation
+  match:
+    kind: Deployment
+  assert:
+    path: spec.template.spec.containers[*].securityContext.allowPrivilegeEscalation
+    op: notIn
+    values:
+      - "true"
+  level: warning
+  message: a container explicitly allows privilege escalation
+
+- id: security.deploy-run-as-non-root-unset
+  match:
+    kind: Deployment
+  assert:
+    path: spec.template.spec.containers[*].securityContext.runAsNonRoot
+    op: exists
+  level: info
+  message: a container does not set runAsNonRoot, so nothing stops it running as root
+
+- id: security.deploy-run-as-non-root
+  match:
+    kind: Deployment
+  assert:
+    path: spec.template.spec.containers[*].securityContext.runAsNonRoot
+    op: notIn
+    values:
+      - "false"
+  level: warning
+  message: a container sets runAsNonRoot to false, so it may run as root
+
+- id: security.deploy-run-as-root-uid
+  match:
+    kind: Deployment
+  assert:
+    path: spec.template.spec.containers[*].securityContext.runAsUser
+    op: gt
+    values:
+      - "0"
+  level: warning
+  message: a container is pinned to user id 0, which is root
+
+- id: security.deploy-read-only-root-unset
+  match:
+    kind: Deployment
+  assert:
+    path: spec.template.spec.containers[*].securityContext.readOnlyRootFilesystem
+    op: exists
+  level: info
+  message: a container does not set readOnlyRootFilesystem, so its root filesystem is writable
+
+- id: security.deploy-read-only-root
+  match:
+    kind: Deployment
+  assert:
+    path: spec.template.spec.containers[*].securityContext.readOnlyRootFilesystem
+    op: notIn
+    values:
+      - "false"
+  level: warning
+  message: a container sets readOnlyRootFilesystem to false, so its root filesystem is writable
+
+- id: security.deploy-added-capabilities
+  match:
+    kind: Deployment
+  assert:
+    path: spec.template.spec.containers[*].securityContext.capabilities.add[*]
+    op: notIn
+    values:
+      - ALL
+      - SYS_ADMIN
+      - SYS_MODULE
+      - SYS_PTRACE
+      - NET_ADMIN
+      - NET_RAW
+      - DAC_READ_SEARCH
+  level: warning
+  message: a container adds a Linux capability that grants host-level power
+
+- id: security.deploy-host-path-volume
+  match:
+    kind: Deployment
+  assert:
+    path: spec.template.spec.volumes[*].hostPath
+    op: notExists
+  level: warning
+  message: a volume mounts a path from the host, so a container can reach the node filesystem
+
+- id: security.deploy-host-port
+  match:
+    kind: Deployment
+  assert:
+    path: spec.template.spec.containers[*].ports[*].hostPort
+    op: notExists
+  level: warning
+  message: a container binds a port directly on the node
+
+- id: security.deploy-host-network
+  match:
+    kind: Deployment
+  assert:
+    path: spec.template.spec.hostNetwork
+    op: notIn
+    values:
+      - "true"
+  level: warning
+  message: the pod shares the host network namespace, so it bypasses network policy
+
+- id: security.deploy-host-pid
+  match:
+    kind: Deployment
+  assert:
+    path: spec.template.spec.hostPID
+    op: notIn
+    values:
+      - "true"
+  level: warning
+  message: the pod shares the host process namespace, so it can see and signal node processes
+
+- id: security.deploy-host-ipc
+  match:
+    kind: Deployment
+  assert:
+    path: spec.template.spec.hostIPC
+    op: notIn
+    values:
+      - "true"
+  level: warning
+  message: the pod shares the host IPC namespace, so it can reach shared memory on the node
+
+- id: security.deploy-seccomp-unset
+  match:
+    kind: Deployment
+  assert:
+    path: spec.template.spec.securityContext.seccompProfile.type
+    op: exists
+  level: info
+  message: the pod sets no seccomp profile, so its containers run with syscalls unfiltered
+
+- id: security.deploy-seccomp-unconfined
+  match:
+    kind: Deployment
+  assert:
+    path: spec.template.spec.securityContext.seccompProfile.type
+    op: notIn
+    values:
+      - Unconfined
+  level: warning
+  message: the pod sets its seccomp profile to Unconfined, so syscalls are unfiltered
+
+- id: security.deploy-service-account-unset
+  match:
+    kind: Deployment
+  assert:
+    path: spec.template.spec.serviceAccountName
+    op: exists
+  level: info
+  message: the workload names no service account, so it uses the namespace default
+
+- id: security.deploy-automount-token-unset
+  match:
+    kind: Deployment
+  assert:
+    path: spec.template.spec.automountServiceAccountToken
+    op: exists
+  level: info
+  message: the workload does not set automountServiceAccountToken, so an API token is mounted into every container

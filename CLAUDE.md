@@ -463,13 +463,13 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   version **1.1** (added `shared`, `omitempty`), and a sweep that correlates
   nothing encodes no key
   (see [website/docs/features/fleet.md](website/docs/features/fleet.md)).
-  Slice 3 has since shipped, and **fleet-scale is complete**: `kubeagent
-  fleet --fleet-file <path>` selects the clusters to sweep from a YAML file
-  instead of a kubeconfig's contexts, so a fleet can span several
+  Slice 3 has since shipped (v1.11.0), and **fleet-scale is complete**:
+  `kubeagent fleet --fleet-file <path>` selects the clusters to sweep from a
+  YAML file instead of a kubeconfig's contexts, so a fleet can span several
   kubeconfigs and each row can carry a name the operator chose.
   `internal/fleetfile` decodes it under `internal/fleet`'s wall plus one
-  field `internal/fleet` itself cannot carry: no `k8s.io/client-go`, so
-  holding no client is structural rather than stated. Selection comes from
+  `internal/fleet` itself cannot carry: neither `k8s.io/client-go` nor
+  `internal/cluster`, so holding no client is structural rather than stated. Selection comes from
   the file; credentials still come from the kubeconfigs it points at, and
   the format cannot express one — an entry has three string fields decoded
   strictly, so `server:`, `token:` and `certificate-authority-data:` are

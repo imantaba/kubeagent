@@ -11,6 +11,12 @@ import (
 // appear in it. "unreachable" is 11 and "inconclusive" is 12.
 const verdictWidth = 12
 
+// maxNamedClusters caps the context names a shared-signal line spells out
+// before it counts the rest. Three, on the same reasoning that caps TopIssues:
+// the line has to stay readable when a signal spans three hundred clusters, and
+// the document carries every name for whoever needs them all.
+const maxNamedClusters = 3
+
 // RenderJSON writes the report as the versioned JSON document.
 //
 // It keeps Unreachable as its own array rather than interleaving it, because a
@@ -77,6 +83,10 @@ func RenderText(w io.Writer, rep Report) error {
 		}
 	}
 
+	if err := renderShared(w, rep); err != nil {
+		return err
+	}
+
 	_, err := fmt.Fprintf(w, "\nverdict: %s (exit %d)\n", rep.Verdict, rep.Code)
 	return err
 }
@@ -112,4 +122,81 @@ func detailOf(c ClusterSummary) string {
 		return blind
 	}
 	return detail + " " + blind
+}
+
+// renderShared writes the two correlation sections, between the cluster table
+// and the verdict line.
+//
+// A section with no entries is omitted entirely, heading included: a heading
+// over nothing reads as a failed render. The signal column is padded to one
+// width computed across both sections rather than per section, because two
+// sections that nearly line up read as a bug.
+//
+// The verdict line's own leading newline supplies the blank line after the last
+// row here, so this function emits no trailing blank of its own.
+func renderShared(w io.Writer, rep Report) error {
+	judged := len(rep.Clusters)
+
+	var issues, blindspots []Shared
+	countWidth, signalWidth := 0, 0
+	for _, s := range rep.Shared {
+		if s.Source == SourceIssue {
+			issues = append(issues, s)
+		} else {
+			blindspots = append(blindspots, s)
+		}
+		if n := len(countCell(s, judged)); n > countWidth {
+			countWidth = n
+		}
+		if n := len(s.Signal); n > signalWidth {
+			signalWidth = n
+		}
+	}
+
+	for _, section := range []struct {
+		title   string
+		entries []Shared
+	}{
+		{"SHARED ISSUES", issues},
+		{"SHARED BLIND SPOTS", blindspots},
+	} {
+		if len(section.entries) == 0 {
+			continue
+		}
+		if _, err := fmt.Fprintf(w, "\n%s  in %d or more of %d judged clusters\n\n",
+			section.title, minShared, judged); err != nil {
+			return err
+		}
+		for _, s := range section.entries {
+			line := fmt.Sprintf("  %*s  %-*s  %s",
+				countWidth, countCell(s, judged),
+				signalWidth, s.Signal,
+				namedClusters(s.Clusters))
+			if _, err := fmt.Fprintln(w, strings.TrimRight(line, " ")); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// countCell is the N/M cell: how many judged clusters showed this signal, out
+// of how many were judged.
+//
+// The denominator is judged clusters and not selected ones. An unreachable
+// cluster produced no verdict and so contributed no evidence, and counting it
+// would make a 2-of-2 correlation read as 2-of-5 — understating exactly the
+// thing the section exists to surface.
+func countCell(s Shared, judged int) string {
+	return fmt.Sprintf("%d/%d", len(s.Clusters), judged)
+}
+
+// namedClusters spells out at most maxNamedClusters context names and then says
+// how many it left out.
+func namedClusters(contexts []string) string {
+	if len(contexts) <= maxNamedClusters {
+		return strings.Join(contexts, ", ")
+	}
+	return fmt.Sprintf("%s, +%d more",
+		strings.Join(contexts[:maxNamedClusters], ", "), len(contexts)-maxNamedClusters)
 }

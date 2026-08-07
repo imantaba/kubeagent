@@ -435,7 +435,7 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   of the known-issues item's "curated community detector library" ambition
   now has a first form — not new Go detector code, but `kubeagent policy
   packs`: a kubeagent-curated `reliability` pack of fourteen rules and, since
-  slice 2, a `security` pack of twenty-three rules over workload pod
+  slice 2 (v1.12.0), a `security` pack of twenty-three rules over workload pod
   templates, both compiled into `internal/policypack` and evaluated by the
   existing `--policy` engine via `scan --policy-pack`/`gate --policy-pack`.
   The `security` pack pairs an `info` "field unset" rule with a `warning`

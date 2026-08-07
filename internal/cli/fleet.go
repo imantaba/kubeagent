@@ -12,6 +12,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/cluster"
 	"github.com/imantaba/kubeagent/internal/findings"
 	"github.com/imantaba/kubeagent/internal/fleet"
+	"github.com/imantaba/kubeagent/internal/fleetfile"
 	"github.com/imantaba/kubeagent/internal/gate"
 	"github.com/imantaba/kubeagent/internal/glob"
 )
@@ -23,6 +24,7 @@ type fleetOptions struct {
 	contexts       []string
 	allContexts    bool
 	match          string
+	fleetFile      string
 	failOn         string
 	workers        int
 	clusterTimeout time.Duration
@@ -35,6 +37,7 @@ func bindFleetFlags(cmd *cobra.Command, o *fleetOptions) {
 	cmd.Flags().StringArrayVar(&o.contexts, "context", nil, "kubeconfig context to sweep (repeatable)")
 	cmd.Flags().BoolVar(&o.allContexts, "all-contexts", false, "sweep every context the kubeconfig defines")
 	cmd.Flags().StringVar(&o.match, "match", "", "with --all-contexts: only contexts whose name matches this glob")
+	cmd.Flags().StringVar(&o.fleetFile, "fleet-file", "", "read the clusters to sweep from a file")
 	cmd.Flags().StringVar(&o.failOn, "fail-on", "critical", "severity that fails the sweep: critical, warning or info")
 	cmd.Flags().IntVar(&o.workers, "workers", envInt("KUBEAGENT_FLEET_WORKERS", 8), "clusters read concurrently")
 	cmd.Flags().DurationVar(&o.clusterTimeout, "cluster-timeout", envDuration("KUBEAGENT_FLEET_CLUSTER_TIMEOUT", 60*time.Second), "per-cluster budget")
@@ -58,6 +61,18 @@ func parseFleetFlags(args []string) (fleetOptions, error) {
 
 // validateFleetOptions checks the values that do not need a kubeconfig.
 func validateFleetOptions(o fleetOptions) error {
+	// --fleet-file names the clusters. A flag that also names them is refused
+	// rather than silently losing to one of them; a flag that says how to reach
+	// them (--kubeconfig, the fallback) or which subset to take (--match) is
+	// not in conflict at all.
+	if o.fleetFile != "" {
+		switch {
+		case len(o.contexts) > 0:
+			return &exitError{code: gate.CodeUsage, msg: "--fleet-file and --context cannot be combined: the file names the clusters to sweep"}
+		case o.allContexts:
+			return &exitError{code: gate.CodeUsage, msg: "--fleet-file and --all-contexts cannot be combined: the file names the clusters to sweep"}
+		}
+	}
 	if o.output != "text" && o.output != "json" {
 		return &exitError{code: gate.CodeUsage, msg: fmt.Sprintf("unsupported output format %q: use text or json", o.output)}
 	}
@@ -91,7 +106,7 @@ func selectContexts(all []cluster.ContextInfo, wanted []string, allContexts bool
 
 	switch {
 	case match != "" && !allContexts:
-		return nil, usage("--match needs --all-contexts: it filters the contexts a sweep would otherwise take all of")
+		return nil, usage("--match needs --all-contexts or --fleet-file: it filters the clusters a sweep would otherwise take all of")
 	case len(wanted) > 0 && allContexts:
 		return nil, usage("--context and --all-contexts cannot be combined: pick the contexts or take them all")
 	}
@@ -132,6 +147,77 @@ func selectContexts(all []cluster.ContextInfo, wanted []string, allContexts bool
 	return selected, nil
 }
 
+// readFleetFile reads and loads the fleet file.
+//
+// internal/cli owns the read and owns naming the path, on the precedent
+// readPolicyFile set for --policy. Every failure is exit 4: bad input,
+// discovered before any cluster was touched. The path reaches stderr and
+// nowhere else — it never crosses into internal/fleetfile's errors and never
+// into internal/fleet at all.
+func readFleetFile(path string) ([]fleetfile.Entry, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, &exitError{code: gate.CodeUsage, msg: fmt.Sprintf("%s: %v", namePath("--fleet-file", path), err)}
+	}
+	entries, err := fleetfile.Load(data)
+	if err != nil {
+		return nil, &exitError{code: gate.CodeUsage, msg: fmt.Sprintf("%s: %v", namePath("--fleet-file", path), err)}
+	}
+	return entries, nil
+}
+
+// selectEntries filters a fleet file's entries by --match and refuses an empty
+// result, the same ruling selectContexts makes and for the same reason: an
+// empty sweep reporting "pass" is the worst possible answer, because it looks
+// like good news.
+//
+// It matches the row identity rather than the context, because the identity is
+// what the operator wrote and what the report will show. It keeps file order
+// rather than sorting: a kubeconfig's context list has no order anyone chose,
+// but a fleet file does.
+func selectEntries(entries []fleetfile.Entry, match string) ([]fleetfile.Entry, error) {
+	if match == "" {
+		return entries, nil
+	}
+	var selected []fleetfile.Entry
+	for _, e := range entries {
+		if glob.Match(match, e.Name) {
+			selected = append(selected, e)
+		}
+	}
+	if len(selected) == 0 {
+		return nil, &exitError{code: gate.CodeUsage, msg: fmt.Sprintf("no cluster matches --match %q", match)}
+	}
+	return selected, nil
+}
+
+// buildFleetFileTargets connects to each entry's cluster.
+//
+// An entry's own kubeconfig wins; --kubeconfig is the fallback for entries that
+// name none, and an empty fallback lets client-go take $KUBECONFIG and then the
+// default location, exactly as every other command does.
+//
+// A client that cannot be built is fatal, the same ruling buildFleetTargets
+// makes: cluster.NewClient does no network I/O, so a failure here is a
+// configuration defect and never a reachability event — it must not become a
+// third Unreachable.Reason. This is the one place a kubeconfig path may be
+// named, on stderr, and it is why no path ever reaches internal/fleet.
+func buildFleetFileTargets(fallbackKubeconfig string, entries []fleetfile.Entry) ([]fleet.Target, error) {
+	targets := make([]fleet.Target, 0, len(entries))
+	for _, e := range entries {
+		kubeconfig := e.Kubeconfig
+		if kubeconfig == "" {
+			kubeconfig = fallbackKubeconfig
+		}
+		client, err := cluster.NewClient(kubeconfig, e.Context)
+		if err != nil {
+			return nil, &exitError{code: gate.CodeUsage, msg: fmt.Sprintf("connecting to cluster %q: %v", e.Name, err)}
+		}
+		targets = append(targets, fleet.Target{Name: e.Name, Context: e.Context, Client: client})
+	}
+	return targets, nil
+}
+
 // buildFleetTargets connects to each selected context.
 //
 // A client that cannot be built is fatal, the same ruling buildTargets makes for
@@ -152,21 +238,41 @@ func buildFleetTargets(kubeconfig string, names []string) ([]fleet.Target, error
 	return targets, nil
 }
 
+// fleetTargets resolves the selection to connected clusters, from whichever
+// source the operator chose. The two sources meet here and nowhere deeper:
+// fleet.Sweep takes []Target and never learns where they came from, which is
+// what keeps a fleet-file sweep and a kubeconfig sweep the same evaluation.
+func fleetTargets(o fleetOptions) ([]fleet.Target, error) {
+	if o.fleetFile != "" {
+		entries, err := readFleetFile(o.fleetFile)
+		if err != nil {
+			return nil, err
+		}
+		selected, err := selectEntries(entries, o.match)
+		if err != nil {
+			return nil, err
+		}
+		return buildFleetFileTargets(o.kubeconfig, selected)
+	}
+
+	all, err := cluster.Contexts(o.kubeconfig)
+	if err != nil {
+		return nil, &exitError{code: gate.CodeUsage, msg: err.Error()}
+	}
+	names, err := selectContexts(all, o.contexts, o.allContexts, o.match)
+	if err != nil {
+		return nil, err
+	}
+	return buildFleetTargets(o.kubeconfig, names)
+}
+
 func runFleetOpts(o fleetOptions) error {
 	if err := validateFleetOptions(o); err != nil {
 		return err
 	}
 	level, _ := findings.Parse(o.failOn) // validated just above
 
-	all, err := cluster.Contexts(o.kubeconfig)
-	if err != nil {
-		return &exitError{code: gate.CodeUsage, msg: err.Error()}
-	}
-	names, err := selectContexts(all, o.contexts, o.allContexts, o.match)
-	if err != nil {
-		return err
-	}
-	targets, err := buildFleetTargets(o.kubeconfig, names)
+	targets, err := fleetTargets(o)
 	if err != nil {
 		return err
 	}
@@ -196,11 +302,13 @@ func newFleetCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "fleet",
 		Short: "Sweep many clusters and report one verdict per cluster",
-		Long: "Sweep every selected kubeconfig context in bounded parallel, running the same\n" +
-			"evaluation `kubeagent gate` runs against each, and print one row per cluster\n" +
-			"worst first. Read-only toward every cluster (get and list only, no write of any\n" +
-			"kind), and it makes no model call — two separate promises. The report names\n" +
-			"contexts and issue kinds — never a node, namespace, pod or workload.",
+		Long: "Sweep every selected cluster in bounded parallel, running the same evaluation\n" +
+			"`kubeagent gate` runs against each, and print one row per cluster worst first.\n" +
+			"Clusters come from the kubeconfig's contexts, or from a file named by\n" +
+			"--fleet-file when a fleet spans several kubeconfigs. Read-only toward every\n" +
+			"cluster (get and list only, no write of any kind), and it makes no model call —\n" +
+			"two separate promises. The report names clusters and issue kinds — never a node,\n" +
+			"namespace, pod or workload.",
 		Args:          cobra.NoArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,

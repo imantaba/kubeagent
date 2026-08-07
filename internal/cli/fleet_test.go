@@ -1,11 +1,16 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/imantaba/kubeagent/internal/cluster"
+	"github.com/imantaba/kubeagent/internal/fleet"
+	"github.com/imantaba/kubeagent/internal/fleetfile"
 )
 
 func contexts() []cluster.ContextInfo {
@@ -207,4 +212,272 @@ func TestBuildFleetTargetsRejectsAnUnknownContext(t *testing.T) {
 	if got := exitCodeFor(err); got != 4 {
 		t.Errorf("exit code = %d, want 4", got)
 	}
+}
+
+// selectEntries preserves FILE ORDER — unlike selectContexts, which sorts,
+// because a kubeconfig's context list has no order an operator chose. A fleet
+// file does: the order the operator wrote. Sweep sorts the report anyway, so
+// this only decides which clusters go to which worker.
+func TestSelectEntries(t *testing.T) {
+	all := []fleetfile.Entry{
+		{Name: "prod-eu", Context: "prod-eu"},
+		{Name: "edge-a", Context: "default"},
+		{Name: "prod-us", Context: "prod-us"},
+		{Name: "edge-b", Context: "default"},
+	}
+
+	tests := []struct {
+		name    string
+		match   string
+		want    []string // resolved names, in the order selectEntries returns them
+		wantErr string
+	}{
+		{
+			name: "no match takes every entry in file order",
+			want: []string{"prod-eu", "edge-a", "prod-us", "edge-b"},
+		},
+		{
+			name:  "a match takes the subset in file order",
+			match: "prod-*",
+			want:  []string{"prod-eu", "prod-us"},
+		},
+		{
+			name:  "the match runs against the row identity, not the context",
+			match: "edge-*",
+			want:  []string{"edge-a", "edge-b"},
+		},
+		{
+			name:    "a match selecting nothing is refused",
+			match:   "staging-*",
+			wantErr: "no cluster matches --match",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := selectEntries(all, tt.match)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("selectEntries() error = nil, want one containing %q", tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("selectEntries() error = %q, want it to contain %q", err, tt.wantErr)
+				}
+				if code := exitCodeFor(err); code != 4 {
+					t.Errorf("exit code = %d, want 4 — bad input, found before any cluster was touched", code)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("selectEntries() error = %v, want none", err)
+			}
+			var names []string
+			for _, e := range got {
+				names = append(names, e.Name)
+			}
+			if !reflect.DeepEqual(names, tt.want) {
+				t.Errorf("selectEntries() = %v, want %v", names, tt.want)
+			}
+		})
+	}
+}
+
+// The whole flag-conflict matrix from the spec. --fleet-file names the
+// clusters, so a flag that also names them is refused; a flag that says how to
+// reach them or which subset to take is not.
+func TestValidateFleetOptionsFleetFileConflicts(t *testing.T) {
+	base := func() fleetOptions {
+		return fleetOptions{
+			fleetFile:      "/fleet/clusters.yaml",
+			failOn:         "critical",
+			output:         "text",
+			clusterTimeout: 60 * time.Second,
+		}
+	}
+
+	tests := []struct {
+		name    string
+		mutate  func(*fleetOptions)
+		wantErr string
+	}{
+		{
+			name:    "--fleet-file and --context are refused",
+			mutate:  func(o *fleetOptions) { o.contexts = []string{"prod-eu"} },
+			wantErr: "--fleet-file and --context cannot be combined",
+		},
+		{
+			name:    "--fleet-file and --all-contexts are refused",
+			mutate:  func(o *fleetOptions) { o.allContexts = true },
+			wantErr: "--fleet-file and --all-contexts cannot be combined",
+		},
+		{
+			name:   "--fleet-file and --kubeconfig are allowed",
+			mutate: func(o *fleetOptions) { o.kubeconfig = "/fleet/fallback.kubeconfig" },
+		},
+		{
+			name:   "--fleet-file and --match are allowed",
+			mutate: func(o *fleetOptions) { o.match = "prod-*" },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			o := base()
+			tt.mutate(&o)
+			err := validateFleetOptions(o)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("validateFleetOptions() error = %v, want none", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("validateFleetOptions() error = nil, want one containing %q", tt.wantErr)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("validateFleetOptions() error = %q, want it to contain %q", err, tt.wantErr)
+			}
+			if code := exitCodeFor(err); code != 4 {
+				t.Errorf("exit code = %d, want 4", code)
+			}
+		})
+	}
+}
+
+// --match filters something a sweep would otherwise take all of. There are now
+// two such sources, and the refusal has to name both or an operator reading it
+// learns only half the answer.
+func TestSelectContextsMatchNeedsAllContextsOrAFleetFile(t *testing.T) {
+	_, err := selectContexts([]cluster.ContextInfo{{Name: "prod-eu"}}, nil, false, "prod-*")
+	if err == nil {
+		t.Fatal("selectContexts() error = nil, want one")
+	}
+	for _, want := range []string{"--all-contexts", "--fleet-file"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want it to name %s", err, want)
+		}
+	}
+}
+
+// --fleet-file accepts the single-dash long-flag spelling, like every other
+// flag: Normalize is what keeps command lines written against v0.72 working.
+func TestParseFleetFlagsAcceptsTheFleetFileFlag(t *testing.T) {
+	for _, args := range [][]string{
+		{"--fleet-file", "/fleet/clusters.yaml"},
+		{"-fleet-file", "/fleet/clusters.yaml"},
+	} {
+		o, err := parseFleetFlags(args)
+		if err != nil {
+			t.Fatalf("parseFleetFlags(%v) error = %v", args, err)
+		}
+		if o.fleetFile != "/fleet/clusters.yaml" {
+			t.Errorf("parseFleetFlags(%v) fleetFile = %q, want /fleet/clusters.yaml", args, o.fleetFile)
+		}
+	}
+}
+
+// An unreadable file is bad input, found before any cluster was touched, and
+// the path may be named because this reaches stderr and nowhere else.
+func TestReadFleetFileNamesTheFlagAndThePathOnFailure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing.yaml")
+	_, err := readFleetFile(path)
+	if err == nil {
+		t.Fatal("readFleetFile() error = nil, want one")
+	}
+	if !strings.Contains(err.Error(), "--fleet-file") || !strings.Contains(err.Error(), path) {
+		t.Errorf("error = %q, want it to name both --fleet-file and the path", err)
+	}
+	if code := exitCodeFor(err); code != 4 {
+		t.Errorf("exit code = %d, want 4", code)
+	}
+}
+
+// A file that reads but does not load is the same class of failure.
+func TestReadFleetFileReportsALoadFailureAtExitFour(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "clusters.yaml")
+	if err := os.WriteFile(path, []byte("- name: edge-a\n"), 0o600); err != nil {
+		t.Fatalf("writing fixture: %v", err)
+	}
+	_, err := readFleetFile(path)
+	if err == nil {
+		t.Fatal("readFleetFile() error = nil, want one")
+	}
+	if !strings.Contains(err.Error(), "entry 1 has no context") {
+		t.Errorf("error = %q, want the load failure", err)
+	}
+	if code := exitCodeFor(err); code != 4 {
+		t.Errorf("exit code = %d, want 4", code)
+	}
+}
+
+// buildFleetFileTargets uses the entry's own kubeconfig when it names one and
+// the fallback otherwise, and it carries the identity pair through to the
+// target. cluster.NewClient does no network I/O, so this needs no cluster.
+func TestBuildFleetFileTargets(t *testing.T) {
+	fallback := fleetFileKubeconfigPath(t, "prod-eu")
+	perCluster := fleetFileKubeconfigPath(t, "default")
+
+	targets, err := buildFleetFileTargets(fallback, []fleetfile.Entry{
+		{Name: "prod-eu", Context: "prod-eu"},
+		{Name: "edge-a", Kubeconfig: perCluster, Context: "default"},
+	})
+	if err != nil {
+		t.Fatalf("buildFleetFileTargets() error = %v", err)
+	}
+	if len(targets) != 2 {
+		t.Fatalf("targets = %d, want 2", len(targets))
+	}
+	for i, want := range []fleet.Target{
+		{Name: "prod-eu", Context: "prod-eu"},
+		{Name: "edge-a", Context: "default"},
+	} {
+		if targets[i].Name != want.Name || targets[i].Context != want.Context {
+			t.Errorf("target %d = {Name:%q Context:%q}, want {%q %q}",
+				i, targets[i].Name, targets[i].Context, want.Name, want.Context)
+		}
+		if targets[i].Client == nil {
+			t.Errorf("target %d has no client", i)
+		}
+	}
+}
+
+// A context the kubeconfig does not define is a configuration defect, not a
+// reachability event: cluster.NewClient does no network I/O. Fatal at exit 4,
+// the same ruling buildFleetTargets makes.
+func TestBuildFleetFileTargetsRejectsAnUnknownContext(t *testing.T) {
+	path := fleetFileKubeconfigPath(t, "prod-eu")
+	_, err := buildFleetFileTargets(path, []fleetfile.Entry{
+		{Name: "edge-a", Context: "nonexistent"},
+	})
+	if err == nil {
+		t.Fatal("buildFleetFileTargets() error = nil, want one")
+	}
+	if code := exitCodeFor(err); code != 4 {
+		t.Errorf("exit code = %d, want 4", code)
+	}
+}
+
+// fleetFileKubeconfigPath writes a one-context kubeconfig into a temp dir. The
+// server is a loopback address on a port nothing listens on: cluster.NewClient
+// does no network I/O, so nothing ever connects to it.
+func fleetFileKubeconfigPath(t *testing.T, contextName string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "kubeconfig")
+	body := "apiVersion: v1\n" +
+		"kind: Config\n" +
+		"current-context: " + contextName + "\n" +
+		"clusters:\n" +
+		"  - name: " + contextName + "\n" +
+		"    cluster:\n" +
+		"      server: https://127.0.0.1:1\n" +
+		"contexts:\n" +
+		"  - name: " + contextName + "\n" +
+		"    context: {cluster: " + contextName + ", user: " + contextName + "}\n" +
+		"users:\n" +
+		"  - name: " + contextName + "\n" +
+		"    user: {token: <PLACEHOLDER>}\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("writing kubeconfig: %v", err)
+	}
+	return path
 }

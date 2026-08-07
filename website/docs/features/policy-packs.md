@@ -133,7 +133,8 @@ violates the rule: one object yields at most one violation per rule, from the
 first slot that fails, but it takes only one failing slot to produce it.
 Setting the limit on every container but one is not "mostly compliant."
 
-**`exists` violates on an absent field; every other operator skips it.**
+**`exists` violates on an absent field; `notExists` is satisfied by one; every
+other operator skips it.**
 `reliability.deploy-image-tagged` asserts `containers[*].image` **matches**
 `*:*` — looking for a colon, which is where a tag or digest would be. It
 catches a bare `image: nginx`. It does **not** catch
@@ -152,8 +153,16 @@ rbac print` — already report. The kinds the fourteen `reliability` rules
 select (`Deployment`, `StatefulSet`, `DaemonSet`, `CronJob`,
 `PersistentVolumeClaim`) are all inside the policy engine's selectable kinds,
 which are pinned to the same core rules `rbacprofile` already grants. Turning
-on `--policy-pack reliability` asks the cluster for nothing a `scan` without
-it did not already ask for. See [Least-privilege RBAC](rbac.md).
+on `--policy-pack reliability` asks for no permission a plain `scan` did not
+already have.
+
+It does add request volume, though: evaluating any policy — a pack included —
+builds its own dynamic client and lists every kind the loaded rules touch,
+independently of whatever `scan`'s typed collectors already read. For this
+pack that is six `List` calls, one each for the five kinds its rules select
+plus `PodDisruptionBudget` for the one relation rule. That extra, uncached
+read is how `--policy` has always evaluated a rule set; this pack does not
+change it. See [Least-privilege RBAC](rbac.md).
 
 ## Forking a pack
 
@@ -173,7 +182,7 @@ running the fork **alongside** the pack it came from collides:
 
 ```text
 $ kubeagent scan --policy-pack reliability --policy mine.yaml
-mine.yaml: rule id "reliability.deploy-readiness-probe" is already defined in pack:reliability
+kubeagent: mine.yaml: rule id "reliability.deploy-readiness-probe" is already defined in pack:reliability
 ```
 
 Change the ids in the fork — or drop `--policy-pack reliability` once you are

@@ -57,8 +57,15 @@ CHART_NEW="$(awk -F. '{print $1"."$2"."$3+1}' <<<"$CHART_VER")"
 sed -i "s#^version: $CHART_VER\$#version: $CHART_NEW#" "$CHART"
 
 # --- verify nothing stale remains ------------------------------------------------
+# Historical records legitimately name the old version forever and are excluded:
+# the CHANGELOG's own released sections, the specs and plans under
+# docs/superpowers, and CLAUDE.md's roadmap, whose every shipped bullet carries
+# the release that shipped it. CLAUDE.md holds no image tag and no install line,
+# so nothing there can go stale. What remains in scope is every file that tells
+# someone which version to deploy.
 STALE="$(grep -rn "v$OLD" --include=*.yaml --include=*.md . \
-  | grep -v "$CHANGELOG" | grep -v docs/superpowers | grep -v '.superpowers/' || true)"
+  | grep -v "$CHANGELOG" | grep -v docs/superpowers | grep -v '.superpowers/' \
+  | grep -vE '^(\./)?CLAUDE\.md:' || true)"
 [ -z "$STALE" ] || { echo "STALE references to v$OLD remain:" >&2; echo "$STALE" >&2; exit 1; }
 
 cat <<EOF

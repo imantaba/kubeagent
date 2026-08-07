@@ -12,6 +12,16 @@ import (
 // fourth-most-common kind has never been what makes an operator open a cluster.
 const maxTopIssues = 3
 
+// identity is what the report calls a cluster: the operator's name when the
+// selection source gave one, the kubeconfig context otherwise. It is the single
+// definition — the sorts, the renderer and the evidence all go through it.
+func identity(name, context string) string {
+	if name != "" {
+		return name
+	}
+	return context
+}
+
 // summarize reduces one cluster's gate verdict to its fleet row, and to the
 // evidence that row cannot carry.
 //
@@ -24,14 +34,19 @@ const maxTopIssues = 3
 // questions and are allowed to disagree: the count is how many reads failed,
 // the set is which resources they were, and two failed reads of one resource
 // are two of the former and one of the latter.
-func summarize(context string, v gate.Verdict) (ClusterSummary, clusterEvidence) {
+//
+// It copies the name and context it is handed rather than resolving them. Sweep
+// resolves the pair once, before the branch that chooses between a summary and
+// an unreachable row, so the rule lives in one place instead of two.
+func summarize(name, context string, v gate.Verdict) (ClusterSummary, clusterEvidence) {
 	s := ClusterSummary{
+		Name:       name,
 		Context:    context,
 		Verdict:    v.Verdict,
 		Blindspots: len(v.Inconclusive),
 	}
 	ev := clusterEvidence{
-		context:    context,
+		id:         identity(name, context),
 		issues:     map[string]bool{},
 		blindspots: map[string]bool{},
 	}
@@ -98,8 +113,15 @@ func rank(verdict string) int {
 }
 
 // sortSummaries puts the worst cluster first, in place. The last tiebreak is
-// the context name, which is unique within a kubeconfig — so the order is
-// total and two runs over the same fleet render identical bytes.
+// the row identity, which is unique because fleetfile.Load refuses two entries
+// that resolve to the same name — so the order is total and two runs over the
+// same fleet render identical bytes.
+//
+// It was the context name until the fleet file arrived, justified by the
+// context being unique within a kubeconfig. That premise dies the moment a
+// sweep spans several kubeconfigs: four per-cluster k3s kubeconfigs are four
+// clusters whose context is "default", which makes the comparator non-total,
+// and sort.Slice is not stable.
 func sortSummaries(s []ClusterSummary) {
 	sort.Slice(s, func(i, j int) bool {
 		a, b := s[i], s[j]
@@ -115,7 +137,7 @@ func sortSummaries(s []ClusterSummary) {
 		if a.Info != b.Info {
 			return a.Info > b.Info
 		}
-		return a.Context < b.Context
+		return identity(a.Name, a.Context) < identity(b.Name, b.Context)
 	})
 }
 

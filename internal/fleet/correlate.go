@@ -36,7 +36,11 @@ const (
 // in one cluster is still one cluster. A count-weighted fold would let a single
 // noisy cluster manufacture a fleet-wide signal that does not exist.
 type clusterEvidence struct {
-	context    string
+	// id is the row identity — the operator's name when the selection source
+	// gave one, the kubeconfig context otherwise. The shared-signal section
+	// must name what the table names, or an operator cannot cross-reference
+	// the two.
+	id         string
 	issues     map[string]bool
 	blindspots map[string]bool
 }
@@ -45,7 +49,7 @@ type clusterEvidence struct {
 // minShared or more clusters, most widespread first.
 //
 // It is pure, and what it carries is bounded by construction rather than by a
-// filter: a Shared holds a context name, an issue kind or an API resource name,
+// filter: a Shared holds a row identity, an issue kind or an API resource name,
 // and nothing else. In particular nothing on a gate.Blindspot reaches here
 // except Resource — never Reason, which is a redacted error string rather than
 // a bounded vocabulary, and this document is written to be forwarded.
@@ -57,10 +61,10 @@ func correlate(evidence []clusterEvidence) []Shared {
 	issues, blindspots := map[string][]string{}, map[string][]string{}
 	for _, e := range evidence {
 		for signal := range e.issues {
-			issues[signal] = append(issues[signal], e.context)
+			issues[signal] = append(issues[signal], e.id)
 		}
 		for signal := range e.blindspots {
-			blindspots[signal] = append(blindspots[signal], e.context)
+			blindspots[signal] = append(blindspots[signal], e.id)
 		}
 	}
 
@@ -83,17 +87,17 @@ func correlate(evidence []clusterEvidence) []Shared {
 }
 
 // gather turns one signal-to-clusters map into the entries that clear
-// minShared. The context names are sorted here rather than at the call site
+// minShared. The identities are sorted here rather than at the call site
 // because Go randomizes map iteration: without it the same fleet would render
 // two different orders on two runs.
 func gather(m map[string][]string, source string) []Shared {
 	var out []Shared
-	for signal, contexts := range m {
-		if len(contexts) < minShared {
+	for signal, ids := range m {
+		if len(ids) < minShared {
 			continue
 		}
-		sort.Strings(contexts)
-		out = append(out, Shared{Signal: signal, Source: source, Clusters: contexts})
+		sort.Strings(ids)
+		out = append(out, Shared{Signal: signal, Source: source, Clusters: ids})
 	}
 	return out
 }

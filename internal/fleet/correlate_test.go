@@ -9,7 +9,7 @@ import (
 // see TestCorrelateCountsAClusterOnceHoweverLoudItIs in summarize_test.go for
 // why that distinction is load-bearing.
 func ev(context string, issues, blindspots []string) clusterEvidence {
-	e := clusterEvidence{context: context, issues: map[string]bool{}, blindspots: map[string]bool{}}
+	e := clusterEvidence{id: context, issues: map[string]bool{}, blindspots: map[string]bool{}}
 	for _, i := range issues {
 		e.issues[i] = true
 	}

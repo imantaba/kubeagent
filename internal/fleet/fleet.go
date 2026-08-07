@@ -78,6 +78,11 @@ type Report struct {
 	FailOn        findings.Level   `json:"failOn"`
 	Clusters      []ClusterSummary `json:"clusters"`
 	Unreachable   []Unreachable    `json:"unreachable"`
+
+	// Shared is the cross-cluster correlation: which signals appeared in two or
+	// more judged clusters. Absent from the document when there is none, so a
+	// consumer written against the version before it is unaffected.
+	Shared []Shared `json:"shared,omitempty"`
 }
 
 // ClusterSummary is one cluster's outcome: counts and issue kinds, never object
@@ -178,6 +183,7 @@ func Sweep(ctx context.Context, targets []Target, opts Options) Report {
 		Clusters:      []ClusterSummary{},
 		Unreachable:   []Unreachable{},
 	}
+	evidence := make([]clusterEvidence, 0, len(targets))
 	for i, r := range results {
 		if r.err != nil {
 			rep.Unreachable = append(rep.Unreachable, Unreachable{
@@ -186,8 +192,16 @@ func Sweep(ctx context.Context, targets []Target, opts Options) Report {
 			})
 			continue
 		}
-		rep.Clusters = append(rep.Clusters, summarize(targets[i].Name, r.verdict))
+		summary, ev := summarize(targets[i].Name, r.verdict)
+		rep.Clusters = append(rep.Clusters, summary)
+		evidence = append(evidence, ev)
 	}
+
+	// Only judged clusters contribute. An unreachable cluster produced no
+	// verdict and so no evidence — it is absent from this slice rather than
+	// present and empty, which is also what makes the rendered denominator the
+	// count of clusters kubeagent actually judged.
+	rep.Shared = correlate(evidence)
 
 	sortSummaries(rep.Clusters)
 	sort.Slice(rep.Unreachable, func(i, j int) bool {

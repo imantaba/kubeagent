@@ -434,9 +434,15 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
 - **Post-1.0 — curated policy packs, slice 1 has shipped (v1.9.0):** the second half
   of the known-issues item's "curated community detector library" ambition
   now has a first form — not new Go detector code, but `kubeagent policy
-  packs`: a kubeagent-curated `reliability` pack of fourteen rules, compiled
-  into `internal/policypack` and evaluated by the existing `--policy` engine
-  via `scan --policy-pack`/`gate --policy-pack`. It is opt-in — omitting the
+  packs`: a kubeagent-curated `reliability` pack of fourteen rules and, since
+  slice 2, a `security` pack of twenty-three rules over workload pod
+  templates, both compiled into `internal/policypack` and evaluated by the
+  existing `--policy` engine via `scan --policy-pack`/`gate --policy-pack`.
+  The `security` pack pairs an `info` "field unset" rule with a `warning`
+  "field set wrong" rule for the four properties that are unsafe either way,
+  because every operator except `exists` and `notExists` skips an absent
+  slot; where absence is the safe default a single value rule ships. It is
+  opt-in — omitting the
   flag renders the same bytes as before — moves no `schemaVersion` (`scan`
   stays 1.2, `gate` stays 1.1), and ships no `critical` rule, so adding it to
   a pipeline that passed yesterday cannot fail it today
@@ -477,5 +483,5 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   `name` on a cluster summary and on an unreachable cluster, both
   `omitempty`).
   The remaining post-1.0 work is the rest of the curated-packs item's second
-  half — security and cost packs, and a pack contributed by someone other
+  half — a cost pack, and a pack contributed by someone other
   than kubeagent itself — plus other baseline dimensions.

@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A second curated policy pack, `security`: twenty-three rules over workload
+  pod templates covering privileged containers, privilege escalation, running
+  as root, writable root filesystems, added Linux capabilities, `hostPath`
+  volumes, host ports, the three host namespaces, seccomp profiles and service
+  account token mounting. Run it with `kubeagent scan --policy-pack security`
+  or `kubeagent gate --policy-pack security`, print it with `kubeagent policy
+  packs --print security`, and combine it with `--policy` or with the
+  `reliability` pack. Four properties that are unsafe both when unset and when
+  set wrong ship as a pair of rules — an `info` rule for the unset case and a
+  `warning` rule for the explicit one — because every operator except `exists`
+  and `notExists` skips an absent field, so one rule could only ever catch one
+  of the two. No rule is `critical`, so adding the pack to a pipeline that
+  passed yesterday cannot fail it today; `--fail-on warning` is the explicit
+  act that makes it block. Nothing versioned moves: `scan` stays at schema
+  version 1.2 and `gate` at 1.1, the evaluator is unchanged, and the pack needs
+  no RBAC grant a plain `scan` did not already have.
+
 ## [1.11.0] - 2026-08-07
 
 ### Added

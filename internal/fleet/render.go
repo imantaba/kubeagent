@@ -11,7 +11,7 @@ import (
 // appear in it. "unreachable" is 11 and "inconclusive" is 12.
 const verdictWidth = 12
 
-// maxNamedClusters caps the context names a shared-signal line spells out
+// maxNamedClusters caps the row identities a shared-signal line spells out
 // before it counts the rest. Three, on the same reasoning that caps TopIssues:
 // the line has to stay readable when a signal spans three hundred clusters, and
 // the document carries every name for whoever needs them all.
@@ -41,11 +41,11 @@ func RenderJSON(w io.Writer, rep Report) error {
 func RenderText(w io.Writer, rep Report) error {
 	rows := make([]row, 0, len(rep.Clusters)+len(rep.Unreachable))
 	for _, u := range rep.Unreachable {
-		rows = append(rows, row{context: u.Context, verdict: "unreachable", detail: u.Reason})
+		rows = append(rows, row{id: identity(u.Name, u.Context), verdict: "unreachable", detail: u.Reason})
 	}
 	for _, c := range rep.Clusters {
 		rows = append(rows, row{
-			context: c.Context,
+			id:      identity(c.Name, c.Context),
 			verdict: c.Verdict,
 			crit:    fmt.Sprint(c.Critical),
 			warn:    fmt.Sprint(c.Warning),
@@ -56,8 +56,8 @@ func RenderText(w io.Writer, rep Report) error {
 
 	width := len("CLUSTER")
 	for _, r := range rows {
-		if len(r.context) > width {
-			width = len(r.context)
+		if len(r.id) > width {
+			width = len(r.id)
 		}
 	}
 
@@ -73,7 +73,7 @@ func RenderText(w io.Writer, rep Report) error {
 		return err
 	}
 
-	if err := writeRow(w, width, row{context: "CLUSTER", verdict: "VERDICT",
+	if err := writeRow(w, width, row{id: "CLUSTER", verdict: "VERDICT",
 		crit: "CRIT", warn: "WARN", info: "INFO", detail: "TOP ISSUES"}); err != nil {
 		return err
 	}
@@ -95,12 +95,12 @@ func RenderText(w io.Writer, rep Report) error {
 // unreachable cluster can leave them blank — it has no counts, and printing 0
 // would claim kubeagent looked and found nothing.
 type row struct {
-	context, verdict, crit, warn, info, detail string
+	id, verdict, crit, warn, info, detail string
 }
 
 func writeRow(w io.Writer, width int, r row) error {
 	line := fmt.Sprintf("%-*s  %-*s  %4s  %4s  %4s  %s",
-		width, r.context, verdictWidth, r.verdict, r.crit, r.warn, r.info, r.detail)
+		width, r.id, verdictWidth, r.verdict, r.crit, r.warn, r.info, r.detail)
 	_, err := fmt.Fprintln(w, strings.TrimRight(line, " "))
 	return err
 }
@@ -191,12 +191,12 @@ func countCell(s Shared, judged int) string {
 	return fmt.Sprintf("%d/%d", len(s.Clusters), judged)
 }
 
-// namedClusters spells out at most maxNamedClusters context names and then says
-// how many it left out.
-func namedClusters(contexts []string) string {
-	if len(contexts) <= maxNamedClusters {
-		return strings.Join(contexts, ", ")
+// namedClusters spells out at most maxNamedClusters row identities and then
+// says how many it left out.
+func namedClusters(ids []string) string {
+	if len(ids) <= maxNamedClusters {
+		return strings.Join(ids, ", ")
 	}
 	return fmt.Sprintf("%s, +%d more",
-		strings.Join(contexts[:maxNamedClusters], ", "), len(contexts)-maxNamedClusters)
+		strings.Join(ids[:maxNamedClusters], ", "), len(ids)-maxNamedClusters)
 }

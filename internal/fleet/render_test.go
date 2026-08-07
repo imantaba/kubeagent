@@ -425,3 +425,94 @@ func TestRenderJSONCarriesEverySharedClusterName(t *testing.T) {
 		t.Errorf("the document carries the text renderer's elision:\n%s", buf.String())
 	}
 }
+
+// The table names what the operator called each cluster, and the SHARED section
+// names the same thing — an operator who cannot cross-reference the two has two
+// reports rather than one. Compared byte for byte, because column padding is
+// the whole point of this renderer.
+func TestRenderTextNamesTheRowIdentity(t *testing.T) {
+	rep := Report{
+		SchemaVersion: "1.2",
+		Verdict:       "fail",
+		Code:          1,
+		Clusters: []ClusterSummary{
+			{Name: "edge-a", Context: "default", Verdict: "fail", Critical: 2,
+				TopIssues: []string{"ImagePullBackOff", "OOMKilled"}},
+			{Name: "edge-b", Context: "default", Verdict: "fail", Critical: 1,
+				TopIssues: []string{"OOMKilled"}},
+			{Context: "prod-eu", Verdict: "pass"},
+			{Context: "prod-us", Verdict: "pass"},
+		},
+		Unreachable: []Unreachable{},
+		Shared: []Shared{
+			{Signal: "OOMKilled", Source: SourceIssue, Clusters: []string{"edge-a", "edge-b"}},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := RenderText(&buf, rep); err != nil {
+		t.Fatalf("RenderText() error = %v", err)
+	}
+
+	want := strings.Join([]string{
+		"FLEET  4 clusters, 2 failing, 0 unreachable",
+		"",
+		"CLUSTER  VERDICT       CRIT  WARN  INFO  TOP ISSUES",
+		"edge-a   fail             2     0     0  ImagePullBackOff, OOMKilled",
+		"edge-b   fail             1     0     0  OOMKilled",
+		"prod-eu  pass             0     0     0",
+		"prod-us  pass             0     0     0",
+		"",
+		"SHARED ISSUES  in 2 or more of 4 judged clusters",
+		"",
+		"  2/4  OOMKilled  edge-a, edge-b",
+		"",
+		"verdict: fail (exit 1)",
+		"",
+	}, "\n")
+
+	if got := buf.String(); got != want {
+		t.Errorf("RenderText() =\n%q\nwant\n%q", got, want)
+	}
+}
+
+// An unreachable row is named by its identity too. Rendering "default" for a
+// per-cluster kubeconfig would name nothing at all.
+func TestRenderTextNamesAnUnreachableClusterByItsIdentity(t *testing.T) {
+	var buf bytes.Buffer
+	err := RenderText(&buf, Report{
+		SchemaVersion: "1.2",
+		Verdict:       "inconclusive",
+		Code:          2,
+		Clusters:      []ClusterSummary{{Context: "prod-eu", Verdict: "pass"}},
+		Unreachable:   []Unreachable{{Name: "edge-a", Context: "default", Reason: ReasonUnreachable}},
+	})
+	if err != nil {
+		t.Fatalf("RenderText() error = %v", err)
+	}
+	if !strings.Contains(buf.String(), "edge-a   unreachable") {
+		t.Errorf("rendered =\n%s\nwant an unreachable row named edge-a", buf.String())
+	}
+	if strings.Contains(buf.String(), "default") {
+		t.Errorf("rendered =\n%s\nwant no bare context where an identity was given", buf.String())
+	}
+}
+
+// A sweep selected from a kubeconfig must encode no name key anywhere, so a
+// consumer written against fleet 1.0 or 1.1 sees the document it expects.
+func TestRenderJSONOmitsNameWhenNoNameDiffers(t *testing.T) {
+	var buf bytes.Buffer
+	err := RenderJSON(&buf, Report{
+		SchemaVersion: "1.2",
+		Verdict:       "inconclusive",
+		Code:          2,
+		Clusters:      []ClusterSummary{{Context: "prod-eu", Verdict: "pass"}},
+		Unreachable:   []Unreachable{{Context: "prod-us", Reason: ReasonUnreachable}},
+	})
+	if err != nil {
+		t.Fatalf("RenderJSON() error = %v", err)
+	}
+	if strings.Contains(buf.String(), `"name"`) {
+		t.Errorf("document =\n%s\nwant no name key when no name differs from its context", buf.String())
+	}
+}

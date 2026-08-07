@@ -92,8 +92,13 @@ func TestSweepIsDeterministic(t *testing.T) {
 // pod, workload and container names.
 func TestSweepCarriesNoObjectName(t *testing.T) {
 	rep := Sweep(context.Background(), []Target{
-		{Name: "example-a", Client: fake.NewSimpleClientset(crashingPod("MARKERVALUE"))},
-	}, Options{FailOn: findings.Critical, Workers: 1, ClusterTimeout: 30 * time.Second})
+		{Name: "example-a", Client: fake.NewSimpleClientset(crashingPod("MARKERVALUEA"))},
+		{Name: "example-b", Client: fake.NewSimpleClientset(crashingPod("MARKERVALUEB"))},
+	}, Options{FailOn: findings.Critical, Workers: 2, ClusterTimeout: 30 * time.Second})
+
+	if len(rep.Shared) == 0 {
+		t.Fatalf("rep.Shared is empty — the walk over it below checks nothing unless the fixture actually correlates two clusters")
+	}
 
 	var sb strings.Builder
 	sb.WriteString(rep.SchemaVersion + " " + rep.Verdict)
@@ -103,7 +108,13 @@ func TestSweepCarriesNoObjectName(t *testing.T) {
 	for _, u := range rep.Unreachable {
 		sb.WriteString(" " + u.Context + " " + u.Reason)
 	}
-	if strings.Contains(sb.String(), "MARKERVALUE") {
+	for _, s := range rep.Shared {
+		sb.WriteString(" " + s.Signal + " " + s.Source + " " + strings.Join(s.Clusters, " "))
+	}
+	if strings.Contains(sb.String(), "MARKERVALUEA") {
+		t.Errorf("report carries an object name: %q", sb.String())
+	}
+	if strings.Contains(sb.String(), "MARKERVALUEB") {
 		t.Errorf("report carries an object name: %q", sb.String())
 	}
 }
@@ -169,5 +180,44 @@ func TestSweepOfNothingIsAPassWithEmptySlices(t *testing.T) {
 	if rep.Clusters == nil || rep.Unreachable == nil {
 		t.Errorf("Clusters = %v, Unreachable = %v — both must be empty slices so the "+
 			"JSON document has [] rather than null", rep.Clusters, rep.Unreachable)
+	}
+}
+
+// A correlation adds no severity. Every finding it counts was already counted
+// in the cluster that produced it, and that cluster already got its verdict
+// from gate.Decide — so folding the same evidence again would double-count it,
+// and would let a sweep disagree with a single-cluster `kubeagent gate` about
+// the same cluster, which this package's doc comment says can never happen.
+func TestSweepCorrelationChangesNoVerdict(t *testing.T) {
+	targets := []Target{
+		{Name: "example-a", Client: fake.NewSimpleClientset(crashingPod("alpha"))},
+		{Name: "example-b", Client: fake.NewSimpleClientset(crashingPod("beta"))},
+	}
+	opts := Options{FailOn: findings.Critical, Workers: 2, ClusterTimeout: 30 * time.Second}
+
+	rep := Sweep(context.Background(), targets, opts)
+
+	if len(rep.Shared) == 0 {
+		t.Fatal("no correlation; the fixture must share a signal or this test proves nothing")
+	}
+	if rep.Verdict != "fail" || rep.Code != 1 {
+		t.Errorf("verdict = %q/%d, want fail/1 — the same answer slice 1 gave", rep.Verdict, rep.Code)
+	}
+	for _, c := range rep.Clusters {
+		if c.Verdict != "fail" {
+			t.Errorf("cluster %s = %q, want fail — a correlation changes no cluster verdict",
+				c.Context, c.Verdict)
+		}
+	}
+}
+
+// One cluster cannot correlate with itself, however much it reports.
+func TestSweepOfOneClusterCarriesNoCorrelation(t *testing.T) {
+	rep := Sweep(context.Background(), []Target{
+		{Name: "example-a", Client: fake.NewSimpleClientset(crashingPod("alpha"))},
+	}, Options{FailOn: findings.Critical, Workers: 1, ClusterTimeout: 30 * time.Second})
+
+	if rep.Shared != nil {
+		t.Errorf("Shared = %+v, want nil so omitempty drops the key", rep.Shared)
 	}
 }

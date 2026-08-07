@@ -12,7 +12,7 @@ import (
 
 func sampleReport() Report {
 	rep := Report{
-		SchemaVersion: "1.0",
+		SchemaVersion: "1.1",
 		FailOn:        findings.Critical,
 		Clusters: []ClusterSummary{
 			{Context: "example-staging-2", Verdict: "inconclusive", Warning: 1, Blindspots: 2},
@@ -188,19 +188,240 @@ func (f *flakyWriter) Write(p []byte) (int, error) {
 func TestRenderTextReportsAFailedWrite(t *testing.T) {
 	boom := errors.New("disk full")
 
-	// How many writes a full render makes, so the loop below covers every one.
-	counter := &flakyWriter{failAt: -1}
-	if err := RenderText(counter, sampleReport()); err != nil {
-		t.Fatalf("counting writes: %v", err)
+	for _, tc := range []struct {
+		name string
+		rep  Report
+	}{
+		{"without a correlation", sampleReport()},
+		{"with both correlation sections", sharedReport()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// How many writes a full render makes, so the loop below covers every one.
+			counter := &flakyWriter{failAt: -1}
+			if err := RenderText(counter, tc.rep); err != nil {
+				t.Fatalf("counting writes: %v", err)
+			}
+			if counter.n < 3 {
+				t.Fatalf("counted %d writes; the fixture should render a header and several rows",
+					counter.n)
+			}
+
+			for i := 1; i <= counter.n; i++ {
+				w := &flakyWriter{failAt: i, err: boom}
+				if err := RenderText(w, tc.rep); !errors.Is(err, boom) {
+					t.Errorf("write %d of %d failed: err = %v, want %v", i, counter.n, err, boom)
+				}
+			}
+		})
 	}
-	if counter.n < 3 {
-		t.Fatalf("counted %d writes; the fixture should render a header and several rows", counter.n)
+}
+
+// sharedReport is sampleReport with a correlation. Four judged clusters, so the
+// denominator is 4 — the fifth is unreachable and contributed no evidence.
+func sharedReport() Report {
+	rep := sampleReport()
+	rep.Shared = []Shared{
+		{Signal: "ImagePullBackOff", Source: SourceIssue, Clusters: []string{
+			"example-eu-1", "example-eu-2", "example-staging-2", "example-us-3"}},
+		{Signal: "OOMKilled", Source: SourceIssue, Clusters: []string{
+			"example-eu-1", "example-us-3"}},
+		{Signal: "nodes/proxy", Source: SourceBlindspot, Clusters: []string{
+			"example-eu-1", "example-staging-2"}},
+	}
+	return rep
+}
+
+func TestRenderTextWithCorrelationIsExactBytes(t *testing.T) {
+	var buf bytes.Buffer
+	if err := RenderText(&buf, sharedReport()); err != nil {
+		t.Fatalf("RenderText() error = %v", err)
 	}
 
-	for i := 1; i <= counter.n; i++ {
-		w := &flakyWriter{failAt: i, err: boom}
-		if err := RenderText(w, sampleReport()); !errors.Is(err, boom) {
-			t.Errorf("write %d of %d failed: err = %v, want %v", i, counter.n, err, boom)
-		}
+	want := strings.Join([]string{
+		"FLEET  5 clusters, 2 failing, 1 unreachable",
+		"",
+		"CLUSTER            VERDICT       CRIT  WARN  INFO  TOP ISSUES",
+		"example-ap-1       unreachable                     connecting to the cluster",
+		"example-staging-2  inconclusive     0     1     0  (2 blind spots)",
+		"example-eu-1       fail             4     2     0  CrashLoopBackOff, ImagePullBackOff",
+		"example-us-3       fail             1     5     1  Unschedulable",
+		"example-eu-2       pass             0     0     0",
+		"",
+		"SHARED ISSUES  in 2 or more of 4 judged clusters",
+		"",
+		"  4/4  ImagePullBackOff  example-eu-1, example-eu-2, example-staging-2, +1 more",
+		"  2/4  OOMKilled         example-eu-1, example-us-3",
+		"",
+		"SHARED BLIND SPOTS  in 2 or more of 4 judged clusters",
+		"",
+		"  2/4  nodes/proxy       example-eu-1, example-staging-2",
+		"",
+		"verdict: inconclusive (exit 2)",
+		"",
+	}, "\n")
+
+	if got := buf.String(); got != want {
+		t.Errorf("RenderText() =\n%s\nwant\n%s", got, want)
+	}
+}
+
+// A heading over nothing reads as a failed render, so a section with no entries
+// is omitted entirely rather than printed empty.
+func TestRenderTextOmitsASharedSectionWithNoEntries(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		shared      []Shared
+		wantPresent string
+		wantAbsent  string
+	}{
+		{
+			name: "blind spots only",
+			shared: []Shared{{Signal: "nodes/proxy", Source: SourceBlindspot,
+				Clusters: []string{"example-a", "example-b"}}},
+			wantPresent: "SHARED BLIND SPOTS",
+			wantAbsent:  "SHARED ISSUES",
+		},
+		{
+			name: "issues only",
+			shared: []Shared{{Signal: "OOMKilled", Source: SourceIssue,
+				Clusters: []string{"example-a", "example-b"}}},
+			wantPresent: "SHARED ISSUES",
+			wantAbsent:  "SHARED BLIND SPOTS",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rep := Report{
+				Verdict: "fail", Code: 1,
+				Clusters: []ClusterSummary{
+					{Context: "example-a", Verdict: "fail", Critical: 1},
+					{Context: "example-b", Verdict: "fail", Critical: 1},
+				},
+				Shared: tc.shared,
+			}
+			var buf bytes.Buffer
+			if err := RenderText(&buf, rep); err != nil {
+				t.Fatalf("RenderText() error = %v", err)
+			}
+			if !strings.Contains(buf.String(), tc.wantPresent) {
+				t.Errorf("output = %q, want a %s section", buf.String(), tc.wantPresent)
+			}
+			if strings.Contains(buf.String(), tc.wantAbsent) {
+				t.Errorf("output = %q, want no %s heading over an empty section",
+					buf.String(), tc.wantAbsent)
+			}
+		})
+	}
+}
+
+// A signpost, not an inventory — the same reasoning that caps TopIssues at
+// three. The JSON document carries every name.
+func TestRenderTextNamesAtMostThreeClustersThenCountsTheRest(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		clusters []string
+		wantLine string
+	}{
+		{"three are all named", []string{"example-a", "example-b", "example-c"},
+			"  3/3  OOMKilled  example-a, example-b, example-c"},
+		{"four name three and count one",
+			[]string{"example-a", "example-b", "example-c", "example-d"},
+			"  4/4  OOMKilled  example-a, example-b, example-c, +1 more"},
+		{"six name three and count three",
+			[]string{"example-a", "example-b", "example-c", "example-d", "example-e", "example-f"},
+			"  6/6  OOMKilled  example-a, example-b, example-c, +3 more"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rep := Report{Verdict: "pass", Shared: []Shared{
+				{Signal: "OOMKilled", Source: SourceIssue, Clusters: tc.clusters},
+			}}
+			for _, c := range tc.clusters {
+				rep.Clusters = append(rep.Clusters, ClusterSummary{Context: c, Verdict: "pass"})
+			}
+
+			var buf bytes.Buffer
+			if err := RenderText(&buf, rep); err != nil {
+				t.Fatalf("RenderText() error = %v", err)
+			}
+			if !strings.Contains(buf.String(), "\n"+tc.wantLine+"\n") {
+				t.Errorf("output =\n%s\nwant a line %q", buf.String(), tc.wantLine)
+			}
+		})
+	}
+}
+
+// The denominator is judged clusters, not selected ones. An unreachable cluster
+// produced no verdict and could not have contributed a signal, so counting it
+// would make a 2-of-2 correlation read as 2-of-5 and understate it.
+func TestRenderTextSharedDenominatorCountsJudgedClustersOnly(t *testing.T) {
+	rep := Report{
+		Verdict: "inconclusive", Code: 2,
+		Clusters: []ClusterSummary{
+			{Context: "example-a", Verdict: "fail", Critical: 1},
+			{Context: "example-b", Verdict: "fail", Critical: 1},
+		},
+		Unreachable: []Unreachable{
+			{Context: "example-c", Reason: ReasonUnreachable},
+			{Context: "example-d", Reason: ReasonTimedOut},
+			{Context: "example-e", Reason: ReasonTimedOut},
+		},
+		Shared: []Shared{
+			{Signal: "OOMKilled", Source: SourceIssue, Clusters: []string{"example-a", "example-b"}},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := RenderText(&buf, rep); err != nil {
+		t.Fatalf("RenderText() error = %v", err)
+	}
+	if !strings.Contains(buf.String(), "in 2 or more of 2 judged clusters") {
+		t.Errorf("output =\n%s\nwant a denominator of 2 — three unreachable clusters "+
+			"produced no verdict and could not have contributed a signal", buf.String())
+	}
+	if !strings.Contains(buf.String(), "  2/2  OOMKilled") {
+		t.Errorf("output =\n%s\nwant the count cell measured against judged clusters too", buf.String())
+	}
+}
+
+func TestRenderJSONOmitsSharedWhenThereIsNoCorrelation(t *testing.T) {
+	var buf bytes.Buffer
+	if err := RenderJSON(&buf, sampleReport()); err != nil {
+		t.Fatalf("RenderJSON() error = %v", err)
+	}
+	if strings.Contains(buf.String(), `"shared"`) {
+		t.Errorf("document carries a shared key with no correlation; omitempty must drop it:\n%s",
+			buf.String())
+	}
+}
+
+// The text renderer names at most three clusters. The document names every one:
+// a jq filter asking which clusters share a signal must get the answer, not a
+// signpost.
+func TestRenderJSONCarriesEverySharedClusterName(t *testing.T) {
+	var buf bytes.Buffer
+	if err := RenderJSON(&buf, sharedReport()); err != nil {
+		t.Fatalf("RenderJSON() error = %v", err)
+	}
+
+	var doc map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &doc); err != nil {
+		t.Fatalf("unmarshalling: %v", err)
+	}
+	shared, ok := doc["shared"].([]any)
+	if !ok || len(shared) != 3 {
+		t.Fatalf("shared = %#v, want three entries", doc["shared"])
+	}
+	first, ok := shared[0].(map[string]any)
+	if !ok {
+		t.Fatalf("shared[0] = %#v, want an object", shared[0])
+	}
+	if first["signal"] != "ImagePullBackOff" || first["source"] != "issue" {
+		t.Errorf("shared[0] = %#v, want the most widespread issue first", first)
+	}
+	if clusters, ok := first["clusters"].([]any); !ok || len(clusters) != 4 {
+		t.Errorf("clusters = %#v, want all four names — the +N more elision belongs to "+
+			"the text renderer, not to the document", first["clusters"])
+	}
+	if strings.Contains(buf.String(), "more") {
+		t.Errorf("the document carries the text renderer's elision:\n%s", buf.String())
 	}
 }

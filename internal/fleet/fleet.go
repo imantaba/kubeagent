@@ -12,12 +12,16 @@
 // LLM call. The package accordingly imports neither internal/remediate nor
 // internal/explain, which internal/fleet/imports_test.go enforces.
 //
-// The report names kubeconfig context names and issue kinds. It never names a
-// node, namespace, pod or workload, and that is structural rather than
-// filtered: a summary is counts plus issue kinds, a shape an object name cannot
-// fit into. Nor does it ever carry a kubeconfig path — the one accepted place a
-// path may appear is stderr, from internal/cli, and this package writes no
-// errors of its own.
+// The report names kubeconfig context names, issue kinds, and the API resource
+// names of refused reads. It never names a node, namespace, pod or workload,
+// and that is structural rather than filtered: a summary is counts plus issue
+// kinds, and a correlation is context names plus a signal drawn from one of two
+// closed vocabularies — shapes an object name cannot fit into. In particular a
+// correlation reads gate.Blindspot.Resource and never gate.Blindspot.Reason,
+// which is a redacted error string rather than a bounded vocabulary. Nor does
+// the report ever carry a kubeconfig path — the one accepted place a path may
+// appear is stderr, from internal/cli, and this package writes no errors of its
+// own.
 package fleet
 
 import (
@@ -78,6 +82,11 @@ type Report struct {
 	FailOn        findings.Level   `json:"failOn"`
 	Clusters      []ClusterSummary `json:"clusters"`
 	Unreachable   []Unreachable    `json:"unreachable"`
+
+	// Shared is the cross-cluster correlation: which signals appeared in two or
+	// more judged clusters. Absent from the document when there is none, so a
+	// consumer written against the version before it is unaffected.
+	Shared []Shared `json:"shared,omitempty"`
 }
 
 // ClusterSummary is one cluster's outcome: counts and issue kinds, never object
@@ -178,6 +187,7 @@ func Sweep(ctx context.Context, targets []Target, opts Options) Report {
 		Clusters:      []ClusterSummary{},
 		Unreachable:   []Unreachable{},
 	}
+	evidence := make([]clusterEvidence, 0, len(targets))
 	for i, r := range results {
 		if r.err != nil {
 			rep.Unreachable = append(rep.Unreachable, Unreachable{
@@ -186,8 +196,16 @@ func Sweep(ctx context.Context, targets []Target, opts Options) Report {
 			})
 			continue
 		}
-		rep.Clusters = append(rep.Clusters, summarize(targets[i].Name, r.verdict))
+		summary, ev := summarize(targets[i].Name, r.verdict)
+		rep.Clusters = append(rep.Clusters, summary)
+		evidence = append(evidence, ev)
 	}
+
+	// Only judged clusters contribute. An unreachable cluster produced no
+	// verdict and so no evidence — it is absent from this slice rather than
+	// present and empty, which is also what makes the rendered denominator the
+	// count of clusters kubeagent actually judged.
+	rep.Shared = correlate(evidence)
 
 	sortSummaries(rep.Clusters)
 	sort.Slice(rep.Unreachable, func(i, j int) bool {

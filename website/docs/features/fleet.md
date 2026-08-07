@@ -138,7 +138,7 @@ documents](json-schema.md):
 
 ```json
 {
-  "schemaVersion": "1.0",
+  "schemaVersion": "1.1",
   "verdict": "inconclusive",
   "exitCode": 2,
   "failOn": "critical",
@@ -199,12 +199,110 @@ for a different reason — a reader scanning rows top-down should not have to
 find a second table below the fold to learn that a cluster went unjudged.
 Same data, shaped for what each consumer needs. A passing cluster carries no
 `topIssues` key at all: `omitempty` drops it rather than writing an empty
-array.
+array, and this sweep's two failing clusters report disjoint issue kinds, so
+there is no `shared` key either — see [Shared signals](#shared-signals).
+
+## Shared signals
+
+One row per cluster answers "which one do I open first". It cannot answer
+"is this one problem or five".
+
+Under the table, `fleet` names the issue kinds and the refused reads that
+appear in **two or more** of the judged clusters, most widespread first:
+
+```text
+FLEET  5 clusters, 3 failing, 1 unreachable
+
+CLUSTER    VERDICT       CRIT  WARN  INFO  TOP ISSUES
+example-e  unreachable                     connecting to the cluster
+example-a  inconclusive     2     0     0  ImagePullBackOff, OOMKilled (1 blind spot)
+example-b  fail             2     0     0  ImagePullBackOff, OOMKilled
+example-c  fail             1     0     0  OOMKilled
+example-d  fail             1     0     0  OOMKilled
+
+SHARED ISSUES  in 2 or more of 4 judged clusters
+
+  4/4  OOMKilled         example-a, example-b, example-c, +1 more
+  2/4  ImagePullBackOff  example-a, example-b
+
+verdict: inconclusive (exit 2)
+```
+
+There is no `SHARED BLIND SPOTS` section above because only one cluster has a
+blind spot, and one cluster is not a correlation. A section with no entries is
+omitted entirely, heading included — a heading over nothing reads as a failed
+render. `example-e` never answered, so the sweep judged four of the five
+clusters it selected and the denominator is four.
+
+Both sections appear in the JSON document as one `shared` array, each entry
+tagged with which vocabulary its signal came from:
+
+```json
+  "shared": [
+    {
+      "signal": "OOMKilled",
+      "source": "issue",
+      "clusters": [
+        "example-a",
+        "example-b",
+        "example-c",
+        "example-d"
+      ]
+    },
+    {
+      "signal": "ImagePullBackOff",
+      "source": "issue",
+      "clusters": [
+        "example-a",
+        "example-b"
+      ]
+    }
+  ]
+```
+
+The text names at most three clusters per line and then counts the rest
+(`+1 more`, above). The document names every one: a `jq` filter asking which
+clusters share a signal must get the answer, not a signpost.
+
+A repeated blind spot — `source` `blindspot`, rendered under `SHARED BLIND
+SPOTS` — is often the more actionable of the two: it usually means one RBAC
+binding is missing everywhere, and it is the class of problem a per-cluster
+view is worst at surfacing, because each cluster reports it as a single quiet
+line.
+
+**Some things this deliberately does not do.**
+
+A cluster counts **once** per signal, however loud it is. A kind hitting four
+hundred pods in one cluster is one cluster — otherwise a single noisy cluster
+could manufacture a fleet-wide signal that does not exist.
+
+The denominator is the count of clusters kubeagent **judged**, never the count
+it selected. An unreachable cluster produced no verdict and could not have
+contributed a signal.
+
+**It changes no verdict.** Every finding a correlation counts was already
+counted in the cluster that produced it, and that cluster already got its
+verdict from the same `gate` evaluation a single-cluster run would use.
+Counting it twice would let a sweep disagree with `kubeagent gate` about the
+same cluster. The threshold is two and is not configurable: one cluster is
+not a pattern, and every number above two is an arbitrary line you would
+have to learn.
+
+Matching is exact. `Init:CrashLoopBackOff` and `CrashLoopBackOff` are
+different kinds and stay different — they have different causes and different
+fixes, and folding them together would report a coincidence as a correlation.
+
+The text names at most three clusters per line and then counts the rest. The
+JSON document names every one.
 
 ## What the report may name
 
-**It may name:** kubeconfig context names, and issue kinds
-(`CrashLoopBackOff`, `ImagePullBackOff`, `Unschedulable`, and so on). A
+**It may name:** kubeconfig context names; issue kinds (`CrashLoopBackOff`,
+`ImagePullBackOff`, `Unschedulable`, and so on); and, in the shared-signals
+section, the API resource names of reads kubeagent was refused (`nodes/proxy`,
+`pods/log`, `secrets`, `events`, and so on). Both of those are closed,
+kubeagent-authored vocabularies, and a resource name names a *kind* of read,
+never an object. A
 context name is the operator's own label for their own cluster — it is the
 only thing that can answer "which one". This is not a new exposure:
 `internal/mcp`'s `list_contexts` tool already serves context names to a
@@ -221,6 +319,12 @@ carry more — it is why the report is a summary at all. A `ClusterSummary`
 carries counts and issue kinds, and neither of those can hold an object
 name, so the exclusion is structural: there is no field to accidentally
 populate with one, and no filter for a future change to accidentally bypass.
+
+A shared signal is the same shape of promise: it carries a context name, a
+signal from one of those two closed vocabularies, and nothing else. In
+particular it reads a blind spot's `Resource` and never its `Reason`, which
+is a redacted error string rather than a bounded vocabulary — redacted is not
+the same as bounded, and a fleet report is written to be forwarded.
 
 `Unreachable.Reason` comes from a fixed, two-entry vocabulary —
 `"connecting to the cluster"`, `"timed out"` — never from `err.Error()`,
@@ -275,11 +379,11 @@ kubeconfig, nothing else needed.
 
 Deliberately absent, and not planned for this slice:
 
-- **Cross-cluster correlation** — "the same image is failing in all three".
-  This slice is the first thing in the repo that holds many clusters'
-  findings at once, which makes that question possible to ask, but it does
-  not attempt to answer it: each row is one cluster's own verdict, computed
-  independently of every other row.
+- **Correlation on an image.** The shared-signals section correlates issue
+  kinds and refused reads, not images: no finding in kubeagent carries an
+  image reference at any point in `scan` → `findings` → `gate`, and a private
+  registry host in one would be an internal hostname in a document written to
+  be forwarded.
 - `--output sarif`, `--policy` and `--baseline` at fleet scope. Each is
   plausible for a later slice; none is needed to answer "which of my
   clusters are broken".

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`kubeagent fleet` cross-cluster correlation.** Under the per-cluster table,
+  a sweep now names the issue kinds and the refused reads that appear in two or
+  more of the judged clusters, most widespread first — the answer to "is this
+  one problem or five" that a one-row-per-cluster view cannot give. It costs no
+  new cluster read: both axes were already computed inside the sweep. A cluster
+  counts once per signal however loud it is, the denominator is judged clusters
+  rather than selected ones, and the correlation changes no verdict — every
+  finding it counts was already counted in the cluster that produced it. The
+  fleet JSON document gains an optional `shared` property and moves to schema
+  version `1.1`; a sweep that found no correlation encodes no key, so every
+  existing consumer is unaffected.
+
 ## [1.9.0] - 2026-08-07
 
 ### Added

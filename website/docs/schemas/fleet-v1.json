@@ -39,6 +39,32 @@
       ],
       "type": "object"
     },
+    "fleet.Shared": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "clusters": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "signal": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "clusters",
+        "signal",
+        "source"
+      ],
+      "type": "object"
+    },
     "fleet.Unreachable": {
       "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
       "properties": {
@@ -84,6 +110,12 @@
       "description": "This document's schema version, MAJOR.MINOR. Treat an unknown MINOR as compatible.",
       "pattern": "^1\\.[0-9]+$",
       "type": "string"
+    },
+    "shared": {
+      "items": {
+        "$ref": "#/$defs/fleet.Shared"
+      },
+      "type": "array"
     },
     "unreachable": {
       "items": {

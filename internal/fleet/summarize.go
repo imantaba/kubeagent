@@ -12,14 +12,28 @@ import (
 // fourth-most-common kind has never been what makes an operator open a cluster.
 const maxTopIssues = 3
 
-// summarize reduces one cluster's gate verdict to its fleet row. It is pure,
-// and it reads only Level and Issue off each finding — which is what keeps a
-// namespace, pod, workload or node name out of the report by construction.
-func summarize(context string, v gate.Verdict) ClusterSummary {
+// summarize reduces one cluster's gate verdict to its fleet row, and to the
+// evidence that row cannot carry.
+//
+// It is pure, and it reads only Level and Issue off each finding and only
+// Resource off each blind spot — which is what keeps a namespace, pod, workload
+// or node name out of the report by construction, and keeps a blind spot's
+// redacted Reason out of it too.
+//
+// The row's Blindspots count and the evidence's blindspots set answer different
+// questions and are allowed to disagree: the count is how many reads failed,
+// the set is which resources they were, and two failed reads of one resource
+// are two of the former and one of the latter.
+func summarize(context string, v gate.Verdict) (ClusterSummary, clusterEvidence) {
 	s := ClusterSummary{
 		Context:    context,
 		Verdict:    v.Verdict,
 		Blindspots: len(v.Inconclusive),
+	}
+	ev := clusterEvidence{
+		context:    context,
+		issues:     map[string]bool{},
+		blindspots: map[string]bool{},
 	}
 
 	counts := map[string]int{}
@@ -33,9 +47,14 @@ func summarize(context string, v gate.Verdict) ClusterSummary {
 			s.Info++
 		}
 		counts[f.Issue]++
+		ev.issues[f.Issue] = true
 	}
+	for _, b := range v.Inconclusive {
+		ev.blindspots[b.Resource] = true
+	}
+
 	s.TopIssues = topIssues(counts)
-	return s
+	return s, ev
 }
 
 // topIssues returns at most maxTopIssues kinds, most frequent first, ties by

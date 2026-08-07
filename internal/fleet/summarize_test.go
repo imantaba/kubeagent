@@ -27,7 +27,7 @@ func TestSummarizeCountsByLevelAcrossFailingAndReported(t *testing.T) {
 		Inconclusive: []gate.Blindspot{{Resource: "nodes", Reason: "forbidden"}},
 	}
 
-	got := summarize("example-context", v)
+	got, _ := summarize("example-context", v)
 
 	want := ClusterSummary{
 		Context:    "example-context",
@@ -46,7 +46,7 @@ func TestSummarizeCountsByLevelAcrossFailingAndReported(t *testing.T) {
 // A pass carries no issues at all, and TopIssues must be nil rather than an
 // empty slice so `omitempty` drops the key from the JSON document.
 func TestSummarizeOfAPassIsAllZeroAndOmitsTopIssues(t *testing.T) {
-	got := summarize("example-context", gate.Verdict{Verdict: "pass"})
+	got, _ := summarize("example-context", gate.Verdict{Verdict: "pass"})
 
 	if got.TopIssues != nil {
 		t.Errorf("TopIssues = %v, want nil so omitempty drops the key", got.TopIssues)
@@ -71,7 +71,7 @@ func TestSummarizeCapsTopIssuesAtThreeMostFrequentFirst(t *testing.T) {
 	}
 	fs = append(fs, finding(findings.Critical, "ddd"))
 
-	got := summarize("example-context", gate.Verdict{Verdict: "fail", Failing: fs})
+	got, _ := summarize("example-context", gate.Verdict{Verdict: "fail", Failing: fs})
 
 	want := []string{"aaa", "bbb", "ccc"}
 	if !reflect.DeepEqual(got.TopIssues, want) {
@@ -88,7 +88,7 @@ func TestSummarizeBreaksTopIssueTiesByNameAscending(t *testing.T) {
 	}
 
 	for i := 0; i < 50; i++ {
-		got := summarize("example-context", gate.Verdict{Verdict: "fail", Failing: fs})
+		got, _ := summarize("example-context", gate.Verdict{Verdict: "fail", Failing: fs})
 		want := []string{"alpha", "mike", "zebra"}
 		if !reflect.DeepEqual(got.TopIssues, want) {
 			t.Fatalf("run %d: TopIssues = %v, want %v", i, got.TopIssues, want)
@@ -96,10 +96,13 @@ func TestSummarizeBreaksTopIssueTiesByNameAscending(t *testing.T) {
 	}
 }
 
-// The report names clusters and issue kinds. A namespace, pod, workload or node
-// name reaching it would be a credential leak, and the defence is structural:
-// summarize reads Level and Issue and nothing else. This test proves the
-// structure holds by marking every other field and looking for the markers.
+// A cluster's row names its context and its issue kinds. A namespace, pod,
+// workload or node name reaching it would be a credential leak, and the defence
+// is structural: summarize reads Level and Issue and nothing else off a
+// finding. This test proves the structure holds by marking every other field
+// and looking for the markers. The blind-spot resource names the same verdict
+// carries reach the report through Report.Shared, never through a row — which
+// is why the marked Resource below must not appear here either.
 func TestSummarizeCarriesNoObjectName(t *testing.T) {
 	const marker = "MARKERVALUE"
 	v := gate.Verdict{
@@ -116,7 +119,7 @@ func TestSummarizeCarriesNoObjectName(t *testing.T) {
 		Inconclusive: []gate.Blindspot{{Resource: marker + "Resource", Reason: marker + "BlindReason"}},
 	}
 
-	got := summarize("example-context", v)
+	got, _ := summarize("example-context", v)
 
 	rendered := strings.Join(append([]string{got.Context, got.Verdict}, got.TopIssues...), " ")
 	if strings.Contains(rendered, marker) {
@@ -176,5 +179,64 @@ func TestDecide(t *testing.T) {
 				t.Errorf("decide() = %q/%d, want %q/%d", verdict, code, tc.wantVerdict, tc.wantCode)
 			}
 		})
+	}
+}
+
+// Evidence is a set, not a count: a kind hitting four hundred pods in one
+// cluster is still one cluster. A count-weighted fold would let a single noisy
+// cluster manufacture a fleet-wide signal that does not exist.
+func TestCorrelateCountsAClusterOnceHoweverLoudItIs(t *testing.T) {
+	var fs []findings.Finding
+	for i := 0; i < 400; i++ {
+		fs = append(fs, finding(findings.Critical, "CrashLoopBackOff"))
+	}
+
+	_, ev := summarize("example-context", gate.Verdict{Verdict: "fail", Failing: fs})
+
+	if len(ev.issues) != 1 || !ev.issues["CrashLoopBackOff"] {
+		t.Errorf("issues = %v, want the one kind exactly once", ev.issues)
+	}
+	if ev.context != "example-context" {
+		t.Errorf("context = %q, want the cluster the evidence came from", ev.context)
+	}
+}
+
+// Evidence spans both halves of the verdict, exactly as the level counts do. A
+// finding below --fail-on is still evidence of what this cluster is showing.
+func TestSummarizeEvidenceSpansFailingAndReported(t *testing.T) {
+	_, ev := summarize("example-context", gate.Verdict{
+		Verdict:  "fail",
+		Failing:  []findings.Finding{finding(findings.Critical, "CrashLoopBackOff")},
+		Reported: []findings.Finding{finding(findings.Info, "Unschedulable")},
+	})
+
+	want := map[string]bool{"CrashLoopBackOff": true, "Unschedulable": true}
+	if !reflect.DeepEqual(ev.issues, want) {
+		t.Errorf("issues = %v, want %v", ev.issues, want)
+	}
+}
+
+// Blindspot.Resource is a closed set of API resource type names, every one a
+// string literal in internal/scan. Blindspot.Reason is a redacted error string,
+// bounded by nothing, and must never reach a document written to be forwarded.
+// The evidence reads Resource and nothing else off a blind spot.
+func TestSummarizeEvidenceCarriesResourceNeverReason(t *testing.T) {
+	const sentinel = "SENTINELREASON"
+	_, ev := summarize("example-context", gate.Verdict{
+		Verdict: "inconclusive",
+		Inconclusive: []gate.Blindspot{
+			{Resource: "nodes/proxy", Reason: sentinel},
+			{Resource: "pods/log", Reason: sentinel, Waived: true},
+		},
+	})
+
+	want := map[string]bool{"nodes/proxy": true, "pods/log": true}
+	if !reflect.DeepEqual(ev.blindspots, want) {
+		t.Errorf("blindspots = %v, want %v — a waived read is still a blind spot", ev.blindspots, want)
+	}
+	for signal := range ev.blindspots {
+		if strings.Contains(signal, sentinel) {
+			t.Errorf("evidence carries a blind-spot reason: %q", signal)
+		}
 	}
 }

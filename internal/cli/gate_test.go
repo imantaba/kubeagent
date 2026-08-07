@@ -16,12 +16,18 @@ func TestGateRegistersPolicyAsARepeatableFlag(t *testing.T) {
 	}
 }
 
-// --policy is declared per command, never as a persistent flag. The commands
-// that take no policy must reject it rather than accept and ignore it.
+// --policy and --policy-pack are declared per command, never as persistent
+// flags. The commands that take no policy must reject both rather than
+// accept and ignore them.
 func TestPolicyIsNotAPersistentFlag(t *testing.T) {
 	for _, name := range []string{"watch", "mcp", "tui", "version", "schema"} {
-		if err := Run([]string{name, "--policy", "x.yaml"}); err == nil {
-			t.Errorf("%s accepted --policy", name)
+		for _, flag := range [][]string{{"--policy", "x.yaml"}, {"--policy-pack", "reliability"}} {
+			// []string{name} is built fresh inside each append call: its cap
+			// equals its len, so append always reallocates rather than
+			// reusing a backing array another iteration still holds.
+			if err := Run(append([]string{name}, flag...)); err == nil {
+				t.Errorf("%s accepted %s", name, flag[0])
+			}
 		}
 	}
 }

@@ -36,7 +36,7 @@ func bindFleetFlags(cmd *cobra.Command, o *fleetOptions) {
 	cmd.Flags().StringVar(&o.kubeconfig, "kubeconfig", "", "path to kubeconfig (default: $KUBECONFIG or ~/.kube/config)")
 	cmd.Flags().StringArrayVar(&o.contexts, "context", nil, "kubeconfig context to sweep (repeatable)")
 	cmd.Flags().BoolVar(&o.allContexts, "all-contexts", false, "sweep every context the kubeconfig defines")
-	cmd.Flags().StringVar(&o.match, "match", "", "with --all-contexts: only contexts whose name matches this glob")
+	cmd.Flags().StringVar(&o.match, "match", "", "with --all-contexts or --fleet-file: only rows whose identity matches this glob")
 	cmd.Flags().StringVar(&o.fleetFile, "fleet-file", "", "read the clusters to sweep from a file")
 	cmd.Flags().StringVar(&o.failOn, "fail-on", "critical", "severity that fails the sweep: critical, warning or info")
 	cmd.Flags().IntVar(&o.workers, "workers", envInt("KUBEAGENT_FLEET_WORKERS", 8), "clusters read concurrently")

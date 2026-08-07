@@ -197,7 +197,7 @@ func TestCorrelateCountsAClusterOnceHoweverLoudItIs(t *testing.T) {
 		t.Errorf("issues = %v, want the one kind exactly once", ev.issues)
 	}
 	if ev.id != "example-context" {
-		t.Errorf("context = %q, want the cluster the evidence came from", ev.id)
+		t.Errorf("id = %q, want the cluster the evidence came from", ev.id)
 	}
 }
 

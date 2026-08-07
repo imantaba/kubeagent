@@ -29,8 +29,9 @@ package glob
 // followed by a long, almost-matching literal run, where each mismatch
 // re-scans nearly the whole literal. A caller must not hand this an unbounded
 // value — internal/policy's checkOp caps the compared value at maxMatchLen
-// before it reaches here, and `fleet --match` compares kubeconfig context
-// names, which the operator wrote. Do not remove that cap on the mistaken
+// before it reaches here, and `fleet --match` compares a row identity — a
+// kubeconfig context name, or a name from a fleet file — either way,
+// something the operator wrote. Do not remove that cap on the mistaken
 // belief that this function is linear.
 func Match(pattern, s string) bool {
 	var (

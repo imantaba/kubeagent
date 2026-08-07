@@ -46,7 +46,8 @@ describes what it does with the result — and neither implies the other.
 | `--kubeconfig` | `$KUBECONFIG` or `~/.kube/config` | — | path to kubeconfig |
 | `--context` | (none — repeatable) | — | kubeconfig context to sweep |
 | `--all-contexts` | `false` | — | sweep every context the kubeconfig defines |
-| `--match` | (empty) | — | with `--all-contexts`: only contexts whose name matches this glob |
+| `--match` | (empty) | — | with `--all-contexts` or `--fleet-file`: only rows whose identity matches this glob |
+| `--fleet-file` | (empty) | — | read the clusters to sweep from a file |
 | `--fail-on` | `critical` | — | severity that fails the sweep: `critical`, `warning` or `info` |
 | `--workers` | `8` | `KUBEAGENT_FLEET_WORKERS` | clusters read concurrently |
 | `--cluster-timeout` | `60s` | `KUBEAGENT_FLEET_CLUSTER_TIMEOUT` | per-cluster budget |

@@ -40,9 +40,11 @@ type Entry struct {
 	Name string `json:"name,omitempty"`
 
 	// Kubeconfig is the path to the kubeconfig this cluster is reached through.
-	// Optional; internal/cli falls back to --kubeconfig, then $KUBECONFIG, then
-	// the default location. This package never opens it and never names it in
-	// an error.
+	// Optional; an empty value falls back to --kubeconfig, then $KUBECONFIG,
+	// then the default location — the three-step resolution
+	// internal/cluster.resolveKubeconfig performs, reached through NewClient's
+	// restConfig. internal/cli only passes the flag's possibly-empty value
+	// through. This package never opens it and never names it in an error.
 	Kubeconfig string `json:"kubeconfig,omitempty"`
 
 	// Context is the kubeconfig context to use. Required, deliberately: an

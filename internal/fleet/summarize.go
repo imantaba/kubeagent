@@ -113,9 +113,12 @@ func rank(verdict string) int {
 }
 
 // sortSummaries puts the worst cluster first, in place. The last tiebreak is
-// the row identity, which is unique because fleetfile.Load refuses two entries
-// that resolve to the same name — so the order is total and two runs over the
-// same fleet render identical bytes.
+// the row identity, unique for a different reason on each of the two paths
+// that reach here: on a kubeconfig sweep the identity is a context name,
+// unique within the one kubeconfig it came from; on a fleet-file sweep it is
+// the entry's own resolved name, which fleetfile.Load refuses to let
+// collide. Either way the order is total, so two runs over the same fleet
+// render identical bytes.
 //
 // It was the context name until the fleet file arrived, justified by the
 // context being unique within a kubeconfig. That premise dies the moment a

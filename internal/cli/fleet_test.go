@@ -443,7 +443,9 @@ func TestBuildFleetFileTargets(t *testing.T) {
 
 // A context the kubeconfig does not define is a configuration defect, not a
 // reachability event: cluster.NewClient does no network I/O. Fatal at exit 4,
-// the same ruling buildFleetTargets makes.
+// the same ruling buildFleetTargets makes, and the same standard
+// TestBuildFleetTargetsRejectsAnUnknownContext holds it to: the error must
+// name what failed, not just that something did.
 func TestBuildFleetFileTargetsRejectsAnUnknownContext(t *testing.T) {
 	path := fleetFileKubeconfigPath(t, "prod-eu")
 	_, err := buildFleetFileTargets(path, []fleetfile.Entry{
@@ -451,6 +453,9 @@ func TestBuildFleetFileTargetsRejectsAnUnknownContext(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("buildFleetFileTargets() error = nil, want one")
+	}
+	if !strings.Contains(err.Error(), `"edge-a"`) {
+		t.Errorf("error = %v, want it to name the entry", err)
 	}
 	if code := exitCodeFor(err); code != 4 {
 		t.Errorf("exit code = %d, want 4", code)

@@ -109,6 +109,41 @@ func TestRenderTextWidensForALongContextName(t *testing.T) {
 	}
 }
 
+// TestRenderTextWidensForALongContextName above sets only Context, so
+// identity == context there by construction: a width loop that read Context
+// instead of the row identity would compute the same number for that
+// fixture and this test would not notice. Here Name is longer than every
+// Context in the report, so the two computations diverge, and only a width
+// computed from the row identity keeps the columns lined up.
+func TestRenderTextWidthFollowsRowIdentityNotContext(t *testing.T) {
+	rep := Report{
+		Verdict: "pass",
+		Clusters: []ClusterSummary{
+			{Name: "edge-far-west-1", Context: "default", Verdict: "pass"},
+			{Context: "prod-eu", Verdict: "pass"},
+		},
+	}
+	var buf bytes.Buffer
+	if err := RenderText(&buf, rep); err != nil {
+		t.Fatalf("RenderText() error = %v", err)
+	}
+
+	want := strings.Join([]string{
+		"FLEET  2 clusters, 0 failing, 0 unreachable",
+		"",
+		"CLUSTER          VERDICT       CRIT  WARN  INFO  TOP ISSUES",
+		"edge-far-west-1  pass             0     0     0",
+		"prod-eu          pass             0     0     0",
+		"",
+		"verdict: pass (exit 0)",
+		"",
+	}, "\n")
+
+	if got := buf.String(); got != want {
+		t.Errorf("RenderText() =\n%q\nwant\n%q", got, want)
+	}
+}
+
 // There is no elision. The spec's sample line is documentation shorthand, not
 // program output — three hundred clusters means three hundred rows.
 func TestRenderTextElidesNothing(t *testing.T) {

@@ -9,11 +9,17 @@ no file of your own to author.
 kubeagent policy packs                       # list what ships
 kubeagent policy packs --print reliability   # print one, to read or fork
 kubeagent scan --policy-pack reliability     # evaluate it against a cluster
+kubeagent scan --policy-pack security        # or the other one, or both
+
+# Nothing in a pack is critical, so a pack cannot fail a gate by default.
+# This is the explicit act that makes it block:
+kubeagent gate --policy-pack security --fail-on warning
 ```
 
 ```text
 $ kubeagent policy packs
   reliability    14 rules — probes, resource requests and limits, replica counts, disruption budgets and image tags
+  security       23 rules — privileged containers, host namespaces and paths, root filesystems, capabilities and service account tokens
 
 Print one to fork it:
   kubeagent policy packs --print <name>
@@ -56,7 +62,7 @@ An unknown name is refused, naming what does exist:
 
 ```text
 $ kubeagent policy packs --print nope
-kubeagent: unknown policy pack "nope" (want reliability)
+kubeagent: unknown policy pack "nope" (want reliability, security)
 ```
 
 ## Guarantees
@@ -78,7 +84,7 @@ smaller version of it.
 `--policy-pack` is opt-in, exactly like `--policy`: leave it off, and `scan`
 renders exactly the bytes it rendered before this slice shipped. No `policy`
 key appears in `--output json`, and no `schemaVersion` moves — `scan` stays at
-schema version 1.2, `gate` at 1.1. Shipping the `reliability` pack inside the
+schema version 1.2, `gate` at 1.1. Shipping a pack inside the
 binary changes nothing about what an existing command line does; the rules
 only run once `--policy-pack` names them.
 
@@ -90,14 +96,24 @@ separate, pack-shaped output to learn.
 ## No rule is critical
 
 `gate` fails a build on a `critical` finding by default (`--fail-on
-critical`). None of the fourteen `reliability` rules is `critical` — the
-pack's own header comment says this is deliberate — so turning on
-`--policy-pack reliability` in a pipeline that passed yesterday cannot make it
-fail today. Raising `--fail-on warning` (or lower) is the explicit, separate
-act that makes these rules block a build; enabling the pack does not do it for
-you.
+critical`). **No rule in any shipped pack is `critical`** — each pack's own
+header comment says this is deliberate — so turning on `--policy-pack` in a
+pipeline that passed yesterday cannot make it fail today. A test over the
+whole registry keeps it that way, so it is a property of the pack format
+rather than of the two packs that happen to ship.
 
-## The fourteen rules
+Read that as "opt-in to blocking", not as "not meant to block." Raising
+`--fail-on` is the explicit, separate act:
+
+```bash
+kubeagent gate --policy-pack security --fail-on warning
+```
+
+Every explicitly-bad-value rule in the `security` pack is a `warning`, so that
+one flag makes the pack block a build. Every "field is unset" rule is `info`
+and stays advisory even then.
+
+## The reliability pack — fourteen rules
 
 Paths are shortened below; every `containers[*]` is
 `spec.template.spec.containers[*]`.
@@ -119,10 +135,108 @@ Paths are shortened below; every `containers[*]` is
 | `reliability.cronjob-concurrency-policy` | CronJob | `spec.concurrencyPolicy` in `Forbid`, `Replace` | info |
 | `reliability.pvc-storage-class` | PersistentVolumeClaim | `spec.storageClassName` exists | info |
 
+## The security pack — twenty-three rules
+
+Paths are shortened below: `T` is `spec.template.spec`. The one `CronJob` rule
+spells its path in full, because its pod template lives one level deeper.
+
+| id | kind | assertion | level |
+| --- | --- | --- | --- |
+| `security.deploy-privileged` | Deployment | `T.containers[*].securityContext.privileged` notIn `true` | warning |
+| `security.deploy-privilege-escalation-unset` | Deployment | `T.containers[*].securityContext.allowPrivilegeEscalation` exists | info |
+| `security.deploy-privilege-escalation` | Deployment | `T.containers[*].securityContext.allowPrivilegeEscalation` notIn `true` | warning |
+| `security.deploy-run-as-non-root-unset` | Deployment | `T.containers[*].securityContext.runAsNonRoot` exists | info |
+| `security.deploy-run-as-non-root` | Deployment | `T.containers[*].securityContext.runAsNonRoot` notIn `false` | warning |
+| `security.deploy-run-as-root-uid` | Deployment | `T.containers[*].securityContext.runAsUser` gt `0` | warning |
+| `security.deploy-read-only-root-unset` | Deployment | `T.containers[*].securityContext.readOnlyRootFilesystem` exists | info |
+| `security.deploy-read-only-root` | Deployment | `T.containers[*].securityContext.readOnlyRootFilesystem` notIn `false` | warning |
+| `security.deploy-added-capabilities` | Deployment | `T.containers[*].securityContext.capabilities.add[*]` notIn seven host-level capabilities | warning |
+| `security.deploy-host-path-volume` | Deployment | `T.volumes[*].hostPath` notExists | warning |
+| `security.deploy-host-port` | Deployment | `T.containers[*].ports[*].hostPort` notExists | warning |
+| `security.deploy-host-network` | Deployment | `T.hostNetwork` notIn `true` | warning |
+| `security.deploy-host-pid` | Deployment | `T.hostPID` notIn `true` | warning |
+| `security.deploy-host-ipc` | Deployment | `T.hostIPC` notIn `true` | warning |
+| `security.deploy-seccomp-unset` | Deployment | `T.securityContext.seccompProfile.type` exists | info |
+| `security.deploy-seccomp-unconfined` | Deployment | `T.securityContext.seccompProfile.type` notIn `Unconfined` | warning |
+| `security.deploy-service-account-unset` | Deployment | `T.serviceAccountName` exists | info |
+| `security.deploy-automount-token-unset` | Deployment | `T.automountServiceAccountToken` exists | info |
+| `security.statefulset-privileged` | StatefulSet | `T.containers[*].securityContext.privileged` notIn `true` | warning |
+| `security.statefulset-host-path-volume` | StatefulSet | `T.volumes[*].hostPath` notExists | warning |
+| `security.daemonset-privileged` | DaemonSet | `T.containers[*].securityContext.privileged` notIn `true` | warning |
+| `security.daemonset-host-path-volume` | DaemonSet | `T.volumes[*].hostPath` notExists | warning |
+| `security.cronjob-privileged` | CronJob | `spec.jobTemplate.spec.template.spec.containers[*].securityContext.privileged` notIn `true` | warning |
+
+### Why four properties get two rules each
+
+`exists` catches a field nobody set. A value operator catches a field someone
+set to the wrong thing. Neither catches both, because **every operator except
+`exists` and `notExists` skips an absent field** — so a single `notIn` rule is
+silent about a workload that never set the field at all.
+
+The pack pairs them only where **an absent field is itself unsafe**:
+
+| property | absent means | rules |
+| --- | --- | --- |
+| `allowPrivilegeEscalation` | the Kubernetes default is `true` — unsafe | paired |
+| `runAsNonRoot` | nothing stops the container running as root — unsafe | paired |
+| `readOnlyRootFilesystem` | a writable root filesystem — unsafe | paired |
+| `seccompProfile.type` | unconfined — unsafe | paired |
+| `privileged`, `hostNetwork`, `hostPID`, `hostIPC`, `capabilities.add` | the safe value — safe | one value rule |
+| `hostPath`, `hostPort` | the safe case | one `notExists` rule |
+
+Where absence is the safe default, a second rule would report a compliant
+workload, so only the value rule ships. The `-unset` half of each pair is
+`info` and the value half is `warning`, which is why raising `--fail-on
+warning` blocks on the explicit misconfiguration without also blocking on
+every unset optional field.
+
+### What the security pack cannot say
+
+Five real gaps. They are written down rather than worked around, because each
+comes from a property the rule grammar does not have — and adding one would be
+an engine change, not a pack change.
+
+1. **A bare `Pod` that no controller owns is not checked.** Every rule selects
+   a workload kind. `kubeagent scan`'s own detectors still see that pod; the
+   pack does not. A controller-owned pod would otherwise repeat its workload's
+   violation once per replica.
+2. **Hardening set at one level does not satisfy a rule written for the
+   other.** The grammar has no OR, so each path names exactly one level and
+   cannot also accept the other. Both directions are real. A Deployment that
+   sets `runAsNonRoot` once in `spec.template.spec.securityContext` still
+   reports `security.deploy-run-as-non-root-unset` for each container. And a
+   Deployment whose containers each set their own `seccompProfile` still
+   reports `security.deploy-seccomp-unset`, because that pair reads the
+   pod-level field — Kubernetes accepts a seccomp profile at either level, so
+   that workload is hardened and the rule still fires. This is the pack's most
+   likely source of false positives. If your workloads harden at the other
+   level, fork the pack and move those paths.
+3. **`capabilities.drop` cannot be required to include `ALL`.** That needs an
+   existential quantifier — "some element equals ALL" — and `[*]` is
+   universally quantified with no existential counterpart. The pack checks
+   what was *added* instead, against a fixed list of seven host-level
+   capabilities.
+4. **RBAC bindings, service account objects and Secrets are unreachable.**
+   None is a kind a policy may select. A workload's *reference* to a service
+   account is reachable, and `security.deploy-service-account-unset` is that
+   rule; the object it names is not.
+   `security.deploy-automount-token-unset` is bounded the same way: it reads
+   the workload's own field, and cannot see that the service account behind it
+   may already have opted out.
+   `Secret` is absent deliberately — a violation carries evidence, and
+   evidence drawn from a Secret would be secret material rendered into a
+   report, a JSON document and a SARIF upload.
+5. **The added-capability list is curated, not exhaustive.** A capability
+   outside the seven passes. Fork the pack to extend it.
+
+A registry allowlist is also not a rule kubeagent can curate: it does not know
+which registry is yours, and a shipped rule naming one would be wrong for
+everyone else. `--print` and forking are the answer.
+
 ## Two semantics a rule author must know
 
 These follow directly from how the [general policy evaluator](policy.md)
-works, and every one of the fourteen `reliability` rules is written with them
+works, and every rule in both shipped packs is written with them
 in mind.
 
 **`[*]` produces one slot per element, and every slot must satisfy the
@@ -149,20 +263,21 @@ either rule alone to prove every image is pinned.
 ## RBAC
 
 A pack needs no grant beyond what a plain `kubeagent scan` — and `kubeagent
-rbac print` — already report. The kinds the fourteen `reliability` rules
+rbac print` — already report. The kinds the shipped rules
 select (`Deployment`, `StatefulSet`, `DaemonSet`, `CronJob`,
 `PersistentVolumeClaim`) are all inside the policy engine's selectable kinds,
 which are pinned to the same core rules `rbacprofile` already grants. Turning
-on `--policy-pack reliability` asks for no permission a plain `scan` did not
+on `--policy-pack` asks for no permission a plain `scan` did not
 already have.
 
 It does add request volume, though: evaluating any policy — a pack included —
 builds its own dynamic client and lists every kind the loaded rules touch,
-independently of whatever `scan`'s typed collectors already read. For this
-pack that is six `List` calls, one each for the five kinds its rules select
-plus `PodDisruptionBudget` for the one relation rule. That extra, uncached
-read is how `--policy` has always evaluated a rule set; this pack does not
-change it. See [Least-privilege RBAC](rbac.md).
+independently of whatever `scan`'s typed collectors already read. For
+`reliability` that is six `List` calls, one each for the five kinds its rules
+select plus `PodDisruptionBudget` for the one relation rule. For `security` it
+is four, one per workload kind, since it has no relation rule. That extra,
+uncached read is how `--policy` has always evaluated a rule set; a pack does
+not change it. See [Least-privilege RBAC](rbac.md).
 
 ## Forking a pack
 
@@ -192,8 +307,10 @@ running the fork instead of the original — before combining the two.
 
 Deliberately absent:
 
-- **Security and cost packs.** `reliability` is the first pack; the registry
-  has room for more, but this slice ships exactly one.
+- **A cost pack.** `reliability` and `security` ship; a cost pack does not.
+  Most cost claims are thresholds, and a threshold is cluster-specific, so
+  picking a curated default is a decision of its own rather than a third
+  transcription of this one.
 - **Operator-contributed packs at run time.** The registry is curated and
   compiled into the binary, the same as `known-issues`; there is no way to add
   a pack without a kubeagent release.

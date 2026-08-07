@@ -131,6 +131,75 @@ configuration defect, never a reachability event, and re-running will not change
 it. A cluster that is merely gone builds a client without complaint and lands in
 `unreachable` on the graceful path, where it belongs.
 
+## Selecting from a file
+
+`--context` and `--all-contexts` both select from one kubeconfig's contexts.
+`--fleet-file <path>` selects from a file instead, so a fleet can span several
+kubeconfigs and each row can carry a name the operator chose:
+
+```yaml
+# clusters.yaml
+- context: prod-eu
+- context: prod-us
+- name: edge-a
+  kubeconfig: /path/to/edge-a.kubeconfig
+  context: default
+- name: edge-b
+  kubeconfig: /path/to/edge-b.kubeconfig
+  context: default
+```
+
+```text
+$ kubeagent fleet --fleet-file clusters.yaml
+
+FLEET  4 clusters, 2 failing, 0 unreachable
+
+CLUSTER  VERDICT       CRIT  WARN  INFO  TOP ISSUES
+edge-a   fail             2     0     0  ImagePullBackOff, OOMKilled
+edge-b   fail             1     0     0  OOMKilled
+prod-eu  pass             0     0     0
+prod-us  pass             0     0     0
+
+SHARED ISSUES  in 2 or more of 4 judged clusters
+
+  2/4  OOMKilled  edge-a, edge-b
+
+verdict: fail (exit 1)
+```
+
+`edge-a` and `edge-b` come from two different kubeconfigs that both name their
+context `default` — the shape four per-cluster k3s kubeconfigs routinely take —
+so `name` is what tells them apart in the report; `prod-eu` and `prod-us` set
+no `name` and fall back to their `context`.
+
+Each entry:
+
+| Field | Required | Meaning |
+|---|---|---|
+| `context` | yes | the kubeconfig context to reach this cluster through |
+| `kubeconfig` | no | path to the kubeconfig; falls back to `--kubeconfig`, then `$KUBECONFIG`, then the default location |
+| `name` | no | the row identity; defaults to `context` |
+
+`context` is required: an entry naming none would take its kubeconfig's
+current-context, which can change under the operator between runs, and a
+checked-in fleet file has to be reproducible.
+
+The other selection flags beside `--fleet-file`:
+
+| Combination | Outcome |
+|---|---|
+| `--fleet-file` + `--context` | refused, exit 4 — the file names the clusters |
+| `--fleet-file` + `--all-contexts` | refused, exit 4 — same |
+| `--fleet-file` + `--kubeconfig` | allowed; `--kubeconfig` becomes the fallback for entries that set none |
+| `--fleet-file` + `--match` | allowed; matches the row identity |
+
+Selection comes from the file, and credentials still come from the kubeconfigs
+it points at. No server URL, no bearer token and no CA data can enter a
+kubeagent value, and structurally rather than by rule — an entry has three
+string fields decoded strictly, so `server:`, `token:` and
+`certificate-authority-data:` are load errors. The `--fleet-file` path and an
+entry's `kubeconfig` path reach stderr only.
+
 ## `--output json`
 
 The same sweep as above, as JSON — the eighth of kubeagent's [versioned JSON
@@ -297,14 +366,15 @@ JSON document names every one.
 
 ## What the report may name
 
-**It may name:** kubeconfig context names; issue kinds (`CrashLoopBackOff`,
-`ImagePullBackOff`, `Unschedulable`, and so on); and, in the shared-signals
-section, the API resource names of reads kubeagent was refused (`nodes/proxy`,
-`pods/log`, `secrets`, `events`, and so on). Both of those are closed,
-kubeagent-authored vocabularies, and a resource name names a *kind* of read,
-never an object. A
-context name is the operator's own label for their own cluster — it is the
-only thing that can answer "which one". This is not a new exposure:
+**It may name:** a row identity — the operator's own name for a cluster when
+the selection source gave one, the kubeconfig context otherwise; issue kinds
+(`CrashLoopBackOff`, `ImagePullBackOff`, `Unschedulable`, and so on); and, in
+the shared-signals section, the API resource names of reads kubeagent was
+refused (`nodes/proxy`, `pods/log`, `secrets`, `events`, and so on). Both of
+those are closed, kubeagent-authored vocabularies, and a resource name names a
+*kind* of read, never an object. A row identity is the operator's own label
+for their own cluster — it is the only thing that can answer "which one". This
+is not a new exposure:
 `internal/mcp`'s `list_contexts` tool already serves context names to a
 remote caller by design, and the watch daemon has carried one as a `cluster`
 metric label since its multi-cluster hub shipped.
@@ -320,7 +390,7 @@ carries counts and issue kinds, and neither of those can hold an object
 name, so the exclusion is structural: there is no field to accidentally
 populate with one, and no filter for a future change to accidentally bypass.
 
-A shared signal is the same shape of promise: it carries a context name, a
+A shared signal is the same shape of promise: it carries a row identity, a
 signal from one of those two closed vocabularies, and nothing else. In
 particular it reads a blind spot's `Resource` and never its `Reason`, which
 is a redacted error string rather than a bounded vocabulary — redacted is not

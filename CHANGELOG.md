@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `kubeagent fleet --fleet-file <path>` reads the clusters to sweep from a YAML
+  file instead of a kubeconfig's contexts, so a fleet can span several
+  kubeconfigs and each row can carry a name the operator chose. An entry names a
+  `context`, optionally a `kubeconfig` path and optionally a `name`; selection
+  comes from the file, and credentials still come from the kubeconfigs it points
+  at. The format cannot express a credential — an entry has three string fields
+  decoded strictly, so `server:`, `token:` and `certificate-authority-data:` are
+  load errors. `--context` and `--all-contexts` are refused beside it;
+  `--kubeconfig` becomes the fallback and `--match` filters the row identity.
+  `fleet` moves to schema version 1.2 (added the optional `name` on a cluster
+  summary and on an unreachable cluster, both `omitempty`), so a sweep selected
+  from a kubeconfig encodes neither key and its document is unchanged.
+
+### Fixed
+
+- `kubeagent fleet` could render two runs over the same fleet in different
+  orders when several clusters shared a kubeconfig context name. Both sorts
+  broke ties on the context name, which is not unique across kubeconfigs, and
+  `sort.Slice` is not stable. Both now break on the row identity, which a
+  duplicate-name load error keeps unique.
+
 ## [1.10.0] - 2026-08-07
 
 ### Added

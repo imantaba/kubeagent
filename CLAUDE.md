@@ -187,11 +187,24 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   calls the per-cluster `gate` evaluation it reuses already makes against
   that one context — and no `--fix` path. Separately: it makes **no LLM
   call**. It must never import `internal/remediate` or `internal/explain`.
-  Its report names kubeconfig context names, issue kinds, and the API resource
-  names of refused reads — never a node, namespace, pod or workload name, and
-  never a blind spot's `Reason`, which is a redacted error string rather than a
-  bounded vocabulary
+  Its report names a row identity — the operator's own name for a cluster
+  when the selection source gave one, the kubeconfig context otherwise —
+  plus issue kinds and the API resource names of refused reads — never a
+  node, namespace, pod or workload name, and never a blind spot's `Reason`,
+  which is a redacted error string rather than a bounded vocabulary
   (see [website/docs/features/fleet.md](website/docs/features/fleet.md)).
+  `internal/fleetfile` (the `--fleet-file` decoder) is a tenth case and takes
+  `internal/fleet`'s wall plus one `internal/fleet` cannot carry: it must never
+  import `internal/remediate` or `internal/explain`, and it must never import
+  `k8s.io/client-go` or `internal/cluster` either, which makes "holds no client"
+  structural rather than stated in a package that holds kubeconfig paths.
+  `internal/fleetfile/imports_test.go` enforces both halves. It is not in the
+  stdlib-only class — it imports `sigs.k8s.io/yaml`, already a direct dependency,
+  and `internal/safetext`. It is pure: no client, no context, no I/O beyond the
+  bytes it is handed. The file it decodes names clusters and cannot carry a
+  credential: an `Entry` has three string fields decoded with
+  `yaml.UnmarshalStrict`, so `server:`, `token:` and `certificate-authority-data:`
+  are load errors rather than ignored keys.
 - **Untrusted API text is sanitized at ingress, not at each renderer.** Every
   value read from a field the API server does not validate — `waiting.Message`,
   `terminated.Reason`, condition and event messages, `involvedObject.fieldPath`,
@@ -225,10 +238,12 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   says whether the change was additive (MINOR) or breaking (MAJOR). `scan` is
   at schema version **1.2** (added `policy`, then `baseline`, both
   `omitempty`), `gate` is at **1.1** (added `policyNotEvaluated`, `omitempty`),
-  and `fleet` is now at **1.1** too (added `shared`, `omitempty`) — all three
-  additive; `baseline` enters at **1.0**. A run without `--policy` or
-  `--baseline` encodes none of those keys, and a sweep that correlates nothing
-  encodes no `shared` key — every existing consumer is unaffected.
+  and `fleet` is at **1.2** (added `shared` at 1.1, then `name` at 1.2, both
+  `omitempty`) — all three additive; `baseline` enters at **1.0**. A run
+  without `--policy` or `--baseline` encodes none of those keys, a sweep that
+  correlates nothing encodes no `shared` key, and a sweep selected from a
+  kubeconfig writes no `name` key either, because a row identity that equals
+  its context is not written — every existing consumer is unaffected.
 
 ## Commit conventions
 
@@ -448,7 +463,19 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   version **1.1** (added `shared`, `omitempty`), and a sweep that correlates
   nothing encodes no key
   (see [website/docs/features/fleet.md](website/docs/features/fleet.md)).
-  The remaining post-1.0 work is the rest of fleet-scale — selection from
-  something other than a kubeconfig — and the rest of the curated-packs
-  item's second half: security and cost packs, and a pack contributed by
-  someone other than kubeagent itself.
+  Slice 3 has since shipped, and **fleet-scale is complete**: `kubeagent
+  fleet --fleet-file <path>` selects the clusters to sweep from a YAML file
+  instead of a kubeconfig's contexts, so a fleet can span several
+  kubeconfigs and each row can carry a name the operator chose.
+  `internal/fleetfile` decodes it under `internal/fleet`'s wall plus one
+  field `internal/fleet` itself cannot carry: no `k8s.io/client-go`, so
+  holding no client is structural rather than stated. Selection comes from
+  the file; credentials still come from the kubeconfigs it points at, and
+  the format cannot express one — an entry has three string fields decoded
+  strictly, so `server:`, `token:` and `certificate-authority-data:` are
+  load errors. `fleet` moves to schema version **1.2** (added the optional
+  `name` on a cluster summary and on an unreachable cluster, both
+  `omitempty`).
+  The remaining post-1.0 work is the rest of the curated-packs item's second
+  half — security and cost packs, and a pack contributed by someone other
+  than kubeagent itself — plus other baseline dimensions.

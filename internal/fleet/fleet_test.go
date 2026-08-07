@@ -221,3 +221,112 @@ func TestSweepOfOneClusterCarriesNoCorrelation(t *testing.T) {
 		t.Errorf("Shared = %+v, want nil so omitempty drops the key", rep.Shared)
 	}
 }
+
+// Target must never gain a kubeconfig path field. The caller builds the client
+// precisely so that a credential never enters this package, and a field set is
+// the only thing a test can pin that a comment cannot.
+func TestTargetCarriesNoKubeconfigPath(t *testing.T) {
+	var got []string
+	typ := reflect.TypeOf(Target{})
+	for i := 0; i < typ.NumField(); i++ {
+		got = append(got, typ.Field(i).Name)
+	}
+	want := []string{"Name", "Context", "Client"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Target fields = %v, want exactly %v — a kubeconfig path is a credential this package must never hold", got, want)
+	}
+}
+
+// A name is written only when it says something the context does not. A
+// kubeconfig sweep hands in Name with Context unset, and its rows must carry no
+// name at all so the JSON stays byte-identical to v1.10.0's.
+func TestSweepNamesAClusterOnlyWhenItDiffersFromItsContext(t *testing.T) {
+	rep := Sweep(context.Background(), []Target{
+		{Name: "edge-a", Context: "default", Client: healthyClient()},
+		{Name: "prod-eu", Client: healthyClient()},
+		{Name: "prod-us", Context: "prod-us", Client: healthyClient()},
+	}, Options{FailOn: findings.Critical, Workers: 3, ClusterTimeout: 30 * time.Second})
+
+	want := map[string]string{ // context -> expected Name
+		"default": "edge-a",
+		"prod-eu": "",
+		"prod-us": "",
+	}
+	if len(rep.Clusters) != 3 {
+		t.Fatalf("Clusters = %d, want 3", len(rep.Clusters))
+	}
+	for _, c := range rep.Clusters {
+		expected, known := want[c.Context]
+		if !known {
+			t.Fatalf("unexpected context %q", c.Context)
+		}
+		if c.Name != expected {
+			t.Errorf("cluster %q Name = %q, want %q", c.Context, c.Name, expected)
+		}
+	}
+}
+
+// The Unreachable sort had the same non-total comparator the summary sort had,
+// and the same fix: order on the row identity, not the context.
+func TestSweepSortsUnreachableByIdentityNotContext(t *testing.T) {
+	targets := []Target{
+		{Name: "edge-d", Context: "default"},
+		{Name: "edge-b", Context: "default"},
+		{Name: "edge-c", Context: "default"},
+		{Name: "edge-a", Context: "default"},
+	}
+	rep := Sweep(context.Background(), targets,
+		Options{FailOn: findings.Critical, Workers: 4, ClusterTimeout: 30 * time.Second})
+
+	var got []string
+	for _, u := range rep.Unreachable {
+		got = append(got, u.Name)
+	}
+	want := []string{"edge-a", "edge-b", "edge-c", "edge-d"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Unreachable order = %v, want %v", got, want)
+	}
+	for _, u := range rep.Unreachable {
+		if u.Context != "default" || u.Reason != ReasonUnreachable {
+			t.Errorf("unreachable row = %+v, want context default and the fixed reason", u)
+		}
+	}
+}
+
+// What a cluster is CALLED must not change what it is JUDGED to be. The same
+// fake clients wrapped the way a kubeconfig sweep wraps them and the way a
+// fleet file wraps them must produce the same verdict, the same exit code and
+// the same per-row counts. This is the test that pins "a sweep and a
+// single-cluster gate can never disagree about the same cluster" across a new
+// selection source.
+func TestSelectionSourceChangesNoVerdict(t *testing.T) {
+	opts := Options{FailOn: findings.Critical, Workers: 2, ClusterTimeout: 30 * time.Second}
+
+	crashing := fake.NewSimpleClientset(crashingPod("alpha"))
+	healthy := healthyClient()
+
+	fromKubeconfig := Sweep(context.Background(), []Target{
+		{Name: "edge-a", Client: crashing},
+		{Name: "edge-b", Client: healthy},
+	}, opts)
+
+	fromFile := Sweep(context.Background(), []Target{
+		{Name: "edge-a", Context: "default", Client: crashing},
+		{Name: "edge-b", Context: "default", Client: healthy},
+	}, opts)
+
+	if fromKubeconfig.Verdict != fromFile.Verdict || fromKubeconfig.Code != fromFile.Code {
+		t.Fatalf("verdict = %q/%d from a kubeconfig and %q/%d from a file, want identical",
+			fromKubeconfig.Verdict, fromKubeconfig.Code, fromFile.Verdict, fromFile.Code)
+	}
+	if len(fromKubeconfig.Clusters) != len(fromFile.Clusters) {
+		t.Fatalf("row counts differ: %d and %d", len(fromKubeconfig.Clusters), len(fromFile.Clusters))
+	}
+	for i := range fromKubeconfig.Clusters {
+		a, b := fromKubeconfig.Clusters[i], fromFile.Clusters[i]
+		if a.Verdict != b.Verdict || a.Critical != b.Critical || a.Warning != b.Warning ||
+			a.Info != b.Info || a.Blindspots != b.Blindspots {
+			t.Errorf("row %d differs beyond its name:\n %+v\n %+v", i, a, b)
+		}
+	}
+}

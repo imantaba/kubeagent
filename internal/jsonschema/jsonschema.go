@@ -31,11 +31,13 @@ const (
 	WatchVersion    = "1.0"
 	BaselineVersion = "1.0"
 
-	// FleetVersion is `kubeagent fleet --output json`. It entered the contract
-	// at 1.0 as the eighth document. 1.1 adds the optional `shared` property —
-	// the cross-cluster correlation — which is absent from a sweep that found
-	// none, so every 1.0 consumer is unaffected.
-	FleetVersion = "1.1"
+	// FleetVersion is `kubeagent fleet --output json`. 1.1 added the optional
+	// `shared` array; 1.2 added the optional `name` on a cluster summary and on
+	// an unreachable cluster, written only when the row identity differs from
+	// the kubeconfig context. Both bumps are additive: every property is
+	// omitempty and absent from `required`, so a document produced without
+	// them still validates against the older schema.
+	FleetVersion = "1.2"
 )
 
 // baseID is where the generated files are published. The $id carries the MAJOR

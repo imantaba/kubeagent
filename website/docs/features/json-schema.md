@@ -48,11 +48,12 @@ is a choice, not an oversight:
 ## What MINOR and MAJOR mean
 
 Every `schemaVersion` is `MAJOR.MINOR`. Every surface starts at `1.0`;
-`gate` and `fleet` are at `1.1` today, each having gained one optional
-field; `scan` is at `1.2`, having gained two — and **the schema version
-is not the kubeagent release version** — a surface's number moves only
-when its own document's shape moves, so a new `scan` field does not
-disturb a script reading the `gate` document.
+`gate` is at `1.1` today, having gained one optional field; `scan` is at
+`1.2`, having gained two; `fleet` is at `1.2` too, having gained two
+optional `name` properties — and **the schema version is not the kubeagent
+release version** — a surface's number moves only when its own document's
+shape moves, so a new `scan` field does not disturb a script reading the
+`gate` document.
 
 - **MINOR** — adds an *optional* field, or adds an enum value. A parser
   written against `1.0` still works against `1.3`: it just won't know about

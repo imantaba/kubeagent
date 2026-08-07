@@ -12,16 +12,17 @@
 // LLM call. The package accordingly imports neither internal/remediate nor
 // internal/explain, which internal/fleet/imports_test.go enforces.
 //
-// The report names kubeconfig context names, issue kinds, and the API resource
-// names of refused reads. It never names a node, namespace, pod or workload,
-// and that is structural rather than filtered: a summary is counts plus issue
-// kinds, and a correlation is context names plus a signal drawn from one of two
-// closed vocabularies — shapes an object name cannot fit into. In particular a
-// correlation reads gate.Blindspot.Resource and never gate.Blindspot.Reason,
-// which is a redacted error string rather than a bounded vocabulary. Nor does
-// the report ever carry a kubeconfig path — the one accepted place a path may
-// appear is stderr, from internal/cli, and this package writes no errors of its
-// own.
+// The report names a row identity — the operator's own name for a cluster when
+// the selection source gave one, the kubeconfig context otherwise — plus issue
+// kinds and the API resource names of refused reads. It never names a node,
+// namespace, pod or workload, and that is structural rather than filtered: a
+// summary is counts plus issue kinds, and a correlation is row identities plus
+// a signal drawn from one of two closed vocabularies — shapes an object name
+// cannot fit into. In particular a correlation reads gate.Blindspot.Resource
+// and never gate.Blindspot.Reason, which is a redacted error string rather
+// than a bounded vocabulary. Nor does the report ever carry a kubeconfig path
+// — the one accepted place a path may appear is stderr, from internal/cli,
+// and this package writes no errors of its own.
 package fleet
 
 import (
@@ -43,7 +44,15 @@ import (
 // building it needs a kubeconfig path and a kubeconfig path is a credential
 // this package must never hold.
 type Target struct {
-	Name   string
+	// Name is the row identity: what the report calls this cluster. For a
+	// kubeconfig sweep it is the context name.
+	Name string
+
+	// Context is the kubeconfig context this cluster was reached through.
+	// Empty means it is the same as Name — a caller that did not distinguish
+	// the two has only one identity to report.
+	Context string
+
 	Client kubernetes.Interface
 }
 
@@ -92,6 +101,12 @@ type Report struct {
 // ClusterSummary is one cluster's outcome: counts and issue kinds, never object
 // names.
 type ClusterSummary struct {
+	// Name is the row identity when the selection source gave one that differs
+	// from the context. Absent otherwise. Context always holds a real
+	// kubeconfig context name, as it has since v1.7.0, so a consumer piping it
+	// into `kubectl --context` keeps working.
+	Name string `json:"name,omitempty"`
+
 	Context    string `json:"context"`
 	Verdict    string `json:"verdict"`
 	Critical   int    `json:"critical"`
@@ -114,6 +129,14 @@ type ClusterSummary struct {
 // and gate.Decide recorded the refusal. Unreachable is only for a cluster that
 // produced no scan.Result at all.
 type Unreachable struct {
+	// Name is the row identity when the selection source gave one that differs
+	// from the context. Absent otherwise, so a sweep selected from a kubeconfig
+	// encodes no name key and its document stays byte-identical to v1.10.0's.
+	//
+	// An unreachable per-cluster-kubeconfig entry would otherwise render as
+	// "default", which names nothing.
+	Name string `json:"name,omitempty"`
+
 	Context string `json:"context"`
 
 	// Reason is drawn from the fixed vocabulary below and is never an
@@ -189,14 +212,27 @@ func Sweep(ctx context.Context, targets []Target, opts Options) Report {
 	}
 	evidence := make([]clusterEvidence, 0, len(targets))
 	for i, r := range results {
+		// Resolve the pair once, here, rather than in each branch below: a
+		// caller that gave only a Name has one identity to report, and a name
+		// equal to its context says nothing the context does not — so it is
+		// blanked and omitempty drops the key.
+		name, ctx := targets[i].Name, targets[i].Context
+		if ctx == "" {
+			ctx = name
+		}
+		if name == ctx {
+			name = ""
+		}
+
 		if r.err != nil {
 			rep.Unreachable = append(rep.Unreachable, Unreachable{
-				Context: targets[i].Name,
+				Name:    name,
+				Context: ctx,
 				Reason:  reasonFor(r.err),
 			})
 			continue
 		}
-		summary, ev := summarize(targets[i].Name, r.verdict)
+		summary, ev := summarize(name, ctx, r.verdict)
 		rep.Clusters = append(rep.Clusters, summary)
 		evidence = append(evidence, ev)
 	}
@@ -209,7 +245,8 @@ func Sweep(ctx context.Context, targets []Target, opts Options) Report {
 
 	sortSummaries(rep.Clusters)
 	sort.Slice(rep.Unreachable, func(i, j int) bool {
-		return rep.Unreachable[i].Context < rep.Unreachable[j].Context
+		a, b := rep.Unreachable[i], rep.Unreachable[j]
+		return identity(a.Name, a.Context) < identity(b.Name, b.Context)
 	})
 	rep.Verdict, rep.Code = decide(rep.Clusters, rep.Unreachable)
 	return rep

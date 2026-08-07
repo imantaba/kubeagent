@@ -27,7 +27,7 @@ func TestSummarizeCountsByLevelAcrossFailingAndReported(t *testing.T) {
 		Inconclusive: []gate.Blindspot{{Resource: "nodes", Reason: "forbidden"}},
 	}
 
-	got, _ := summarize("example-context", v)
+	got, _ := summarize("", "example-context", v)
 
 	want := ClusterSummary{
 		Context:    "example-context",
@@ -46,7 +46,7 @@ func TestSummarizeCountsByLevelAcrossFailingAndReported(t *testing.T) {
 // A pass carries no issues at all, and TopIssues must be nil rather than an
 // empty slice so `omitempty` drops the key from the JSON document.
 func TestSummarizeOfAPassIsAllZeroAndOmitsTopIssues(t *testing.T) {
-	got, _ := summarize("example-context", gate.Verdict{Verdict: "pass"})
+	got, _ := summarize("", "example-context", gate.Verdict{Verdict: "pass"})
 
 	if got.TopIssues != nil {
 		t.Errorf("TopIssues = %v, want nil so omitempty drops the key", got.TopIssues)
@@ -71,7 +71,7 @@ func TestSummarizeCapsTopIssuesAtThreeMostFrequentFirst(t *testing.T) {
 	}
 	fs = append(fs, finding(findings.Critical, "ddd"))
 
-	got, _ := summarize("example-context", gate.Verdict{Verdict: "fail", Failing: fs})
+	got, _ := summarize("", "example-context", gate.Verdict{Verdict: "fail", Failing: fs})
 
 	want := []string{"aaa", "bbb", "ccc"}
 	if !reflect.DeepEqual(got.TopIssues, want) {
@@ -88,7 +88,7 @@ func TestSummarizeBreaksTopIssueTiesByNameAscending(t *testing.T) {
 	}
 
 	for i := 0; i < 50; i++ {
-		got, _ := summarize("example-context", gate.Verdict{Verdict: "fail", Failing: fs})
+		got, _ := summarize("", "example-context", gate.Verdict{Verdict: "fail", Failing: fs})
 		want := []string{"alpha", "mike", "zebra"}
 		if !reflect.DeepEqual(got.TopIssues, want) {
 			t.Fatalf("run %d: TopIssues = %v, want %v", i, got.TopIssues, want)
@@ -119,7 +119,7 @@ func TestSummarizeCarriesNoObjectName(t *testing.T) {
 		Inconclusive: []gate.Blindspot{{Resource: marker + "Resource", Reason: marker + "BlindReason"}},
 	}
 
-	got, _ := summarize("example-context", v)
+	got, _ := summarize("", "example-context", v)
 
 	rendered := strings.Join(append([]string{got.Context, got.Verdict}, got.TopIssues...), " ")
 	if strings.Contains(rendered, marker) {
@@ -191,20 +191,20 @@ func TestCorrelateCountsAClusterOnceHoweverLoudItIs(t *testing.T) {
 		fs = append(fs, finding(findings.Critical, "CrashLoopBackOff"))
 	}
 
-	_, ev := summarize("example-context", gate.Verdict{Verdict: "fail", Failing: fs})
+	_, ev := summarize("", "example-context", gate.Verdict{Verdict: "fail", Failing: fs})
 
 	if len(ev.issues) != 1 || !ev.issues["CrashLoopBackOff"] {
 		t.Errorf("issues = %v, want the one kind exactly once", ev.issues)
 	}
-	if ev.context != "example-context" {
-		t.Errorf("context = %q, want the cluster the evidence came from", ev.context)
+	if ev.id != "example-context" {
+		t.Errorf("id = %q, want the cluster the evidence came from", ev.id)
 	}
 }
 
 // Evidence spans both halves of the verdict, exactly as the level counts do. A
 // finding below --fail-on is still evidence of what this cluster is showing.
 func TestSummarizeEvidenceSpansFailingAndReported(t *testing.T) {
-	_, ev := summarize("example-context", gate.Verdict{
+	_, ev := summarize("", "example-context", gate.Verdict{
 		Verdict:  "fail",
 		Failing:  []findings.Finding{finding(findings.Critical, "CrashLoopBackOff")},
 		Reported: []findings.Finding{finding(findings.Info, "Unschedulable")},
@@ -222,7 +222,7 @@ func TestSummarizeEvidenceSpansFailingAndReported(t *testing.T) {
 // The evidence reads Resource and nothing else off a blind spot.
 func TestSummarizeEvidenceCarriesResourceNeverReason(t *testing.T) {
 	const sentinel = "SENTINELREASON"
-	_, ev := summarize("example-context", gate.Verdict{
+	_, ev := summarize("", "example-context", gate.Verdict{
 		Verdict: "inconclusive",
 		Inconclusive: []gate.Blindspot{
 			{Resource: "nodes/proxy", Reason: sentinel},
@@ -237,6 +237,70 @@ func TestSummarizeEvidenceCarriesResourceNeverReason(t *testing.T) {
 	for signal := range ev.blindspots {
 		if strings.Contains(signal, sentinel) {
 			t.Errorf("evidence carries a blind-spot reason: %q", signal)
+		}
+	}
+}
+
+func TestIdentity(t *testing.T) {
+	tests := []struct {
+		name, context, want string
+	}{
+		{"", "prod-eu", "prod-eu"},
+		{"edge-a", "default", "edge-a"},
+		{"edge-a", "", "edge-a"},
+		{"", "", ""},
+	}
+	for _, tt := range tests {
+		if got := identity(tt.name, tt.context); got != tt.want {
+			t.Errorf("identity(%q, %q) = %q, want %q", tt.name, tt.context, got, tt.want)
+		}
+	}
+}
+
+// summarize copies the pair it is handed. Resolving the identity is Sweep's
+// job, and doing it in two places would be two definitions of one rule.
+func TestSummarizeCopiesTheResolvedNameAndContext(t *testing.T) {
+	s, ev := summarize("edge-a", "default", gate.Verdict{Verdict: "pass"})
+	if s.Name != "edge-a" || s.Context != "default" {
+		t.Errorf("summary = {Name:%q Context:%q}, want {edge-a default}", s.Name, s.Context)
+	}
+	if ev.id != "edge-a" {
+		t.Errorf("evidence id = %q, want edge-a — the evidence carries the row identity", ev.id)
+	}
+
+	s, ev = summarize("", "prod-eu", gate.Verdict{Verdict: "pass"})
+	if s.Name != "" {
+		t.Errorf("summary Name = %q, want empty so omitempty drops the key", s.Name)
+	}
+	if s.Context != "prod-eu" || ev.id != "prod-eu" {
+		t.Errorf("summary = {Context:%q}, evidence id = %q, want both prod-eu", s.Context, ev.id)
+	}
+}
+
+// Four clusters whose context is all "default" is exactly the per-cluster
+// kubeconfig case, and it is what made the old tiebreak non-total: sort.Slice
+// is not stable, so a non-total comparator renders different bytes on different
+// runs. The comparator must break on the row identity.
+func TestSortSummariesIsTotalWhenEveryContextIsTheSame(t *testing.T) {
+	build := func(names ...string) []ClusterSummary {
+		out := make([]ClusterSummary, 0, len(names))
+		for _, n := range names {
+			out = append(out, ClusterSummary{Name: n, Context: "default", Verdict: "pass"})
+		}
+		return out
+	}
+
+	a := build("edge-a", "edge-b", "edge-c", "edge-d")
+	b := build("edge-d", "edge-c", "edge-b", "edge-a")
+	sortSummaries(a)
+	sortSummaries(b)
+
+	if !reflect.DeepEqual(a, b) {
+		t.Fatalf("two input orders sorted differently:\n %+v\n %+v", a, b)
+	}
+	for i, want := range []string{"edge-a", "edge-b", "edge-c", "edge-d"} {
+		if a[i].Name != want {
+			t.Errorf("sorted[%d] = %q, want %q", i, a[i].Name, want)
 		}
 	}
 }

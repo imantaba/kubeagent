@@ -5,7 +5,8 @@
 // in the same class as internal/jsonschema, internal/dashboard and
 // internal/baseline. internal/glob/imports_test.go enforces both halves. It has
 // two callers with nothing else in common: a --policy rule matching an image
-// reference, and `kubeagent fleet --match` matching a kubeconfig context name.
+// reference, and `kubeagent fleet --match` matching a row identity — a
+// kubeconfig context name, or the operator's own name from a fleet file.
 package glob
 
 // Match reports whether s matches pattern. Two metacharacters, and only two:
@@ -28,8 +29,9 @@ package glob
 // followed by a long, almost-matching literal run, where each mismatch
 // re-scans nearly the whole literal. A caller must not hand this an unbounded
 // value — internal/policy's checkOp caps the compared value at maxMatchLen
-// before it reaches here, and `fleet --match` compares kubeconfig context
-// names, which the operator wrote. Do not remove that cap on the mistaken
+// before it reaches here, and `fleet --match` compares a row identity — a
+// kubeconfig context name, or a name from a fleet file — either way,
+// something the operator wrote. Do not remove that cap on the mistaken
 // belief that this function is linear.
 func Match(pattern, s string) bool {
 	var (

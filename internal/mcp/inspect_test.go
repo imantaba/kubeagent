@@ -319,6 +319,7 @@ func TestInspect_HealthyDeploymentIsFound(t *testing.T) {
 // as the positive: a resolver that ignored the requested kind would answer
 // found:true for a Deployment asked about as a StatefulSet.
 func TestResolveObject_FindsEachKindUnderItsOwnKindOnly(t *testing.T) {
+	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
 	const ns = "shop"
 	in := inventory.Inputs{
 		Deployments: []appsv1.Deployment{{
@@ -374,7 +375,7 @@ func TestResolveObject_FindsEachKindUnderItsOwnKindOnly(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		got := resolveObject(res, tc.kind, ns, tc.name)
+		got := resolveObject(res, tc.kind, ns, tc.name, now)
 		if !got.Found {
 			t.Errorf("resolveObject(%q, %q) Found = false, want true", tc.kind, tc.name)
 			continue
@@ -388,14 +389,175 @@ func TestResolveObject_FindsEachKindUnderItsOwnKindOnly(t *testing.T) {
 			if other.kind == tc.kind {
 				continue
 			}
-			if resolveObject(res, other.kind, ns, tc.name).Found {
+			if resolveObject(res, other.kind, ns, tc.name, now).Found {
 				t.Errorf("resolveObject(%q, %q) Found = true; %q is a %s",
 					other.kind, tc.name, tc.name, wantKind[tc.kind])
 			}
 		}
 		// A name nothing carries must not resolve under any kind.
-		if resolveObject(res, tc.kind, ns, "ghost").Found {
+		if resolveObject(res, tc.kind, ns, "ghost", now).Found {
 			t.Errorf("resolveObject(%q, %q) Found = true for a name nothing carries", tc.kind, "ghost")
 		}
+	}
+}
+
+// callInspectRaw returns the tool's structured result as a decoded JSON object,
+// so a test can assert which keys are *present*. InspectOutput cannot answer
+// that: after unmarshalling, an omitempty field that was omitted and one that
+// encoded its zero value are the same value.
+func callInspectRaw(t *testing.T, cs *mcpsdk.ClientSession, args map[string]any) map[string]any {
+	t.Helper()
+	res, err := cs.CallTool(context.Background(), &mcpsdk.CallToolParams{
+		Name: "kubeagent_inspect", Arguments: args,
+	})
+	if err != nil {
+		t.Fatalf("CallTool() error = %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("CallTool() returned an error result: %+v", res.Content)
+	}
+	blob, err := json.Marshal(res.StructuredContent)
+	if err != nil {
+		t.Fatalf("Marshal(structured) error = %v", err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(blob, &out); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	return out
+}
+
+// crashingOwnedPod is crashingPod's controller-owned twin: the shape that
+// actually occurs in a cluster. PodOwners rolls it up to its Deployment, so it
+// is never a "Pod" workload in its own right.
+func crashingOwnedPod(ns, name, rs string) *corev1.Pod {
+	p := ownedPod(ns, name, ctrl("ReplicaSet", rs))
+	p.Status.ContainerStatuses = []corev1.ContainerStatus{{
+		Name:         "app",
+		RestartCount: 7,
+		State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{
+			Reason: "CrashLoopBackOff", Message: "back-off restarting failed container",
+		}},
+	}}
+	return p
+}
+
+// TestInspect_ControllerOwnedPodIsFoundAndNamesItsOwner is the reported defect.
+// kubeagent_triage emits Kind:"Pod" with the pod's own name for every critical
+// finding, and the shipped skill tells the model to inspect it with exactly the
+// namespace and name the finding supplied. Every controller-owned pod answered
+// found:false, because a lookup was being answered against a workload list a
+// controller-owned pod is never in.
+func TestInspect_ControllerOwnedPodIsFoundAndNamesItsOwner(t *testing.T) {
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web"},
+		Spec:       appsv1.DeploymentSpec{Replicas: p32(1)},
+		Status:     appsv1.DeploymentStatus{ReadyReplicas: 0},
+	}
+	rs := &appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{
+		Namespace: "shop", Name: "web-1a2b", OwnerReferences: ctrl("Deployment", "web"),
+	}}
+	cs := connect(t, Config{Context: "kind-example"}, fake.NewSimpleClientset(
+		dep, rs, crashingOwnedPod("shop", "web-1a2b-cdef", "web-1a2b")))
+
+	out := callInspect(t, cs, map[string]any{
+		"kind": "pod", "namespace": "shop", "name": "web-1a2b-cdef",
+	})
+
+	if !out.Found {
+		t.Fatal("Found = false for a controller-owned pod that exists; this is the " +
+			"identity kubeagent_triage hands out for every critical finding")
+	}
+	if out.Kind != "Pod" {
+		t.Errorf("Kind = %q, want %q — a caller who asked about a pod must not be "+
+			"answered about its Deployment", out.Kind, "Pod")
+	}
+	if out.Status != "Running" {
+		t.Errorf("Status = %q, want the pod's own phase %q", out.Status, "Running")
+	}
+	if out.Owner != "Deployment/web" {
+		t.Errorf("Owner = %q, want %q — the escalation pointer, so a caller need not "+
+			"guess the owning workload's name", out.Owner, "Deployment/web")
+	}
+	if len(out.Pods) != 1 || out.Pods[0].Name != "web-1a2b-cdef" {
+		t.Fatalf("Pods = %+v, want exactly the one pod asked about", out.Pods)
+	}
+	if out.Pods[0].Restarts != 7 {
+		t.Errorf("Pods[0].Restarts = %d, want 7", out.Pods[0].Restarts)
+	}
+	if len(out.Findings) != 1 {
+		t.Fatalf("Findings = %+v, want the pod's own critical finding", out.Findings)
+	}
+	f := out.Findings[0]
+	if f.Severity != "critical" || f.Kind != "Pod" || f.Name != "web-1a2b-cdef" {
+		t.Errorf("Findings[0] = %+v, want a critical finding on the pod itself", f)
+	}
+}
+
+// TestInspect_PodAnswerHasNoDesiredOrReadyKey guards the rule that absence must
+// never read as zero. A pod has no replica count; encoding desired:0 ready:0
+// would tell a model the pod is scaled to nothing.
+func TestInspect_PodAnswerHasNoDesiredOrReadyKey(t *testing.T) {
+	cs := connect(t, Config{Context: "kind-example"},
+		fake.NewSimpleClientset(ownedPod("shop", "loner", nil)))
+
+	raw := callInspectRaw(t, cs, map[string]any{
+		"kind": "pod", "namespace": "shop", "name": "loner",
+	})
+
+	if raw["found"] != true {
+		t.Fatalf("found = %v, want true (result: %+v)", raw["found"], raw)
+	}
+	for _, key := range []string{"desired", "ready"} {
+		if v, ok := raw[key]; ok {
+			t.Errorf("a pod answer carries %q = %v; both are omitempty and a pod has "+
+				"no replica count, so absence must never render as zero", key, v)
+		}
+	}
+}
+
+// TestInspect_BarePodHasNoOwnerKey — a pod with no controller must not claim an
+// owner it does not have.
+func TestInspect_BarePodHasNoOwnerKey(t *testing.T) {
+	cs := connect(t, Config{Context: "kind-example"},
+		fake.NewSimpleClientset(ownedPod("shop", "loner", nil)))
+
+	raw := callInspectRaw(t, cs, map[string]any{
+		"kind": "pod", "namespace": "shop", "name": "loner",
+	})
+
+	if v, ok := raw["owner"]; ok {
+		t.Errorf("owner = %v on a bare pod, want the key absent", v)
+	}
+}
+
+// TestInspect_JobPodPastTheCapIsStillInspectable covers the third way the old
+// lookup lost an object that exists: Assemble truncates a Job's or CronJob's pod
+// rows at jobPodCap (3), which is right for a report and wrong for a lookup. The
+// pod path reads res.Inputs.Pods directly, so the fourth pod is findable.
+func TestInspect_JobPodPastTheCapIsStillInspectable(t *testing.T) {
+	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "migrate"}}
+	objs := []runtime.Object{job}
+	for _, n := range []string{"migrate-1", "migrate-2", "migrate-3", "migrate-4"} {
+		objs = append(objs, ownedPod("shop", n, ctrl("Job", "migrate")))
+	}
+	cs := connect(t, Config{Context: "kind-example"}, fake.NewSimpleClientset(objs...))
+
+	// The owning Job's own answer is capped at three rows, by design.
+	viaJob := callInspect(t, cs, map[string]any{"kind": "job", "namespace": "shop", "name": "migrate"})
+	if len(viaJob.Pods) != 3 {
+		t.Fatalf("the Job answer carries %d pod rows, want jobPodCap (3) — the fixture "+
+			"no longer exercises truncation", len(viaJob.Pods))
+	}
+
+	out := callInspect(t, cs, map[string]any{
+		"kind": "pod", "namespace": "shop", "name": "migrate-4",
+	})
+	if !out.Found {
+		t.Fatal("Found = false for a Job's fourth pod; a display cap must not hide an " +
+			"object from a lookup")
+	}
+	if out.Owner != "Job/migrate" {
+		t.Errorf("Owner = %q, want %q", out.Owner, "Job/migrate")
 	}
 }

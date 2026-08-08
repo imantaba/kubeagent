@@ -41,18 +41,24 @@ type InspectInput struct {
 
 // InspectOutput is the kubeagent_inspect result.
 type InspectOutput struct {
-	Found     bool               `json:"found"`
-	Kind      string             `json:"kind"`
-	Namespace string             `json:"namespace"`
-	Name      string             `json:"name"`
-	Status    string             `json:"status,omitempty"`
-	Desired   int                `json:"desired,omitempty"`
-	Ready     int                `json:"ready,omitempty"`
-	Image     string             `json:"image,omitempty"`
-	Pods      []inventory.PodRow `json:"pods"`
-	Findings  []Finding          `json:"findings"`
-	Events    []Event            `json:"events"`
-	Coverage  *Coverage          `json:"coverage"`
+	Found     bool   `json:"found"`
+	Kind      string `json:"kind"`
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
+	Status    string `json:"status,omitempty"`
+	Desired   int    `json:"desired,omitempty"`
+	Ready     int    `json:"ready,omitempty"`
+	Image     string `json:"image,omitempty"`
+	// Owner names the controller that owns this pod, as "Deployment/web". It is
+	// the escalation pointer: a critical finding names a pod, and this is how a
+	// caller learns which workload to inspect next without guessing its name.
+	// Absent for a bare pod, which has no controller, and for every kind other
+	// than pod.
+	Owner    string             `json:"owner,omitempty"`
+	Pods     []inventory.PodRow `json:"pods"`
+	Findings []Finding          `json:"findings"`
+	Events   []Event            `json:"events"`
+	Coverage *Coverage          `json:"coverage"`
 }
 
 func registerInspect(s *mcpsdk.Server, cfg Config, base kubernetes.Interface, switchTo clientFactory, now func() time.Time) {
@@ -119,13 +125,14 @@ func registerInspect(s *mcpsdk.Server, cfg Config, base kubernetes.Interface, sw
 				Coverage:  cov,
 			}
 
-			if r := resolveObject(res, in.Kind, in.Namespace, in.Name); r.Found {
+			if r := resolveObject(res, in.Kind, in.Namespace, in.Name, now()); r.Found {
 				out.Found = true
 				out.Kind = r.Kind
 				out.Status = r.Status
 				out.Desired = r.Desired
 				out.Ready = r.Ready
 				out.Image = r.Image
+				out.Owner = r.Owner
 				out.Pods = append(out.Pods, r.Pods...)
 				out.Findings = append(out.Findings, r.Findings...)
 			}
@@ -162,6 +169,7 @@ type resolved struct {
 	Desired  int
 	Ready    int
 	Image    string
+	Owner    string
 	Pods     []inventory.PodRow
 	Findings []Finding
 }
@@ -196,7 +204,10 @@ func findingsOf(ws []inventory.Workload) []diagnose.Finding {
 // only the seven lowercase spellings, but this is a pure function a test may
 // call with any string, and it must not answer found:false for "Pod" when the
 // caller meant "pod".
-func resolveObject(res scan.Result, kind, namespace, name string) resolved {
+func resolveObject(res scan.Result, kind, namespace, name string, now time.Time) resolved {
+	if strings.EqualFold(kind, "pod") {
+		return resolvePod(res, namespace, name, now)
+	}
 	for _, w := range inventory.Assemble(res.Inputs, findingsOf(res.Inventory.Workloads)) {
 		if w.Namespace != namespace || w.Name != name || !strings.EqualFold(w.Kind, kind) {
 			continue
@@ -218,6 +229,53 @@ func resolveObject(res scan.Result, kind, namespace, name string) resolved {
 			}
 		} else {
 			for _, f := range w.Findings {
+				out.Findings = append(out.Findings, fromDiagnose(f))
+			}
+		}
+		return out
+	}
+	return resolved{}
+}
+
+// resolvePod answers a pod lookup from res.Inputs.Pods directly rather than
+// through the owning workload's Pods slice. Two reasons, and both are defects
+// the old lookup had: a controller-owned pod is never a workload in its own
+// right (inventory.PodOwners assigns kind "Pod" only when the pod has no
+// controller owner), and Assemble truncates a Job's or CronJob's rows at
+// jobPodCap — right for a report, wrong for a lookup.
+//
+// The answer describes the pod. A caller who asked about a pod and got its
+// Deployment's replica counts back would have been answered a different
+// question, so Desired and Ready are left unset: both are omitempty, so they
+// leave the JSON rather than rendering as 0/0, and absence must never read as
+// zero. Image is taken off the row rather than recomputed, so a pod answer and
+// a workload answer report the same field the same way.
+//
+// There is no fromWorkload fallback here. fromWorkload describes a workload's
+// ready-versus-desired; synthesising one for a pod would invent a finding no
+// detector emitted, and an unready pod is already visible in its row's ready
+// field.
+func resolvePod(res scan.Result, namespace, name string, now time.Time) resolved {
+	key := namespace + "/" + name
+	for _, p := range res.Inputs.Pods {
+		if p.Namespace != namespace || p.Name != name {
+			continue
+		}
+		row := inventory.PodRowFor(p, now)
+		out := resolved{
+			Found: true,
+			// "Pod" comes from here, never from the object: typed client-go
+			// objects leave TypeMeta empty.
+			Kind:   "Pod",
+			Status: row.Phase,
+			Image:  row.Image,
+			Pods:   []inventory.PodRow{row},
+		}
+		if o := inventory.PodOwners(res.Inputs)[key]; o.Kind != "Pod" {
+			out.Owner = o.Kind + "/" + o.Name
+		}
+		for _, f := range findingsOf(res.Inventory.Workloads) {
+			if f.Pod == key {
 				out.Findings = append(out.Findings, fromDiagnose(f))
 			}
 		}

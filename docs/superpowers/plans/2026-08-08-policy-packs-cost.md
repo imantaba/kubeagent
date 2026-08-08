@@ -327,7 +327,7 @@ The pack names shapes that usually cost money and claims nothing more."
 - Consumes, from `internal/policypack/packs_test.go`: `func loadPack(t *testing.T, name string) []policy.Rule`
 - Consumes, from `internal/policypack/security_rules_test.go`: `func evaluateOne(t *testing.T, r policy.Rule, kind string, obj *unstructured.Unstructured) []policy.Violation`
 - Consumes, from `internal/policy`: `policy.Rule` with fields `ID string`, `Match Match` (field `Kind string`), `Assert Assert` (fields `Path string`, `Op Op`, `Values []string`), `Level Level`, `Message string`; constants `policy.LevelInfo`, `policy.LevelWarning`, `policy.LevelCritical`, `policy.OpExists`, `policy.OpLte`.
-- Produces, for Tasks 3 and 4: `packRule`, `sizedContainer`, `containerWithoutResource`, `containerRequesting`, `containerLimiting`, `cronJobFrom`/`goodCronJob`/`cronJobWithContainer`/`cronJobWithHistory`/`cronJobWithoutDeadline`, `costJob`, `hpa`, `claim`.
+- Produces, for Tasks 3 and 4: `packRule`, `sizedContainer`, `containerWithoutResource`, `containerRequesting`, `cronJobFrom`/`goodCronJob`/`cronJobWithContainer`/`cronJobWithHistory`/`cronJobWithoutDeadline`, `costJob`, `hpa`, `claim`. There is deliberately no limits-side container helper: every `lte` rule in the pack targets `requests` or a bare numeric field, and the two rules that read `resources.limits` use `exists`, which `containerWithoutResource` already serves.
 
 - [ ] **Step 1: Rename `securityRule` to `packRule`**
 

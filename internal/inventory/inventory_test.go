@@ -100,10 +100,10 @@ func TestPodReadyAndIsReady(t *testing.T) {
 }
 
 func TestWorkloadStatusAndFlagged(t *testing.T) {
-	if workloadStatus(3, 3) != "Running" {
+	if WorkloadStatus(3, 3) != "Running" {
 		t.Error("3/3 should be Running")
 	}
-	if workloadStatus(1, 2) != "Degraded" {
+	if WorkloadStatus(1, 2) != "Degraded" {
 		t.Error("1/2 should be Degraded")
 	}
 	healthy := Workload{Ready: 3, Desired: 3}
@@ -118,7 +118,7 @@ func TestWorkloadStatusAndFlagged(t *testing.T) {
 	if !withFinding.Flagged() {
 		t.Error("a workload with a finding should be flagged even when ready==desired")
 	}
-	if workloadStatus(0, 0) != "Scaled Down" {
+	if WorkloadStatus(0, 0) != "Scaled Down" {
 		t.Error("0/0 should be Scaled Down, not Degraded")
 	}
 }
@@ -689,7 +689,7 @@ func TestPrioritize_CensusCountsFailedStatusAsBadEvenWhenFullyReady(t *testing.T
 }
 
 func TestPrioritize_CensusCountsScaledToZeroAsGood(t *testing.T) {
-	// Ready(0) < Desired(0) is false and workloadStatus(0, 0) is "Scaled Down",
+	// Ready(0) < Desired(0) is false and WorkloadStatus(0, 0) is "Scaled Down",
 	// not "Failed", so Flagged() is false and this workload counts as Good
 	// forever. That is the intended reading, not an oversight: an operator who
 	// deliberately scaled a Deployment to zero replicas is not experiencing an

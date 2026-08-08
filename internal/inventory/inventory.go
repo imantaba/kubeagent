@@ -177,7 +177,12 @@ func PodRowFor(p corev1.Pod, now time.Time) PodRow {
 	}
 }
 
-func workloadStatus(ready, desired int) string {
+// WorkloadStatus renders a ready-versus-desired pair as the one status
+// vocabulary every kubeagent surface uses. Assemble sets it for a workload it
+// grouped; internal/mcp's inspect handler calls it for a ReplicaSet it looked
+// up directly, so a ReplicaSet's status word means the same thing as a
+// Deployment's.
+func WorkloadStatus(ready, desired int) string {
 	if desired == 0 {
 		return "Scaled Down"
 	}
@@ -426,7 +431,7 @@ func Assemble(in Inputs, findings []diagnose.Finding) []Workload {
 			w.Pods = w.Pods[:jobPodCap]
 		}
 		if w.Status == "" {
-			w.Status = workloadStatus(w.Ready, w.Desired)
+			w.Status = WorkloadStatus(w.Ready, w.Desired)
 		}
 		out = append(out, *w)
 	}

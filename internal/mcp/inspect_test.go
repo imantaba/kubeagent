@@ -349,8 +349,10 @@ func TestResolveObject_FindsEachKindUnderItsOwnKindOnly(t *testing.T) {
 			// orphan-rs needs a pod to exist as a workload at all: Assemble seeds
 			// Deployment, StatefulSet, DaemonSet, CronJob and Job directly from
 			// Inputs, but a ReplicaSet workload only materialises from a pod whose
-			// owner resolves to one. A ReplicaSet with no pods, and every
-			// Deployment-owned ReplicaSet, are both still unresolvable here.
+			// owner resolves to one, so this pod is what puts orphan-rs in
+			// Assemble's output at all. resolveReplicaSet no longer depends on
+			// that: it reads Inputs.ReplicaSets directly, which is what makes a
+			// pod-less or Deployment-owned ReplicaSet resolvable too.
 			*ownedPod(ns, "orphan-rs-pod", ctrl("ReplicaSet", "orphan-rs")),
 		},
 	}
@@ -559,5 +561,130 @@ func TestInspect_JobPodPastTheCapIsStillInspectable(t *testing.T) {
 	}
 	if out.Owner != "Job/migrate" {
 		t.Errorf("Owner = %q, want %q", out.Owner, "Job/migrate")
+	}
+}
+
+// TestInspect_DeploymentOwnedReplicaSetIsFound is the common case and the third
+// facet of the reported defect. A Deployment's ReplicaSets are what its
+// rollouts are made of, and every one of them answered found:false: Assemble
+// never seeds a ReplicaSet from Inputs.ReplicaSets, and PodOwners rolls a
+// Deployment-owned ReplicaSet's pods up to the Deployment, so no ReplicaSet
+// workload is ever built for it. It runs through the tool rather than calling
+// the resolver directly, because it asserts the pod's finding and a finding
+// exists only after a real scan.
+func TestInspect_DeploymentOwnedReplicaSetIsFound(t *testing.T) {
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web"},
+		Spec:       appsv1.DeploymentSpec{Replicas: p32(1)},
+	}
+	rs := &appsv1.ReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "shop", Name: "web-1a2b", OwnerReferences: ctrl("Deployment", "web"),
+		},
+		Spec:   appsv1.ReplicaSetSpec{Replicas: p32(1)},
+		Status: appsv1.ReplicaSetStatus{ReadyReplicas: 0},
+	}
+	cs := connect(t, Config{Context: "kind-example"}, fake.NewSimpleClientset(
+		dep, rs, crashingOwnedPod("shop", "web-1a2b-cdef", "web-1a2b")))
+
+	out := callInspect(t, cs, map[string]any{
+		"kind": "replicaset", "namespace": "shop", "name": "web-1a2b",
+	})
+
+	if !out.Found {
+		t.Fatal("Found = false for a Deployment-owned ReplicaSet that exists; " +
+			"Assemble never seeds one, so the resolver must read Inputs.ReplicaSets")
+	}
+	if out.Kind != "ReplicaSet" {
+		t.Errorf("Kind = %q, want %q", out.Kind, "ReplicaSet")
+	}
+	if out.Desired != 1 || out.Ready != 0 {
+		t.Errorf("Desired/Ready = %d/%d, want 1/0 — taken from the ReplicaSet's own "+
+			"spec and status", out.Desired, out.Ready)
+	}
+	if out.Status != "Degraded" {
+		t.Errorf("Status = %q, want %q", out.Status, "Degraded")
+	}
+	if len(out.Pods) != 1 || out.Pods[0].Name != "web-1a2b-cdef" {
+		t.Fatalf("Pods = %+v, want exactly the ReplicaSet's own one pod", out.Pods)
+	}
+	if len(out.Findings) != 1 || out.Findings[0].Name != "web-1a2b-cdef" {
+		t.Errorf("Findings = %+v, want the crash finding on its own pod", out.Findings)
+	}
+	if out.Owner != "" {
+		t.Errorf("Owner = %q, want empty — owner is the pod path's escalation "+
+			"pointer and is documented as absent for every other kind", out.Owner)
+	}
+}
+
+// TestResolveReplicaSet_WithNoPodsIsFound covers the second unresolvable
+// ReplicaSet: an old revision scaled to zero. It has no pods, so nothing can
+// materialise a workload for it — and it is exactly the object an operator asks
+// about mid-rollout.
+func TestResolveReplicaSet_WithNoPodsIsFound(t *testing.T) {
+	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
+	res := scan.Result{Inputs: inventory.Inputs{
+		ReplicaSets: []appsv1.ReplicaSet{{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web-0old"},
+			Spec:       appsv1.ReplicaSetSpec{Replicas: p32(0)},
+		}},
+	}}
+
+	got := resolveObject(res, "replicaset", "shop", "web-0old", now)
+
+	if !got.Found {
+		t.Fatal("Found = false for a ReplicaSet scaled to zero; a lookup must not " +
+			"need the object to have pods")
+	}
+	if got.Status != "Scaled Down" {
+		t.Errorf("Status = %q, want %q", got.Status, "Scaled Down")
+	}
+	if len(got.Pods) != 0 {
+		t.Errorf("Pods = %+v, want none", got.Pods)
+	}
+}
+
+// TestResolveReplicaSet_CarriesOnlyItsOwnPods pins the owner filter. Two
+// revisions of one Deployment run side by side during a rollout; asking about
+// one must not return the other's pods. It also pins that the resolver's now
+// parameter, not the wall clock, drives the pod row's Age: the fixed clock
+// here is set far from any plausible real time, so swapping now for
+// time.Now() inside the resolver would fail this on Age alone.
+func TestResolveReplicaSet_CarriesOnlyItsOwnPods(t *testing.T) {
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	newPod := ownedPod("shop", "web-new-aaaa", ctrl("ReplicaSet", "web-new"))
+	newPod.CreationTimestamp = metav1.NewTime(now.Add(-72 * time.Hour))
+	res := scan.Result{Inputs: inventory.Inputs{
+		Deployments: []appsv1.Deployment{{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web"},
+			Spec:       appsv1.DeploymentSpec{Replicas: p32(2)},
+		}},
+		ReplicaSets: []appsv1.ReplicaSet{
+			{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web-new",
+					OwnerReferences: ctrl("Deployment", "web")},
+				Spec: appsv1.ReplicaSetSpec{Replicas: p32(1)},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web-old",
+					OwnerReferences: ctrl("Deployment", "web")},
+				Spec: appsv1.ReplicaSetSpec{Replicas: p32(1)},
+			},
+		},
+		Pods: []corev1.Pod{
+			*newPod,
+			*ownedPod("shop", "web-old-bbbb", ctrl("ReplicaSet", "web-old")),
+		},
+	}}
+
+	got := resolveObject(res, "replicaset", "shop", "web-new", now)
+
+	if len(got.Pods) != 1 || got.Pods[0].Name != "web-new-aaaa" {
+		t.Fatalf("Pods = %+v, want only web-new's own pod — the other revision's "+
+			"pod belongs to web-old", got.Pods)
+	}
+	if got.Pods[0].Age != "3d" {
+		t.Errorf("Pods[0].Age = %q, want %q — the resolver's now parameter must drive "+
+			"the row's age, not the wall clock", got.Pods[0].Age, "3d")
 	}
 }

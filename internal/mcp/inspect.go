@@ -208,6 +208,9 @@ func resolveObject(res scan.Result, kind, namespace, name string, now time.Time)
 	if strings.EqualFold(kind, "pod") {
 		return resolvePod(res, namespace, name, now)
 	}
+	if strings.EqualFold(kind, "replicaset") {
+		return resolveReplicaSet(res, namespace, name, now)
+	}
 	for _, w := range inventory.Assemble(res.Inputs, findingsOf(res.Inventory.Workloads)) {
 		if w.Namespace != namespace || w.Name != name || !strings.EqualFold(w.Kind, kind) {
 			continue
@@ -282,6 +285,77 @@ func resolvePod(res scan.Result, namespace, name string, now time.Time) resolved
 		return out
 	}
 	return resolved{}
+}
+
+// resolveReplicaSet answers a ReplicaSet lookup from res.Inputs.ReplicaSets
+// directly. inventory.Assemble seeds a workload from Inputs for a Deployment,
+// StatefulSet, DaemonSet, CronJob and Job, but not for a ReplicaSet: one
+// materialises only as a side effect of a pod whose PodOwners result is
+// ReplicaSet, and PodOwners returns that only for a ReplicaSet with no
+// controller owner of its own. So a Deployment-owned ReplicaSet — what every
+// rollout is made of — and a ReplicaSet scaled to zero both had no workload to
+// be found in, even though inspectKinds advertises the kind.
+//
+// Desired and Ready come from the ReplicaSet's own spec and status rather than
+// from a pod count, so a scaled-to-zero revision reads as Scaled Down rather
+// than as a workload with no pods. Image comes off the first pod row, which is
+// how Assemble reports it for every other kind; a ReplicaSet with no pods
+// carries no image, and the field is omitempty.
+//
+// No Owner is set. Owner is the pod path's escalation pointer, for the pod
+// identity kubeagent_triage hands a caller who did not choose it; a caller who
+// asked about a ReplicaSet named it themselves.
+func resolveReplicaSet(res scan.Result, namespace, name string, now time.Time) resolved {
+	for _, rs := range res.Inputs.ReplicaSets {
+		if rs.Namespace != namespace || rs.Name != name {
+			continue
+		}
+		desired := 0
+		if rs.Spec.Replicas != nil {
+			desired = int(*rs.Spec.Replicas)
+		}
+		ready := int(rs.Status.ReadyReplicas)
+		out := resolved{
+			Found: true,
+			// "ReplicaSet" comes from here, never from the object: typed
+			// client-go objects leave TypeMeta empty.
+			Kind:    "ReplicaSet",
+			Status:  inventory.WorkloadStatus(ready, desired),
+			Desired: desired,
+			Ready:   ready,
+		}
+		mine := map[string]bool{}
+		for _, p := range res.Inputs.Pods {
+			if p.Namespace != namespace || !ownedByReplicaSet(p, name) {
+				continue
+			}
+			mine[p.Namespace+"/"+p.Name] = true
+			out.Pods = append(out.Pods, inventory.PodRowFor(p, now))
+		}
+		if len(out.Pods) > 0 {
+			out.Image = out.Pods[0].Image
+		}
+		for _, f := range findingsOf(res.Inventory.Workloads) {
+			if mine[f.Pod] {
+				out.Findings = append(out.Findings, fromDiagnose(f))
+			}
+		}
+		return out
+	}
+	return resolved{}
+}
+
+// ownedByReplicaSet reports whether p's controller owner is the named
+// ReplicaSet. inventory.PodOwners cannot answer this: it deliberately rolls a
+// ReplicaSet-owned pod up to the Deployment above it, which is right for a
+// report grouped by workload and wrong when the caller named the ReplicaSet.
+func ownedByReplicaSet(p corev1.Pod, name string) bool {
+	for _, o := range p.OwnerReferences {
+		if o.Controller != nil && *o.Controller && o.Kind == "ReplicaSet" && o.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // eventTime picks the most recent timestamp an event carries. Series events

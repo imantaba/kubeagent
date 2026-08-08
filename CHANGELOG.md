@@ -25,6 +25,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`kubeagent_inspect` resolves every object of the seven kinds it
+  advertises.** It answered a lookup against the workload list the text report
+  renders — a list built for display, not for lookup, which
+  `inventory.Prioritize` filters — so objects the cluster plainly had answered
+  `found: false`. A controller-owned pod is never a workload in its own right,
+  yet `Pod/<name>` is exactly the identity `kubeagent_triage` emits for every
+  critical finding, and the shipped skill tells a model to inspect it; on the
+  cluster this was found against, that was six of six critical findings. A
+  healthy-quiet workload is dropped outright, so inspecting a fully-ready
+  Deployment failed too. That list also caps a Job's pod rows at three, so a
+  Job's fourth pod could not be inspected either. A ReplicaSet failed for a
+  cause of its own, and the widest: the snapshot's ReplicaSet collection was
+  never read at all, so a ReplicaSet became a workload only as a side effect of
+  a pod that resolved to one — which excluded every Deployment-owned
+  ReplicaSet, the shape every rollout is made of, and every ReplicaSet scaled
+  to zero. It now resolves from the snapshot directly, carrying its own pods
+  and no `owner`. Existence now comes from the raw snapshot the scan already
+  collected, so the fix costs **no new cluster read**. A pod answers as itself
+  — `kind` `Pod`, its own phase, its one row, its own findings — with
+  `desired` and `ready` absent rather than `0`, and a new `owner` field naming
+  the controller so a caller can escalate without guessing the workload's name.
+  `found: false` now means the object does not exist, and still returns its
+  events. No
+  `schemaVersion` moves (`kubeagent_inspect`'s result is not one of the eight
+  versioned documents) and no import-graph invariant changes. See
+  [MCP server](website/docs/features/mcp.md).
+
 - **`kubeagent mcp` no longer exits when the kubeconfig marks no context as
   current.** Under `--allow-context-switch` — and only there — the server now
   starts without a default cluster instead of refusing to start. That flag

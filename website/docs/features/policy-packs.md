@@ -384,13 +384,101 @@ kubeagent: mine.yaml: rule id "reliability.deploy-readiness-probe" is already de
 Change the ids in the fork — or drop `--policy-pack reliability` once you are
 running the fork instead of the original — before combining the two.
 
+## Contributing a pack
+
+A pack is a subject, not a patch. **Open an issue first** and agree the subject
+belongs in kubeagent before writing any YAML — review will ask why *this* set
+of rules, and that is easier to answer before the rules exist.
+
+Then:
+
+```bash
+# 1. write the pack
+$EDITOR internal/policypack/packs/<name>.yaml
+
+# 2. add its entry to the registry slice in policypack.go, keeping it sorted
+$EDITOR internal/policypack/policypack.go
+
+# 3. the gate
+go test ./internal/policypack
+```
+
+Open a pull request with a `CHANGELOG.md` entry under `## [Unreleased]`, the
+same as any other change.
+[CONTRIBUTING.md](https://github.com/imantaba/kubeagent/blob/main/CONTRIBUTING.md)
+carries the sign-off and commit-message conventions.
+
+### What the tests check
+
+These assertions run over every registered pack, so every failure is
+predictable before you push:
+
+| check | refuses |
+|-------|---------|
+| the pack loads | a registry entry naming a file that is not embedded — a typo or a rename, the mirror image of the orphan below — anything the policy loader rejects, such as an unknown key, a malformed rule id, a kind that is not selectable, an unknown level or an empty message, and a pack that loaded but holds no rules |
+| ids carry the pack prefix | a rule id not beginning `<pack>.`, which is what keeps `--policy-pack` and `--policy` from colliding when both are given |
+| no rule is critical | a `critical` rule, which would fail a gate at its default `--fail-on critical` the day the pack was added |
+| no host or address | `://` or a bare IPv4 address anywhere in the YAML, and **any** dot in a rule message |
+| every embedded file is registered | a `packs/*.yaml` with no registry entry — it would ship inside the binary while being invisible to the listing, to `--policy-pack` and to every other test — or two registry entries naming the same file, which would ship one pack's rules under two names |
+| names are unique and usable | a duplicate name, anything outside lowercase letters, digits and interior hyphens, or a name too long for the listing column |
+| summary shape | an empty summary, a multi-line summary, leading or trailing whitespace, a trailing period, or a leading capital |
+
+The last three are about the registry rather than the rules, and they exist
+because nothing else can see it: the loader is handed bytes and never learns
+where they came from, and every other test iterates the registered packs — so
+anything missing from the registry is invisible to all of them.
+
+### What no test can check
+
+These are the review, and they are why acceptance is not automatic:
+
+- **Is every rule true of the kind it selects?** A path that does not exist on
+  that kind makes every operator except `exists` and `notExists` skip the slot
+  — the rule runs, reports nothing, and looks like a pass. Check each path
+  against the API type, not against memory.
+- **Does the subject belong?** `reliability`, `security` and `cost` are three
+  questions an operator already asks of a workload. A pack encoding one
+  organisation's house style is a fork, not a pack — see
+  [Forking a pack](#forking-a-pack).
+- **Is every message a single clause with no dot?** The dot ban is mechanical;
+  a message that still reads well under it is not.
+- **Is every level right?** Nothing is `critical`. Beyond that, a rule firing
+  on an explicitly wrong value is usually `warning`, and one firing on an unset
+  field is usually `info` — each shipped pack explains its own choice in its
+  header comment.
+- **Does the pack say what it cannot say?** All three shipped packs carry a
+  section naming their own gaps. Claiming only what you deliver is the house
+  style here, not a nicety.
+
+### Acceptance is curatorial
+
+Passing the tests is **necessary, not sufficient**. A maintainer still reads
+every rule, and a pack that ships is kubeagent's curation whoever wrote it —
+kubeagent's name is on every rule an operator runs by name. If kubeagent would
+not vouch for a pack, kubeagent does not merge it.
+
+Attribution goes in the pack's own header comment, which
+`kubeagent policy packs --print <name>` emits verbatim. There is no author
+field in the listing, and a contributed pack is not marked as one: a two-tier
+listing would tell an operator to trust some shipped rules less than others,
+which is the opposite of what accepting a pack means.
+
+### Two limits worth knowing before you start
+
+**A contributed pack ships on a kubeagent release.** The registry is compiled
+into the binary, the same as `known-issues`; there is no way to add a pack to
+an installed kubeagent. If you need rules today rather than next release, fork
+one instead — [Forking a pack](#forking-a-pack) needs no release and no pull
+request.
+
+**Nobody has walked this path yet.** `reliability`, `security` and `cost` are
+all kubeagent's own curation; a pack authored outside the project does not
+exist yet. The route above is written and enforced, but it has not been used.
+
 ## Not in this slice
 
 Deliberately absent:
 
-- **A pack contributed by someone other than kubeagent itself.**
-  `reliability`, `security` and `cost` are all kubeagent's own curation; a
-  pack authored outside the project does not exist yet.
 - **Operator-contributed packs at run time.** The registry is curated and
   compiled into the binary, the same as `known-issues`; there is no way to add
   a pack without a kubeagent release.

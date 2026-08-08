@@ -13,6 +13,9 @@ pull requests are all welcome. Everyone taking part is expected to follow the
 - **Read [docs/design.md](docs/design.md).** kubeagent is a one-directional
   pipeline — `cluster` (connect) → `collect` (list) → `diagnose` (detect) →
   `report` (render) — and changes that cut across it usually want discussion.
+- **Contributing a policy pack?** There is a documented route with its own
+  admission criteria, enforced by `go test ./internal/policypack` — see
+  [Contributing a pack](https://k8sproject.top/features/policy-packs/#contributing-a-pack).
 - **Security problems do not go in issues.** See [SECURITY.md](SECURITY.md).
 
 ## Project invariants
@@ -20,14 +23,31 @@ pull requests are all welcome. Everyone taking part is expected to follow the
 These are not style preferences. A change that breaks one of them will not be
 merged without an explicit decision under [GOVERNANCE.md](GOVERNANCE.md):
 
-1. **Read-only by default.** `scan`, `watch`, `mcp`, `gate`, and `tui` issue
-   only `get`/`list`/`watch` against the cluster. The single exception is the
-   opt-in `--fix` flag, whose writes come from a fixed allowlist, refuse
-   protected namespaces, require a per-action confirmation, and re-verify
-   afterwards.
+1. **Read-only by default.** `scan`, `watch`, `mcp`, `gate`, `tui`, `rbac` and
+   `fleet` issue only `get`/`list`/`watch` against the cluster. Two opt-in
+   flags write, and only those two: `scan --fix`, whose writes come from a
+   fixed allowlist, refuse protected namespaces, require a per-action
+   confirmation and re-verify afterwards; and `scan --rollback`, which undoes
+   the most recent applied fix recorded in `--audit-log`. The two are mutually
+   exclusive. One documented carve-out is not a write at all: `rbac check`
+   creates `SelfSubjectAccessReview` objects — a virtual resource the API
+   server evaluates and never persists, the same API `kubectl auth can-i` uses
+   — which makes it the only POST outside remediation and changes no cluster
+   state.
 2. **No LLM call decides a write.** Remediation is chosen by deterministic
-   code. `internal/mcp` and `internal/gate` must never import
-   `internal/remediate` or `internal/explain`.
+   code, and a read-only surface may never import `internal/remediate` or
+   `internal/explain`. That list has grown well past the first two:
+   `internal/mcp`, `internal/gate` (with `internal/findings`,
+   `internal/sarif`, `internal/rolloutwait`), `internal/tui`,
+   `internal/rbacprofile`, `internal/policy`, `internal/parallel`,
+   `internal/fleet` and `internal/fleetfile` all carry the wall. Several
+   packages go further and import nothing from kubeagent at all —
+   `internal/jsonschema`, `internal/dashboard`, `internal/baseline`,
+   `internal/glob`, `internal/knownissues` and `internal/policypack` — which
+   makes the reach impossible by construction rather than by rule. Some of
+   these walls are pinned by an `imports_test.go` in the package itself;
+   the rest are a rule enforced at review. Adding a package means deciding
+   which wall it inherits, and saying so.
 3. **The diagnostic core works offline.** No API key is required for anything
    except the explicitly opt-in `--explain` and `--investigate` paths.
 4. **No cluster identity in artifacts that travel** — the `gate` verdict, the
@@ -54,8 +74,9 @@ DCO check. Run them locally before pushing.
 
 ### Layout
 
-- `main.go` — flag parsing and subcommand dispatch (standard-library `flag`
-  only; no Cobra).
+- `main.go` — only the `version` symbol the release workflow stamps with
+  `-ldflags`. The CLI is a Cobra command tree in `internal/cli`, one file per
+  command; flags are declared per command and never as persistent flags.
 - `internal/cluster`, `internal/collect` — connecting and listing. These do
   I/O, and are tested with client-go's fake clientset.
 - `internal/diagnose` and the per-concern packages beside it — detectors.
@@ -81,11 +102,12 @@ house style, and it is what review will ask about.
 
   Then refresh the README demo GIF and the quickstart example output in
   `website/docs/quickstart.md` in the same pull request.
-- **Fuzzing.** Twelve native fuzz targets cover the parsers, the policy loader,
-  the text sanitizer and the detector set (`FuzzDetectors`, `FuzzClassify`,
-  `FuzzRedactURL`, `FuzzRedactError`, `FuzzParseResponses`, `FuzzParseReadyz`,
-  `FuzzCertAssess`, `FuzzLoadPolicy`, `FuzzEvaluatePolicy`, `FuzzResolvePath`,
-  `FuzzGlob`, `FuzzLine`). Their seed corpora
+- **Fuzzing.** Fifteen native fuzz targets cover the parsers, the policy loader,
+  the text sanitizer, the renderers and the detector set (`FuzzDetectors`,
+  `FuzzClassify`, `FuzzRedactURL`, `FuzzRedactError`, `FuzzParseResponses`,
+  `FuzzParseReadyz`, `FuzzCertAssess`, `FuzzLoadPolicy`, `FuzzEvaluatePolicy`,
+  `FuzzResolvePath`, `FuzzGlob`, `FuzzLine`, `FuzzBaselineLoad`,
+  `FuzzDashboardRender`, `FuzzEncodePagerDuty`). Their seed corpora
   replay on a plain `go test ./...`, so a regression a past campaign found fails
   your pull request immediately — no fuzzing budget needed. A real campaign runs
   nightly in `.github/workflows/fuzz.yml`, one job per target, because

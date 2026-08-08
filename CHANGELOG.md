@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A documented route for contributing a policy pack, with admission criteria
+  enforced by `go test ./internal/policypack` rather than by review. Three new
+  checks cover the registry, the one layer nothing could see: every embedded
+  `packs/*.yaml` must have a registry entry — one that does not would ship
+  inside the binary while being invisible to `kubeagent policy packs`, to
+  `--policy-pack` and to every other test — no two packs may share a name, a
+  name must be usable as a `--policy-pack` value and fit the listing column,
+  and a summary must be a single line the listing can align.
+  Every check that can fail a contributor's pack is written down, so a failure
+  is predictable before opening a pull request. Acceptance stays curatorial: the criteria are
+  necessary, not sufficient. No pack ships in this release, no existing command
+  line behaves differently, and nothing versioned moves.
+
+### Fixed
+
+- Five statements in `CONTRIBUTING.md` that no longer described the code: the
+  claim that `main.go` parses flags with the standard library and uses no Cobra
+  (the CLI has been a Cobra tree in `internal/cli` since v0.73.0), a read-only
+  command list missing `rbac` and `fleet`, the claim that `--fix` is the single
+  write path (`scan --rollback` also writes, and `rbac check` issues the one
+  POST outside remediation), an import-wall list naming two packages where a
+  dozen carry the wall, and a fuzz-target count of twelve against a tree
+  holding fifteen.
+
 ## [1.13.0] - 2026-08-08
 
 ### Added

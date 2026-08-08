@@ -145,8 +145,14 @@ refused with a message telling the caller to list the contexts and pick one.
 
 Nothing else degrades. A kubeconfig that cannot be read, one naming no
 contexts at all, an API server that cannot be reached, and a `--context` that
-does not resolve all still exit at startup with the error below — a server
-that starts and then fails every call is worse than one that refuses to start.
+does not resolve all still exit at startup — a server that starts and then
+fails every call is worse than one that refuses to start. Those four are not
+one error, though. Three of them fail before a connection is attempted and
+exit with `connecting to the cluster:`, which names the kubeconfig file and
+context it tried; that is the unredacted startup error the note below is
+about. An API server that cannot be reached exits with `reaching the API
+server:` instead, and that one is already redacted to `scheme://host` — no
+kubeconfig path, no context name.
 
 ## Freshness
 
@@ -173,9 +179,12 @@ would.
     remote model. Startup is different. `kubeagent mcp` validates the
     cluster connection *before* it starts serving — a server that starts
     happily and then fails every call teaches the calling agent that
-    kubeagent is unreliable — and if that validation fails, the process
-    exits with an error naming the kubeconfig file and context it tried,
-    printed to **stderr**, because that is what an operator needs to fix it.
+    kubeagent is unreliable — and if the kubeconfig cannot be loaded, the
+    process exits with `connecting to the cluster:` naming the kubeconfig
+    file and context it tried, printed to **stderr**, because that is what
+    an operator needs to fix it. (The other startup failure, `reaching the
+    API server:`, is redacted to `scheme://host` like every other result;
+    only this one names a path.)
     MCP hosts commonly capture a server subprocess's stderr into their own
     logs. If your host treats its logs as shareable, know that this one
     startup error is the exception to "no kubeconfig paths cross the MCP

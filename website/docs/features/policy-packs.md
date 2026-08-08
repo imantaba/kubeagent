@@ -415,7 +415,7 @@ predictable before you push:
 
 | check | refuses |
 |-------|---------|
-| the pack loads | anything the policy loader rejects — an unknown key, a malformed rule id, a kind that is not selectable, an unknown level, an empty message — and a pack that loaded but holds no rules |
+| the pack loads | a registry entry naming a file that is not embedded — a typo or a rename, the mirror image of the orphan below — anything the policy loader rejects, such as an unknown key, a malformed rule id, a kind that is not selectable, an unknown level or an empty message, and a pack that loaded but holds no rules |
 | ids carry the pack prefix | a rule id not beginning `<pack>.`, which is what keeps `--policy-pack` and `--policy` from colliding when both are given |
 | no rule is critical | a `critical` rule, which would fail a gate at its default `--fail-on critical` the day the pack was added |
 | no host or address | `://` or a bare IPv4 address anywhere in the YAML, and **any** dot in a rule message |

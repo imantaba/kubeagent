@@ -8,8 +8,8 @@ Triage the cluster with kubeagent. Namespace scope: $1 (empty means all namespac
 Follow the `triaging-a-cluster` skill for the workflow and the
 `reading-kubeagent-findings` skill for how to read what comes back.
 
-1. Preflight: confirm `kubeagent` is on PATH. If not, stop and give the install
-   commands.
+1. Preflight: follow the `triaging-a-cluster` skill's Step 0 — confirm
+   `kubeagent_triage` is in your tool list, and shell out only if it is not.
 2. Call `kubeagent_triage`, passing `namespace` only if $1 is non-empty.
 3. Read the `coverage` block before the findings.
 4. Call `kubeagent_inspect` on every `critical` finding, and on each `warning`

@@ -8,7 +8,8 @@ Run a pre-deploy readiness check. Namespace scope: $1 (empty means all namespace
 Follow the `triaging-a-cluster` skill and the `reading-kubeagent-findings`
 skill.
 
-1. Preflight: confirm `kubeagent` is on PATH.
+1. Preflight: follow the `triaging-a-cluster` skill's Step 0 — confirm
+   `kubeagent_triage` is in your tool list, and shell out only if it is not.
 2. Call `kubeagent_triage`, passing `namespace` only if $1 is non-empty.
 3. Call `kubeagent_advisory` once, with sections `drift` and `capacity`. These
    two are the pre-deploy questions: is live state already diverging from Git,

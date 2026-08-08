@@ -22,8 +22,12 @@ first by any of the routes on the [install page](../install.md), then:
 /plugin install kubeagent@kubeagent
 ```
 
-Confirm the server connected with `/mcp`. If it shows as failed, the usual
-cause is `kubeagent` not being on the `PATH` Claude Code sees.
+Confirm the server connected with `/mcp`. If it shows as failed, there are two
+common causes and they need different fixes: `kubeagent` is not on the `PATH`
+Claude Code sees, or it is there but predates the MCP server. `kubeagent mcp
+--help` tells you which — it fails on a binary too old to serve, and reinstalling
+over the top fixes that. The `triaging-a-cluster` skill runs this same check
+before its first tool call.
 
 ## What you get
 

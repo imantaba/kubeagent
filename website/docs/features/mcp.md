@@ -134,6 +134,20 @@ reaches the cluster. Starting with `--allow-context-switch` also registers
 `kubeagent_advisory` accept a `context` argument naming any context in the
 same kubeconfig.
 
+`--allow-context-switch` also changes what happens at startup when your
+kubeconfig marks **no** context as current — the usual posture when you hold
+several production kubeconfigs and do not want a stray `kubectl` to reach one.
+Without the flag, the server exits: there is no default cluster and no way to
+name one. With it, the server starts anyway, with no default cluster. All four
+tools stay registered, `list_contexts` answers as usual with an empty
+`current`, and a call naming a `context` works normally. A call naming none is
+refused with a message telling the caller to list the contexts and pick one.
+
+Nothing else degrades. A kubeconfig that cannot be read, one naming no
+contexts at all, an API server that cannot be reached, and a `--context` that
+does not resolve all still exit at startup with the error below — a server
+that starts and then fails every call is worse than one that refuses to start.
+
 ## Freshness
 
 There is no cache. Every call runs a fresh scan against the live cluster, so

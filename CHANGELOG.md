@@ -23,6 +23,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names `internal/mcp` actually registers, and against `bump-version.sh`. See
   [Claude Code plugin](website/docs/features/claude-plugin.md).
 
+### Fixed
+
+- **`kubeagent mcp` no longer exits when the kubeconfig marks no context as
+  current.** Under `--allow-context-switch` — and only there — the server now
+  starts without a default cluster instead of refusing to start. That flag
+  registers `list_contexts`, the tool whose whole purpose is to pick a context,
+  and it was unreachable in exactly the case it was built for. All four tools
+  stay registered, a call naming a `context` works normally, and a call naming
+  none is refused with a message pointing at `list_contexts`. Every other
+  startup failure still exits with the same operator-facing error: a missing or
+  unreadable kubeconfig, one naming zero contexts, an unreachable API server, a
+  `--context` that does not resolve. No `schemaVersion` moves and no import-graph
+  invariant changes. See [MCP server](website/docs/features/mcp.md).
+
+- **The shipped `triaging-a-cluster` skill preflights capability, not presence.**
+  `command -v kubeagent` passes on a binary built before `kubeagent mcp`
+  existed, which is a plugin whose skills load and whose tools never appear.
+  The skill now checks whether the `kubeagent_*` tools are in the model's own
+  tool list — no subprocess — and shells out only to explain an empty one:
+  nothing installed, a binary too old to serve MCP (`kubeagent mcp --help`
+  fails), or a server that could not connect. The three commands defer to it
+  rather than restating a check that is now three-way.
+
 ## [1.13.1] - 2026-08-08
 
 ### Added

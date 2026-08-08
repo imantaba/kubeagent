@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -22,6 +23,35 @@ clusters:
   - name: staging-cluster
     cluster:
       server: https://staging.example.com:6443/some/path?token=<PLACEHOLDER>
+  - name: prod-cluster
+    cluster:
+      server: https://prod.example.com:6443
+contexts:
+  - name: staging
+    context:
+      cluster: staging-cluster
+      user: staging-user
+  - name: prod
+    context:
+      cluster: prod-cluster
+      user: prod-user
+users:
+  - name: staging-user
+    user: {}
+  - name: prod-user
+    user: {}
+`
+
+// noCurrentKubeconfigFixture names two contexts and marks neither current —
+// the posture of an operator with several production clusters who does not
+// want a stray kubectl to hit one. It is the case that made kubeagent mcp
+// exit at startup.
+const noCurrentKubeconfigFixture = `apiVersion: v1
+kind: Config
+clusters:
+  - name: staging-cluster
+    cluster:
+      server: https://staging.example.com:6443
   - name: prod-cluster
     cluster:
       server: https://prod.example.com:6443
@@ -202,5 +232,41 @@ func TestListContexts_MissingKubeconfigErrorDoesNotLeakThePath(t *testing.T) {
 	text := firstText(res)
 	if strings.Contains(text, sentinelPath) {
 		t.Errorf("error text = %q, leaks the kubeconfig path sentinel %q", text, sentinelPath)
+	}
+}
+
+// TestListContexts_AnswersWithNoCurrentContextAndNoDefaultCluster is the
+// reason the degraded start exists at all: list_contexts is the tool that
+// resolves "there is no current context", so it must work on exactly the
+// server that condition produces — one built with a nil base. It reads the
+// kubeconfig directly and never touches the clientset, so it answers in full,
+// with current empty rather than absent.
+func TestListContexts_AnswersWithNoCurrentContextAndNoDefaultCluster(t *testing.T) {
+	path := writeKubeconfig(t, noCurrentKubeconfigFixture)
+	cs := connectWith(t, Config{Kubeconfig: path, AllowContextSwitch: true}, nil,
+		func(string) (kubernetes.Interface, error) { return fake.NewSimpleClientset(), nil })
+
+	res, blob := callListContexts(t, cs)
+	if res.IsError {
+		t.Fatalf("CallTool() returned an error result: %+v", res.Content)
+	}
+
+	var out ContextsOutput
+	if err := json.Unmarshal(blob, &out); err != nil {
+		t.Fatalf("Unmarshal(%s) error = %v", blob, err)
+	}
+	if out.Current != "" {
+		t.Errorf("current = %q, want empty — this kubeconfig marks no context current", out.Current)
+	}
+	if len(out.Contexts) != 2 {
+		t.Fatalf("contexts = %+v, want both of the kubeconfig's two", out.Contexts)
+	}
+	if out.Contexts[0].Name != "prod" || out.Contexts[1].Name != "staging" {
+		t.Errorf("contexts = %+v, want them sorted by name", out.Contexts)
+	}
+	for _, c := range out.Contexts {
+		if c.Current {
+			t.Errorf("context %q is marked current, want none marked", c.Name)
+		}
 	}
 }

@@ -41,6 +41,16 @@ type TriageOutput struct {
 var errContextSwitchDisabled = errors.New(
 	"this server was started without --allow-context-switch, so it only answers for the cluster it was started against")
 
+// errNoDefaultContext is returned verbatim to the caller, like
+// errContextSwitchDisabled above. The server started without a default
+// cluster because the kubeconfig marks no context current (see
+// startableWithoutDefaultContext in server.go), so a call naming no context
+// has nothing to read. The message names the fix — list_contexts, then the
+// context argument — without naming a kubeconfig path, a server address, or
+// a CLI flag a model might be tempted to run on the operator's behalf.
+var errNoDefaultContext = errors.New(
+	"this kubeconfig has no current context, so there is no default cluster: call list_contexts and pass one of its names as context")
+
 func registerTriage(s *mcpsdk.Server, cfg Config, base kubernetes.Interface, switchTo clientFactory, now func() time.Time) {
 	tool := &mcpsdk.Tool{
 		Name: "kubeagent_triage",

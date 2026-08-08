@@ -44,9 +44,10 @@ merged without an explicit decision under [GOVERNANCE.md](GOVERNANCE.md):
    packages go further and import nothing from kubeagent at all —
    `internal/jsonschema`, `internal/dashboard`, `internal/baseline`,
    `internal/glob`, `internal/knownissues` and `internal/policypack` — which
-   makes the reach impossible by construction rather than by rule. Each wall
-   is enforced by a test in its own package; adding a package means deciding
-   which one it inherits.
+   makes the reach impossible by construction rather than by rule. Some of
+   these walls are pinned by an `imports_test.go` in the package itself;
+   the rest are a rule enforced at review. Adding a package means deciding
+   which wall it inherits, and saying so.
 3. **The diagnostic core works offline.** No API key is required for anything
    except the explicitly opt-in `--explain` and `--investigate` paths.
 4. **No cluster identity in artifacts that travel** — the `gate` verdict, the
@@ -101,11 +102,12 @@ house style, and it is what review will ask about.
 
   Then refresh the README demo GIF and the quickstart example output in
   `website/docs/quickstart.md` in the same pull request.
-- **Fuzzing.** Twelve native fuzz targets cover the parsers, the policy loader,
-  the text sanitizer and the detector set (`FuzzDetectors`, `FuzzClassify`,
-  `FuzzRedactURL`, `FuzzRedactError`, `FuzzParseResponses`, `FuzzParseReadyz`,
-  `FuzzCertAssess`, `FuzzLoadPolicy`, `FuzzEvaluatePolicy`, `FuzzResolvePath`,
-  `FuzzGlob`, `FuzzLine`). Their seed corpora
+- **Fuzzing.** Fifteen native fuzz targets cover the parsers, the policy loader,
+  the text sanitizer, the renderers and the detector set (`FuzzDetectors`,
+  `FuzzClassify`, `FuzzRedactURL`, `FuzzRedactError`, `FuzzParseResponses`,
+  `FuzzParseReadyz`, `FuzzCertAssess`, `FuzzLoadPolicy`, `FuzzEvaluatePolicy`,
+  `FuzzResolvePath`, `FuzzGlob`, `FuzzLine`, `FuzzBaselineLoad`,
+  `FuzzDashboardRender`, `FuzzEncodePagerDuty`). Their seed corpora
   replay on a plain `go test ./...`, so a regression a past campaign found fails
   your pull request immediately — no fuzzing budget needed. A real campaign runs
   nightly in `.github/workflows/fuzz.yml`, one job per target, because

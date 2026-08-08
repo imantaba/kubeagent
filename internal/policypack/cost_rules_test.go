@@ -293,6 +293,52 @@ func TestEveryCostRuleFiresAndPasses(t *testing.T) {
 			violating:  cronJobWithoutDeadline("no-deadline"),
 			satisfying: goodCronJob("bounded"),
 		},
+		{
+			id:         "cost.deploy-large-cpu-request",
+			kind:       "Deployment",
+			violating:  deployment("big-cpu", containerRequesting(t, "cpu", "16")),
+			satisfying: deployment("sized", sizedContainer()),
+		},
+		{
+			id:         "cost.deploy-large-memory-request",
+			kind:       "Deployment",
+			violating:  deployment("big-memory", containerRequesting(t, "memory", "64Gi")),
+			satisfying: deployment("sized", sizedContainer()),
+		},
+		{
+			id:         "cost.cronjob-successful-history",
+			kind:       "CronJob",
+			violating:  cronJobWithHistory("many-successes", int64(50), int64(1)),
+			satisfying: goodCronJob("few-successes"),
+		},
+		{
+			id:         "cost.cronjob-failed-history",
+			kind:       "CronJob",
+			violating:  cronJobWithHistory("many-failures", int64(3), int64(50)),
+			satisfying: goodCronJob("few-failures"),
+		},
+		{
+			id:         "cost.job-backoff-limit",
+			kind:       "Job",
+			violating:  costJob("many-retries", 50),
+			satisfying: costJob("few-retries", 6),
+		},
+		{
+			id:         "cost.hpa-max-replicas",
+			kind:       "HorizontalPodAutoscaler",
+			violating:  hpa("wide", 200),
+			satisfying: hpa("narrow", 10),
+		},
+		{
+			id:         "cost.pvc-large-storage",
+			kind:       "PersistentVolumeClaim",
+			violating:  claim("big", "4Ti"),
+			satisfying: claim("small", "20Gi"),
+		},
+	}
+
+	if len(cases) != 16 {
+		t.Fatalf("%d cases, want one per rule in a sixteen-rule pack", len(cases))
 	}
 
 	for _, tc := range cases {
@@ -306,5 +352,32 @@ func TestEveryCostRuleFiresAndPasses(t *testing.T) {
 				t.Errorf("%s produced %d violations on the satisfying object, want 0", tc.id, len(got))
 			}
 		})
+	}
+}
+
+// TestCostThresholdsCompareQuantitiesNotStrings machine-checks the fact the
+// whole threshold half of this pack rests on: internal/policy's compareNumeric
+// falls through ParseInt and ParseFloat to resource.ParseQuantity, so a
+// threshold compares quantities rather than bytes.
+//
+// Both cases below are chosen because a lexical comparison gets them WRONG in
+// opposite directions, so neither can pass by accident:
+//
+//	"16" sorts BEFORE "8", so a lexical lte would let sixteen CPUs through
+//	"512Mi" sorts AFTER "32Gi", so a lexical lte would accuse half a gibibyte
+//
+// cost.hpa-max-replicas is a third instance of the same property — "200" sorts
+// before "50" — and its own case above already covers it.
+func TestCostThresholdsCompareQuantitiesNotStrings(t *testing.T) {
+	rules := loadPack(t, "cost")
+
+	cpu := packRule(t, rules, "cost.deploy-large-cpu-request")
+	if got := evaluateOne(t, cpu, "Deployment", deployment("sixteen", containerRequesting(t, "cpu", "16"))); len(got) != 1 {
+		t.Errorf(`a request of 16 CPUs produced %d violations of a "lte 8" rule, want 1 — the threshold is comparing bytes, not quantities`, len(got))
+	}
+
+	memory := packRule(t, rules, "cost.deploy-large-memory-request")
+	if got := evaluateOne(t, memory, "Deployment", deployment("half-a-gibibyte", containerRequesting(t, "memory", "512Mi"))); len(got) != 0 {
+		t.Errorf(`a request of 512Mi produced %d violations of a "lte 32Gi" rule, want 0 — the threshold is comparing bytes, not quantities`, len(got))
 	}
 }

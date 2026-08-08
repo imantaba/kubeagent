@@ -496,6 +496,30 @@ func TestInspect_ControllerOwnedPodIsFoundAndNamesItsOwner(t *testing.T) {
 	}
 }
 
+// TestResolvePod_StampsTheRowFromTheInjectedClock pins resolvePod's now
+// parameter to the pod row it builds. The clock is far from any plausible wall
+// clock on purpose: with now near time.Now(), a 72h-old pod lands in HumanAge's
+// "3d" bucket either way, and swapping the parameter for time.Now() would not
+// fail this test.
+func TestResolvePod_StampsTheRowFromTheInjectedClock(t *testing.T) {
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	p := ownedPod("shop", "loner", nil)
+	p.CreationTimestamp = metav1.NewTime(now.Add(-72 * time.Hour))
+	res := scan.Result{Inputs: inventory.Inputs{Pods: []corev1.Pod{*p}}}
+
+	got := resolveObject(res, "pod", "shop", "loner", now)
+	if !got.Found {
+		t.Fatal("Found = false for a bare pod that exists")
+	}
+	if len(got.Pods) != 1 {
+		t.Fatalf("Pods = %+v, want exactly one row", got.Pods)
+	}
+	if got.Pods[0].Age != "3d" {
+		t.Errorf("Pods[0].Age = %q, want %q — the row must be stamped from the "+
+			"injected clock, not from the wall clock", got.Pods[0].Age, "3d")
+	}
+}
+
 // TestInspect_PodAnswerHasNoDesiredOrReadyKey guards the rule that absence must
 // never read as zero. A pod has no replica count; encoding desired:0 ready:0
 // would tell a model the pod is scaled to nothing.

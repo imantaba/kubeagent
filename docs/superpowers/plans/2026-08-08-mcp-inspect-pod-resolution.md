@@ -78,25 +78,30 @@ Constraints section. Every task's requirements implicitly include this section.
 
 | File | Responsibility | Task |
 |---|---|---|
-| `internal/inventory/inventory.go` | Gains the exported `PodRowFor`; `Assemble` refactored to call it, so there is one pod-row implementation | 1 |
-| `internal/inventory/inventory_test.go` | Pins `PodRowFor` to the row `Assemble` builds | 1 |
-| `internal/mcp/inspect.go` | The resolver (`resolveObject`, `resolvePod`, `findingsOf`), the `Owner` output field, the widened tool description | 2, 3, 4 |
-| `internal/mcp/inspect_test.go` | Resolver table, healthy-Deployment, controller-owned-pod, key-absence and `jobPodCap` tests, plus the raw-JSON helper | 2, 3 |
-| `skills/triaging-a-cluster/SKILL.md` | Step 3: webhook configurations added; pod inspection and `owner` described | 4 |
-| `commands/triage.md` | Step 4's non-inspectable list gains webhook configurations | 4 |
-| `skills/reading-kubeagent-findings/SKILL.md` | The skipped-check count is seven, or eight without `--logs` | 4 |
-| `website/docs/features/mcp.md` | The `owner` field and what `found: false` now means | 5 |
-| `CHANGELOG.md` | `[Unreleased]` → `### Fixed` entry | 5 |
+| `internal/inventory/inventory.go` | Gains the exported `PodRowFor`; `Assemble` refactored to call it, so there is one pod-row implementation. Later, `workloadStatus` becomes exported `WorkloadStatus` | 1, 4 |
+| `internal/inventory/inventory_test.go` | Pins `PodRowFor` field by field; later, the `WorkloadStatus` rename | 1, 4 |
+| `internal/mcp/inspect.go` | The resolver (`resolveObject`, `resolvePod`, `resolveReplicaSet`, `findingsOf`, `ownedByReplicaSet`), the `Owner` output field, the widened tool description | 2, 3, 4, 5 |
+| `internal/mcp/inspect_test.go` | Resolver table, healthy-Deployment, controller-owned-pod, key-absence, `jobPodCap` and ReplicaSet tests, plus the raw-JSON helper | 2, 3, 4 |
+| `skills/triaging-a-cluster/SKILL.md` | Step 3: webhook configurations added; pod inspection and `owner` described | 5 |
+| `commands/triage.md` | Step 4's non-inspectable list gains webhook configurations | 5 |
+| `skills/reading-kubeagent-findings/SKILL.md` | The skipped-check count is seven, or eight without `--logs` | 5 |
+| `website/docs/features/mcp.md` | The `owner` field and what `found: false` now means | 6 |
+| `CHANGELOG.md` | `[Unreleased]` → `### Fixed` entry | 6 |
 
-Five tasks. Task 1 is a pure extraction with no behaviour change. Task 2 fixes
-the healthy-workload half of the defect and leaves the reported pod half
-failing. Task 3 fixes the reported defect. Tasks 4 and 5 are documentation.
+Six tasks. Task 1 is a pure extraction with no behaviour change. Tasks 2, 3 and
+4 are the three facets of the one defect, in the order they were found: Task 2
+fixes the healthy-workload half and leaves the reported pod half failing; Task 3
+fixes the reported defect; Task 4 fixes the ReplicaSet half, discovered during
+Task 2. Tasks 5 and 6 are documentation.
 
-**Tasks 2 and 3 both modify `internal/mcp/inspect.go` and
-`internal/mcp/inspect_test.go`.** Task 3 **extends** Task 2's `resolveObject`
-— it changes its signature to add a `now time.Time` parameter and adds a pod
-branch at the top. Task 3 must not rewrite, rename or reword Task 2's
-`resolveObject` body, its comment, or any test Task 2 wrote.
+**Tasks 2, 3 and 4 all modify `internal/mcp/inspect.go` and
+`internal/mcp/inspect_test.go`.** Task 3 **extends** Task 2's `resolveObject` —
+it changes its signature to add a `now time.Time` parameter and adds a pod
+branch at the top. Task 4 adds a second branch beside it. Neither may rewrite,
+rename or reword the other's resolver body or comment, and neither may change an
+assertion in a test the other wrote. Task 4 makes exactly one edit inside Task
+2's test file, to a fixture comment its own change makes false (Task 4 Step 5a);
+that edit touches no assertion.
 
 ---
 
@@ -133,12 +138,18 @@ Append to `internal/inventory/inventory_test.go`. It uses the file's existing
 `pod` helper (line 128), which builds a one-container pod that is **not** ready.
 
 ```go
-// TestPodRowFor_MatchesTheRowAssembleBuilds pins PodRowFor to Assemble's own
-// output. Assemble delegates to it, so a drift between the two would mean the
-// extraction changed a row's shape — which internal/report's golden output and
-// every kubeagent_inspect pod row both depend on.
-func TestPodRowFor_MatchesTheRowAssembleBuilds(t *testing.T) {
-	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
+// TestPodRowFor_BuildsEveryRowFieldAndAssembleRoutesThroughIt pins PodRowFor's
+// output field by field, then checks that Assemble still routes through it. The
+// order matters: comparing PodRowFor against Assemble is the ONLY assertion
+// that would be worthless, because after Step 5 Assemble delegates to
+// PodRowFor — both sides of that comparison go wrong together, so it can never
+// catch a field PodRowFor gets wrong. The literal below is the independent
+// assertion; the Assemble comparison is a secondary check on the delegation.
+func TestPodRowFor_BuildsEveryRowFieldAndAssembleRoutesThroughIt(t *testing.T) {
+	// Far from any plausible wall clock on purpose: with `now` near time.Now(),
+	// a 72h-old pod lands in HumanAge's "3d" bucket either way, and swapping
+	// the injected clock for time.Now() would not fail this test.
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	p := pod("shop", "cart-0", nil, 4, "registry.example.com/cart:1.2.3")
 	p.CreationTimestamp = metav1.NewTime(now.Add(-72 * time.Hour))
 	p.Spec.NodeName = "node-a"
@@ -151,26 +162,37 @@ func TestPodRowFor_MatchesTheRowAssembleBuilds(t *testing.T) {
 
 	row := PodRowFor(p, now)
 
+	want := PodRow{
+		Name: "cart-0", Phase: "Running", Ready: "0/1", Restarts: 4,
+		LastRestart: "2026-01-01T11:00:00Z", Node: "node-a", IP: "192.0.2.10",
+		Age: "3d", Image: "registry.example.com/cart:1.2.3",
+	}
+	if row != want {
+		t.Errorf("PodRowFor() = %+v\nwant             = %+v", row, want)
+	}
+
+	// Assemble must still route through PodRowFor. Age is the one field that
+	// cannot match by construction — Assemble stamps it from the wall clock
+	// while PodRowFor was handed a fixed one — so blank it on both sides.
 	ws := Assemble(Inputs{Pods: []corev1.Pod{p}}, nil)
 	if len(ws) != 1 || len(ws[0].Pods) != 1 {
 		t.Fatalf("Assemble() = %+v, want one workload carrying one pod row", ws)
 	}
-	want := ws[0].Pods[0]
-
-	// Age is the one field that cannot match by construction: Assemble stamps
-	// it from the wall clock while PodRowFor was handed a fixed one. Check it
-	// against what the fixed clock implies, then compare every other field.
-	if row.Age != "3d" {
-		t.Errorf("Age = %q, want %q", row.Age, "3d")
-	}
-	row.Age, want.Age = "", ""
-	if row != want {
-		t.Errorf("PodRowFor() = %+v\nAssemble's row  = %+v", row, want)
+	got := ws[0].Pods[0]
+	got.Age, want.Age = "", ""
+	if got != want {
+		t.Errorf("Assemble's row = %+v\nwant           = %+v", got, want)
 	}
 }
 ```
 
 `PodRow` has only string and int fields, so `!=` compares it field-for-field.
+
+Every literal above is derived by reading the helpers, not by running the code:
+`Ready` is `"0/1"` because the file's `pod` helper builds a container that is
+not ready; `LastRestart` is `termTime`'s RFC 3339 rendering of `now-1h`; `Age`
+is `HumanAge`'s bucket for 72h. **Do not** replace the literal with a value
+copied out of a test run.
 
 - [ ] **Step 3: Run it and watch it fail**
 
@@ -1058,7 +1080,442 @@ workload needs no guess at its name. A bare pod gets no owner key."
 
 ---
 
-## Task 4: The tool description and the three shipped plugin documents
+## Task 4: Resolve a ReplicaSet from the snapshot, not from a pod's owner
+
+**Files:**
+- Modify: `internal/inventory/inventory.go` (rename `workloadStatus` →
+  `WorkloadStatus`, one call site at line 429)
+- Modify: `internal/inventory/inventory_test.go` (three call sites at lines 103,
+  106, 121, and one comment at line 692 — mechanical rename only)
+- Modify: `internal/mcp/inspect.go` (add `resolveReplicaSet` and
+  `ownedByReplicaSet`; add the `replicaset` branch to `resolveObject`)
+- Test: `internal/mcp/inspect_test.go` (append)
+
+**Interfaces:**
+- Consumes: `resolved`, `resolveObject`, `findingsOf`, `ctrl`, `ownedPod`,
+  `p32` (Task 2); `crashingOwnedPod` (Task 3); the
+  `resolveObject(res, kind, namespace, name string, now time.Time)` signature
+  (Task 3).
+- Produces: `func inventory.WorkloadStatus(ready, desired int) string`;
+  `func resolveReplicaSet(res scan.Result, namespace, name string, now time.Time) resolved`;
+  `func ownedByReplicaSet(p corev1.Pod, name string) bool`.
+
+**Why this task exists — the third facet of the same defect.** `inspectKinds`
+advertises `replicaset`, and Task 2 resolved it only by accident. `Assemble`
+seeds a workload from `Inputs` for Deployment, StatefulSet, DaemonSet, CronJob
+and non-CronJob-owned Job — and **not** for ReplicaSet: read
+`internal/inventory/inventory.go:335-375` and there is no
+`for _, rs := range in.ReplicaSets` loop. A ReplicaSet workload materialises
+only as a side effect of a pod whose `PodOwners` result is `ReplicaSet`, and
+`PodOwners` returns `ReplicaSet` only when the ReplicaSet has no controller
+owner of its own. So two ReplicaSets that plainly exist answered `found: false`:
+
+1. **Every Deployment-owned ReplicaSet** — the common case, since that is what
+   a Deployment's rollouts are made of. Its pods roll up to the Deployment, so
+   no `ReplicaSet` workload is ever built.
+2. **A ReplicaSet with no pods** — an old revision scaled to zero, which is
+   exactly the object an operator asks about during a rollout.
+
+Task 2's fixture had to give `orphan-rs` a pod for its case to pass at all.
+That was the right call for Task 2 and it is the evidence for this task.
+
+`Assemble` is **not** the place to fix this. It is shared with `scan`'s text
+report, and `internal/report/testdata/golden-scan.txt` must stay byte-identical;
+seeding ReplicaSets there would add a workload row to every report. The fix
+belongs in the resolver, alongside `resolvePod`, for the same reason: these are
+the two kinds `Assemble` does not seed.
+
+**Deliberately NOT in this task:** a ReplicaSet answer sets **no** `Owner`.
+Task 3 documents `owner` as present for a pod and absent "for every kind other
+than `pod`", and that stays true. A caller who asked about a ReplicaSet named it
+themselves; the pod path needs `owner` because `kubeagent_triage` hands out a
+pod identity the caller did not choose. Do not add it.
+
+- [ ] **Step 1: Export `WorkloadStatus`**
+
+A ReplicaSet answer needs the same `Scaled Down` / `Running` / `Degraded`
+vocabulary every other kind reports, and `workloadStatus` is unexported.
+Rename it rather than adding a second name for one rule. In
+`internal/inventory/inventory.go` at line 180:
+
+```go
+// WorkloadStatus renders a ready-versus-desired pair as the one status
+// vocabulary every kubeagent surface uses. Assemble sets it for a workload it
+// grouped; internal/mcp's inspect handler calls it for a ReplicaSet it looked
+// up directly, so a ReplicaSet's status word means the same thing as a
+// Deployment's.
+func WorkloadStatus(ready, desired int) string {
+	if desired == 0 {
+		return "Scaled Down"
+	}
+	if ready >= desired {
+		return "Running"
+	}
+	return "Degraded"
+}
+```
+
+Then update the one production call site (line 429, inside `Assemble`) and the
+three test call sites (`internal/inventory/inventory_test.go` lines 103, 106,
+121) plus the comment at line 692. This is a mechanical rename: change nothing
+else about those tests, and add nothing to them.
+
+```bash
+export PATH=$PATH:/usr/local/go/bin
+grep -rn 'workloadStatus' --include='*.go' .    # must print nothing
+go build ./... && go test ./internal/inventory -count=1
+```
+
+Expected: `grep` prints nothing; `internal/inventory` is `ok`.
+
+- [ ] **Step 2: Write the three failing tests**
+
+Append to `internal/mcp/inspect_test.go`:
+
+There is **no** `scan.Result` fixture helper in this package: Task 2's
+`TestResolveObject_FindsEachKindUnderItsOwnKindOnly` builds
+`res := scan.Result{Inputs: in}` by hand from an `inventory.Inputs` literal
+(`internal/mcp/inspect_test.go:356`), which carries no findings because
+`res.Inventory.Workloads` is empty. Do not invent a helper. The first test below
+needs real findings, so it goes through the tool with `connect` + `callInspect`
+exactly as Task 3's defect test does; the other two need no findings and call
+`resolveObject` directly over a hand-built `Inputs`.
+
+```go
+// TestInspect_DeploymentOwnedReplicaSetIsFound is the common case and the third
+// facet of the reported defect. A Deployment's ReplicaSets are what its
+// rollouts are made of, and every one of them answered found:false: Assemble
+// never seeds a ReplicaSet from Inputs.ReplicaSets, and PodOwners rolls a
+// Deployment-owned ReplicaSet's pods up to the Deployment, so no ReplicaSet
+// workload is ever built for it. It runs through the tool rather than calling
+// the resolver directly, because it asserts the pod's finding and a finding
+// exists only after a real scan.
+func TestInspect_DeploymentOwnedReplicaSetIsFound(t *testing.T) {
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web"},
+		Spec:       appsv1.DeploymentSpec{Replicas: p32(1)},
+	}
+	rs := &appsv1.ReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "shop", Name: "web-1a2b", OwnerReferences: ctrl("Deployment", "web"),
+		},
+		Spec:   appsv1.ReplicaSetSpec{Replicas: p32(1)},
+		Status: appsv1.ReplicaSetStatus{ReadyReplicas: 0},
+	}
+	cs := connect(t, Config{Context: "kind-example"}, fake.NewSimpleClientset(
+		dep, rs, crashingOwnedPod("shop", "web-1a2b-cdef", "web-1a2b")))
+
+	out := callInspect(t, cs, map[string]any{
+		"kind": "replicaset", "namespace": "shop", "name": "web-1a2b",
+	})
+
+	if !out.Found {
+		t.Fatal("Found = false for a Deployment-owned ReplicaSet that exists; " +
+			"Assemble never seeds one, so the resolver must read Inputs.ReplicaSets")
+	}
+	if out.Kind != "ReplicaSet" {
+		t.Errorf("Kind = %q, want %q", out.Kind, "ReplicaSet")
+	}
+	if out.Desired != 1 || out.Ready != 0 {
+		t.Errorf("Desired/Ready = %d/%d, want 1/0 — taken from the ReplicaSet's own "+
+			"spec and status", out.Desired, out.Ready)
+	}
+	if out.Status != "Degraded" {
+		t.Errorf("Status = %q, want %q", out.Status, "Degraded")
+	}
+	if len(out.Pods) != 1 || out.Pods[0].Name != "web-1a2b-cdef" {
+		t.Fatalf("Pods = %+v, want exactly the ReplicaSet's own one pod", out.Pods)
+	}
+	if len(out.Findings) != 1 || out.Findings[0].Name != "web-1a2b-cdef" {
+		t.Errorf("Findings = %+v, want the crash finding on its own pod", out.Findings)
+	}
+	if out.Owner != "" {
+		t.Errorf("Owner = %q, want empty — owner is the pod path's escalation "+
+			"pointer and is documented as absent for every other kind", out.Owner)
+	}
+}
+
+// TestResolveReplicaSet_WithNoPodsIsFound covers the second unresolvable
+// ReplicaSet: an old revision scaled to zero. It has no pods, so nothing can
+// materialise a workload for it — and it is exactly the object an operator asks
+// about mid-rollout.
+func TestResolveReplicaSet_WithNoPodsIsFound(t *testing.T) {
+	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
+	res := scan.Result{Inputs: inventory.Inputs{
+		ReplicaSets: []appsv1.ReplicaSet{{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web-0old"},
+			Spec:       appsv1.ReplicaSetSpec{Replicas: p32(0)},
+		}},
+	}}
+
+	got := resolveObject(res, "replicaset", "shop", "web-0old", now)
+
+	if !got.Found {
+		t.Fatal("Found = false for a ReplicaSet scaled to zero; a lookup must not " +
+			"need the object to have pods")
+	}
+	if got.Status != "Scaled Down" {
+		t.Errorf("Status = %q, want %q", got.Status, "Scaled Down")
+	}
+	if len(got.Pods) != 0 {
+		t.Errorf("Pods = %+v, want none", got.Pods)
+	}
+}
+
+// TestResolveReplicaSet_CarriesOnlyItsOwnPods pins the owner filter. Two
+// revisions of one Deployment run side by side during a rollout; asking about
+// one must not return the other's pods.
+func TestResolveReplicaSet_CarriesOnlyItsOwnPods(t *testing.T) {
+	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
+	res := scan.Result{Inputs: inventory.Inputs{
+		Deployments: []appsv1.Deployment{{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web"},
+			Spec:       appsv1.DeploymentSpec{Replicas: p32(2)},
+		}},
+		ReplicaSets: []appsv1.ReplicaSet{
+			{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web-new",
+					OwnerReferences: ctrl("Deployment", "web")},
+				Spec: appsv1.ReplicaSetSpec{Replicas: p32(1)},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web-old",
+					OwnerReferences: ctrl("Deployment", "web")},
+				Spec: appsv1.ReplicaSetSpec{Replicas: p32(1)},
+			},
+		},
+		Pods: []corev1.Pod{
+			*ownedPod("shop", "web-new-aaaa", ctrl("ReplicaSet", "web-new")),
+			*ownedPod("shop", "web-old-bbbb", ctrl("ReplicaSet", "web-old")),
+		},
+	}}
+
+	got := resolveObject(res, "replicaset", "shop", "web-new", now)
+
+	if len(got.Pods) != 1 || got.Pods[0].Name != "web-new-aaaa" {
+		t.Fatalf("Pods = %+v, want only web-new's own pod — the other revision's "+
+			"pod belongs to web-old", got.Pods)
+	}
+}
+```
+
+`appsv1`, `corev1`, `metav1`, `fake`, `scan`, `inventory` and `time` are all
+already imported in `inspect_test.go`.
+
+- [ ] **Step 3: Run them and watch the defect fail**
+
+```bash
+export PATH=$PATH:/usr/local/go/bin
+go test ./internal/mcp -run TestResolveReplicaSet -count=1
+```
+
+Expected: **FAIL** on the first two —
+`Found = false for a Deployment-owned ReplicaSet that exists` and
+`Found = false for a ReplicaSet scaled to zero`. The third
+(`CarriesOnlyItsOwnPods`) also fails, on `Pods = [], want only web-new's own
+pod`, because nothing resolves at all yet. Report the exact output of all
+three. **Never** manufacture a red run or claim a failure you did not observe.
+
+- [ ] **Step 4: Add the ReplicaSet path**
+
+Add the branch as `resolveObject`'s second statement, immediately after the pod
+branch Task 3 added:
+
+```go
+	if strings.EqualFold(kind, "replicaset") {
+		return resolveReplicaSet(res, namespace, name, now)
+	}
+```
+
+Then add both functions immediately after `resolvePod`:
+
+```go
+// resolveReplicaSet answers a ReplicaSet lookup from res.Inputs.ReplicaSets
+// directly. inventory.Assemble seeds a workload from Inputs for a Deployment,
+// StatefulSet, DaemonSet, CronJob and Job, but not for a ReplicaSet: one
+// materialises only as a side effect of a pod whose PodOwners result is
+// ReplicaSet, and PodOwners returns that only for a ReplicaSet with no
+// controller owner of its own. So a Deployment-owned ReplicaSet — what every
+// rollout is made of — and a ReplicaSet scaled to zero both had no workload to
+// be found in, even though inspectKinds advertises the kind.
+//
+// Desired and Ready come from the ReplicaSet's own spec and status rather than
+// from a pod count, so a scaled-to-zero revision reads as Scaled Down rather
+// than as a workload with no pods. Image comes off the first pod row, which is
+// how Assemble reports it for every other kind; a ReplicaSet with no pods
+// carries no image, and the field is omitempty.
+//
+// No Owner is set. Owner is the pod path's escalation pointer, for the pod
+// identity kubeagent_triage hands a caller who did not choose it; a caller who
+// asked about a ReplicaSet named it themselves.
+func resolveReplicaSet(res scan.Result, namespace, name string, now time.Time) resolved {
+	for _, rs := range res.Inputs.ReplicaSets {
+		if rs.Namespace != namespace || rs.Name != name {
+			continue
+		}
+		desired := 0
+		if rs.Spec.Replicas != nil {
+			desired = int(*rs.Spec.Replicas)
+		}
+		ready := int(rs.Status.ReadyReplicas)
+		out := resolved{
+			Found: true,
+			// "ReplicaSet" comes from here, never from the object: typed
+			// client-go objects leave TypeMeta empty.
+			Kind:    "ReplicaSet",
+			Status:  inventory.WorkloadStatus(ready, desired),
+			Desired: desired,
+			Ready:   ready,
+		}
+		mine := map[string]bool{}
+		for _, p := range res.Inputs.Pods {
+			if p.Namespace != namespace || !ownedByReplicaSet(p, name) {
+				continue
+			}
+			mine[p.Namespace+"/"+p.Name] = true
+			out.Pods = append(out.Pods, inventory.PodRowFor(p, now))
+		}
+		if len(out.Pods) > 0 {
+			out.Image = out.Pods[0].Image
+		}
+		for _, f := range findingsOf(res.Inventory.Workloads) {
+			if mine[f.Pod] {
+				out.Findings = append(out.Findings, fromDiagnose(f))
+			}
+		}
+		return out
+	}
+	return resolved{}
+}
+
+// ownedByReplicaSet reports whether p's controller owner is the named
+// ReplicaSet. inventory.PodOwners cannot answer this: it deliberately rolls a
+// ReplicaSet-owned pod up to the Deployment above it, which is right for a
+// report grouped by workload and wrong when the caller named the ReplicaSet.
+func ownedByReplicaSet(p corev1.Pod, name string) bool {
+	for _, o := range p.OwnerReferences {
+		if o.Controller != nil && *o.Controller && o.Kind == "ReplicaSet" && o.Name == name {
+			return true
+		}
+	}
+	return false
+}
+```
+
+- [ ] **Step 5: Run the tests and watch them pass**
+
+```bash
+export PATH=$PATH:/usr/local/go/bin
+go test ./internal/mcp -run 'TestResolveReplicaSet|TestResolveObject_|TestInspect_' -count=1 -v
+```
+
+Expected: every test PASSES, including Task 2's
+`TestResolveObject_FindsEachKindUnderItsOwnKindOnly`.
+
+That test needs **no** edit. Its `orphan-rs` case now resolves through
+`resolveReplicaSet` rather than through `Assemble`, and the fixture has no
+`Spec.Replicas`, so `Desired` becomes 0 and `Status` becomes `Scaled Down`
+instead of the `Degraded` a pod-derived workload produced — but the test asserts
+only `Found` and `Kind` for each case
+(`internal/mcp/inspect_test.go:376-399`), and both still hold. Do not change its
+name, its table, its assertions or its fixture.
+
+- [ ] **Step 5a: Narrow Task 2's now-stale fixture comment**
+
+Task 2's fixture carries a comment (`internal/mcp/inspect_test.go:348-353`)
+ending:
+
+```go
+			// owner resolves to one. A ReplicaSet with no pods, and every
+			// Deployment-owned ReplicaSet, are both still unresolvable here.
+```
+
+Both of those are resolvable as of this task, so that sentence is now false —
+the same class of defect as a doc comment that overclaims, in the opposite
+direction. Replace those two lines with:
+
+```go
+			// owner resolves to one, so this pod is what puts orphan-rs in
+			// Assemble's output at all. resolveReplicaSet no longer depends on
+			// that: it reads Inputs.ReplicaSets directly, which is what makes a
+			// pod-less or Deployment-owned ReplicaSet resolvable too.
+```
+
+Keep the first three lines of that comment ("orphan-rs needs a pod to exist as a
+workload at all: Assemble seeds Deployment, StatefulSet, DaemonSet, CronJob and
+Job directly from Inputs, but a ReplicaSet workload only materialises from a pod
+whose") exactly as they are. This is the one edit to Task 2's test file this task
+makes, and it changes no assertion.
+
+- [ ] **Step 6: Falsify the owner filter**
+
+Temporarily drop the name check in `ownedByReplicaSet`:
+
+```go
+		if o.Controller != nil && *o.Controller && o.Kind == "ReplicaSet" {
+```
+
+```bash
+go test ./internal/mcp -run TestResolveReplicaSet_CarriesOnlyItsOwnPods -count=1
+```
+
+Expected: **FAIL** — `Pods = [...two rows...], want only web-new's own pod`.
+Report the exact output. Then **revert** to the `&& o.Name == name` form and run
+again:
+
+```bash
+go test ./internal/mcp -run TestResolveReplicaSet -count=1
+```
+
+Expected: PASS.
+
+- [ ] **Step 7: Full suite and constraint check**
+
+```bash
+export PATH=$PATH:/usr/local/go/bin
+go build ./... && go vet ./... && gofmt -l internal/
+go test -p 2 -count=1 ./...
+git diff --stat main -- go.mod go.sum internal/report/testdata/golden-scan.txt website/docs/schemas/
+```
+
+Expected: `gofmt -l` prints nothing; every package `ok` — in particular
+`internal/inventory`, `internal/report` and `internal/scan`, which the
+`WorkloadStatus` rename touches; the final `git diff --stat` prints **nothing**,
+so the golden scan output is byte-identical and no schema moved. **Do not** run
+any test with `-update`.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add internal/inventory/inventory.go internal/inventory/inventory_test.go \
+        internal/mcp/inspect.go internal/mcp/inspect_test.go
+git commit -s -m "fix(mcp): inspect resolves a ReplicaSet from the snapshot
+
+inspectKinds advertises replicaset, and two ReplicaSets that plainly exist
+answered found:false. inventory.Assemble seeds a workload from Inputs for a
+Deployment, StatefulSet, DaemonSet, CronJob and Job, but never for a
+ReplicaSet -- one materialises only as a side effect of a pod whose
+PodOwners result is ReplicaSet, which happens only when the ReplicaSet has
+no controller owner of its own. So every Deployment-owned ReplicaSet, which
+is what a rollout is made of, and every ReplicaSet scaled to zero were
+unresolvable.
+
+resolveReplicaSet reads res.Inputs.ReplicaSets directly, alongside
+resolvePod: these are the two kinds Assemble does not seed. Desired and
+Ready come from the ReplicaSet's own spec and status, so an old revision
+reads as Scaled Down rather than as a workload with no pods, and its pods
+are filtered by controller owner reference rather than through PodOwners,
+which rolls them up to the Deployment above. Assemble is untouched -- it is
+shared with the text report, and golden-scan.txt is byte-identical.
+
+workloadStatus becomes exported WorkloadStatus so a ReplicaSet's status word
+means the same thing as a Deployment's, rather than a second copy of the
+rule."
+```
+
+---
+
+## Task 5: The tool description and the three shipped plugin documents
 
 **Files:**
 - Modify: `internal/mcp/inspect.go:60-61` (the tool `Description`)
@@ -1223,7 +1680,7 @@ right for a plugin install and wrong for a hand-configured server."
 
 ---
 
-## Task 5: The reference page and the changelog
+## Task 6: The reference page and the changelog
 
 **Files:**
 - Modify: `website/docs/features/mcp.md` (line 25's table row; a new section
@@ -1373,15 +1830,15 @@ task:
 
 | Spec requirement | Task |
 |---|---|
-| Decision 1 — resolve all seven kinds against `res.Inputs` | 2 (controller kinds), 3 (pod) |
+| Decision 1 — resolve all seven kinds against `res.Inputs` | 2 (controller kinds), 3 (pod), 4 (ReplicaSet) |
 | Decision 2 — a pod answer describes the pod and names its owner; `Desired`/`Ready` unset | 3 |
-| Decision 3 — fix `inspect`, not `fromDiagnose`; `view.go` untouched | 2, 3 (no task edits `view.go`) |
-| Decision 4 — the un-inspectable warning kinds stay so; the model is told | 4 |
-| Implementation — the resolver, pure, no new cluster read | 2 |
+| Decision 3 — fix `inspect`, not `fromDiagnose`; `view.go` untouched | 2, 3, 4 (no task edits `view.go`) |
+| Decision 4 — the un-inspectable warning kinds stay so; the model is told | 5 |
+| Implementation — the resolver, pure, no new cluster read | 2, 4 |
 | Implementation — `inventory.PodRowFor`, `Assemble` refactored to call it | 1 |
 | Implementation — findings on the pod path, no `fromWorkload` fallback, `Owner` from `PodOwners` | 3 |
-| Documentation table, all five files | 4 (four of them), 5 (`website/docs/features/mcp.md`) |
-| Test 1 — `PodRowFor` matches `Assemble` | 1 Step 2 |
+| Documentation table, all five files | 5 (four of them), 6 (`website/docs/features/mcp.md`) |
+| Test 1 — `PodRowFor` pinned field by field, then `Assemble` shown to route through it | 1 Step 2 |
 | Test 2 — resolver table over all seven kinds, positive and negative | 2 Step 1 |
 | Test 3 — controller-owned pod, seen to fail first | 3 Steps 1-2 |
 | Test 4 — healthy Deployment | 2 Step 1 |
@@ -1390,6 +1847,7 @@ task:
 | Test 7 — no `owner` key on a bare pod | 3 Step 1 |
 | Test 8 — a Job's fourth pod is inspectable | 3 Step 1 |
 | Test 9 — `golden-scan.txt` byte-identical, never `-update` | every task's verify step |
+| Decision 1, ReplicaSet half — found during Task 2: `Assemble` has no `Inputs.ReplicaSets` loop, so a Deployment-owned or pod-less ReplicaSet answered `found: false` | 4 |
 
 The spec's "Recorded, out of scope" item — whether a pod row should carry
 `Node` and `IP` at all — is deliberately **not** a task here. It predates this
@@ -1407,9 +1865,26 @@ explicitly changes it to `(res scan.Result, kind, namespace, name string, now ti
 naming the four test call sites that must be updated. `resolved` gains exactly
 one field (`Owner string`) in Task 3, matching `InspectOutput.Owner`.
 `findingsOf(ws []inventory.Workload) []diagnose.Finding` is declared in Task 2
-and called in Task 3. `ctrl` and `ownedPod` are declared in Task 2's test step
-and used in Task 3's; `crashingOwnedPod` and `callInspectRaw` are Task 3's own
-and collide with nothing in `internal/mcp`'s test files.
+and called in Tasks 3 and 4. `ctrl` and `ownedPod` are declared in Task 2's test
+step and used in Tasks 3's and 4's; `crashingOwnedPod` and `callInspectRaw` are
+Task 3's own and collide with nothing in `internal/mcp`'s test files. Task 4
+renames `inventory.workloadStatus(ready, desired int) string` to exported
+`WorkloadStatus` with the same signature — a rename, not a second name for one
+rule — and calls it from
+`resolveReplicaSet(res scan.Result, namespace, name string, now time.Time) resolved`,
+which takes the `now` Task 3 added to `resolveObject`'s signature and passes it
+to Task 1's `PodRowFor`. `ownedByReplicaSet(p corev1.Pod, name string) bool` is
+Task 4's own and collides with nothing.
+
+**Task 4 is an amendment, not a spec section.** It was written during Task 2's
+execution, when the resolver table test failed on `replicaset` and the cause
+turned out to be wider than the fixture: `inventory.Assemble` has no
+`Inputs.ReplicaSets` loop at all, so a ReplicaSet materialises as a workload
+only as a side effect of a pod whose `PodOwners` result is `ReplicaSet` — which
+excludes every Deployment-owned ReplicaSet and every ReplicaSet with no pods.
+The spec's Decision 1 promises all seven advertised kinds resolve. Task 4 keeps
+that promise rather than retracting it, and it lands **before** the two
+documentation tasks because Tasks 5 and 6 already say seven kinds resolve.
 
 **One refinement of the spec, recorded here rather than smuggled in:** the spec's
 Decision 2 lists `Kind`, `Status`, `Pods`, `Findings` and `Owner` for a pod

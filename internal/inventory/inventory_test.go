@@ -810,9 +810,9 @@ func TestPodRowFor_BuildsEveryRowFieldAndAssembleRoutesThroughIt(t *testing.T) {
 	if len(ws) != 1 || len(ws[0].Pods) != 1 {
 		t.Fatalf("Assemble() = %+v, want one workload carrying one pod row", ws)
 	}
-	got, viaAssemble := want, ws[0].Pods[0]
-	got.Age, viaAssemble.Age = "", ""
-	if got != viaAssemble {
-		t.Errorf("Assemble's row  = %+v\nPodRowFor's row = %+v", viaAssemble, got)
+	wantRow, viaAssemble := want, ws[0].Pods[0]
+	wantRow.Age, viaAssemble.Age = "", ""
+	if wantRow != viaAssemble {
+		t.Errorf("Assemble's row = %+v\nwant           = %+v", viaAssemble, wantRow)
 	}
 }

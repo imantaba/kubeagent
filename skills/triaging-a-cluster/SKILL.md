@@ -61,13 +61,23 @@ Every finding carries a `severity` of `critical` (a detector matched a concrete
 failure mode) or `warning` (a health check flagged something that needs a
 human). Those are the only two values.
 
-Call `kubeagent_inspect` on every `critical` finding, using the `kind`,
-`namespace`, and `name` the finding already gave you. It returns that object's
-status, its pods, kubeagent's findings for it, and its recent Kubernetes events.
-Inspect a `warning` when it sits inside the scope the user asked about — most of
-kubeagent's Service, Ingress, PVC, PodDisruptionBudget, HPA and quota findings
-are warnings, so skipping them wholesale is how a real problem gets dismissed as
-noise.
+Call `kubeagent_inspect` on every `critical` finding, using the `namespace` and
+`name` the finding already gave you. It returns that object's status, its pods,
+kubeagent's findings for it, and its recent Kubernetes events.
+
+**Lowercase the kind first.** A finding reports `"kind": "Pod"`; `kubeagent_inspect`
+accepts `pod`. Passing the finding's spelling through unchanged is rejected before
+the call reaches the cluster.
+
+`kubeagent_inspect` takes seven kinds and no others: `pod`, `deployment`,
+`statefulset`, `daemonset`, `replicaset`, `job`, `cronjob`. Most of kubeagent's
+Service, Ingress, PVC, PodDisruptionBudget, HPA and quota findings are
+`warning`s, and **none of those six kinds can be inspected** — the call fails
+the schema. Report those findings from the `reason` and `detail` they already
+carry, and inspect the workload behind them if the user's question is about one.
+Do not skip them wholesale; that is how a real problem gets dismissed as noise.
+
+Otherwise inspect a `warning` when it sits inside the scope the user asked about.
 
 Do not inspect objects no finding pointed at. Do not invent names.
 

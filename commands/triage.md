@@ -13,8 +13,12 @@ Follow the `triaging-a-cluster` skill for the workflow and the
 2. Call `kubeagent_triage`, passing `namespace` only if $1 is non-empty.
 3. Read the `coverage` block before the findings.
 4. Call `kubeagent_inspect` on every `critical` finding, and on each `warning`
-   finding inside the namespace scope, passing that finding's `kind`,
-   `namespace`, and `name`. `critical` and `warning` are the only two
+   finding inside the namespace scope, passing that finding's `namespace` and
+   `name` and its `kind` **lowercased** — a finding says `Pod`, the tool takes
+   `pod`. Only `pod`, `deployment`, `statefulset`, `daemonset`, `replicaset`,
+   `job` and `cronjob` are inspectable; a Service, Ingress, PVC,
+   PodDisruptionBudget, HPA or ResourceQuota finding is not, so report it from
+   its own `reason` and `detail`. `critical` and `warning` are the only two
    severities kubeagent emits.
 5. Do not call `kubeagent_advisory` unless a finding points at a specific
    section.

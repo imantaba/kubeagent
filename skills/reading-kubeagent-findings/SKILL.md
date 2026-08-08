@@ -52,6 +52,16 @@ Report it as a blind spot, and name the resource. "No NetworkPolicy problems
 found" is wrong when NetworkPolicies are in `partial`. "kubeagent could not read
 NetworkPolicies, so that is unchecked" is right.
 
+`partial` covers the reads kubeagent can do without. A refusal on one it cannot
+— pods, or the workload kinds it diagnoses from — fails the whole call instead,
+and `kubeagent_triage` returns an error naming the resource and the verb. That
+is not a cluster problem to report as a finding. Tell the user their credentials
+are too narrow and give them the profile:
+
+```bash
+kubeagent rbac print --profile scan
+```
+
 ### metricsServer: "not-checked" means never looked
 
 `coverage.metricsServer` is the literal string `"not-checked"` until a call
@@ -69,6 +79,11 @@ human. Those are the only two values. `confidence` is how sure kubeagent is:
 `high` when the state is one Kubernetes itself asserts, `medium` when it is a
 kubeagent heuristic. The two vocabularies do not overlap — there is no `high`
 severity and no `critical` confidence.
+
+Only `critical` findings carry a `confidence` at all — it comes from the
+detector that matched. A `warning` has no `confidence` key, and its absence says
+nothing about how sure kubeagent is. Do not read a missing `confidence` as a low
+one.
 
 A `critical` finding carrying `medium` confidence is a **lead to verify**, not a
 conclusion to report. Escalate it with `kubeagent_inspect` and read the object's

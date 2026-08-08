@@ -410,7 +410,7 @@ carries the sign-off and commit-message conventions.
 
 ### What the tests check
 
-Seven assertions run over every registered pack, so every failure is
+These assertions run over every registered pack, so every failure is
 predictable before you push:
 
 | check | refuses |
@@ -421,7 +421,7 @@ predictable before you push:
 | no host or address | `://` or a bare IPv4 address anywhere in the YAML, and **any** dot in a rule message |
 | every embedded file is registered | a `packs/*.yaml` with no registry entry — it would ship inside the binary while being invisible to the listing, to `--policy-pack` and to every other test — or two registry entries naming the same file, which would ship one pack's rules under two names |
 | names are unique and usable | a duplicate name, anything outside lowercase letters, digits and interior hyphens, or a name too long for the listing column |
-| summary shape | a multi-line summary, leading or trailing whitespace, a trailing period, or a leading capital |
+| summary shape | an empty summary, a multi-line summary, leading or trailing whitespace, a trailing period, or a leading capital |
 
 The last three are about the registry rather than the rules, and they exist
 because nothing else can see it: the loader is handed bytes and never learns

@@ -240,13 +240,13 @@ func TestPolicyPacksListsWhatShips(t *testing.T) {
 	out := buf.String()
 	// Every shipped pack must appear. Asserting one pack would still pass with
 	// a second one missing from the registry, which is the failure this is for.
-	for _, want := range []string{"reliability", "security"} {
+	for _, want := range []string{"cost", "reliability", "security"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the listing does not name the %s pack:\n%s", want, out)
 		}
 	}
 	// The counts come from loading, so they cannot drift from the files.
-	for _, want := range []string{"14 rules", "23 rules"} {
+	for _, want := range []string{"14 rules", "16 rules", "23 rules"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the listing does not carry the %q count:\n%s", want, out)
 		}
@@ -271,6 +271,20 @@ func TestPolicyPacksPrintEmitsLoadableYAML(t *testing.T) {
 	}
 }
 
+func TestPolicyPacksPrintEmitsALoadableCostPack(t *testing.T) {
+	var buf bytes.Buffer
+	if err := runPolicyPacks(nil, "cost", &buf); err != nil {
+		t.Fatalf("runPolicyPacks: %v", err)
+	}
+	rules, err := policy.Load([]policy.Document{{Source: "pack:cost", Data: buf.Bytes()}})
+	if err != nil {
+		t.Fatalf("the printed pack does not load back: %v", err)
+	}
+	if len(rules) != 16 {
+		t.Errorf("printed pack has %d rules, want 16", len(rules))
+	}
+}
+
 func TestPolicyPacksPrintUnknownNameIsRefused(t *testing.T) {
 	var buf bytes.Buffer
 	err := runPolicyPacks(nil, "no-such-pack", &buf)
@@ -280,7 +294,7 @@ func TestPolicyPacksPrintUnknownNameIsRefused(t *testing.T) {
 	if !strings.Contains(err.Error(), `"no-such-pack"`) {
 		t.Errorf("the error does not quote the name given: %v", err)
 	}
-	for _, want := range []string{"reliability", "security"} {
+	for _, want := range []string{"cost", "reliability", "security"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the error does not name the %s pack, so it does not name the packs that do exist: %v", want, err)
 		}

@@ -261,3 +261,103 @@ func TestClientFor_FactoryFailureNeverLeaksTheUnderlyingError(t *testing.T) {
 		})
 	}
 }
+
+// TestClientFor_NilBaseRefusesUnnamedCallsOnly covers the server that started
+// without a default cluster: the kubeconfig named contexts but marked none
+// current, so Serve passed a nil base (see startableWithoutDefaultContext). A
+// call that names no context has nothing to read and must be told how to fix
+// that; a call that names one must still work, because switchTo never
+// consulted base in the first place.
+func TestClientFor_NilBaseRefusesUnnamedCallsOnly(t *testing.T) {
+	present := fake.NewSimpleClientset()
+	switched := fake.NewSimpleClientset()
+	switchTo := func(string) (kubernetes.Interface, error) { return switched, nil }
+	cfg := Config{AllowContextSwitch: true}
+
+	tests := []struct {
+		name      string
+		base      kubernetes.Interface
+		requested string
+		wantErr   error
+		wantLabel string
+	}{
+		{"unnamed call with a default cluster", present, "", nil, "(current context)"},
+		{"unnamed call without a default cluster", nil, "", errNoDefaultContext, ""},
+		{"named call with a default cluster", present, "kind-other", nil, "kind-other"},
+		{"named call without a default cluster", nil, "kind-other", nil, "kind-other"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			client, label, err := clientFor(cfg, tc.base, switchTo, tc.requested)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+			if tc.wantErr != nil {
+				if client != nil {
+					t.Errorf("client = %v, want nil alongside an error", client)
+				}
+				return
+			}
+			if client == nil {
+				t.Fatal("client = nil, want a usable clientset")
+			}
+			if label != tc.wantLabel {
+				t.Errorf("label = %q, want %q", label, tc.wantLabel)
+			}
+		})
+	}
+}
+
+// TestErrNoDefaultContext_NamesTheFixAndNoPath pins the message a model reads.
+// It crosses the MCP boundary, so it must name list_contexts and the context
+// argument — the two things that resolve it — and must not name a kubeconfig
+// path or an API server address, because nothing in this package may put one
+// on the protocol stream.
+func TestErrNoDefaultContext_NamesTheFixAndNoPath(t *testing.T) {
+	got := errNoDefaultContext.Error()
+
+	for _, want := range []string{"no current context", "list_contexts", "context"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("error = %q, want it to mention %q", got, want)
+		}
+	}
+	for _, leak := range []string{"kubeconfig path", "/", "https://", "--"} {
+		if strings.Contains(got, leak) {
+			t.Errorf("error = %q, contains %q; this string crosses the MCP boundary and must "+
+				"name neither a path, a URL, nor a CLI flag a model might try to run", got, leak)
+		}
+	}
+}
+
+// TestServer_NilBaseIsUsableOverTheProtocol drives the real MCP transport
+// against a server built with no default cluster. This is the shape a live
+// client sees after Serve degrades: the tools are all registered, a call
+// naming a context works normally, and a call naming none comes back as a
+// tool-level error result carrying the sentinel's text — not a transport
+// failure and not a panic.
+func TestServer_NilBaseIsUsableOverTheProtocol(t *testing.T) {
+	crashing := fake.NewSimpleClientset(crashingPod())
+	switchTo := func(string) (kubernetes.Interface, error) { return crashing, nil }
+	cs := connectWith(t, Config{AllowContextSwitch: true}, nil, switchTo)
+
+	named := callTriage(t, cs, map[string]any{"context": "kind-other"})
+	if named.Verdict != "degraded" {
+		t.Fatalf("named-context Verdict = %q, want %q — a named call must work with no default "+
+			"cluster, because it never consulted one", named.Verdict, "degraded")
+	}
+	if named.Cluster.Context != "kind-other" {
+		t.Errorf("named-context Cluster.Context = %q, want %q", named.Cluster.Context, "kind-other")
+	}
+
+	res, err := cs.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "kubeagent_triage"})
+	if err != nil {
+		t.Fatalf("CallTool() error = %v, want a tool-level error result", err)
+	}
+	if !res.IsError {
+		t.Fatal("CallTool() with no context succeeded although there is no default cluster")
+	}
+	if text := firstText(res); !strings.Contains(text, "list_contexts") {
+		t.Errorf("error text = %q, want it to point the caller at list_contexts", text)
+	}
+}

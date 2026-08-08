@@ -71,6 +71,12 @@ type clientFactory func(contextName string) (kubernetes.Interface, error)
 // never an API server address.
 func clientFor(cfg Config, base kubernetes.Interface, switchTo clientFactory, requested string) (kubernetes.Interface, string, error) {
 	if requested == "" {
+		// A nil base means Serve started without a default cluster. base is
+		// only ever the literal nil there, never a typed nil pointer stored
+		// in the interface, so this comparison is the whole check.
+		if base == nil {
+			return nil, "", errNoDefaultContext
+		}
 		return base, contextLabel(cfg.Context), nil
 	}
 	if !cfg.AllowContextSwitch {

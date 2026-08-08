@@ -9,11 +9,15 @@ import (
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
+
+	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/scan"
 )
 
 func p32(n int32) *int32 { return &n }
@@ -248,5 +252,150 @@ func TestInspect_EmptyNamespaceIsRejectedBeforeTheHandlerRuns(t *testing.T) {
 	if called {
 		t.Error("the fake clientset was called; validation must reject namespace=\"\" before the " +
 			"handler ever runs")
+	}
+}
+
+// ctrl builds the controller owner reference chain fixture the resolver tests
+// need. internal/inventory's test package has its own copy; this is a different
+// package and cannot reach it.
+func ctrl(kind, name string) []metav1.OwnerReference {
+	yes := true
+	return []metav1.OwnerReference{{Kind: kind, Name: name, Controller: &yes}}
+}
+
+// ownedPod is a ready one-container pod owned by the given controller.
+func ownedPod(ns, name string, owners []metav1.OwnerReference) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name, OwnerReferences: owners},
+		Spec: corev1.PodSpec{
+			NodeName:   "node-a",
+			Containers: []corev1.Container{{Name: "app", Image: "registry.example.com/app:1.0.0"}},
+		},
+		Status: corev1.PodStatus{
+			Phase:             corev1.PodRunning,
+			PodIP:             "192.0.2.10",
+			ContainerStatuses: []corev1.ContainerStatus{{Name: "app", Ready: true}},
+		},
+	}
+}
+
+// TestInspect_HealthyDeploymentIsFound is the second half of the resolution
+// defect. inspect answered a lookup against inventory.Prioritize's output — a
+// list built for display, which drops healthy-quiet workloads outright — so a
+// Deployment that is fully ready with no restarts answered found:false for an
+// object the cluster plainly has.
+func TestInspect_HealthyDeploymentIsFound(t *testing.T) {
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web"},
+		Spec:       appsv1.DeploymentSpec{Replicas: p32(1)},
+		Status:     appsv1.DeploymentStatus{ReadyReplicas: 1},
+	}
+	rs := &appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{
+		Namespace: "shop", Name: "web-1a2b", OwnerReferences: ctrl("Deployment", "web"),
+	}}
+	cs := connect(t, Config{Context: "kind-example"}, fake.NewSimpleClientset(
+		dep, rs, ownedPod("shop", "web-1a2b-cdef", ctrl("ReplicaSet", "web-1a2b"))))
+
+	out := callInspect(t, cs, map[string]any{"kind": "deployment", "namespace": "shop", "name": "web"})
+
+	if !out.Found {
+		t.Fatal("Found = false for a healthy Deployment that exists")
+	}
+	if out.Kind != "Deployment" || out.Status != "Running" || out.Desired != 1 || out.Ready != 1 {
+		t.Errorf("got kind=%q status=%q %d/%d, want Deployment Running 1/1",
+			out.Kind, out.Status, out.Ready, out.Desired)
+	}
+	if len(out.Pods) != 1 || out.Pods[0].Name != "web-1a2b-cdef" {
+		t.Errorf("Pods = %+v, want the one pod behind it", out.Pods)
+	}
+	if len(out.Findings) != 0 {
+		t.Errorf("Findings = %+v, want none on a healthy Deployment", out.Findings)
+	}
+}
+
+// TestResolveObject_FindsEachKindUnderItsOwnKindOnly drives the resolver
+// directly — it is a pure function over the snapshot scan.Evaluate returns, so
+// it needs no server and no fake clientset. The negative half matters as much
+// as the positive: a resolver that ignored the requested kind would answer
+// found:true for a Deployment asked about as a StatefulSet.
+func TestResolveObject_FindsEachKindUnderItsOwnKindOnly(t *testing.T) {
+	const ns = "shop"
+	in := inventory.Inputs{
+		Deployments: []appsv1.Deployment{{
+			ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: "web"},
+			Spec:       appsv1.DeploymentSpec{Replicas: p32(1)},
+			Status:     appsv1.DeploymentStatus{ReadyReplicas: 1},
+		}},
+		ReplicaSets: []appsv1.ReplicaSet{{ObjectMeta: metav1.ObjectMeta{
+			Namespace: ns, Name: "orphan-rs",
+		}}},
+		StatefulSets: []appsv1.StatefulSet{{
+			ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: "db"},
+			Spec:       appsv1.StatefulSetSpec{Replicas: p32(1)},
+			Status:     appsv1.StatefulSetStatus{ReadyReplicas: 1},
+		}},
+		DaemonSets: []appsv1.DaemonSet{{
+			ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: "agent"},
+			Status:     appsv1.DaemonSetStatus{DesiredNumberScheduled: 1, NumberReady: 1},
+		}},
+		Jobs: []batchv1.Job{{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: "migrate"}}},
+		CronJobs: []batchv1.CronJob{{
+			ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: "nightly"},
+			Spec:       batchv1.CronJobSpec{Schedule: "0 3 * * *"},
+		}},
+		Pods: []corev1.Pod{
+			*ownedPod(ns, "loner", nil),
+			// orphan-rs needs a pod to exist as a workload at all: Assemble seeds
+			// Deployment, StatefulSet, DaemonSet, CronJob and Job directly from
+			// Inputs, but a ReplicaSet workload only materialises from a pod whose
+			// owner resolves to one. A ReplicaSet with no pods, and every
+			// Deployment-owned ReplicaSet, are both still unresolvable here.
+			*ownedPod(ns, "orphan-rs-pod", ctrl("ReplicaSet", "orphan-rs")),
+		},
+	}
+	res := scan.Result{Inputs: in}
+
+	cases := []struct {
+		kind string
+		name string
+	}{
+		{"pod", "loner"},
+		{"deployment", "web"},
+		{"replicaset", "orphan-rs"},
+		{"statefulset", "db"},
+		{"daemonset", "agent"},
+		{"job", "migrate"},
+		{"cronjob", "nightly"},
+	}
+	wantKind := map[string]string{
+		"pod": "Pod", "deployment": "Deployment", "replicaset": "ReplicaSet",
+		"statefulset": "StatefulSet", "daemonset": "DaemonSet", "job": "Job",
+		"cronjob": "CronJob",
+	}
+
+	for _, tc := range cases {
+		got := resolveObject(res, tc.kind, ns, tc.name)
+		if !got.Found {
+			t.Errorf("resolveObject(%q, %q) Found = false, want true", tc.kind, tc.name)
+			continue
+		}
+		if got.Kind != wantKind[tc.kind] {
+			t.Errorf("resolveObject(%q, %q) Kind = %q, want %q",
+				tc.kind, tc.name, got.Kind, wantKind[tc.kind])
+		}
+		// The same name under every other kind must not resolve.
+		for _, other := range cases {
+			if other.kind == tc.kind {
+				continue
+			}
+			if resolveObject(res, other.kind, ns, tc.name).Found {
+				t.Errorf("resolveObject(%q, %q) Found = true; %q is a %s",
+					other.kind, tc.name, tc.name, wantKind[tc.kind])
+			}
+		}
+		// A name nothing carries must not resolve under any kind.
+		if resolveObject(res, tc.kind, ns, "ghost").Found {
+			t.Errorf("resolveObject(%q, %q) Found = true for a name nothing carries", tc.kind, "ghost")
+		}
 	}
 }

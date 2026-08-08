@@ -13,6 +13,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/imantaba/kubeagent/internal/collect"
+	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/redact"
 	"github.com/imantaba/kubeagent/internal/scan"
@@ -118,35 +119,15 @@ func registerInspect(s *mcpsdk.Server, cfg Config, base kubernetes.Interface, sw
 				Coverage:  cov,
 			}
 
-			for _, w := range res.Inventory.Workloads {
-				if w.Namespace != in.Namespace || w.Name != in.Name ||
-					!strings.EqualFold(w.Kind, in.Kind) {
-					continue
-				}
+			if r := resolveObject(res, in.Kind, in.Namespace, in.Name); r.Found {
 				out.Found = true
-				out.Kind = w.Kind
-				out.Status = w.Status
-				out.Desired = w.Desired
-				out.Ready = w.Ready
-				out.Image = w.Image
-				out.Pods = append(out.Pods, w.Pods...)
-				// Mirrors findingsFromResult in view.go: a workload can be
-				// Flagged() (Ready < Desired, or a bare Failed pod) with no
-				// per-pod diagnose.Finding attached — for example a Deployment
-				// stuck at 0/3 ready with no crash-looping pod. Projecting
-				// only w.Findings would report "findings: []" for an object
-				// triage already flags; fromWorkload is the same helper
-				// triage uses, so the two surfaces agree.
-				if len(w.Findings) == 0 {
-					if w.Flagged() {
-						out.Findings = append(out.Findings, fromWorkload(w))
-					}
-				} else {
-					for _, f := range w.Findings {
-						out.Findings = append(out.Findings, fromDiagnose(f))
-					}
-				}
-				break
+				out.Kind = r.Kind
+				out.Status = r.Status
+				out.Desired = r.Desired
+				out.Ready = r.Ready
+				out.Image = r.Image
+				out.Pods = append(out.Pods, r.Pods...)
+				out.Findings = append(out.Findings, r.Findings...)
 			}
 
 			// Events are read for the named object whether or not the scan
@@ -170,6 +151,79 @@ func registerInspect(s *mcpsdk.Server, cfg Config, base kubernetes.Interface, sw
 			sortFindings(out.Findings)
 			return nil, out, nil
 		}))
+}
+
+// resolved is the answer to an object lookup, separated from InspectOutput so
+// the lookup is a pure function a test can call without standing up a server.
+type resolved struct {
+	Found    bool
+	Kind     string
+	Status   string
+	Desired  int
+	Ready    int
+	Image    string
+	Pods     []inventory.PodRow
+	Findings []Finding
+}
+
+// findingsOf gathers every diagnose.Finding the scan attached to a workload.
+// Re-attaching them to a recomputed workload set is lossless: Workload.Flagged()
+// is true whenever len(Findings) > 0 and Prioritize never drops a flagged
+// workload, so no finding can have been filtered out of the list this reads.
+func findingsOf(ws []inventory.Workload) []diagnose.Finding {
+	var out []diagnose.Finding
+	for _, w := range ws {
+		out = append(out, w.Findings...)
+	}
+	return out
+}
+
+// resolveObject answers "does this object exist, and what is its state" from
+// the snapshot scan.Evaluate already returned. It issues no cluster call.
+//
+// It deliberately does not *match* against res.Inventory.Workloads. That list is
+// inventory.Prioritize's output, built for display: it drops healthy-quiet
+// workloads outright and Assemble truncates a Job's or CronJob's pod rows at
+// jobPodCap. Answering a lookup against it made inspect report found:false for
+// objects the cluster plainly had. Existence comes from res.Inputs, the raw
+// snapshot the scan already collected, so this costs no cluster call.
+// res.Inventory.Workloads is still read, through findingsOf, for one narrow
+// purpose: to recover the findings the scan already attached.
+//
+// The canonical Kind spelling comes from the recomputed workload, never from the
+// object: typed client-go objects leave TypeMeta empty. The requested kind is
+// matched case-insensitively, as it has always been — the published enum admits
+// only the seven lowercase spellings, but this is a pure function a test may
+// call with any string, and it must not answer found:false for "Pod" when the
+// caller meant "pod".
+func resolveObject(res scan.Result, kind, namespace, name string) resolved {
+	for _, w := range inventory.Assemble(res.Inputs, findingsOf(res.Inventory.Workloads)) {
+		if w.Namespace != namespace || w.Name != name || !strings.EqualFold(w.Kind, kind) {
+			continue
+		}
+		out := resolved{
+			Found: true, Kind: w.Kind, Status: w.Status,
+			Desired: w.Desired, Ready: w.Ready, Image: w.Image,
+		}
+		out.Pods = append(out.Pods, w.Pods...)
+		// Mirrors findingsFromResult in view.go: a workload can be
+		// Flagged() (Ready < Desired, or a bare Failed pod) with no per-pod
+		// diagnose.Finding attached — a Deployment stuck at 0/3 ready with no
+		// crash-looping pod, for instance. Projecting only w.Findings would
+		// report "findings: []" for an object triage already flags; fromWorkload
+		// is the same helper triage uses, so the two surfaces agree.
+		if len(w.Findings) == 0 {
+			if w.Flagged() {
+				out.Findings = append(out.Findings, fromWorkload(w))
+			}
+		} else {
+			for _, f := range w.Findings {
+				out.Findings = append(out.Findings, fromDiagnose(f))
+			}
+		}
+		return out
+	}
+	return resolved{}
 }
 
 // eventTime picks the most recent timestamp an event carries. Series events

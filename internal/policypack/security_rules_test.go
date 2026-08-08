@@ -236,8 +236,8 @@ func evaluateOne(t *testing.T, r policy.Rule, kind string, obj *unstructured.Uns
 	return violations
 }
 
-// securityRule finds one rule in the pack by id.
-func securityRule(t *testing.T, rules []policy.Rule, id string) policy.Rule {
+// packRule finds one rule in a pack by id.
+func packRule(t *testing.T, rules []policy.Rule, id string) policy.Rule {
 	t.Helper()
 	for _, r := range rules {
 		if r.ID == id {
@@ -411,7 +411,7 @@ func TestEverySecurityRuleFiresAndPasses(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.id, func(t *testing.T) {
-			r := securityRule(t, rules, tc.id)
+			r := packRule(t, rules, tc.id)
 
 			violations := evaluateOne(t, r, tc.kind, tc.violating)
 			if len(violations) != 1 {
@@ -488,8 +488,8 @@ func TestPairedRulesDivideTheWork(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.property, func(t *testing.T) {
-			unsetRule := securityRule(t, rules, tc.unsetID)
-			valueRule := securityRule(t, rules, tc.valueID)
+			unsetRule := packRule(t, rules, tc.unsetID)
+			valueRule := packRule(t, rules, tc.valueID)
 
 			// The unset object: only the exists half may fire.
 			if got := evaluateOne(t, unsetRule, "Deployment", tc.unset); len(got) != 1 {

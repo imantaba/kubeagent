@@ -457,6 +457,28 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   stays 1.2, `gate` stays 1.1), and ships no `critical` rule, so adding it to
   a pipeline that passed yesterday cannot fail it today
   (see [website/docs/features/policy-packs.md](website/docs/features/policy-packs.md)).
+  Slice 4 has since shipped, and **curated policy packs are complete**: there
+  is now a documented route for a pack written outside kubeagent, with the
+  admission criteria machine-checked at the layer nothing else can see.
+  `policy.Load` validates every rule and the generic pack tests validate every
+  *registered* pack, but neither can see the registry — `Load` is handed bytes
+  and never learns where they came from, and every generic test iterates
+  `All()`, so anything absent from `All()` is invisible to all of them.
+  `internal/policypack/registry_test.go` closes it: every embedded
+  `packs/*.yaml` must have a registry entry, no two entries may share a name or
+  a file, a name must match `^[a-z0-9]+(-[a-z0-9]+)*$` and fit the `%-14s`
+  listing column in `internal/cli/policy.go`, and a summary must be one line
+  with no leading or trailing whitespace, no trailing period and no leading
+  capital. Acceptance stays curatorial —
+  the criteria are necessary, not sufficient, and a pack that ships is
+  kubeagent's curation whoever wrote it; attribution lives in the pack's header
+  comment, which `--print` emits, and there is no author field, because a
+  two-tier listing would tell an operator to trust some shipped rules less than
+  others. The slice adds **no production Go code**: the registry gains no entry
+  and no field, and no pack ships. Loading a pack into an installed binary
+  without a kubeagent release remains deliberately absent, and no outside pack
+  has yet come through the route
+  (see [website/docs/features/policy-packs.md](website/docs/features/policy-packs.md)).
 - **Post-1.0 — fleet-scale, slice 2 has shipped (v1.10.0):** cross-cluster
   correlation. Under the per-cluster table, `kubeagent fleet` now names the
   issue kinds and the refused reads present in two or more of the **judged**
@@ -492,6 +514,4 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   load errors. `fleet` moves to schema version **1.2** (added the optional
   `name` on a cluster summary and on an unreachable cluster, both
   `omitempty`).
-  The remaining post-1.0 work is the rest of the curated-packs item's second
-  half — a pack contributed by someone other than kubeagent itself — plus
-  other baseline dimensions.
+  The remaining post-1.0 work is other baseline dimensions.

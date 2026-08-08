@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A third curated policy pack, `cost`: sixteen rules over seven kinds —
+  Deployment, StatefulSet, DaemonSet, CronJob, Job, HorizontalPodAutoscaler
+  and PersistentVolumeClaim — covering resource requests and limits, CronJob
+  history and active-deadline limits, Job retry limits, autoscaler ceilings
+  and claim sizes. Run it with `kubeagent scan --policy-pack cost` or
+  `kubeagent gate --policy-pack cost`, print it with `kubeagent policy packs
+  --print cost`, and combine it with `--policy` or with
+  `reliability`/`security`. Every rule is `info` — a cost finding is
+  budget-dependent in a way a security finding is not — so adding the pack
+  cannot fail a gate at the default `--fail-on critical` or at `--fail-on
+  warning`. Opt-in: omitting `--policy-pack` renders the same bytes as
+  before, and nothing versioned moves — `scan` stays at schema version 1.2
+  and `gate` at 1.1.
+
 ## [1.12.0] - 2026-08-07
 
 ### Added

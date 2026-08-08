@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -360,4 +361,96 @@ func TestServer_NilBaseIsUsableOverTheProtocol(t *testing.T) {
 	if text := firstText(res); !strings.Contains(text, "list_contexts") {
 		t.Errorf("error text = %q, want it to point the caller at list_contexts", text)
 	}
+}
+
+// oneCurrentKubeconfig, noContextsKubeconfig: the two fixtures the degrade
+// predicate must reject. The one it accepts, noCurrentKubeconfigFixture,
+// lives in contexts_test.go beside the fixture it was derived from.
+const oneCurrentKubeconfig = `apiVersion: v1
+kind: Config
+current-context: staging
+clusters:
+  - name: staging-cluster
+    cluster:
+      server: https://staging.example.com:6443
+contexts:
+  - name: staging
+    context:
+      cluster: staging-cluster
+      user: staging-user
+users:
+  - name: staging-user
+    user: {}
+`
+
+const noContextsKubeconfig = `apiVersion: v1
+kind: Config
+clusters: []
+contexts: []
+users: []
+`
+
+// TestStartableWithoutDefaultContext_OnlyTheOneNarrowCase pins the trigger.
+// Degrading is a real loss of a startup check, so it must fire for exactly
+// one condition — switching allowed, no context requested, and a kubeconfig
+// that names contexts but marks none current. Every other startup failure
+// still exits with the operator-facing error on stderr, which is the honest
+// answer for a missing kubeconfig, a typo'd --context, or a cluster that is
+// simply unreachable.
+func TestStartableWithoutDefaultContext_OnlyTheOneNarrowCase(t *testing.T) {
+	tests := []struct {
+		name     string
+		contents string
+		cfg      Config
+		want     bool
+	}{
+		{
+			name:     "contexts with none current, switching allowed",
+			contents: noCurrentKubeconfigFixture,
+			cfg:      Config{AllowContextSwitch: true},
+			want:     true,
+		},
+		{
+			name:     "a context is current",
+			contents: oneCurrentKubeconfig,
+			cfg:      Config{AllowContextSwitch: true},
+			want:     false,
+		},
+		{
+			name:     "the kubeconfig names no contexts at all",
+			contents: noContextsKubeconfig,
+			cfg:      Config{AllowContextSwitch: true},
+			want:     false,
+		},
+		{
+			name:     "switching is not allowed, so no call could name a context",
+			contents: noCurrentKubeconfigFixture,
+			cfg:      Config{},
+			want:     false,
+		},
+		{
+			name:     "the operator named a context explicitly, so its failure is theirs to see",
+			contents: noCurrentKubeconfigFixture,
+			cfg:      Config{AllowContextSwitch: true, Context: "staging"},
+			want:     false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := tc.cfg
+			cfg.Kubeconfig = writeKubeconfig(t, tc.contents)
+			if got := startableWithoutDefaultContext(cfg); got != tc.want {
+				t.Errorf("startableWithoutDefaultContext() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+
+	t.Run("the kubeconfig cannot be read", func(t *testing.T) {
+		cfg := Config{AllowContextSwitch: true, Kubeconfig: filepath.Join(t.TempDir(), "absent")}
+		if startableWithoutDefaultContext(cfg) {
+			t.Error("startableWithoutDefaultContext() = true for an unreadable kubeconfig, want false — " +
+				"a path that does not resolve is a configuration error the operator must see")
+		}
+	})
 }

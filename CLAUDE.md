@@ -304,7 +304,7 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   [website/docs/features/dashboard.md](website/docs/features/dashboard.md),
   which closed the theme.
   A third distribution surface now sits alongside the MCP server and the krew
-  plugin: kubeagent installs into Claude Code as a plugin
+  plugin: kubeagent installs into Claude Code as a plugin (v1.14.0)
   (`.claude-plugin/plugin.json` + `marketplace.json`, with user-facing skills
   under `skills/` and commands under `commands/`), documented in
   [website/docs/features/claude-plugin.md](website/docs/features/claude-plugin.md).

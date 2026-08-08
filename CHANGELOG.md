@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-08-08
+
 ### Added
 
 - **Claude Code plugin.** kubeagent installs into Claude Code with
@@ -1860,7 +1862,8 @@ infrastructure (a documentation site and a pre-release chaos-test harness).
 - CI (vet/test/build on push & PR) and a release workflow publishing a
   linux/amd64 tarball + `SHA256SUMS` to a GitHub Release.
 
-[Unreleased]: https://github.com/imantaba/kubeagent/compare/v1.13.1...HEAD
+[Unreleased]: https://github.com/imantaba/kubeagent/compare/v1.14.0...HEAD
+[1.14.0]: https://github.com/imantaba/kubeagent/compare/v1.13.1...v1.14.0
 [1.13.1]: https://github.com/imantaba/kubeagent/compare/v1.13.0...v1.13.1
 [1.13.0]: https://github.com/imantaba/kubeagent/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/imantaba/kubeagent/compare/v1.11.0...v1.12.0

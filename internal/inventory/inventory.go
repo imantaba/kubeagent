@@ -160,6 +160,23 @@ func podImage(p corev1.Pod) string {
 	return ""
 }
 
+// PodRowFor projects one pod into the row shape a report renders. Assemble
+// calls it for every pod it groups, and internal/mcp's inspect handler calls it
+// for a pod it looked up directly — one implementation, so a pod row is the
+// same shape whichever surface produced it.
+//
+// now is a parameter rather than a time.Now() call, so a caller holding an
+// injected clock (the MCP server has one) gets a deterministic Age.
+func PodRowFor(p corev1.Pod, now time.Time) PodRow {
+	restarts, last := podRestarts(p)
+	return PodRow{
+		Name: p.Name, Phase: string(p.Status.Phase), Ready: podReady(p),
+		Restarts: restarts, LastRestart: termTime(last),
+		Node: p.Spec.NodeName, IP: p.Status.PodIP,
+		Age: HumanAge(p.CreationTimestamp.Time, now), Image: podImage(p),
+	}
+}
+
 func workloadStatus(ready, desired int) string {
 	if desired == 0 {
 		return "Scaled Down"
@@ -381,12 +398,7 @@ func Assemble(in Inputs, findings []diagnose.Finding) []Workload {
 		if podIsReady(p) {
 			derivedReady[k]++
 		}
-		w.Pods = append(w.Pods, PodRow{
-			Name: p.Name, Phase: string(p.Status.Phase), Ready: podReady(p),
-			Restarts: restarts, LastRestart: termTime(last),
-			Node: p.Spec.NodeName, IP: p.Status.PodIP,
-			Age: HumanAge(p.CreationTimestamp.Time, time.Now()), Image: podImage(p),
-		})
+		w.Pods = append(w.Pods, PodRowFor(p, time.Now()))
 		podKey[p.Namespace+"/"+p.Name] = k
 	}
 

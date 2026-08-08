@@ -767,3 +767,39 @@ func TestPodOwnersKeepsEveryPodOfAJob(t *testing.T) {
 		t.Errorf("PodOwners returned %d entries, want %d — every pod must be resolved", got, jobPodCap+4)
 	}
 }
+
+// TestPodRowFor_MatchesTheRowAssembleBuilds pins PodRowFor to Assemble's own
+// output. Assemble delegates to it, so a drift between the two would mean the
+// extraction changed a row's shape — which internal/report's golden output and
+// every kubeagent_inspect pod row both depend on.
+func TestPodRowFor_MatchesTheRowAssembleBuilds(t *testing.T) {
+	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
+	p := pod("shop", "cart-0", nil, 4, "registry.example.com/cart:1.2.3")
+	p.CreationTimestamp = metav1.NewTime(now.Add(-72 * time.Hour))
+	p.Spec.NodeName = "node-a"
+	p.Status.PodIP = "192.0.2.10"
+	p.Status.ContainerStatuses[0].LastTerminationState = corev1.ContainerState{
+		Terminated: &corev1.ContainerStateTerminated{
+			FinishedAt: metav1.NewTime(now.Add(-1 * time.Hour)),
+		},
+	}
+
+	row := PodRowFor(p, now)
+
+	ws := Assemble(Inputs{Pods: []corev1.Pod{p}}, nil)
+	if len(ws) != 1 || len(ws[0].Pods) != 1 {
+		t.Fatalf("Assemble() = %+v, want one workload carrying one pod row", ws)
+	}
+	want := ws[0].Pods[0]
+
+	// Age is the one field that cannot match by construction: Assemble stamps
+	// it from the wall clock while PodRowFor was handed a fixed one. Check it
+	// against what the fixed clock implies, then compare every other field.
+	if row.Age != "3d" {
+		t.Errorf("Age = %q, want %q", row.Age, "3d")
+	}
+	row.Age, want.Age = "", ""
+	if row != want {
+		t.Errorf("PodRowFor() = %+v\nAssemble's row  = %+v", row, want)
+	}
+}

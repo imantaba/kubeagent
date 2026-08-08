@@ -457,7 +457,8 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   stays 1.2, `gate` stays 1.1), and ships no `critical` rule, so adding it to
   a pipeline that passed yesterday cannot fail it today
   (see [website/docs/features/policy-packs.md](website/docs/features/policy-packs.md)).
-  Slice 4 has since shipped, and **curated policy packs are complete**: there
+  Slice 4 has since shipped (v1.13.1), and **curated policy packs are
+  complete**: there
   is now a documented route for a pack written outside kubeagent, with the
   admission criteria machine-checked at the layer nothing else can see.
   `policy.Load` validates every rule and the generic pack tests validate every

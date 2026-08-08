@@ -35,3 +35,12 @@ jobs:
           path: _site
       - id: deploy
         uses: actions/deploy-pages@v4
+        with:
+          # The action's default is 10 minutes, which is how long it waits for
+          # GitHub to finish deploying the artifact it already uploaded. That
+          # was ample for years — v1.6.0 deployed in 3m28s — until the v1.7.0
+          # release hit a congested day and timed out twice in a row, once
+          # still queued and once mid-deploy. Nothing was wrong with the site:
+          # a strict mkdocs build had already passed in the step above. Waiting
+          # longer costs a runner minute on a bad day and saves a red release.
+          timeout: 1800000

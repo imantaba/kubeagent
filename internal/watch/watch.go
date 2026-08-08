@@ -43,8 +43,9 @@ type Config struct {
 	Certs                   bool
 	CertWarnDays            int
 	WebhookTimeoutThreshold int32
-	AlertURL                string        // empty disables alerting entirely
-	AlertFormat             string        // "json" | "slack" | "alertmanager"
+	AlertURL                string        // the receiver URL; for pagerduty it is optional and defaults to the published endpoint
+	AlertFormat             string        // "json" | "slack" | "alertmanager" | "pagerduty"
+	AlertRoutingKey         string        // PagerDuty integration key; used by that format alone
 	AlertRepeat             time.Duration // re-send interval for still-firing alerts
 	SLOTarget               float64       // availability SLO as a ratio in (0,1); 0 disables SLO tracking
 	Explain                 bool          // opt-in on-incident explanations; off by default
@@ -263,19 +264,33 @@ func (a *alerter) enqueue(n alertstate.Notification) {
 	a.sink.Enqueue(n)
 }
 
-// newAlerter builds the alerter from the config, returning nil when no webhook is
-// configured. The URL is a credential: only scheme://host is ever logged.
+// newAlerter builds the alerter from the config, returning nil when no
+// credential is configured. Every format but pagerduty authenticates with the
+// webhook URL; pagerduty authenticates with the routing key and defaults its
+// endpoint, so either one turns alerting on. A routing key set under another
+// format is not a credential for that format and leaves alerting off. Both are
+// credentials: only scheme://host is ever logged, and the key is never logged
+// at all.
 func newAlerter(ctx context.Context, cfg Config) (*alerter, error) {
-	if cfg.AlertURL == "" {
+	format := alert.Format(cfg.AlertFormat)
+	if cfg.AlertURL == "" && !(format == alert.FormatPagerDuty && cfg.AlertRoutingKey != "") {
 		return nil, nil
 	}
-	format := alert.Format(cfg.AlertFormat)
-	sink, err := alert.New(alert.Config{URL: cfg.AlertURL, Format: format, Repeat: cfg.AlertRepeat}, nil)
+	sink, err := alert.New(alert.Config{
+		URL:        cfg.AlertURL,
+		Format:     format,
+		Repeat:     cfg.AlertRepeat,
+		RoutingKey: cfg.AlertRoutingKey,
+	}, nil)
 	if err != nil {
 		return nil, err
 	}
 	sink.Start(ctx)
-	log.Printf("kubeagent: alerting enabled (format=%s, repeat=%s, endpoint=%s)", format, cfg.AlertRepeat, redact.URL(cfg.AlertURL))
+	endpoint := cfg.AlertURL
+	if endpoint == "" {
+		endpoint = alert.DefaultURL(format)
+	}
+	log.Printf("kubeagent: alerting enabled (format=%s, repeat=%s, endpoint=%s)", format, cfg.AlertRepeat, redact.URL(endpoint))
 	return &alerter{sink: sink}, nil
 }
 

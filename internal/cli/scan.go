@@ -12,6 +12,7 @@ import (
 
 	"github.com/imantaba/kubeagent/internal/advisory"
 	"github.com/imantaba/kubeagent/internal/audit"
+	"github.com/imantaba/kubeagent/internal/baseline"
 	"github.com/imantaba/kubeagent/internal/cluster"
 	"github.com/imantaba/kubeagent/internal/collect"
 	"github.com/imantaba/kubeagent/internal/connectivity"
@@ -55,6 +56,10 @@ type scanOptions struct {
 	driftAge               time.Duration
 	capacity               bool
 	policyPaths            []string
+	policyPackNames        []string
+	baselinePath           string
+	baselineFactor         float64
+	baselineFloor          float64
 	logs                   bool
 	nodeHeartbeatThreshold time.Duration
 	expectedNodes          string
@@ -102,6 +107,12 @@ func bindScanFlags(cmd *cobra.Command, o *scanOptions) {
 	f.DurationVar(&o.driftAge, "drift-age", envDuration("KUBEAGENT_DRIFT_AGE", time.Hour), "how long an object may differ from Git before --drift calls it stale (e.g. 30m, 2h)")
 	f.BoolVar(&o.capacity, "capacity", envBool("KUBEAGENT_CAPACITY", false), "report scheduling headroom and structurally wrong workload shapes (advisory; uses metrics-server for context when present)")
 	f.StringArrayVar(&o.policyPaths, "policy", nil, "evaluate organization-specific checks from this policy file or directory (repeatable)")
+	f.StringArrayVar(&o.policyPackNames, "policy-pack", nil, "evaluate a curated rule pack compiled into kubeagent (repeatable; see `kubeagent policy packs`)")
+	f.StringVar(&o.baselinePath, "baseline", "", "compare restart rates against this captured baseline (see "+invokedAs+" baseline capture)")
+	f.Float64Var(&o.baselineFactor, "baseline-factor", envFloat("KUBEAGENT_BASELINE_FACTOR", baseline.DefaultFactor),
+		"with --baseline: flag a workload at this multiple of its baseline rate (KUBEAGENT_BASELINE_FACTOR)")
+	f.Float64Var(&o.baselineFloor, "baseline-floor", envFloat("KUBEAGENT_BASELINE_FLOOR", baseline.DefaultFloor),
+		"with --baseline: also require this absolute rise in restarts/hour (KUBEAGENT_BASELINE_FLOOR)")
 	f.BoolVar(&o.logs, "logs", false, "read each crashing container's previous logs and classify the failure (needs the pods/log grant)")
 	f.DurationVar(&o.nodeHeartbeatThreshold, "node-heartbeat-threshold", 40*time.Second, "flag a Ready node whose kubelet lease is stale beyond this (0 disables)")
 	f.StringVar(&o.expectedNodes, "expected-nodes", "", "names of nodes expected in the cluster; a declared name with no Node object is flagged Degraded (comma-separated)")
@@ -161,6 +172,14 @@ func runScan(o scanOptions) error {
 		}
 	} else {
 		explainModel = explain.ResolveModel(o.model, os.Getenv("KUBEAGENT_MODEL"))
+	}
+
+	// Load before connecting: an unreadable or wrong-version baseline is bad
+	// input, and nothing about the cluster should have been attempted when the
+	// run fails on it.
+	baselineDoc, err := loadBaseline(o.baselinePath)
+	if err != nil {
+		return err
 	}
 
 	client, err := cluster.NewClient(o.kubeconfig, o.contextName)
@@ -244,7 +263,7 @@ func runScan(o scanOptions) error {
 	}
 	res.PartialReads = append(res.PartialReads, advisoryBlindSpots(advRes.Degradations)...)
 
-	policyView, err := evaluatePolicy(context.Background(), o.policyPaths, o.kubeconfig, o.contextName, o.namespace)
+	policyView, err := evaluatePolicy(context.Background(), o.policyPaths, o.policyPackNames, o.kubeconfig, o.contextName, o.namespace)
 	if err != nil {
 		return err
 	}
@@ -305,6 +324,8 @@ func runScan(o scanOptions) error {
 		fixPlan = remediate.Plan(result.Workloads, res.Inputs.ReplicaSets, nodes)
 	}
 
+	baselineRep := baselineReport(baselineDoc, o.baselineFactor, o.baselineFloor, res.Inputs, time.Now())
+
 	in := resultInput(res)
 	// Presentation-layer extras that live only in runScan (clock, summaries,
 	// flag-gated reports, credential/explain output).
@@ -321,6 +342,7 @@ func runScan(o scanOptions) error {
 	in.GitOps = gitopsRep
 	in.Capacity = capacityRep
 	in.Policy = policyView
+	in.Baseline = baselineRep
 	in.SecurityVerbose = o.securityVerbose
 	in.Suggest = o.suggest
 	in.Explanation = explanation

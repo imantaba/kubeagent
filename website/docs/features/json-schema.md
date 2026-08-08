@@ -1,6 +1,6 @@
 # JSON schema contract
 
-kubeagent writes six machine-readable JSON documents. Each one now declares a
+kubeagent writes eight machine-readable JSON documents. Each one now declares a
 `schemaVersion`, and each has a published [JSON Schema](https://json-schema.org/)
 generated straight from the Go types that produce it. This page is the
 contract: what is versioned, what a version number promises, how to pin to
@@ -9,7 +9,7 @@ a lie.
 
 ## What is versioned
 
-Four independent surfaces, six documents:
+Six independent surfaces, eight documents:
 
 | Document | Surface | Emitted by |
 |---|---|---|
@@ -19,6 +19,8 @@ Four independent surfaces, six documents:
 | `rbac-check` | rbac | `kubeagent rbac check --output json` |
 | `watch-issues` | watch | the watch daemon's `GET /issues` |
 | `watch-explanations` | watch | the watch daemon's `GET /explanations` |
+| `baseline` | baseline | `kubeagent baseline capture` |
+| `fleet` | fleet | `kubeagent fleet --output json` |
 
 `rbac-print` and `rbac-check` share the `rbac` surface's version: a consumer
 that scripts one usually scripts both, so they move together.
@@ -31,10 +33,11 @@ is a choice, not an oversight:
 - **SARIF** (`kubeagent gate --output sarif`) — SARIF 2.1.0 is versioned by
   [OASIS](https://json.schemastore.org/sarif-2.1.0.json). Wrapping someone
   else's standard in kubeagent's own version number would misattribute it.
-- **The Slack and Alertmanager alert payloads** (`watch --alert-format
-  slack|alertmanager`) — these are the receiver's shapes, not kubeagent's.
-  Slack's incoming-webhook body and Alertmanager's `POST /api/v2/alerts`
-  array are contracts Slack and Prometheus own; kubeagent only fills them in.
+- **The Slack, Alertmanager and PagerDuty alert payloads** (`watch
+  --alert-format slack|alertmanager|pagerduty`) — these are the receiver's
+  shapes, not kubeagent's. Slack's incoming-webhook body, Alertmanager's
+  `POST /api/v2/alerts` array and PagerDuty's Events API v2 event are
+  contracts Slack, Prometheus and PagerDuty own; kubeagent only fills them in.
 - **The `--fix` audit journal** (`--audit-log`) — a write-side record of
   remediation actions taken, appended to a file the operator names. It is
   evidence of what happened, not a read surface a script polls for shape.
@@ -44,11 +47,13 @@ is a choice, not an oversight:
 
 ## What MINOR and MAJOR mean
 
-Every `schemaVersion` is `MAJOR.MINOR`. All four surfaces started at `1.0`;
-`scan` and `gate` are at `1.1` today, having each gained one optional field,
-and **the schema version is not the kubeagent release version** — a
-surface's number moves only when its own document's shape moves, so a new
-`scan` field does not disturb a script reading the `gate` document.
+Every `schemaVersion` is `MAJOR.MINOR`. Every surface starts at `1.0`;
+`gate` is at `1.1` today, having gained one optional field; `scan` is at
+`1.2`, having gained two; `fleet` is at `1.2` too, having gained two
+optional `name` properties — and **the schema version is not the kubeagent
+release version** — a surface's number moves only when its own document's
+shape moves, so a new `scan` field does not disturb a script reading the
+`gate` document.
 
 - **MINOR** — adds an *optional* field, or adds an enum value. A parser
   written against `1.0` still works against `1.3`: it just won't know about
@@ -104,6 +109,8 @@ https://k8sproject.top/schemas/rbac-print-v1.json
 https://k8sproject.top/schemas/rbac-check-v1.json
 https://k8sproject.top/schemas/watch-issues-v1.json
 https://k8sproject.top/schemas/watch-explanations-v1.json
+https://k8sproject.top/schemas/baseline-v1.json
+https://k8sproject.top/schemas/fleet-v1.json
 ```
 
 A MINOR bump edits the file at the same URL in place — a pinned URL never

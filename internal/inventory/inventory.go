@@ -235,6 +235,80 @@ func cronJobStatus(cj batchv1.CronJob) string {
 
 const jobPodCap = 3 // max pod rows shown per Job/CronJob workload
 
+// Owner is the workload a pod rolls up to.
+type Owner struct {
+	Kind      string
+	Namespace string
+	Name      string
+}
+
+// PodOwners resolves every pod in in.Pods to the workload it belongs to, keyed
+// by the pod's "namespace/name". It is kubeagent's single implementation of the
+// pod-to-workload rule: Assemble calls it, and so does `kubeagent baseline
+// capture`, rather than each keeping its own copy that can drift.
+//
+// baseline capture cannot read that rule off Assemble's output. Prioritize
+// drops healthy-quiet workloads from the report and Assemble truncates a Job's
+// or CronJob's pod list at jobPodCap — both right for a report an operator
+// reads, both wrong for a baseline, which needs precisely the healthy majority
+// and every pod behind it.
+//
+// The rule: a ReplicaSet-owned pod rolls up to that ReplicaSet's Deployment
+// when the ReplicaSet is in in.ReplicaSets and names one, and to the ReplicaSet
+// otherwise; a Job-owned pod rolls up to that Job's CronJob when the Job names
+// one AND that CronJob is in in.CronJobs, and to the Job otherwise; any other
+// controller owner is taken at face value; a pod with no owner is its own
+// "Pod" workload.
+func PodOwners(in Inputs) map[string]Owner {
+	// rsToDeploy resolves ReplicaSet -> Deployment name (namespaced).
+	rsToDeploy := map[string]string{}
+	for _, rs := range in.ReplicaSets {
+		if o := controllerOwner(rs.OwnerReferences); o != nil && o.Kind == "Deployment" {
+			rsToDeploy[rs.Namespace+"/"+rs.Name] = o.Name
+		}
+	}
+	// jobToCronJob resolves Job -> owning CronJob name (namespaced).
+	jobToCronJob := map[string]string{}
+	for _, j := range in.Jobs {
+		if o := controllerOwner(j.OwnerReferences); o != nil && o.Kind == "CronJob" {
+			jobToCronJob[j.Namespace+"/"+j.Name] = o.Name
+		}
+	}
+	// cronJobs is the set Assemble seeds as CronJob workloads. Gating the
+	// Job -> CronJob promotion on it is exactly Assemble's old
+	// controllerKeys[key("CronJob", ns, cj)] check: the only CronJob entries
+	// controllerKeys ever held came from in.CronJobs.
+	cronJobs := map[string]bool{}
+	for _, cj := range in.CronJobs {
+		cronJobs[cj.Namespace+"/"+cj.Name] = true
+	}
+
+	out := make(map[string]Owner, len(in.Pods))
+	for _, p := range in.Pods {
+		kind, name := "Pod", p.Name
+		if o := controllerOwner(p.OwnerReferences); o != nil {
+			switch o.Kind {
+			case "ReplicaSet":
+				if dep, ok := rsToDeploy[p.Namespace+"/"+o.Name]; ok {
+					kind, name = "Deployment", dep
+				} else {
+					kind, name = "ReplicaSet", o.Name
+				}
+			case "Job":
+				if cj, ok := jobToCronJob[p.Namespace+"/"+o.Name]; ok && cronJobs[p.Namespace+"/"+cj] {
+					kind, name = "CronJob", cj
+				} else {
+					kind, name = "Job", o.Name
+				}
+			default:
+				kind, name = o.Kind, o.Name
+			}
+		}
+		out[p.Namespace+"/"+p.Name] = Owner{Kind: kind, Namespace: p.Namespace, Name: name}
+	}
+	return out
+}
+
 // Assemble groups pods into workloads, reads controller status for ready/desired,
 // aggregates restarts, attaches findings, and returns workloads sorted
 // flagged-first then by namespace/name.
@@ -276,51 +350,24 @@ func Assemble(in Inputs, findings []diagnose.Finding) []Workload {
 	for _, cj := range in.CronJobs {
 		seedJobLike("CronJob", cj.Namespace, cj.Name, cronJobStatus(cj), cj.Spec.Schedule)
 	}
-	// jobToCronJob resolves a Job to its owning CronJob (namespaced); CronJob-owned
-	// Jobs are NOT seeded as their own workloads (their pods roll up to the CronJob).
-	jobToCronJob := map[string]string{}
+	// CronJob-owned Jobs are NOT seeded as their own workloads (their pods roll
+	// up to the CronJob, per PodOwners).
 	for _, j := range in.Jobs {
 		if o := controllerOwner(j.OwnerReferences); o != nil && o.Kind == "CronJob" {
-			jobToCronJob[j.Namespace+"/"+j.Name] = o.Name
 			continue
 		}
 		seedJobLike("Job", j.Namespace, j.Name, jobStatus(j), "")
 	}
 
-	// rsToDeploy resolves ReplicaSet -> Deployment name (namespaced).
-	rsToDeploy := map[string]string{}
-	for _, rs := range in.ReplicaSets {
-		if o := controllerOwner(rs.OwnerReferences); o != nil && o.Kind == "Deployment" {
-			rsToDeploy[rs.Namespace+"/"+rs.Name] = o.Name
-		}
-	}
-
+	owners := PodOwners(in)
 	podKey := map[string]string{}    // "ns/name" -> workload key
 	derivedReady := map[string]int{} // ready-pod count for pod-derived workloads
 	for _, p := range in.Pods {
-		kind, name := "Pod", p.Name
-		if o := controllerOwner(p.OwnerReferences); o != nil {
-			switch o.Kind {
-			case "ReplicaSet":
-				if dep, ok := rsToDeploy[p.Namespace+"/"+o.Name]; ok {
-					kind, name = "Deployment", dep
-				} else {
-					kind, name = "ReplicaSet", o.Name
-				}
-			case "Job":
-				if cj, ok := jobToCronJob[p.Namespace+"/"+o.Name]; ok && controllerKeys[key("CronJob", p.Namespace, cj)] {
-					kind, name = "CronJob", cj
-				} else {
-					kind, name = "Job", o.Name
-				}
-			default:
-				kind, name = o.Kind, o.Name
-			}
-		}
-		k := key(kind, p.Namespace, name)
+		o := owners[p.Namespace+"/"+p.Name]
+		k := key(o.Kind, p.Namespace, o.Name)
 		w, ok := workloads[k]
 		if !ok {
-			w = &Workload{Namespace: p.Namespace, Name: name, Kind: kind}
+			w = &Workload{Namespace: p.Namespace, Name: o.Name, Kind: o.Kind}
 			workloads[k] = w
 		}
 		restarts, last := podRestarts(p)

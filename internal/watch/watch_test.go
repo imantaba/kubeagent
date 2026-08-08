@@ -355,6 +355,77 @@ func TestAlerter_NilIsDisabled(t *testing.T) {
 	}
 }
 
+// A PagerDuty install authenticates with the routing key and may set no webhook
+// URL at all, so the enable gate cannot be "AlertURL is set" any more. It is
+// still off by default, and a routing key under a format that does not use one
+// leaves it off rather than starting a sink that would post nowhere.
+func TestNewAlerter_EnableGate(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     Config
+		wantOn  bool
+		wantErr bool
+	}{
+		{"nothing configured", Config{AlertFormat: "json"}, false, false},
+		{"webhook only", Config{AlertURL: "http://192.0.2.10:8080/hook", AlertFormat: "json"}, true, false},
+		{"pagerduty routing key only", Config{AlertFormat: "pagerduty", AlertRoutingKey: "not-a-real-routing-key"}, true, false},
+		{"routing key under json stays off", Config{AlertFormat: "json", AlertRoutingKey: "not-a-real-routing-key"}, false, false},
+		{"pagerduty with a URL but no routing key fails loudly", Config{AlertURL: "http://192.0.2.10:8080/hook", AlertFormat: "pagerduty"}, false, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			al, err := newAlerter(ctx, tc.cfg)
+			if tc.wantErr != (err != nil) {
+				t.Fatalf("newAlerter error = %v, wantErr %v", err, tc.wantErr)
+			}
+			if err != nil {
+				if strings.Contains(err.Error(), "not-a-real-routing-key") {
+					t.Errorf("the error echoes the routing key: %v", err)
+				}
+				return
+			}
+			if tc.wantOn != (al != nil) {
+				t.Fatalf("alerting on = %v, want %v", al != nil, tc.wantOn)
+			}
+			if al != nil {
+				cancel()
+				al.sink.Close()
+			}
+		})
+	}
+}
+
+// The startup line names the endpoint the sink actually resolved. A pagerduty
+// install that set no URL must not see "endpoint=" with nothing after it — and
+// the routing key must not appear at all.
+func TestNewAlerter_StartupLogNamesTheResolvedEndpoint(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	al, err := newAlerter(ctx, Config{AlertFormat: "pagerduty", AlertRoutingKey: "not-a-real-routing-key", AlertRepeat: 4 * time.Hour})
+	if err != nil {
+		t.Fatalf("newAlerter: %v", err)
+	}
+	cancel()
+	al.sink.Close()
+
+	line := buf.String()
+	if !strings.Contains(line, "endpoint=https://events.pagerduty.com") {
+		t.Errorf("startup line does not name the resolved endpoint: %q", line)
+	}
+	if strings.Contains(line, "/v2/enqueue") {
+		t.Errorf("startup line carries more than scheme://host: %q", line)
+	}
+	if strings.Contains(line, "not-a-real-routing-key") {
+		t.Errorf("startup line carries the routing key: %q", line)
+	}
+}
+
 // TestApplyResult_EvaluationErrorSendsNoAlert extends the tracker invariant to the
 // outbound path: one API blip must never page the on-call.
 func TestApplyResult_EvaluationErrorSendsNoAlert(t *testing.T) {

@@ -20,8 +20,10 @@
 
 assert_init() {
   ASSERTLOG="${ASSERTLOG:-$(mktemp)}"
+  SKIPLOG="${SKIPLOG:-$(mktemp)}"
   : > "$ASSERTLOG"
-  trap 'rm -f "${ASSERTLOG:-}"' EXIT
+  : > "$SKIPLOG"
+  trap 'rm -f "${ASSERTLOG:-}" "${SKIPLOG:-}"' EXIT
 }
 
 # _assert_record <PASS|FAIL> <label> <detail>
@@ -32,6 +34,46 @@ _assert_record() {
   # sees it when it happens instead of at the end.
   if [ "$1" = FAIL ]; then printf 'ASSERTION FAILED: %s %s\n' "$2" "$3" >&2; fi
   return 0
+}
+
+# assert_skip <label> <reason> — a scenario that did not run, and why.
+#
+# A skip is not an assertion and not a failure: it never touches $ASSERTLOG and
+# it never moves the exit code. It is a STATED GAP, which is the whole point —
+# a run that quietly omitted nine scenarios would otherwise look exactly like a
+# full green one.
+#
+# $SKIPLOG is a file for the same reason $ASSERTLOG is: the caller may be inside
+# a pipeline, a pipeline runs in a subshell, and a counter incremented there is
+# discarded when the block ends.
+#
+# Like every helper here it returns 0, so `set -e` cannot turn a recorded
+# outcome into an aborted run.
+assert_skip() {
+  printf 'SKIP: %s — %s\n' "$1" "$2"
+  printf 'SKIP\t%s — %s\n' "$1" "$2" >> "$SKIPLOG"
+  return 0
+}
+
+# scenario_title <function name> — the report heading for a skipped scenario,
+# derived from the scenario's own function name: scenario_05_coredns -> "5.
+# coredns", scenario_14 -> "14.". Deriving it means a skip heading can never
+# drift from the scenario it names, which passing the title in as a second
+# argument would eventually allow.
+#
+# 10# forces base 10 on the number: a leading-zero numeral is octal to $(( )),
+# so a bare $((08)) is an error rather than 8 — the same trap run.sh's --only
+# normalization already documents.
+#
+# It lives here, not in run.sh, so chaos/assert-selftest.sh can exercise it with
+# no cluster; it touches nothing outside its own arguments.
+scenario_title() {
+  local rest="${1#scenario_}" num word
+  case "$rest" in
+    *_*) num="${rest%%_*}"; word="${rest#*_}" ;;
+    *)   num="$rest";       word="" ;;
+  esac
+  printf '%s.%s\n' "$((10#$num))" "${word:+ $word}"
 }
 
 # expect_eq <label> <actual> <want> — exact string equality.
@@ -82,23 +124,36 @@ expect_absent() {
   return 0
 }
 
-# assert_summary <report-file> — append the roll-up to the report, print the
-# totals to the console, and return 1 when anything failed. This return status is
+# assert_summary <report-file> — append the tally to the report, print it to the
+# console, and return non-zero if any assertion failed. That return status is
 # what makes ./chaos/run.sh a gate rather than a report.
+#
+# Skipped scenarios are counted and listed but never change the status: a skip
+# is a declared gap, not a failure. It is reported unconditionally, including
+# when it is zero, so "0 scenarios skipped" is a claim the run makes out loud
+# rather than a silence the reader has to interpret.
 assert_summary() {
-  local out="$1" total failed
+  local out="$1" total failed skipped
   total="$(wc -l < "$ASSERTLOG" | tr -d ' ')"
   failed="$(grep -c '^FAIL' "$ASSERTLOG" || true)"
+  skipped="$(wc -l < "$SKIPLOG" | tr -d ' ')"
   {
     printf '\n## Assertion summary\n\n'
     printf -- '- assertions run: %s\n' "$total"
     printf -- '- failed: %s\n' "$failed"
+    printf -- '- scenarios skipped: %s\n' "$skipped"
     if [ "$failed" -gt 0 ]; then
       printf '\n```text\n'
       grep '^FAIL' "$ASSERTLOG"
       printf '```\n'
     fi
+    if [ "$skipped" -gt 0 ]; then
+      printf '\n```text\n'
+      cat "$SKIPLOG"
+      printf '```\n'
+    fi
   } >> "$out"
-  printf '\nassertions: %s run, %s failed\n' "$total" "$failed"
+  printf '\nassertions: %s run, %s failed; %s scenario%s skipped\n' \
+    "$total" "$failed" "$skipped" "$([ "$skipped" -eq 1 ] || echo s)"
   [ "$failed" -eq 0 ]
 }

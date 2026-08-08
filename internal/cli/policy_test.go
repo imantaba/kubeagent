@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/imantaba/kubeagent/internal/policy"
 )
 
 const validPolicy = `- id: registry-allowlist
@@ -210,7 +212,7 @@ func TestPolicyValidateRejectsADuplicateRuleIDAcrossFiles(t *testing.T) {
 }
 
 func TestEvaluatePolicyWithNoPathsReturnsNil(t *testing.T) {
-	got, err := evaluatePolicy(context.Background(), nil, "", "", "")
+	got, err := evaluatePolicy(context.Background(), nil, nil, "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +227,202 @@ func TestEvaluatePolicyFailsOnABadFile(t *testing.T) {
 	dir := t.TempDir()
 	p := writeFile(t, dir, "broken.yaml", "- id: no-level\n  match:\n    kind: Pod\n")
 
-	if _, err := evaluatePolicy(context.Background(), []string{p}, "", "", ""); err == nil {
+	if _, err := evaluatePolicy(context.Background(), []string{p}, nil, "", "", ""); err == nil {
 		t.Fatal("a bad policy file did not stop the command")
+	}
+}
+
+func TestPolicyPacksListsWhatShips(t *testing.T) {
+	var buf bytes.Buffer
+	if err := runPolicyPacks(nil, "", &buf); err != nil {
+		t.Fatalf("runPolicyPacks: %v", err)
+	}
+	out := buf.String()
+	// Every shipped pack must appear. Asserting one pack would still pass with
+	// a second one missing from the registry, which is the failure this is for.
+	for _, want := range []string{"cost", "reliability", "security"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the listing does not name the %s pack:\n%s", want, out)
+		}
+	}
+	// The counts come from loading, so they cannot drift from the files.
+	for _, want := range []string{"14 rules", "16 rules", "23 rules"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the listing does not carry the %q count:\n%s", want, out)
+		}
+	}
+	if !strings.Contains(out, "kubeagent policy packs --print") {
+		t.Errorf("the listing does not say how to print one:\n%s", out)
+	}
+}
+
+func TestPolicyPacksPrintEmitsLoadableYAML(t *testing.T) {
+	var buf bytes.Buffer
+	if err := runPolicyPacks(nil, "reliability", &buf); err != nil {
+		t.Fatalf("runPolicyPacks --print: %v", err)
+	}
+	// What is printed must be what the flag would run: load it back.
+	rules, err := policy.Load([]policy.Document{{Source: "stdin", Data: buf.Bytes()}})
+	if err != nil {
+		t.Fatalf("the printed pack does not load: %v", err)
+	}
+	if len(rules) != 14 {
+		t.Errorf("printed pack has %d rules, want 14", len(rules))
+	}
+}
+
+func TestPolicyPacksPrintEmitsALoadableCostPack(t *testing.T) {
+	var buf bytes.Buffer
+	if err := runPolicyPacks(nil, "cost", &buf); err != nil {
+		t.Fatalf("runPolicyPacks: %v", err)
+	}
+	rules, err := policy.Load([]policy.Document{{Source: "pack:cost", Data: buf.Bytes()}})
+	if err != nil {
+		t.Fatalf("the printed pack does not load back: %v", err)
+	}
+	if len(rules) != 16 {
+		t.Errorf("printed pack has %d rules, want 16", len(rules))
+	}
+}
+
+func TestPolicyPacksPrintUnknownNameIsRefused(t *testing.T) {
+	var buf bytes.Buffer
+	err := runPolicyPacks(nil, "no-such-pack", &buf)
+	if err == nil {
+		t.Fatal("an unknown pack name was accepted")
+	}
+	if !strings.Contains(err.Error(), `"no-such-pack"`) {
+		t.Errorf("the error does not quote the name given: %v", err)
+	}
+	for _, want := range []string{"cost", "reliability", "security"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error does not name the %s pack, so it does not name the packs that do exist: %v", want, err)
+		}
+	}
+	if buf.Len() != 0 {
+		t.Errorf("a refused name still wrote to stdout: %q", buf.String())
+	}
+}
+
+func TestPolicyPacksRefusesPositionalArguments(t *testing.T) {
+	var buf bytes.Buffer
+	err := runPolicyPacks([]string{"reliability"}, "", &buf)
+	if err == nil {
+		t.Fatal("a positional argument was accepted; the pack name goes to --print")
+	}
+	if !strings.Contains(err.Error(), "usage:") {
+		t.Errorf("the error is not a usage error: %v", err)
+	}
+}
+
+func TestPackDocumentsCarryNoFilesystemPath(t *testing.T) {
+	docs, err := packDocuments([]string{"reliability"})
+	if err != nil {
+		t.Fatalf("packDocuments: %v", err)
+	}
+	if len(docs) != 1 {
+		t.Fatalf("packDocuments returned %d documents, want 1", len(docs))
+	}
+	if docs[0].Source != "pack:reliability" {
+		t.Errorf("Source = %q, want %q — a pack has no path, so none may leak", docs[0].Source, "pack:reliability")
+	}
+}
+
+func TestPackDocumentsRefusesAnUnknownName(t *testing.T) {
+	if _, err := packDocuments([]string{"no-such-pack"}); err == nil {
+		t.Fatal("an unknown pack name was accepted")
+	}
+}
+
+// policy.Load treats empty or nil YAML as a valid, empty document rather
+// than an error, so nothing downstream of requirePackBytes would ever catch
+// a broken embed on its own. This drives the guard directly with empty
+// bytes, since no shipped pack is ever actually empty: there is no way to
+// reach this branch through packDocuments or runPolicyPacks against the
+// real embedded registry.
+func TestRequirePackBytesRefusesEmptyBytes(t *testing.T) {
+	_, err := requirePackBytes("reliability", nil)
+	if err == nil {
+		t.Fatal("empty pack bytes were accepted")
+	}
+	if !strings.Contains(err.Error(), `"reliability"`) {
+		t.Errorf("the error does not name the pack: %v", err)
+	}
+}
+
+func TestRequirePackBytesAcceptsNonEmptyBytes(t *testing.T) {
+	data, err := requirePackBytes("reliability", []byte("- id: x\n"))
+	if err != nil {
+		t.Fatalf("requirePackBytes: %v", err)
+	}
+	if string(data) != "- id: x\n" {
+		t.Errorf("requirePackBytes changed the bytes: got %q", data)
+	}
+}
+
+// The two surfaces that can miss a pack name — packDocuments and
+// runPolicyPacks --print — must describe the same miss the same way, so a
+// future edit to one cannot quietly drift from the other.
+func TestUnknownPackErrorIsIdenticalAcrossBothSurfaces(t *testing.T) {
+	_, docErr := packDocuments([]string{"no-such-pack"})
+	var buf bytes.Buffer
+	printErr := runPolicyPacks(nil, "no-such-pack", &buf)
+	if docErr == nil || printErr == nil {
+		t.Fatal("expected both surfaces to refuse the unknown name")
+	}
+	if docErr.Error() != printErr.Error() {
+		t.Errorf("packDocuments error = %q, runPolicyPacks --print error = %q, want identical",
+			docErr.Error(), printErr.Error())
+	}
+}
+
+func TestLoadPolicyPutsPacksBeforeFiles(t *testing.T) {
+	rules, err := loadPolicy(nil, []string{"reliability"})
+	if err != nil {
+		t.Fatalf("loadPolicy: %v", err)
+	}
+	if len(rules) != 14 {
+		t.Fatalf("loaded %d rules from the pack alone, want 14", len(rules))
+	}
+	if !strings.HasPrefix(rules[0].ID, "reliability.") {
+		t.Errorf("first rule is %q, want a pack rule first", rules[0].ID)
+	}
+}
+
+func TestLoadPolicyRejectsAFileThatDuplicatesAPackRuleID(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "mine.yaml")
+	body := []byte("- id: reliability.deploy-pdb\n" +
+		"  match:\n    kind: Deployment\n" +
+		"  assert:\n    path: spec.replicas\n    op: exists\n" +
+		"  level: info\n  message: mine\n")
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatalf("writing the fixture: %v", err)
+	}
+	_, err := loadPolicy([]string{path}, []string{"reliability"})
+	if err == nil {
+		t.Fatal("a file reusing a pack rule id was accepted")
+	}
+	// Load's text is `%s: rule id %q is already defined in %s` — the second
+	// %s is the document that defined it FIRST. Packs load first, so the
+	// error reads "<your file>: rule id … is already defined in
+	// pack:reliability": the pack is the fixed thing.
+	if !strings.Contains(err.Error(), "pack:reliability") {
+		t.Errorf("the error does not say which pack the id came from: %v", err)
+	}
+}
+
+// evaluatePolicy's early return must gate on paths AND packs together. A
+// run with only --policy-pack and no --policy has an empty paths slice, so
+// gating on paths alone would silently skip evaluation and return (nil,
+// nil) — the same shape a run with no policy at all produces. Proving that
+// does not happen needs an attempt to reach past loadPolicy: KUBECONFIG
+// points at a path that does not exist, so cluster.NewDynamicClients fails
+// deterministically, and any error at all here is proof the early return
+// did not fire.
+func TestEvaluatePolicyDoesNotSkipWhenOnlyPacksAreGiven(t *testing.T) {
+	t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "does-not-exist"))
+	if _, err := evaluatePolicy(context.Background(), nil, []string{"reliability"}, "", "", ""); err == nil {
+		t.Fatal("packs-only returned no error; the early return may still be gating on paths alone")
 	}
 }

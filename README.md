@@ -138,7 +138,7 @@ kubeagent scan
   has gone stale (kubelet not heartbeating), catching a dark kubelet before the
   node flips to `NotReady`. Tunable via `--node-heartbeat-threshold` (default
   `40s`); adds `leases` read RBAC; on by default.
-- **Expected-node baseline (opt-in)** — `scan --expected-nodes name1,name2,…`
+- **Expected-node list (opt-in)** — `scan --expected-nodes name1,name2,…`
   declares the node names you expect; kubeagent flags each declared node absent
   from the cluster (`node name expected but absent from the cluster`), catching
   a node that never registered or dropped out. Read-only; no new RBAC; best on

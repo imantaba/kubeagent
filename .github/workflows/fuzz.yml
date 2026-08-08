@@ -46,12 +46,14 @@ jobs:
             target: FuzzEvaluatePolicy
           - package: ./internal/policy
             target: FuzzResolvePath
-          - package: ./internal/policy
+          - package: ./internal/glob
             target: FuzzGlob
           - package: ./internal/safetext
             target: FuzzLine
           - package: ./internal/dashboard
             target: FuzzDashboardRender
+          - package: ./internal/alert
+            target: FuzzEncodePagerDuty
     name: ${{ matrix.target }}
     steps:
       - uses: actions/checkout@v4
@@ -61,17 +63,34 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # Two attempts, because two different things can fail here and only one of
+      # them is a finding. A real crasher is written to
+      # <package>/testdata/fuzz/<target>/ and replays as a seed, so the second
+      # attempt fails on it immediately — a retry cannot hide one. The other is a
+      # race in Go's fuzzing coordinator: when the -fuzztime budget expires while
+      # a worker RPC is still in flight, the run ends `--- FAIL: <target>` /
+      # `context deadline exceeded` with no failing input and no corpus entry.
+      # That is noise, and a nightly that cries wolf stops being read.
       - name: Fuzz ${{ matrix.target }}
         run: |
-          go test ${{ matrix.package }} \
-            -run '^$' \
-            -fuzz '^${{ matrix.target }}$' \
-            -fuzztime '${{ inputs.fuzztime || '120s' }}'
+          for attempt in 1 2; do
+            if go test ${{ matrix.package }} \
+              -run '^$' \
+              -fuzz '^${{ matrix.target }}$' \
+              -fuzztime '${{ inputs.fuzztime || '120s' }}'; then
+              exit 0
+            fi
+            echo "::warning::${{ matrix.target }} attempt $attempt failed"
+          done
+          exit 1
 
+      # Scoped to this target's own corpus directory. The repository-wide glob
+      # this replaces uploaded every committed seed in internal/, so a run that
+      # found nothing still produced a non-empty "crashers-" artifact.
       - name: Upload any crasher
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: crashers-${{ matrix.target }}
-          path: internal/**/testdata/fuzz/**
+          path: ${{ matrix.package }}/testdata/fuzz/${{ matrix.target }}/**
           if-no-files-found: ignore

@@ -18,10 +18,330 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   away both the coverage block and the least-privilege RBAC blind-spot
   reporting. Read-only throughout — no tool, skill, or command reaches `--fix`
   — and no new Go production code, so no import-graph invariant moves and none
-  of the six versioned JSON documents change. Tests pin the manifests against
+  of the eight versioned JSON documents change. Tests pin the manifests against
   the chart's `appVersion`, against the real `mcp` flag parser, against the tool
   names `internal/mcp` actually registers, and against `bump-version.sh`. See
   [Claude Code plugin](website/docs/features/claude-plugin.md).
+
+## [1.13.1] - 2026-08-08
+
+### Added
+
+- A documented route for contributing a policy pack, with admission criteria
+  enforced by `go test ./internal/policypack` rather than by review. Three new
+  checks cover the registry, the one layer nothing could see: every embedded
+  `packs/*.yaml` must have a registry entry — one that does not would ship
+  inside the binary while being invisible to `kubeagent policy packs`, to
+  `--policy-pack` and to every other test — no two packs may share a name, a
+  name must be usable as a `--policy-pack` value and fit the listing column,
+  and a summary must be a single line the listing can align.
+  Every check that can fail a contributor's pack is written down, so a failure
+  is predictable before opening a pull request. Acceptance stays curatorial: the criteria are
+  necessary, not sufficient. No pack ships in this release, no existing command
+  line behaves differently, and nothing versioned moves.
+
+### Fixed
+
+- Five statements in `CONTRIBUTING.md` that no longer described the code: the
+  claim that `main.go` parses flags with the standard library and uses no Cobra
+  (the CLI has been a Cobra tree in `internal/cli` since v0.73.0), a read-only
+  command list missing `rbac` and `fleet`, the claim that `--fix` is the single
+  write path (`scan --rollback` also writes, and `rbac check` issues the one
+  POST outside remediation), an import-wall list naming two packages where a
+  dozen carry the wall, and a fuzz-target count of twelve against a tree
+  holding fifteen.
+
+## [1.13.0] - 2026-08-08
+
+### Added
+
+- A third curated policy pack, `cost`: sixteen rules over seven kinds —
+  Deployment, StatefulSet, DaemonSet, CronJob, Job, HorizontalPodAutoscaler
+  and PersistentVolumeClaim — covering resource requests and limits, CronJob
+  history and active-deadline limits, Job retry limits, autoscaler ceilings
+  and claim sizes. Run it with `kubeagent scan --policy-pack cost` or
+  `kubeagent gate --policy-pack cost`, print it with `kubeagent policy packs
+  --print cost`, and combine it with `--policy` or with
+  `reliability`/`security`. Every rule is `info` — a cost finding is
+  budget-dependent in a way a security finding is not — so adding the pack
+  cannot fail a gate at the default `--fail-on critical` or at `--fail-on
+  warning`. Opt-in: omitting `--policy-pack` renders the same bytes as
+  before, and nothing versioned moves — `scan` stays at schema version 1.2
+  and `gate` at 1.1.
+
+## [1.12.0] - 2026-08-07
+
+### Added
+
+- A second curated policy pack, `security`: twenty-three rules over workload
+  pod templates covering privileged containers, privilege escalation, running
+  as root, writable root filesystems, added Linux capabilities, `hostPath`
+  volumes, host ports, the three host namespaces, seccomp profiles and service
+  account token mounting. Run it with `kubeagent scan --policy-pack security`
+  or `kubeagent gate --policy-pack security`, print it with `kubeagent policy
+  packs --print security`, and combine it with `--policy` or with the
+  `reliability` pack. Four properties that are unsafe both when unset and when
+  set wrong ship as a pair of rules — an `info` rule for the unset case and a
+  `warning` rule for the explicit one — because every operator except `exists`
+  and `notExists` skips an absent field, so one rule could only ever catch one
+  of the two. No rule is `critical`, so adding the pack to a pipeline that
+  passed yesterday cannot fail it today; `--fail-on warning` is the explicit
+  act that makes it block. Nothing versioned moves: `scan` stays at schema
+  version 1.2 and `gate` at 1.1, the evaluator is unchanged, and the pack needs
+  no RBAC grant a plain `scan` did not already have.
+
+## [1.11.0] - 2026-08-07
+
+### Added
+
+- `kubeagent fleet --fleet-file <path>` reads the clusters to sweep from a YAML
+  file instead of a kubeconfig's contexts, so a fleet can span several
+  kubeconfigs and each row can carry a name the operator chose. An entry names a
+  `context`, optionally a `kubeconfig` path and optionally a `name`; selection
+  comes from the file, and credentials still come from the kubeconfigs it points
+  at. The format cannot express a credential — an entry has three string fields
+  decoded strictly, so `server:`, `token:` and `certificate-authority-data:` are
+  load errors. `--context` and `--all-contexts` are refused beside it;
+  `--kubeconfig` becomes the fallback and `--match` filters the row identity.
+  `fleet` moves to schema version 1.2 (added the optional `name` on a cluster
+  summary and on an unreachable cluster, both `omitempty`), so a sweep selected
+  from a kubeconfig encodes neither key, and every existing consumer is
+  unaffected.
+
+### Fixed
+
+- `kubeagent fleet` could render two runs over the same fleet in different
+  orders when several clusters shared a kubeconfig context name. Both sorts
+  broke ties on the context name, which is not unique across kubeconfigs, and
+  `sort.Slice` is not stable. Both now break on the row identity, which a
+  duplicate-name load error keeps unique.
+
+## [1.10.0] - 2026-08-07
+
+### Added
+
+- **`kubeagent fleet` cross-cluster correlation.** Under the per-cluster table,
+  a sweep now names the issue kinds and the refused reads that appear in two or
+  more of the judged clusters, most widespread first — the answer to "is this
+  one problem or five" that a one-row-per-cluster view cannot give. It costs no
+  new cluster read: both axes were already computed inside the sweep. A cluster
+  counts once per signal however loud it is, the denominator is judged clusters
+  rather than selected ones, and the correlation changes no verdict — every
+  finding it counts was already counted in the cluster that produced it. The
+  fleet JSON document gains an optional `shared` property and moves to schema
+  version `1.1`; a sweep that found no correlation encodes no key, so every
+  existing consumer is unaffected.
+
+## [1.9.0] - 2026-08-07
+
+### Added
+
+- `kubeagent policy packs` lists the curated policy packs compiled into the
+  binary, and `--print <name>` emits one as YAML to fork. It contacts nothing:
+  no cluster, no kubeconfig, no network, and no model call.
+- `scan --policy-pack <name>` and `gate --policy-pack <name>` evaluate a
+  curated pack (repeatable, and combinable with `--policy`). The first pack,
+  `reliability`, carries fourteen rules covering probes, resource requests and
+  limits, replica counts, disruption-budget coverage and image tags. No rule in
+  it is `critical`, so adding it to a pipeline cannot fail a build that passed
+  yesterday; `--fail-on warning` makes them block.
+- `internal/policypack` holds the packs and imports nothing from kubeagent and
+  nothing outside the standard library, joining `internal/baseline`,
+  `internal/glob` and `internal/knownissues`.
+
+## [1.8.0] - 2026-08-06
+
+### Added
+
+- **`kubeagent known-issues [kind]` — an offline reference for every failure
+  kind the detectors report.** With no argument it lists all thirteen kinds
+  with a one-line summary; with a kind it prints that failure in full — what it
+  means, its likely causes most common first, and read-only next steps whose
+  object names are placeholders. No cluster, no kubeconfig, no network, and no
+  flags at all. Separately: it makes no LLM call — the text is curated prose
+  compiled into the binary, not generated.
+- **The detector issue vocabulary is now machine-checked.** Four tests in
+  `internal/diagnose` keep the reference and the detectors in step: a
+  `go/parser` walk over every string literal reaching a finding's issue field, a
+  fixture table driving all nine detectors to produce all thirteen kinds, a
+  reverse check refusing an entry for a kind nothing emits, and a second parser
+  walk over the two sites that build a kind from a runtime value, which reads
+  the guards rather than the output so widening one fails the suite. That
+  fourth walk understands a closed set of guard shapes and refuses every other
+  shape by name rather than skipping it, so a guard rewritten out of its reach —
+  or compared against a named constant rather than a string literal — fails too.
+  Refusal is closed rather than best-effort: a value reaches that field only by
+  naming it — every `Issue` occurrence must be a composite-literal key or an
+  assignment's left side, inside a function declaration, and a second type
+  declaring its own `Issue` field is refused as well — by not naming it, which is
+  a positional literal or a second name for the type, or by bypassing syntax, for
+  which the detectors' import set is pinned to six packages rather than filtered
+  for `reflect` and `unsafe`, since `json.Unmarshal(payload, &f)` writes the
+  field importing neither. The closure is over `internal/diagnose`'s own
+  detectors, which is what the reference documents. A new detector that emits an
+  undocumented kind fails the suite.
+
+## [1.7.0] - 2026-08-06
+
+### Added
+
+- **`kubeagent fleet` — sweep many clusters in one read-only pass.** Selects
+  kubeconfig contexts with `--context` (repeatable) or `--all-contexts` plus an
+  optional `--match` glob, reads them through a bounded worker pool
+  (`--workers`, default 8, `KUBEAGENT_FLEET_WORKERS`) with a per-cluster budget
+  (`--cluster-timeout`, default 60s, `KUBEAGENT_FLEET_CLUSTER_TIMEOUT`), and
+  prints one row per cluster worst first. Each cluster runs exactly the
+  evaluation `kubeagent gate` runs, so the two can never disagree. Exit codes
+  match `gate`'s, and `inconclusive` outranks `fail` for the same reason it
+  does there. Separately: fleet makes no LLM call. `--output json` writes the
+  eighth versioned document, `fleet` at schema 1.0; `scan` stays at 1.2 and
+  `gate` at 1.1. The report names contexts and issue kinds — never a node,
+  namespace, pod or workload.
+
+### Changed
+
+- `internal/policy`'s unexported glob matcher moved to `internal/glob`, a
+  stdlib-only leaf `internal/policy` and `internal/cli` now share. Behaviour is
+  unchanged: the table test, the blow-up test and `FuzzGlob` moved with it.
+
+## [1.6.0] - 2026-08-06
+
+### Added
+
+- **A learned restart-rate baseline — "what's normal for *this* cluster".**
+  `kubeagent baseline capture` prints a JSON document recording each workload's
+  restart rate, normalised across its pods' observed lifetimes; `scan --baseline
+  <file>` and `gate --baseline <file>` compare a later run against it and report
+  workloads that restart much more than their own normal. A workload deviates
+  only when both thresholds hold — at least `--baseline-factor` times its
+  baseline rate (default 3.0) **and** at least `--baseline-floor` restarts/hour
+  above it (default 0.5) — so a rise from 0.001 to 0.01 is not a 10× alarm.
+  Pods younger than `--min-pod-age` (default 1h) are excluded from both sides of
+  the rate.
+- **The baseline document is the seventh versioned JSON document**, published at
+  version 1.0 as `website/docs/schemas/baseline-v1.json` and printable with
+  `kubeagent schema baseline`.
+- `kubeagent baseline capture` is read-only toward the cluster (List calls only,
+  all of them already in the `scan` RBAC profile) and makes no model call. It
+  writes no file: the document goes to stdout, so an operator reviews it before
+  deciding where it goes.
+
+### Changed
+
+- **`scan`'s JSON schema moves 1.1 → 1.2**, additively: `ScanReport` gains an
+  optional `baseline` object, present only when `--baseline` was passed. Every
+  existing consumer is unaffected. `gate`'s schema does not move — deviations
+  are ordinary findings at the `info` level, so they land in the `failing` and
+  `reported` arrays that already exist, and because `--fail-on` defaults to
+  `critical` a deviation never fails a gate unless an operator asks for it with
+  `--fail-on info`.
+- The static `--expected-nodes` list is now called the **expected-node list**
+  rather than the "expected-node baseline", so "baseline" names one thing.
+
+## [1.5.0] - 2026-08-06
+
+### Added
+
+- **A second Kubernetes distribution in the nightly chaos matrix.**
+  `chaos/run.sh --distro kind|k3s` selects which distribution the harness
+  creates; `kind` remains the default, so every command line written before
+  the flag existed is unchanged. The k3s path (via k3d) resolves a
+  digest-pinned `rancher/k3s` image per supported minor from
+  `chaos/versions.env`, the same way the kind path resolves a `kindest/node`
+  one, and `.github/workflows/chaos-matrix.yml` gains one k3s cell at the
+  newest supported minor alongside the existing per-minor kind cells.
+
+### Changed
+
+- **`node_exec`'s skip reason now names the control plane's shape alongside
+  cluster ownership**: a k3s cluster the harness created is still refused,
+  because an embedded datastore and a kubelet inside the single k3s process
+  are not separately stoppable units. `worker_node` selects a node by its
+  role label instead of a name pattern, so it holds on a k3d cluster as well
+  as a kind one.
+- **The `--fix` then `--rollback` audit-log round trip (scenario 9b) now
+  records in the report which branch kubeagent took and dumps the audit
+  log**, instead of discarding both runs' output — a failed round trip used
+  to be indistinguishable from a refusal, a preflight denial, an error, or an
+  empty audit log.
+
+## [1.4.0] - 2026-08-05
+
+### Added
+
+- **A portability seam in the chaos harness.** `./chaos/run.sh --context <ctx>`
+  runs the suite against a cluster the harness did not create. Each scenario
+  declares the infrastructure it needs from a closed six-name vocabulary, and a
+  scenario whose need is unmet is skipped with a named reason rather than run or
+  silently dropped: six scenarios that write cluster-scoped objects and two that
+  need shell access to a node container are refused outright on a cluster the
+  harness does not own, and four more are gated on what the cluster turns out to
+  have — a LoadBalancer provider, metrics-server, a NetworkPolicy-enforcing CNI,
+  and a clean starting verdict. A preflight refuses to start unless the context
+  connects, no `chaos-*` namespace already exists, and a namespace create/delete
+  round trip succeeds; `--recreate`, `--teardown` and `--k8s-version` are refused
+  rather than ignored; and leftover namespaces are swept at the end. The report
+  names the platform (server version, node count, deduplicated OS image,
+  container runtime and kubelet version) and never the cluster. This makes a
+  cross-distribution answer obtainable by hand; gating a distribution in CI is a
+  separate piece of work.
+
+### Changed
+
+- **The chaos harness's assertion summary now counts skipped scenarios.** The
+  report gains a `- scenarios skipped: N` bullet and, when N is non-zero, a
+  fenced list of each skip and its reason; the console line becomes
+  `assertions: N run, M failed; K scenario(s) skipped`. It is reported
+  unconditionally, including when it is zero. A skip is never a failure and never
+  changes the exit code, which stays non-zero if and only if an assertion failed.
+
+### Fixed
+
+- **The chaos report no longer carries the kubeconfig context name.** The
+  multi-cluster and MCP scenarios wrote it into the results file — as an
+  asserted value that the assertion helper echoes on its passing branch, and
+  in the MCP scenario's raw JSON-RPC response, which echoes it independent of
+  the asserted value. Both now compare a harness-chosen alias or a derived
+  indicator instead, proving exactly what they proved before. Four more
+  scenarios could not take that route: the watch daemon labels its own log
+  lines, its `/issues` roster and its Prometheus metric series with the
+  context name, and a scenario that dumps that output into the report as
+  evidence has no name of its own to substitute. Those are now caught at a
+  single seam instead — every write to the report, from every scenario,
+  passes through one filter that redacts node names and the context name
+  together, in a single left-to-right pass over the raw bytes (never a
+  regex over the context, since a real one can carry almost anything a
+  kubeconfig accepts) rather than as two independently-ordered steps, which
+  can each consume their own needle before the other's exact match ever
+  runs. One case still slips a fragment through: a node name and the
+  context name that overlap without either containing the other can leave
+  the loser's non-overlapping tail in the clear, though never either's full
+  literal text — see `chaos/README.md` for when. A scenario added later
+  inherits the protection rather than having to remember it. A redaction
+  that fails withholds the affected section instead of showing it
+  unredacted, and never aborts the run. A context name is a credential and
+  the results file is designed to be forwarded.
+
+## [1.3.0] - 2026-08-05
+
+### Added
+
+- **PagerDuty as a fourth alert receiver (`kubeagent watch --alert-format
+  pagerduty`).** The watch daemon posts [Events API v2](https://developer.pagerduty.com/docs/events-api-v2-overview)
+  events directly, so being paged by kubeagent no longer means first deploying a
+  Prometheus stack to reach PagerDuty through Alertmanager. A firing object is a
+  `trigger` and a recovered one a `resolve`, both on a `dedup_key` derived from
+  the object's identity — so a daemon restart re-triggers onto the open incident
+  instead of opening a second one. The integration key is a credential and
+  inherits the webhook URL's rule: it comes from `KUBEAGENT_ALERT_ROUTING_KEY`
+  with no flag, because a flag would put it in the pod spec's args and in `ps`
+  output, and it never reaches a log line, a metric label, an error message or a
+  rendered manifest. `KUBEAGENT_ALERT_WEBHOOK` stays the endpoint for all four
+  formats and becomes optional for this one, defaulting to PagerDuty's published
+  URL. The Helm chart grows **no new values**: the existing
+  `alerts.existingSecret` / `alerts.secretKey` pair feeds the routing key when
+  `alerts.format` is `pagerduty`. Closes Theme E's last open receiver. See
+  [watch mode](https://k8sproject.top/features/watch-mode/).
 
 ## [1.2.0] - 2026-08-05
 
@@ -1187,9 +1507,9 @@ of them touches a kubeagent-authored error string or an exit code.
 
 ### Added
 
-- **Expected-node baseline.** Opt-in `scan --expected-nodes nova-worker-1,…`
+- **Expected-node baseline.** Opt-in `scan --expected-nodes node-a,node-b,…`
   declares the node names you expect; kubeagent flags each declared node that has
-  **no `Node` object** in the cluster — `node nova-worker-2 expected but absent
+  **no `Node` object** in the cluster — `node node-b expected but absent
   from the cluster` — catching a node that never registered or dropped out. It
   degrades the cluster verdict, and the watch daemon exposes
   `kubeagent_nodes_expected_absent` (set `KUBEAGENT_EXPECTED_NODES`). A node that
@@ -1490,7 +1810,19 @@ infrastructure (a documentation site and a pre-release chaos-test harness).
 - CI (vet/test/build on push & PR) and a release workflow publishing a
   linux/amd64 tarball + `SHA256SUMS` to a GitHub Release.
 
-[Unreleased]: https://github.com/imantaba/kubeagent/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/imantaba/kubeagent/compare/v1.13.1...HEAD
+[1.13.1]: https://github.com/imantaba/kubeagent/compare/v1.13.0...v1.13.1
+[1.13.0]: https://github.com/imantaba/kubeagent/compare/v1.12.0...v1.13.0
+[1.12.0]: https://github.com/imantaba/kubeagent/compare/v1.11.0...v1.12.0
+[1.11.0]: https://github.com/imantaba/kubeagent/compare/v1.10.0...v1.11.0
+[1.10.0]: https://github.com/imantaba/kubeagent/compare/v1.9.0...v1.10.0
+[1.9.0]: https://github.com/imantaba/kubeagent/compare/v1.8.0...v1.9.0
+[1.8.0]: https://github.com/imantaba/kubeagent/compare/v1.7.0...v1.8.0
+[1.7.0]: https://github.com/imantaba/kubeagent/compare/v1.6.0...v1.7.0
+[1.6.0]: https://github.com/imantaba/kubeagent/compare/v1.5.0...v1.6.0
+[1.5.0]: https://github.com/imantaba/kubeagent/compare/v1.4.0...v1.5.0
+[1.4.0]: https://github.com/imantaba/kubeagent/compare/v1.3.0...v1.4.0
+[1.3.0]: https://github.com/imantaba/kubeagent/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/imantaba/kubeagent/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/imantaba/kubeagent/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/imantaba/kubeagent/compare/v0.74.0...v1.0.0

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/imantaba/kubeagent/internal/baseline"
 	"github.com/imantaba/kubeagent/internal/findings"
 	"github.com/imantaba/kubeagent/internal/jsonschema"
 	"github.com/imantaba/kubeagent/internal/policy"
@@ -52,6 +53,13 @@ type Options struct {
 	// findings, so --fail-on and --wait-for scoping apply to them unchanged.
 	PolicyViolations   []policy.Violation
 	PolicyNotEvaluated []policy.Unevaluated
+
+	// Baseline is the restart-rate comparison (--baseline), nil when the flag is
+	// absent. Its deviations join the flattened findings at findings.Info, so
+	// --fail-on and --wait-for scoping apply to them unchanged. Because
+	// --fail-on defaults to critical, a deviation never fails a gate unless the
+	// operator asks for it with --fail-on info.
+	Baseline *baseline.Report
 }
 
 // Blindspot is one failed collector call plus whether --allow-partial-read
@@ -191,6 +199,7 @@ func Decide(res scan.Result, opts Options) Verdict {
 
 	all := findings.Flatten(res)
 	all = append(all, findings.FromPolicy(opts.PolicyViolations, opts.PolicyNotEvaluated)...)
+	all = append(all, findings.FromBaseline(opts.Baseline)...)
 	findings.Sort(all)
 
 	for _, f := range all {

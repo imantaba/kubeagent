@@ -272,7 +272,7 @@ on the issue, a workload whose failure mode evolves —
 superseded mode while it is still broken. Rolled up per object, that is one alert
 that stays firing until the Deployment actually recovers.
 
-Enable it by setting the URL in the environment:
+Enable it by setting the credential in the environment:
 
 ```bash
 export KUBEAGENT_ALERT_WEBHOOK=<WEBHOOK_URL>
@@ -283,9 +283,23 @@ There is no `--alert-webhook` flag on purpose: a Slack incoming-webhook URL is a
 bearer token in URL form, and a flag would put it in the pod spec's args and in
 `ps` output. Only `scheme://host` is ever logged.
 
+`pagerduty` authenticates differently — with an Events API v2 integration key in
+the request **body**, not with the URL — so it reads
+`KUBEAGENT_ALERT_ROUTING_KEY`, which has no flag for the same reason:
+
+```bash
+export KUBEAGENT_ALERT_ROUTING_KEY=<ROUTING_KEY>
+kubeagent watch --alert-format pagerduty
+```
+
+The routing key never reaches a log line, a metric label, an error message or a
+rendered manifest. `KUBEAGENT_ALERT_WEBHOOK` is optional for this format and
+defaults to PagerDuty's published endpoint; set it to point at a non-default
+service region or an egress proxy, and a URL with no path gains `/v2/enqueue`.
+
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--alert-format` | `json` | `json`, `slack`, or `alertmanager` |
+| `--alert-format` | `json` | `json`, `slack`, `alertmanager`, or `pagerduty` |
 | `--alert-repeat` | `4h`, or `60s` for `alertmanager` | Re-send interval for still-firing alerts |
 
 The re-send is what makes a dropped notification self-healing: a receiver that was
@@ -331,10 +345,66 @@ Alertmanager expires an alert `resolve_timeout` (5m by default) after the last
 POST, so the re-send interval must stay under it — `--alert-repeat` above `4m`
 with this format is a startup error.
 
-### No severity
+`pagerduty` — a [PagerDuty Events API v2](https://developer.pagerduty.com/docs/events-api-v2-overview)
+event:
 
-kubeagent has no severity model, so no payload claims one. Route on what is
-actually known, and derive severity in Alertmanager if you want it:
+```json
+{
+  "routing_key": "<ROUTING_KEY>",
+  "event_action": "trigger",
+  "dedup_key": "local/Deployment/shop/web",
+  "payload": {
+    "summary": "local/Deployment/shop/web: ImagePullBackOff",
+    "source": "local",
+    "severity": "error",
+    "timestamp": "2026-08-05T10:04:11Z",
+    "custom_details": {
+      "cluster": "local",
+      "kind": "Deployment",
+      "namespace": "shop",
+      "name": "web",
+      "issues": ["ImagePullBackOff"],
+      "reason": "new",
+      "flapping": false
+    }
+  }
+}
+```
+
+`dedup_key` is the object's identity — the same string the `slack` format
+already sends. Deriving it from identity rather than state is what makes it
+survive a daemon restart: the restart re-triggers whatever is still broken, and
+PagerDuty folds that onto the open incident instead of opening a second one. A
+key past PagerDuty's 255-character cap keeps a readable prefix and gains a short
+digest, so two objects that share a long prefix still get two incidents.
+
+`timestamp` is when the **object** broke, not when the daemon noticed — the same
+`firingSince` the `json` format carries.
+
+An **explanation** (`--explain`) is a `trigger` on the same `dedup_key` with the
+prose in `custom_details.explanation`, not a new event kind: the object is still
+firing, and an explanation is more detail about one state rather than a
+transition to another. The daemon's `/explanations` endpoint and the dashboard
+remain the authoritative place to read that prose.
+
+A **resolve** carries only `routing_key`, `event_action` and `dedup_key`.
+PagerDuty computes the incident duration itself, so anything kubeagent added
+would be a second copy free to disagree with the first.
+
+`--alert-repeat` defaults to `4h` here, as it does for `json` and `slack`, and
+takes no ceiling: PagerDuty does not expire alerts, so a slow cadence produces no
+false recovery to guard against.
+
+### Severity
+
+kubeagent has no severity model: `diagnose.Finding` carries no rank, and no
+payload derives one. The `pagerduty` format sends the constant `error` because
+the Events API requires the field — it is the same default Alertmanager's own
+PagerDuty notifier picks, and it is the honest answer: kubeagent knows something
+is broken, not how badly. Every other format sends no severity at all.
+
+Route on what is actually known, and derive severity in Alertmanager if you want
+it:
 
 ```yaml
 route:

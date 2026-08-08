@@ -1,0 +1,149 @@
+{
+  "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+  "$defs": {
+    "fleet.ClusterSummary": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "blindspots": {
+          "type": "integer"
+        },
+        "context": {
+          "type": "string"
+        },
+        "critical": {
+          "type": "integer"
+        },
+        "info": {
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "topIssues": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "verdict": {
+          "type": "string"
+        },
+        "warning": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "blindspots",
+        "context",
+        "critical",
+        "info",
+        "verdict",
+        "warning"
+      ],
+      "type": "object"
+    },
+    "fleet.Shared": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "clusters": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "signal": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "clusters",
+        "signal",
+        "source"
+      ],
+      "type": "object"
+    },
+    "fleet.Unreachable": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "context": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "context",
+        "reason"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://k8sproject.top/schemas/fleet-v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The document written by `kubeagent fleet --output json`: one summary per selected cluster, worst first, plus the clusters that could not be judged. A summary carries counts and issue kinds — it never names a node, namespace, pod or workload.",
+  "properties": {
+    "clusters": {
+      "items": {
+        "$ref": "#/$defs/fleet.ClusterSummary"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "exitCode": {
+      "type": "integer"
+    },
+    "failOn": {
+      "enum": [
+        "info",
+        "warning",
+        "critical"
+      ],
+      "type": "string"
+    },
+    "schemaVersion": {
+      "description": "This document's schema version, MAJOR.MINOR. Treat an unknown MINOR as compatible.",
+      "pattern": "^1\\.[0-9]+$",
+      "type": "string"
+    },
+    "shared": {
+      "items": {
+        "$ref": "#/$defs/fleet.Shared"
+      },
+      "type": "array"
+    },
+    "unreachable": {
+      "items": {
+        "$ref": "#/$defs/fleet.Unreachable"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "verdict": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "clusters",
+    "exitCode",
+    "failOn",
+    "schemaVersion",
+    "unreachable",
+    "verdict"
+  ],
+  "title": "kubeagent fleet report",
+  "type": "object"
+}

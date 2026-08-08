@@ -71,7 +71,7 @@
   the daemon exposes `kubeagent_nodes_stale_heartbeat`. See
   [Failure diagnostics](features/diagnostics.md).
 
-- **Expected-node baseline** — opt-in `scan --expected-nodes` flags a declared
+- **Expected-node list** — opt-in `scan --expected-nodes` flags a declared
   node that is absent from the cluster (never registered or dropped out), and
   the daemon exposes `kubeagent_nodes_expected_absent`. See
   [Failure diagnostics](features/diagnostics.md).
@@ -289,13 +289,16 @@
   [Watch mode](features/watch-mode.md#issue-tracking-state-across-reconciles).
 
 - **`watch` alerting** (Theme E — slice 2) — the daemon can now push transitions
-  outbound: one webhook alert per broken object in `json`, `slack`, or
-  `alertmanager` form. Alerts roll up on the object, not the issue, so an
+  outbound: one alert per broken object in `json`, `slack`, `alertmanager` or
+  `pagerduty` form. Alerts roll up on the object, not the issue, so an
   evolving failure (`Degraded` → `ErrImagePull` → `ImagePullBackOff`) opens a
   single alert that clears only once the object has no active issues at all —
-  a still-broken workload never reports a recovery. Off unless
-  `KUBEAGENT_ALERT_WEBHOOK` is set; the URL is env-only, Secret-only in the
-  chart, and never logged beyond `scheme://host`. Delivery is a bounded queue
+  a still-broken workload never reports a recovery. Off unless a credential is
+  set — `KUBEAGENT_ALERT_WEBHOOK` for the three webhook formats,
+  `KUBEAGENT_ALERT_ROUTING_KEY` for PagerDuty. Either is env-only, Secret-only
+  in the chart, and never reaches a log line; a URL is never logged beyond
+  `scheme://host` and the routing key is never logged at all. Delivery is a
+  bounded queue
   with three attempts and counted drops, on its own goroutine, so a hung
   receiver cannot stall the reconcile loop. The daemon stays strictly
   read-only toward the cluster and calls no LLM. See
@@ -436,8 +439,8 @@ These are the north star; every item below is measured against them.
   do), and rollback (`--rollback`). Theme D is complete; guarded, policy-gated
   autonomous remediation inside `watch` moves to Theme E.
 - **E · Continuous operations** ✅ — `watch` gains state (regressions, flapping,
-  MTTR, "new since last"), webhook alerting (JSON / Slack / Alertmanager
-  shipped; PagerDuty remains an open receiver), SLO burn-rate signals
+  MTTR, "new since last"), webhook alerting (JSON / Slack / Alertmanager /
+  PagerDuty, all shipped), SLO burn-rate signals
   (shipped), rate-limited on-incident `--explain` (shipped), and a
   multi-cluster hub (shipped). Theme E is complete; guarded, policy-gated
   autonomous remediation inside `watch` is a separate, future track.
@@ -517,21 +520,29 @@ These are the north star; every item below is measured against them.
   <minor>` pins the harness to a specific Kubernetes minor's digest-pinned
   kind node image, with everything cluster-derived (cluster name, context,
   report path) taking that minor's suffix so two coexist on one machine; and
-  a nightly GitHub Actions workflow runs the full 22-scenario suite once per
+  a nightly GitHub Actions workflow runs the full 23-scenario suite once per
   supported minor (v1.32, v1.33, v1.34 today) in its own job, `fail-fast`
   off, with the report scanned for credential material before a flagged one
   is ever uploaded. The nightly grants no secret — `ANTHROPIC_API_KEY` is
   never set, so it gates kubeagent's deterministic core, not the `--explain`
   path — and it covers exactly one distribution, one architecture, and one
   CNI: kind, on `ubuntu-latest`, amd64, with Calico. Cross-distro coverage
-  (EKS, GKE, AKS, OpenShift, k3s, RKE2) is not part of this slice and remains
-  ahead — see
+  (EKS, GKE, AKS, OpenShift, k3s, RKE2) was not part of that
+  slice. Since then the harness has grown a **portability seam**:
+  `./chaos/run.sh --context <ctx>` runs the namespaced-only subset — plus one
+  scenario that only reads — against a cluster the harness did not create,
+  refuses every scenario that would write a
+  cluster-scoped object or shell into a node, and names each skip and its reason in
+  the assertion summary. A second distribution — **k3s**, via k3d — is now
+  **gated nightly** alongside kind, closing that promise; the remaining
+  distributions (EKS, GKE, AKS, OpenShift and RKE2) stay ungated in CI and
+  reachable only by hand — see
   [the chaos harness](https://github.com/imantaba/kubeagent/tree/main/chaos).
   Slice 9 — the production contract itself — has shipped (v1.0.0) and closes
   Theme H: [Compatibility and support](compatibility.md) writes down which
   surfaces are stable within 1.x and which are deliberately not, states the
   supported Kubernetes window as an evidenced one — v1.32, v1.33 and v1.34,
-  because the nightly matrix passes 128 assertions against each — and commits
+  because the nightly matrix passes 134 assertions against each — and commits
   to a deprecation policy of one full MINOR, a stderr-only warning, and removal
   no earlier than the next MAJOR. **Theme H is complete.**
 
@@ -549,7 +560,7 @@ one guarded step at a time. Roughly:
 | **v0.41–v0.45** | Ecosystem & operators (F) | Operator/CRD adapters (CNPG, cert-manager, Longhorn, Argo/Flux, mesh); GitOps drift; cost/right-sizing; deep networking & storage checks |
 | **v0.5x** | Interfaces & adoption (G) | **MCP server** (shipped, `kubeagent mcp`); **`kubectl` krew plugin** (shipped); **Claude Code plugin** (shipped); **CI/CD gate mode + SARIF** (shipped, `kubeagent gate`); **shareable HTML report** (shipped, `scan --output html`); **interactive TUI** (shipped, `kubeagent tui`); **in-cluster dashboard** (shipped, `watch --dashboard`) |
 | **v1.0** ✅ | Production-grade contract (H) | **Shipped.** Stable versioned JSON schema; cosign-signed releases + SBOM + provenance; per-feature least-privilege RBAC; fuzzed detectors; **policy as code** — operator-written YAML checks, chosen over a compiled plugin SDK so a custom check can never write, panic a scan, or widen RBAC; a cross-version chaos matrix that gates every supported Kubernetes minor nightly; the two v1 simplifications (stdlib-`flag` CLI, sequential scan) retired deliberately — Cobra + bounded scan concurrency — behind the same test bar; and a written [compatibility and support contract](compatibility.md) |
-| **post-1.0** | The best, sustained | Anomaly/baseline learning ("what's normal for *this* cluster"); fleet-scale (hundreds of clusters); a curated community detector library and known-issues knowledge base |
+| **post-1.0** | The best, sustained | Anomaly/baseline learning ("what's normal for *this* cluster") — **restart rates shipped** (`kubeagent baseline capture`, `scan --baseline`, `gate --baseline`); **fleet-scale complete** (`kubeagent fleet` sweeps every selected kubeconfig context — or, via `--fleet-file`, a YAML file naming clusters across several kubeconfigs, each row optionally carrying a name the operator chose — in bounded parallel and reports one verdict per cluster worst first, then names the issue kinds and refused reads shared by two or more judged clusters — correlation on an issue kind and a blind spot rather than on an image, which no kubeagent finding carries); **known-issues knowledge base slice 1 shipped** (`kubeagent known-issues [kind]` — kubeagent's own offline reference for the thirteen kinds the deterministic detectors can emit, no cluster, no network, no model call, a closed vocabulary kept closed by four tests in `internal/diagnose`); **curated policy packs complete** (`kubeagent policy packs` — a kubeagent-curated `reliability` pack of fourteen rules, a `security` pack of twenty-three rules over workload pod templates, and a `cost` pack of sixteen rules over seven kinds, compiled into the binary and evaluated by the existing `--policy` engine via `scan --policy-pack`/`gate --policy-pack`; opt-in, no rule `critical`, no `schemaVersion` move, and no RBAC grant a plain `scan` did not already have; slice 4 adds the route for a pack written outside kubeagent, its admission criteria machine-checked at the registry layer — where neither the rule loader nor the per-pack tests can see — though no outside pack has yet come through it), the second half of this item's first form — plus other baseline dimensions, and loading a pack into an installed binary without a kubeagent release, still ahead |
 
 ### How we keep it the best
 

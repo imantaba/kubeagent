@@ -25,10 +25,19 @@ type Schema = map[string]any
 // release version: a surface's version moves only when its own shape does, so a
 // new scan field does not disturb a CI pipeline reading the gate document.
 const (
-	ScanVersion  = "1.1"
-	GateVersion  = "1.1"
-	RBACVersion  = "1.0"
-	WatchVersion = "1.0"
+	ScanVersion     = "1.2"
+	GateVersion     = "1.1"
+	RBACVersion     = "1.0"
+	WatchVersion    = "1.0"
+	BaselineVersion = "1.0"
+
+	// FleetVersion is `kubeagent fleet --output json`. 1.1 added the optional
+	// `shared` array; 1.2 added the optional `name` on a cluster summary and on
+	// an unreachable cluster, written only when the row identity differs from
+	// the kubeconfig context. Both bumps are additive: every property is
+	// omitempty and absent from `required`, so a document produced without
+	// them still validates against the older schema.
+	FleetVersion = "1.2"
 )
 
 // baseID is where the generated files are published. The $id carries the MAJOR

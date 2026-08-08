@@ -1,23 +1,29 @@
 # kubeagent chaos-test harness
 
-A repeatable, **pre-release** chaos test. It spins up a disposable **Kind**
-cluster, injects the most common production outages, runs `kubeagent scan`
-against each, and asserts — with the `expect_eq` / `expect_ge` /
+A repeatable, **pre-release** chaos test. It spins up a disposable cluster —
+**kind** by default, or **k3s** (via k3d) with `--distro k3s` — injects the
+most common production outages, runs `kubeagent scan` against each, and
+asserts — with the `expect_eq` / `expect_ge` /
 `expect_contains` / `expect_absent` helpers in `chaos/assert.sh` — that
 kubeagent's own contract held for each one. It is a **gate**, not just a
 report: `./chaos/run.sh` exits non-zero the moment any assertion fails, so a
 regression stops a release instead of waiting for someone to notice it while
 reading the whole thing.
 
-It is read-only with respect to any real cluster: it creates and targets only
-its own `kind-kubeagent-chaos` context — `kind-kubeagent-chaos-v1-33` and the
-like when `--k8s-version` is given — and never reads your current kubecontext.
+By default the harness targets **only** the Kind context it creates
+(`kind-kubeagent-chaos`, or `kind-kubeagent-chaos-v1-33` and the like when
+`--k8s-version` is given) — it does not read your current kubecontext, so a
+plain run cannot touch another cluster. `--context <ctx>` deliberately points
+it at a cluster you already have; that mode is described under
+[Portable mode](#portable-mode) and carries its own guard rails.
 
 ## Prerequisites
 
-- **Docker** (the Kind nodes run as containers)
+- **Docker** (the Kind and k3d nodes both run as containers)
 - **kind** ≥ v0.30 — install:
   `curl -sSLo kind https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-amd64 && chmod +x kind && sudo mv kind /usr/local/bin/`
+- **k3d** v5.9.0 — needed **only** for `--distro k3s` — install:
+  `curl -sSLo k3d https://github.com/k3d-io/k3d/releases/download/v5.9.0/k3d-linux-amd64 && chmod +x k3d && sudo mv k3d /usr/local/bin/`
 - **kubectl**, **helm**, **go**, **python3**
 - **inotify headroom.** Every kubelet, kube-proxy and controller inside a Kind
   node draws inotify instances from a **host-wide** budget — containers do not
@@ -25,7 +31,8 @@ like when `--k8s-version` is given — and never reads your current kubecontext.
   boots, so the machine looks fine, and the *second* one starves: kube-proxy
   dies with `too many open files`, the kubelet never reaches healthy, and
   kubeadm gives up four minutes later with a Go stack trace naming none of it.
-  Raise them once:
+  A k3d node draws from the same host-wide budget — it is a container too — so
+  this paragraph applies whichever distribution you create. Raise them once:
 
   ```bash
   sudo sysctl -w fs.inotify.max_user_instances=512
@@ -43,9 +50,10 @@ like when `--k8s-version` is given — and never reads your current kubecontext.
 ./chaos/run.sh                 # create cluster, run all scenarios, leave cluster up
 ./chaos/run.sh --recreate      # delete + recreate the cluster first (clean slate)
 ./chaos/run.sh --teardown      # delete the cluster when finished
-./chaos/run.sh --only 7        # run a single scenario (1..22) for debugging
+./chaos/run.sh --only 7        # run a single scenario (1..23) for debugging
 ./chaos/run.sh --out path.md   # write the report somewhere specific
 ./chaos/run.sh --k8s-version v1.33   # pin the Kubernetes minor (see below)
+./chaos/run.sh --distro k3s   # create a k3s cluster (k3d) instead of kind
 ```
 
 The report is written to `docs/testing/chaos-results.md` by default (the
@@ -104,31 +112,77 @@ docker, in under a second: every listed minor resolves to a digest-pinned
 merely prefix-matching value (`v1.3` against `v1.33`) is refused with nothing on
 stdout.
 
+### Distributions
+
+`--distro kind|k3s` selects which Kubernetes distribution the harness creates.
+`kind` is the default, so every command line written before this flag existed
+means exactly what it always did.
+
+The two paths pin node images differently. Omitting `--k8s-version` on the kind
+path still lets kind pick its own node image, unchanged from before `--distro`
+existed. The k3s path has no such default to fall back to — k3d bundles a k3s
+version that moves with the k3d release — so it **always** pins a digest-pinned
+`rancher/k3s` image from [`versions.env`](versions.env), whether or not
+`--k8s-version` is given.
+
+The report path is derived from the distribution the same way it is derived
+from the version:
+
+| Distribution | default report | `--k8s-version v1.33` |
+| ------------ | --------------- | ---------------------- |
+| kind | `docs/testing/chaos-results.md` | `docs/testing/chaos-results-v1.33.md` |
+| k3s | `docs/testing/chaos-results-k3s.md` | `docs/testing/chaos-results-k3s-v1.33.md` |
+
+`--distro` is refused together with `--context`, the same way `--recreate`,
+`--teardown` and `--k8s-version` are: `--context` points the harness at a
+cluster it did not create, and `--distro` says which distribution to create —
+the two answer contradictory questions, and the flag is refused before
+anything touches docker.
+
+**The harness must not disable Traefik on the k3s path.** Traefik holds port
+80, and holding port 80 is what lets k3s's built-in ServiceLB publish an
+address for a `LoadBalancer` Service — which is what makes scenario 6 run
+instead of skip. Disabling Traefik would silently turn scenario 6 from a real
+assertion into a skip on every k3s run.
+
 ### What this matrix does and does not cover
 
 The nightly workflow (`.github/workflows/chaos-matrix.yml`) runs the full
-suite — the baseline plus all 22 scenarios below — once per supported
+suite — the baseline plus all 23 scenarios below — once per supported
 Kubernetes minor (currently v1.32, v1.33, v1.34), each on its own disposable
 **kind** cluster on a GitHub-hosted `ubuntu-latest` runner, with Calico as the
 CNI and kind's own containerd as the node runtime. Three green cells prove
 that kubeagent held its contract — the machine-checked assertions described
-under Assertions, below — on three kind-hosted minors under twenty-two
+under Assertions, below — on three kind-hosted minors under twenty-three
 specific injected outages. That is **not** a claim that kubeagent is correct in
 general, and the axes below are the ones a three-minor matrix could easily be
 mistaken for covering:
 
-- **Kubernetes distribution.** Only kind. EKS, GKE, AKS, OpenShift, k3s and
-  RKE2 are untested, and so is any managed control plane — a kind
-  control-plane container has none of a cloud provider's admission chain,
-  IAM-mapped auth, or managed upgrade behaviour.
+- **Kubernetes distribution.** The matrix covers **kind** on every supported
+  minor and **k3s** (via k3d) on the newest one. The k3s cell skips five of
+  the twenty-three scenarios, each naming why in its assertion summary:
+  scenario 2 (certs) for the same reason it skips on kind — control-plane
+  certificate expiry cannot be forced quickly or safely; scenarios 1 (etcd)
+  and 11 (kubelet) because k3s's control plane has no separately stoppable
+  etcd (it uses an embedded sqlite datastore) and its kubelet is part of the
+  single k3s process rather than a unit the harness can stop on its own;
+  scenario 4 (networkpolicy) because k3s ships Flannel, which does not
+  enforce NetworkPolicy; and scenario 18 (capacity) because k3s ships
+  metrics-server by default, so the structural-rules-only path scenario 18
+  asserts is not the path kubeagent takes. EKS, GKE, AKS, OpenShift and RKE2
+  remain untested, and so does any managed control plane — neither kind nor
+  k3d has a cloud provider's admission chain, IAM-mapped auth, or managed
+  upgrade behaviour.
 - **CPU architecture.** Only amd64. The runner is GitHub's `ubuntu-latest`
   and the workflow installs the `kind-linux-amd64` binary; arm64 and every
   other architecture are untested.
-- **CNI.** Only Calico (`chaos/kind-config.yaml` disables kind's default CNI
-  so Calico can enforce NetworkPolicy). Cilium, kindnet's own default, and
-  every other CNI are untested — scenario 4's NetworkPolicy assertion in
-  particular exercises Calico's enforcement, not a behaviour every CNI
-  guarantees identically.
+- **CNI.** Calico on the kind cells (`chaos/kind-config.yaml` disables kind's
+  default CNI so Calico can enforce NetworkPolicy), Flannel on the k3s cell —
+  Flannel does not enforce NetworkPolicy, which is exactly why the k3s cell
+  skips scenario 4 rather than running it there. Cilium, kindnet's own
+  default, and every other CNI remain untested; scenario 4's NetworkPolicy
+  assertion runs only where a CNI enforces it, never against a behaviour
+  every CNI guarantees identically.
 - **Container runtime.** Only containerd, because that is what a kind node
   ships (scenario 11 stops it by name to test the boundary). CRI-O and other
   runtimes are untested.
@@ -145,9 +199,10 @@ mistaken for covering:
   redaction, not the real Anthropic backend, which stays covered by unit
   tests only.
 
-Each cell runs 128 assertions. On a GitHub-hosted runner a cell takes roughly
-17 minutes; locally it's 35-40. All three supported
-minors have gone green on real runners.
+Each **kind** cell runs 134 assertions. The k3s cell runs 110 — fewer because
+five scenarios skip for the reasons named above, not because anything is
+weaker. On a GitHub-hosted runner a cell takes roughly 17 minutes; locally
+it's 35-40. All three supported minors have gone green on real runners.
 
 ### `--explain`
 
@@ -160,6 +215,112 @@ ANTHROPIC_API_KEY=sk-ant-... ./chaos/run.sh --recreate
 ```
 
 The key is read from the environment only; it is never written to the report.
+
+## Portable mode
+
+```bash
+./chaos/run.sh --context <ctx>
+```
+
+Runs the portable subset against a cluster the harness did **not** create. The
+report defaults to `docs/testing/chaos-results-portable.md`.
+
+`kind` and `docker` are not required in this mode — the binary list is
+`kubectl`, `go`, `curl` and `python3`.
+
+### What it does to the cluster
+
+Every scenario that runs writes to a `chaos-*` namespace it creates, breaks
+something inside it, and deletes the namespace afterwards — with one exception:
+scenario 21 (control-plane readiness) injects nothing and creates no namespace.
+Its entire body is `scan --control-plane-health`, a GET against the live
+apiserver's `/readyz`, so it has no blast radius at all. Whatever a partial run
+leaves behind is swept at the end. Two consequences are worth knowing before you
+point this at a shared cluster:
+
+- **Scenario 8 deletes a namespace and asserts the cluster reads healthy again.**
+  It deletes only the `chaos-doomed` namespace it created moments earlier — but
+  a cluster where a namespace deletion triggers alerting will alert.
+- **Scenario 10 plants a fake AWS access key** (`AKIAIOSFODNN7EXAMPLE`, AWS's own
+  published example value) in a ConfigMap so kubeagent's credential-leak detector
+  has something to find. A secret scanner or a Falco rule watching the API server
+  will fire on it. It is deleted with the namespace.
+
+### What it refuses
+
+Nine of the 23 scenarios are skipped on a cluster the harness does not own:
+
+| Skipped | Why |
+|---|---|
+| 1, 11 | need shell access to a node the harness owns, whose control plane runs etcd and kubelet as separately stoppable units |
+| 3, 5, 16, 17, 20, 22 | write cluster-scoped objects (node conditions, the CoreDNS ConfigMap, CRDs, ClusterRoles) |
+| 2 | control-plane certificate expiry cannot be forced quickly or safely — skipped everywhere, including on Kind |
+
+Four more skip depending on what the cluster turns out to be:
+
+| Skipped when | Scenario | Probe |
+|---|---|---|
+| a LoadBalancer provider assigns addresses | 6 | a LoadBalancer Service in a temporary `chaos-probe` namespace gets an address within 30s |
+| metrics-server is installed | 18 | the `v1beta1.metrics.k8s.io` APIService exists |
+| the CNI is not recognised as enforcing | 4 | a `calico-node`, `cilium`, `weave-net`, `kube-router` or `antrea-agent` DaemonSet in `kube-system` |
+| the cluster was not already healthy | 8 | the baseline scan reported `Cluster: Healthy` and `No issues found.` |
+
+The CNI probe is a **heuristic** with two named failure modes: an enforcing CNI
+whose DaemonSet is not on that list produces a false skip (safe — the summary
+names it), and a listed CNI configured not to enforce produces a false failure in
+scenario 4. There is no cheap probe that avoids both, and the harness prefers to
+be wrong in the direction of skipping.
+
+Three flags are **refused**, not ignored, because all three manage a Kind
+cluster's lifecycle: `--recreate`, `--teardown` and `--k8s-version`. Each exits
+2 with its reason.
+
+### What it checks before touching anything
+
+1. The named context exists in your kubeconfig.
+2. The cluster answers.
+3. No `chaos-*` namespace already exists — debris from an aborted run, or a
+   second run in progress. The harness names what it found and refuses; it will
+   not delete a namespace it did not create.
+4. A namespace create/delete round trip actually succeeds with these credentials.
+
+Each failure exits 1 with its reason on **stderr**.
+
+### What is in the report, and what is not
+
+The report names the platform and never the cluster: server version, node count,
+and the deduplicated OS image, container runtime and kubelet version from
+`nodeInfo`. **No node name or context name reaches the report as its full
+literal text, and no address is ever printed at all** — with one exception: a
+context name and a node name that overlap without either containing the other
+can leave the losing one's non-overlapping tail in the clear, never either
+name's full text. That takes two real identities landing byte-adjacent with no
+separator, which the log lines, JSON fields and metric labels this filter
+protects never produce. A kubeconfig context name is a credential — on a managed
+cluster it is routinely an ARN or a project/region path — and this report is
+designed to be forwarded.
+
+Both are enforced the same way, literally: every scenario's write to the
+report passes through one filter, and that filter redacts node names and the
+context name together, in a single pass, rather than as two independent
+steps run one after the other. Two independent steps can each consume their
+own needle out of the text before the other's exact match ever sees it —
+whichever direction a node name or the context name happens to embed the
+other, running the filters in a fixed order gets one of those directions
+wrong. A single pass avoids that: every node name and the context name are
+matched as literals, never as a regex (a real context name can carry almost
+anything a kubeconfig accepts), longest name first, in one left-to-right
+scan that never revisits text it has already replaced. A section the filter
+cannot redact is withheld — replaced by a marker, never shown unredacted —
+and that failure never stops the run.
+
+### The baseline
+
+A cluster you already run is very likely not clean, through no fault of
+kubeagent. In portable mode the baseline asserts only that the scan exited 0 and
+rendered a verdict; the verdict itself is recorded for a human to read rather
+than asserted. A dirty baseline also withdraws `clean_baseline`, which skips
+scenario 8.
 
 ## Assertions
 
@@ -177,19 +338,27 @@ the console. That is what an operator watching a 35–40 minute run actually
 sees scroll by.
 
 `main` finishes with `assert_summary`, which appends an `## Assertion summary`
-to the end of the report naming every `FAIL`, prints `assertions: N run, M
-failed` to the console, and returns non-zero when `M > 0` — that return status
-is what makes `./chaos/run.sh` itself exit non-zero. The baseline and all 22
-scenarios are asserted except one: scenario 2 (expired certificates) runs no
-scan and computes nothing, so it carries no assertion by design — the TLS
-branch it would otherwise cover is unit-tested in `internal/connectivity`
-instead.
+to the end of the report. The run ends with `assertions: N run, M failed; K
+scenario(s) skipped` on the console and an `## Assertion summary` in the report
+carrying the same three counts. A failure list is fenced under it when there
+are failures; a skip list is fenced under it when there are skips.
+
+**A skip is never a failure and never moves the exit code** — it is a declared
+gap. It is reported unconditionally, including when the count is zero, so a run
+that skipped nine scenarios can never be read as a full green one. The exit
+code is non-zero if and only if an assertion failed.
+
+The baseline and all 23 scenarios are asserted except one: scenario 2 (expired
+certificates) runs no scan and computes nothing, so it carries no assertion by
+design — the TLS branch it would otherwise cover is unit-tested in
+`internal/connectivity` instead. It is now counted in `scenarios skipped`
+rather than silently absent.
 
 These assertions are written at kubeagent's contract level — a finding
 kubeagent reported, a counter kubeagent computed, kubeagent's own exit code —
 never at the Kubernetes API server's wording, which can change between minor
-versions without kubeagent being wrong. Twenty-two specific injected outages
-passing proves kubeagent kept its side of the contract on those twenty-two; it
+versions without kubeagent being wrong. Twenty-three specific injected outages
+passing proves kubeagent kept its side of the contract on those twenty-three; it
 is not a general correctness proof.
 
 When a `FAIL:` line shows up, the report is what you read to understand it,
@@ -231,6 +400,7 @@ second.
 | 20 | Least-privilege RBAC | generate a `scan`-profile `ClusterRole` with `kubeagent rbac print`, bind it to a fresh ServiceAccount, then run `kubeagent rbac check` and `scan --certs --logs --disk-usage --control-plane-health --dns-health` as that identity alone | `rbac check` reports `core` allowed and exactly `certs diskusage logs` blocked, named from kubeagent's own table, never the API server's; the scan still exits `0`; the report names `secrets`/`pods/log`/`nodes/proxy`/`pods/proxy` as unread rather than showing four empty sections, and does *not* name `/readyz`, which a stock cluster grants to every authenticated identity — a read that succeeded is never reported as a blind spot |
 | 21 | Control-plane readiness probe | nothing injected — the probe runs against a healthy apiserver | `--control-plane-health` classifies `/readyz` as `ok` in the JSON report and renders **no** CONTROL PLANE section in the text one; without the flag the JSON carries no `controlPlane` key at all. The unhealthy branch is deliberately not injected: the only apiserver readyz check reachable from outside is etcd, and breaking etcd takes every read the report is built from with it — that is scenario 1 |
 | 22 | DNS up but not resolving | a Corefile that keeps CoreDNS Ready and serving `/metrics` while answering every query `SERVFAIL` (the `template` plugin), plus a Job driving enough queries to clear the 100-response floor | `--dns-health` reports `degraded`, names it (`cluster DNS is failing to resolve`) and quantifies the SERVFAIL+REFUSED ratio; exit code stays `0` because the section is advisory; without the flag the JSON carries no `dns` key. Scenario 5 covers the other DNS outage — CoreDNS crash-looping — and cannot reach this one, because a CoreDNS that is down serves no `/metrics` to read |
+| 23 | PagerDuty receiver | run `kubeagent watch --alert-format pagerduty` with the routing key in the environment and the endpoint pointed at a local stand-in for `events.pagerduty.com`, then inject and repair the bad-image outage | an Events API v2 `trigger` while the Deployment is broken and a `resolve` after the repair, both on the same identity-derived `dedup_key` — the property that makes a daemon restart re-trigger onto the open incident instead of opening a second one — and the routing key, which travels in the request body only, in **no** line of the daemon's log |
 
 ### Validating `--fix` (remediation)
 
@@ -290,9 +460,12 @@ vendor a pinned `pod-memory-hog` ChaosExperiment + ChaosEngine and swap it into
 
 ## Safety
 
-- Targets only the context it created — `kind-kubeagent-chaos`, or
-  `kind-kubeagent-chaos-v1-33` and the like under `--k8s-version`. It never
-  reads your current kubecontext, so it cannot touch another cluster.
+- By default the harness targets **only** the Kind context it creates
+  (`kind-kubeagent-chaos`, or `kind-kubeagent-chaos-v1-33` and the like under
+  `--k8s-version`) — it does not read your current kubecontext, so a plain run
+  cannot touch another cluster. `--context <ctx>` deliberately points it at a
+  cluster you already have; that mode is described under
+  [Portable mode](#portable-mode) and carries its own guard rails.
 - The credential-leak scenario uses the documentation value
   `AKIAIOSFODNN7EXAMPLE` — never a real secret.
 - `ANTHROPIC_API_KEY` is read from the environment and never logged or committed.

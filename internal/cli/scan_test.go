@@ -1,6 +1,9 @@
 package cli
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestScanRegistersPolicyAsARepeatableFlag(t *testing.T) {
 	cmd := newScanCommand()
@@ -11,5 +14,16 @@ func TestScanRegistersPolicyAsARepeatableFlag(t *testing.T) {
 	// stringArray, not stringSlice: a path may contain a comma.
 	if f.Value.Type() != "stringArray" {
 		t.Errorf("--policy is %s, want stringArray so a comma in a path is not a separator", f.Value.Type())
+	}
+}
+
+func TestScanPolicyPackFlagReachesItsField(t *testing.T) {
+	o, err := parseScanFlags([]string{"--policy-pack", "reliability", "--policy-pack", "other"})
+	if err != nil {
+		t.Fatalf("parseScanFlags: %v", err)
+	}
+	want := []string{"reliability", "other"}
+	if !slices.Equal(o.policyPackNames, want) {
+		t.Errorf("policyPackNames = %v, want %v — the flag is repeatable", o.policyPackNames, want)
 	}
 }

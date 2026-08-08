@@ -67,6 +67,39 @@ check "chaos_suffix v1.34" "$(chaos_suffix v1.34)" "-v1-34"
 out="$(chaos_suffix 'v1.33; echo pwned' 2>/dev/null)" && rc=0 || rc=$?
 check "chaos_suffix rejects a malformed minor" "$rc" 1
 
+# --- chaos_newest ---------------------------------------------------------
+# The newest supported minor, resolved rather than typed. Two callers mean
+# "the newest one" — the k3s path's default image and the CI matrix's single
+# k3s cell — and a second copy of that answer is a copy that goes stale.
+check "chaos_newest is the last entry in the supported list" \
+  "$(chaos_newest)" "$(chaos_versions | awk '{print $NF}')"
+check "chaos_newest names a minor both resolvers accept" \
+  "$(chaos_image "$(chaos_newest)" >/dev/null && chaos_k3s_image "$(chaos_newest)" >/dev/null && echo ok)" ok
+
+# --- chaos_k3s_image ------------------------------------------------------
+# Same contract as chaos_image, for the same reason: a bare tag would let a
+# silently retagged upstream image turn a green nightly red with no kubeagent
+# change, and an empty answer would hand `k3d cluster create` an empty --image.
+for m in $(chaos_versions); do
+  img="$(chaos_k3s_image "$m")" && rc=0 || rc=$?
+  check "chaos_k3s_image $m exits 0"           "$rc" 0
+  check "chaos_k3s_image $m names rancher/k3s" "$(printf '%s' "$img" | grep -c '^rancher/k3s:' || true)" 1
+  check "chaos_k3s_image $m is digest-pinned"  "$(printf '%s' "$img" | grep -cE '@sha256:[0-9a-f]{64}$' || true)" 1
+  check "chaos_k3s_image $m names the minor"   "$(printf '%s' "$img" | grep -cF "rancher/k3s:${m}." || true)" 1
+done
+
+# A rejection must print nothing on stdout, whatever shape the bad value has:
+# an unsupported minor, a near-miss prefix, a malformed string, or an injection
+# attempt that must never reach the variable-name derivation.
+for bad in v9.99 v1.3 v1.320 v01.32 '' 'v1' '1.33' 'v1.33; echo pwned' '../etc'; do
+  out="$(chaos_k3s_image "$bad" 2>/dev/null)" && rc=0 || rc=$?
+  check "chaos_k3s_image rejects '$bad'"            "$rc"  1
+  check "chaos_k3s_image prints nothing for '$bad'" "$out" ""
+done
+err="$(chaos_k3s_image v9.99 2>&1 >/dev/null)" || true
+check "the k3s rejection names the supported set" \
+  "$(printf '%s' "$err" | grep -c 'v1\.34' || true)" 1
+
 # --- set -e safety --------------------------------------------------------
 # A rejection must not abort a caller that is checking the status itself.
 survived=no

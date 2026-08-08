@@ -1,6 +1,68 @@
 {
   "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
   "$defs": {
+    "baseline.Deviation": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "baselineRestartsPerHour": {
+          "type": "number"
+        },
+        "currentRestartsPerHour": {
+          "type": "number"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "pods": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "baselineRestartsPerHour",
+        "currentRestartsPerHour",
+        "kind",
+        "name",
+        "namespace",
+        "pods"
+      ],
+      "type": "object"
+    },
+    "baseline.Report": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "compared": {
+          "type": "integer"
+        },
+        "deviations": {
+          "items": {
+            "$ref": "#/$defs/baseline.Deviation"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "goneFromCluster": {
+          "type": "integer"
+        },
+        "notInBaseline": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "compared",
+        "deviations",
+        "goneFromCluster",
+        "notInBaseline"
+      ],
+      "type": "object"
+    },
     "capacity.Headroom": {
       "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
       "properties": {
@@ -1726,6 +1788,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "The document written by `kubeagent scan --output json`: the cluster verdict, the prioritized workload inventory, and the findings of every check the run enabled.",
   "properties": {
+    "baseline": {
+      "$ref": "#/$defs/baseline.Report"
+    },
     "blindSpots": {
       "items": {
         "$ref": "#/$defs/scan.ReadFailure"

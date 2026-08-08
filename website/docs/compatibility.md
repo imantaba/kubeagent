@@ -131,22 +131,42 @@ will be reworded as the detectors change. Nothing should parse it.
 kubeagent supports **v1.32, v1.33, and v1.34**.
 
 This is an evidenced window rather than an asserted one. A nightly GitHub
-Actions matrix runs the full 22-scenario chaos suite — real injected outages, on
-a real cluster — once per supported minor, each on its own disposable kind
-cluster, with 128 machine-checked assertions per cell. A minor is listed here
-because that suite passes on it, and it stops being listed when the suite stops
-being run against it.
+Actions matrix runs the full 23-scenario chaos suite — real injected outages, on
+a real cluster — against **two distributions**: kind, once per supported
+minor, and k3s (via k3d), once at the newest supported minor, each on its own
+disposable cluster. The kind cells run 134 machine-checked assertions each;
+the k3s cell runs 110, five scenarios fewer, and names each skip and its
+reason in its assertion summary — certificate expiry (skipped identically on
+kind), etcd and kubelet (k3s has no separately stoppable etcd and runs its
+kubelet inside the single k3s process), NetworkPolicy enforcement (k3s ships
+Flannel, which does not enforce it), and the metrics-server-absent capacity
+path (k3s ships metrics-server by default). A minor is listed here because the
+suite passes against it, and it stops being listed when the suite stops being
+run against it.
 
 The window moves forward as Kubernetes releases: a new minor is added after the
 matrix passes against it, and the oldest is dropped once it leaves upstream
 support. Adding or dropping a minor is a MINOR release, not a MAJOR one — the
 support window is a statement about what is tested, not a stable API.
 
-**What the matrix does not cover:** one distribution (kind), one architecture
-(amd64), one CNI (Calico), on `ubuntu-latest`. kubeagent uses only stable
-`client-go` APIs and should work on any conformant cluster in the window, but
-EKS, GKE, AKS, OpenShift, k3s, and RKE2 are not gated in CI. Cross-distribution
-coverage is on the roadmap.
+**What the matrix does not cover:** one architecture (amd64), on
+`ubuntu-latest`. kubeagent uses only stable `client-go` APIs and should work on
+any conformant cluster in the window, but EKS, GKE, AKS, OpenShift, and RKE2
+are **not gated in CI**, and nothing on this page claims they are — one
+distribution beyond kind is gated, not five. The CNI axis is no longer single
+either: Calico enforces NetworkPolicy on the kind cells, Flannel does not on
+the k3s cell, and NetworkPolicy enforcement is asserted only where a CNI
+enforces it.
+
+The harness itself can also be pointed at a cluster it did not create:
+`./chaos/run.sh --context <ctx>` runs the subset of scenarios whose blast
+radius is a namespace it creates and deletes (all but one, which only reads),
+refuses every scenario that would write a cluster-scoped object or touch a
+node, and names each skipped scenario and its reason in the assertion summary
+— so a partial run can never be mistaken for a full one. A second distribution
+is now gated nightly (k3s, alongside kind); portable mode remains the way to
+point the harness at a distribution the matrix does not gate — EKS, GKE, AKS,
+OpenShift, RKE2, or any cluster you already run.
 
 ## Deprecation policy
 
@@ -167,9 +187,10 @@ This is a safety contract rather than a compatibility one, but it is the one
 most worth being explicit about, and it does not change in 1.x.
 
 kubeagent is **read-only toward your cluster by default**. `scan`, `watch`,
-`gate`, `mcp`, `tui`, `rbac print`, `policy validate`, `schema`, `version`, and
-`completion` issue only `get`, `list`, and `watch` calls. There is no code path
-from a policy rule, an MCP tool call, or a model response into a write.
+`gate`, `mcp`, `tui`, `rbac print`, `policy validate`, `policy packs`,
+`schema`, `version`, and `completion` issue only `get`, `list`, and `watch`
+calls. There is no code path from a policy rule, an MCP tool call, or a model
+response into a write.
 
 Two documented exceptions:
 

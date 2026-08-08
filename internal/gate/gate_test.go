@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/imantaba/kubeagent/internal/baseline"
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/findings"
 	"github.com/imantaba/kubeagent/internal/inventory"
@@ -589,5 +590,27 @@ func TestUnevaluatedRuleBelowThresholdDoesNotOverrideABlindSpot(t *testing.T) {
 	}
 	if len(v.Failing) != 0 {
 		t.Errorf("Failing = %#v, want empty — the unevaluated rule is below --fail-on", v.Failing)
+	}
+}
+
+func TestDecideReportsADeviationButDoesNotFailByDefault(t *testing.T) {
+	rep := &baseline.Report{Deviations: []baseline.Deviation{
+		{Kind: "Deployment", Namespace: "prod", Name: "api", BaselineRate: 0.12, CurrentRate: 2.40, Pods: 3},
+	}}
+
+	v := Decide(scan.Result{}, Options{FailOn: findings.Critical, Baseline: rep})
+	if v.Verdict != "pass" || v.Code != CodePass {
+		t.Errorf("verdict = %s (%d), want pass — a deviation must never fail a gate at the default --fail-on", v.Verdict, v.Code)
+	}
+	if len(v.Reported) != 1 || v.Reported[0].Issue != "RestartRateDeviation" {
+		t.Errorf("Reported = %+v, want the deviation reported", v.Reported)
+	}
+
+	v = Decide(scan.Result{}, Options{FailOn: findings.Info, Baseline: rep})
+	if v.Verdict != "fail" || v.Code != CodeFail {
+		t.Errorf("verdict = %s (%d), want fail at --fail-on info", v.Verdict, v.Code)
+	}
+	if len(v.Failing) != 1 {
+		t.Errorf("Failing = %+v, want the deviation failing", v.Failing)
 	}
 }

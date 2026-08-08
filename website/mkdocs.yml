@@ -55,6 +55,7 @@ nav:
   - Quickstart: quickstart.md
   - Features:
       - Failure diagnostics: features/diagnostics.md
+      - Known issues reference: features/known-issues.md
       - Resource context: features/resource-context.md
       - Platform facts: features/platform-facts.md
       - Operator health: features/operators.md
@@ -75,7 +76,10 @@ nav:
       - Performance tuning: features/tuning.md
       - Shell completion: features/completion.md
       - Policy as code: features/policy.md
+      - Policy packs: features/policy-packs.md
       - In-cluster dashboard: features/dashboard.md
+      - Restart-rate baseline: features/baseline.md
+      - Fleet sweep: features/fleet.md
       - Claude Code plugin: features/claude-plugin.md
   - Install: install.md
   - Verifying a release: verify.md

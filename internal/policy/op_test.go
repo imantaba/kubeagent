@@ -73,7 +73,7 @@ func TestCheckOpGlobMatching(t *testing.T) {
 }
 
 // An annotation value can be hundreds of kilobytes and comes from whoever
-// wrote the workload. globMatch is quadratic in the worst case, so an
+// wrote the workload. glob.Match is quadratic in the worst case, so an
 // unbounded call would let that author stall a scan. Over the cap the slot is
 // skipped, never silently reported as matching or as not matching — both would
 // be a judgement kubeagent did not actually make.

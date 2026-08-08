@@ -3,7 +3,10 @@ package policypack
 import (
 	"io/fs"
 	"regexp"
+	"strings"
 	"testing"
+	"unicode"
+	"unicode/utf8"
 )
 
 // TestEveryEmbeddedPackIsRegistered closes the one gap no per-pack test can
@@ -132,6 +135,38 @@ func TestPackNameRulesRefuseHostileNames(t *testing.T) {
 	for _, name := range []string{"cost", "reliability", "security", "supply-chain", "cis1"} {
 		if !validPackName(name) {
 			t.Errorf("validPackName refuses %q, which is a well-formed pack name", name)
+		}
+	}
+}
+
+// TestPackSummaryShape enforces the rule Pack's own doc comment already states
+// — "one line for the listing: lowercase, no trailing period" — and which
+// nothing checked.
+//
+// TestEveryPackHasASummary in policypack_test.go covers non-emptiness and
+// stays as it is; this covers the shape. The multi-line case is the one that
+// breaks the listing outright, since runPolicyPacks prints one row per pack;
+// the other two are the house style a contributor is asked to match, and the
+// fix for either is to reword.
+func TestPackSummaryShape(t *testing.T) {
+	if len(packs) == 0 {
+		t.Fatal("no packs — every assertion below would pass vacuously")
+	}
+	for _, p := range packs {
+		if strings.ContainsAny(p.Summary, "\n\r") {
+			t.Errorf("pack %q has a multi-line summary — the listing prints one row per pack: %q", p.Name, p.Summary)
+		}
+		if strings.TrimSpace(p.Summary) != p.Summary {
+			t.Errorf("pack %q summary has leading or trailing whitespace, which the listing would render as a ragged column: %q", p.Name, p.Summary)
+		}
+		if strings.HasSuffix(p.Summary, ".") {
+			t.Errorf("pack %q summary ends in a period — it is a phrase in a row, not a sentence: %q", p.Name, p.Summary)
+		}
+		// An empty summary decodes to utf8.RuneError, which is not upper, so
+		// this reports nothing for it — non-emptiness is
+		// TestEveryPackHasASummary's job and stays there.
+		if r, _ := utf8.DecodeRuneInString(p.Summary); unicode.IsUpper(r) {
+			t.Errorf("pack %q summary begins with an uppercase letter — it is a phrase in a row, not a sentence: %q", p.Name, p.Summary)
 		}
 	}
 }

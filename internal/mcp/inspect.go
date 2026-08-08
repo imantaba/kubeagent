@@ -65,7 +65,11 @@ func registerInspect(s *mcpsdk.Server, cfg Config, base kubernetes.Interface, sw
 	tool := &mcpsdk.Tool{
 		Name: "kubeagent_inspect",
 		Description: "Inspect one workload or pod: its status, its pods, kubeagent's findings for it, and " +
-			"its recent Kubernetes events. Read-only: this never changes cluster state.",
+			"its recent Kubernetes events. Takes exactly seven kinds — pod, deployment, statefulset, " +
+			"daemonset, replicaset, job and cronjob — and no others. A pod answer describes the pod " +
+			"and names the controller that owns it in the owner field. found:false means no such " +
+			"object exists in that namespace; its events are still returned. Read-only: this never " +
+			"changes cluster state.",
 		InputSchema: &jsonschema.Schema{
 			Type: "object",
 			Properties: map[string]*jsonschema.Schema{

@@ -25,7 +25,10 @@ did not, each with a reason. A skipped check produced no finding because it neve
 ran.
 
 Seven checks are skipped on **every** `kubeagent_triage` call, and they fall
-into two groups.
+into two groups. A server started **without** `--logs` skips an eighth,
+`log-tails`. The shipped Claude Code plugin passes `--logs`, so seven is the
+count for a plugin install and eight for a hand-configured server that omits
+the flag.
 
 Five are not reachable through the MCP server at all — kubelet health,
 control-plane health, DNS health, credential lint, and disk usage. Only the

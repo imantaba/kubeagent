@@ -1,0 +1,198 @@
+# kubeagent cost pack.
+#
+# Every rule here is about a workload's claim on the cluster: what it reserves,
+# what it may grow to, and what it leaves behind. A cluster is provisioned for
+# the sum of its requests, so an unset request and an oversized one are both
+# money, in opposite directions.
+#
+# kubeagent has no prices. There is no billing data here, no instance types, no
+# node cost and no cloud API. The pack names shapes that usually cost money; it
+# cannot tell you what anything costs, and no rule here claims to.
+#
+# Every rule is `info` — not `warning`, which the other two packs use. A cost
+# finding is budget-dependent in a way a security finding is not: "privileged is
+# bad" holds in every cluster, "sixteen CPUs is too many" does not. So this pack
+# cannot fail a gate at any --fail-on above info. A pack that cannot know must
+# not accuse.
+#
+# The thresholds are set as outliers, generously enough that an ordinary
+# workload never trips one, and every threshold message asks you to confirm the
+# size is deliberate rather than calling it waste. An operator who disagrees
+# with a number runs `kubeagent policy packs --print cost > cost.yaml`, edits
+# it, and passes --policy cost.yaml.
+#
+# There are no paired rules here, unlike the security pack. Every operator
+# except `exists` and `notExists` skips an absent field, which is exactly what
+# a threshold wants: a workload that sets no CPU request is never accused of
+# setting a large one, and where the API defines a default — three successful
+# runs kept, one failed run kept, six retries — absence is already the safe
+# value.
+#
+# What this pack does not say, because the rule grammar has no cross-field
+# relation: a container that sets a limit and no request has its request
+# defaulted to the limit, reserving the ceiling rather than the expected use.
+# That is probably the largest single cost defect in a typical cluster and no
+# rule here can name it. A Deployment with no CPU or memory request is also
+# unsaid when this pack runs alone — that `exists` question belongs to the
+# reliability pack, deliberately, so the two do not duplicate.
+#
+# Rule ids are namespaced with the pack name so they cannot collide with an
+# operator's own rules when both are given.
+
+- id: cost.deploy-ephemeral-storage-limit
+  match:
+    kind: Deployment
+  assert:
+    path: spec.template.spec.containers[*].resources.limits.ephemeral-storage
+    op: exists
+  level: info
+  message: a container has no ephemeral-storage limit, so local disk use is bounded only by the node
+
+- id: cost.deploy-large-cpu-request
+  match:
+    kind: Deployment
+  assert:
+    path: spec.template.spec.containers[*].resources.requests.cpu
+    op: lte
+    values:
+      - "8"
+  level: info
+  message: a container reserves more than eight CPUs, so confirm the size is deliberate
+
+- id: cost.deploy-large-memory-request
+  match:
+    kind: Deployment
+  assert:
+    path: spec.template.spec.containers[*].resources.requests.memory
+    op: lte
+    values:
+      - "32Gi"
+  level: info
+  message: a container reserves more than thirty-two gibibytes of memory, so confirm the size is deliberate
+
+- id: cost.statefulset-cpu-request
+  match:
+    kind: StatefulSet
+  assert:
+    path: spec.template.spec.containers[*].resources.requests.cpu
+    op: exists
+  level: info
+  message: a container has no CPU request, so the scheduler cannot size it and the cluster is provisioned for a guess
+
+- id: cost.statefulset-memory-request
+  match:
+    kind: StatefulSet
+  assert:
+    path: spec.template.spec.containers[*].resources.requests.memory
+    op: exists
+  level: info
+  message: a container has no memory request, so the scheduler cannot size it and the cluster is provisioned for a guess
+
+- id: cost.daemonset-cpu-request
+  match:
+    kind: DaemonSet
+  assert:
+    path: spec.template.spec.containers[*].resources.requests.cpu
+    op: exists
+  level: info
+  message: a container has no CPU request, and this workload is scheduled once per node
+
+- id: cost.daemonset-memory-request
+  match:
+    kind: DaemonSet
+  assert:
+    path: spec.template.spec.containers[*].resources.requests.memory
+    op: exists
+  level: info
+  message: a container has no memory request, and this workload is scheduled once per node
+
+- id: cost.daemonset-ephemeral-storage-limit
+  match:
+    kind: DaemonSet
+  assert:
+    path: spec.template.spec.containers[*].resources.limits.ephemeral-storage
+    op: exists
+  level: info
+  message: a container has no ephemeral-storage limit, and this workload writes on every node
+
+- id: cost.cronjob-cpu-request
+  match:
+    kind: CronJob
+  assert:
+    path: spec.jobTemplate.spec.template.spec.containers[*].resources.requests.cpu
+    op: exists
+  level: info
+  message: a container has no CPU request, so every run is placed as if it were free
+
+- id: cost.cronjob-memory-request
+  match:
+    kind: CronJob
+  assert:
+    path: spec.jobTemplate.spec.template.spec.containers[*].resources.requests.memory
+    op: exists
+  level: info
+  message: a container has no memory request, so every run is placed as if it were free
+
+- id: cost.cronjob-successful-history
+  match:
+    kind: CronJob
+  assert:
+    path: spec.successfulJobsHistoryLimit
+    op: lte
+    values:
+      - "10"
+  level: info
+  message: the CronJob keeps more than ten successful runs, so completed Jobs and their pods accumulate
+
+- id: cost.cronjob-failed-history
+  match:
+    kind: CronJob
+  assert:
+    path: spec.failedJobsHistoryLimit
+    op: lte
+    values:
+      - "10"
+  level: info
+  message: the CronJob keeps more than ten failed runs, so completed Jobs and their pods accumulate
+
+- id: cost.cronjob-active-deadline
+  match:
+    kind: CronJob
+  assert:
+    path: spec.jobTemplate.spec.activeDeadlineSeconds
+    op: exists
+  level: info
+  message: the job template sets no activeDeadlineSeconds, so a run that hangs occupies its request until something else stops it
+
+- id: cost.job-backoff-limit
+  match:
+    kind: Job
+  assert:
+    path: spec.backoffLimit
+    op: lte
+    values:
+      - "10"
+  level: info
+  message: the Job retries more than ten times, so a run that cannot succeed still consumes its request on every attempt
+
+- id: cost.hpa-max-replicas
+  match:
+    kind: HorizontalPodAutoscaler
+  assert:
+    path: spec.maxReplicas
+    op: lte
+    values:
+      - "50"
+  level: info
+  message: the autoscaler may reach more than fifty replicas, so confirm the ceiling is deliberate
+
+- id: cost.pvc-large-storage
+  match:
+    kind: PersistentVolumeClaim
+  assert:
+    path: spec.resources.requests.storage
+    op: lte
+    values:
+      - "1Ti"
+  level: info
+  message: the claim reserves more than one tebibyte, so confirm the size is deliberate

@@ -11,15 +11,24 @@ stop when there is nothing left to learn.
 
 ## Step 0: preflight
 
-The plugin cannot ship kubeagent's binary. Before the first call, check it is
-installed:
+The plugin cannot ship kubeagent's binary, so the MCP server may not be
+running. Check **capability, not presence** — and check it in your own tool
+list first, which costs no command:
+
+**Is `kubeagent_triage` among the tools available to you?**
+
+If it is, the server is running and connected. Go to Step 1. Do not shell out
+to check anything.
+
+If it is not, no diagnosis is possible and every step below would fail. Shell
+out only to find out *why*, in this order.
 
 ```bash
 command -v kubeagent
 ```
 
-If that produces nothing, stop and tell the user to install it, offering all
-three paths:
+**Nothing printed** — kubeagent is not installed. Stop and give the user all
+three install paths:
 
 ```bash
 go install github.com/imantaba/kubeagent@latest
@@ -29,10 +38,29 @@ go install github.com/imantaba/kubeagent@latest
 kubectl krew install --manifest-url=https://github.com/imantaba/kubeagent/releases/latest/download/kubeagent.yaml
 ```
 
-Or download a prebuilt binary from
-<https://github.com/imantaba/kubeagent/releases>.
+Or a prebuilt binary from <https://github.com/imantaba/kubeagent/releases>.
 
-Do not attempt the diagnosis without it. The MCP tools will simply fail.
+**A path printed** — kubeagent is installed, but "installed" is not "recent
+enough to serve MCP". Ask the binary:
+
+```bash
+kubeagent mcp --help
+```
+
+**That failed** — the binary predates the MCP server, so the plugin's tools can
+never appear no matter how many times it is reloaded. Tell the user to
+**upgrade** it. The three commands above are the same ones, but the diagnosis
+is not: reinstalling is the fix, and being told to install something they
+already have is not.
+
+**Both succeeded** — the binary is fine and the server itself failed to start
+or connect. The usual causes are a kubeconfig Claude Code cannot read and an
+API server it cannot reach. Tell the user to check `/mcp` for the server's
+error and stop there.
+
+Do not attempt the diagnosis with the tools missing, and do not substitute
+`kubectl` for them. Reporting a cluster healthy because you could not look at
+it is the worst outcome available here.
 
 ## Step 1: always start with kubeagent_triage
 

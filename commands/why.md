@@ -8,7 +8,8 @@ Explain why this object is unhealthy: $ARGUMENTS
 Follow the `triaging-a-cluster` skill and the `reading-kubeagent-findings`
 skill.
 
-1. Preflight: confirm `kubeagent` is on PATH.
+1. Preflight: follow the `triaging-a-cluster` skill's Step 0 — confirm
+   `kubeagent_inspect` is in your tool list, and shell out only if it is not.
 2. Parse the argument into a kind and a name. Valid kinds are `pod`,
    `deployment`, `statefulset`, `daemonset`, `replicaset`, `job`, and
    `cronjob`. If the namespace was not given with `-n`, ask for it rather than

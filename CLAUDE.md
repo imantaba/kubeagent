@@ -434,14 +434,24 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
 - **Post-1.0 — curated policy packs, slice 1 has shipped (v1.9.0):** the second half
   of the known-issues item's "curated community detector library" ambition
   now has a first form — not new Go detector code, but `kubeagent policy
-  packs`: a kubeagent-curated `reliability` pack of fourteen rules and, since
-  slice 2 (v1.12.0), a `security` pack of twenty-three rules over workload pod
-  templates, both compiled into `internal/policypack` and evaluated by the
-  existing `--policy` engine via `scan --policy-pack`/`gate --policy-pack`.
+  packs`: a kubeagent-curated `reliability` pack of fourteen rules, since
+  slice 2 (v1.12.0) a `security` pack of twenty-three rules over workload pod
+  templates, and since slice 3 a `cost` pack of sixteen rules over seven
+  kinds — Deployment, StatefulSet, DaemonSet, CronJob, Job,
+  HorizontalPodAutoscaler and PersistentVolumeClaim — every one `info`. All
+  three are compiled into `internal/policypack` and evaluated by the existing
+  `--policy` engine via `scan --policy-pack`/`gate --policy-pack`.
   The `security` pack pairs an `info` "field unset" rule with a `warning`
   "field set wrong" rule for the four properties that are unsafe either way,
   because every operator except `exists` and `notExists` skips an absent
-  slot; where absence is the safe default a single value rule ships. It is
+  slot; where absence is the safe default a single value rule ships. The
+  `cost` pack ships no paired rules at all: the same skip means a threshold's
+  absence is already the safe value, and the one `exists` question it might
+  have duplicated — an unset CPU or memory request on a Deployment — is
+  already `reliability`'s, so `cost` asks it only for StatefulSet, DaemonSet
+  and CronJob. Separately, kubeagent has no prices — no billing data, no
+  instance types, no node cost, no cloud API — so `cost` names shapes that
+  usually cost money and claims nothing more. It is
   opt-in — omitting the
   flag renders the same bytes as before — moves no `schemaVersion` (`scan`
   stays 1.2, `gate` stays 1.1), and ships no `critical` rule, so adding it to
@@ -483,5 +493,5 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   `name` on a cluster summary and on an unreachable cluster, both
   `omitempty`).
   The remaining post-1.0 work is the rest of the curated-packs item's second
-  half — a cost pack, and a pack contributed by someone other
-  than kubeagent itself — plus other baseline dimensions.
+  half — a pack contributed by someone other than kubeagent itself — plus
+  other baseline dimensions.

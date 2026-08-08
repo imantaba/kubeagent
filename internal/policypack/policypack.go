@@ -47,6 +47,11 @@ type Pack struct {
 // packs is the registry, in name order.
 var packs = []Pack{
 	{
+		Name:    "cost",
+		Summary: "resource requests and limits, retention and history limits, autoscaler ceilings and claim sizes",
+		file:    "packs/cost.yaml",
+	},
+	{
 		Name:    "reliability",
 		Summary: "probes, resource requests and limits, replica counts, disruption budgets and image tags",
 		file:    "packs/reliability.yaml",

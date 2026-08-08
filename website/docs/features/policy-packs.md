@@ -9,7 +9,7 @@ no file of your own to author.
 kubeagent policy packs                       # list what ships
 kubeagent policy packs --print reliability   # print one, to read or fork
 kubeagent scan --policy-pack reliability     # evaluate it against a cluster
-kubeagent scan --policy-pack security        # or the other one, or both
+kubeagent scan --policy-pack security        # or another one, or all three
 
 # Nothing in a pack is critical, so a pack cannot fail a gate by default.
 # This is the explicit act that makes it block:
@@ -18,6 +18,7 @@ kubeagent gate --policy-pack security --fail-on warning
 
 ```text
 $ kubeagent policy packs
+  cost           16 rules — resource requests and limits, retention and history limits, autoscaler ceilings and claim sizes
   reliability    14 rules — probes, resource requests and limits, replica counts, disruption budgets and image tags
   security       23 rules — privileged containers, host namespaces and paths, root filesystems, capabilities and service account tokens
 
@@ -62,7 +63,7 @@ An unknown name is refused, naming what does exist:
 
 ```text
 $ kubeagent policy packs --print nope
-kubeagent: unknown policy pack "nope" (want reliability, security)
+kubeagent: unknown policy pack "nope" (want cost, reliability, security)
 ```
 
 ## Guarantees
@@ -100,7 +101,7 @@ critical`). **No rule in any shipped pack is `critical`** — each pack's own
 header comment says this is deliberate — so turning on `--policy-pack` in a
 pipeline that passed yesterday cannot make it fail today. A test over the
 whole registry keeps it that way, so it is a property of the pack format
-rather than of the two packs that happen to ship.
+rather than of the packs that happen to ship.
 
 Read that as "opt-in to blocking", not as "not meant to block." Raising
 `--fail-on` is the explicit, separate act:
@@ -233,10 +234,89 @@ A registry allowlist is also not a rule kubeagent can curate: it does not know
 which registry is yours, and a shipped rule naming one would be wrong for
 everyone else. `--print` and forking are the answer.
 
+## The cost pack — sixteen rules
+
+The `cost` pack is about a workload's claim on the cluster — what it
+reserves, what it may grow to, and what it leaves behind.
+
+Paths are shortened below: `T` is `spec.template.spec`. The two `CronJob`
+rules that read a container spell their path in full, because the pod
+template lives one level deeper; the three `CronJob` rules that read the
+CronJob's own fields need no shortening.
+
+| id | kind | assertion | level |
+| --- | --- | --- | --- |
+| `cost.deploy-ephemeral-storage-limit` | Deployment | `T.containers[*].resources.limits.ephemeral-storage` exists | info |
+| `cost.deploy-large-cpu-request` | Deployment | `T.containers[*].resources.requests.cpu` lte `8` | info |
+| `cost.deploy-large-memory-request` | Deployment | `T.containers[*].resources.requests.memory` lte `32Gi` | info |
+| `cost.statefulset-cpu-request` | StatefulSet | `T.containers[*].resources.requests.cpu` exists | info |
+| `cost.statefulset-memory-request` | StatefulSet | `T.containers[*].resources.requests.memory` exists | info |
+| `cost.daemonset-cpu-request` | DaemonSet | `T.containers[*].resources.requests.cpu` exists | info |
+| `cost.daemonset-memory-request` | DaemonSet | `T.containers[*].resources.requests.memory` exists | info |
+| `cost.daemonset-ephemeral-storage-limit` | DaemonSet | `T.containers[*].resources.limits.ephemeral-storage` exists | info |
+| `cost.cronjob-cpu-request` | CronJob | `spec.jobTemplate.spec.template.spec.containers[*].resources.requests.cpu` exists | info |
+| `cost.cronjob-memory-request` | CronJob | `spec.jobTemplate.spec.template.spec.containers[*].resources.requests.memory` exists | info |
+| `cost.cronjob-successful-history` | CronJob | `spec.successfulJobsHistoryLimit` lte `10` | info |
+| `cost.cronjob-failed-history` | CronJob | `spec.failedJobsHistoryLimit` lte `10` | info |
+| `cost.cronjob-active-deadline` | CronJob | `spec.jobTemplate.spec.activeDeadlineSeconds` exists | info |
+| `cost.job-backoff-limit` | Job | `spec.backoffLimit` lte `10` | info |
+| `cost.hpa-max-replicas` | HorizontalPodAutoscaler | `spec.maxReplicas` lte `50` | info |
+| `cost.pvc-large-storage` | PersistentVolumeClaim | `spec.resources.requests.storage` lte `1Ti` | info |
+
+### Why every cost rule is `info`
+
+`reliability` and `security` each carry `warning` rules; `cost` does not —
+all sixteen are `info`. The difference is not caution, it is scope:
+`security`'s "privileged is bad" holds in every cluster, but `cost`'s "eight
+CPUs is too many" does not — a request that is generous in one cluster is
+unremarkable in another, so a cost finding is budget-dependent in a way a
+security finding is not. A pack that cannot know a cluster's budget must not
+accuse it of overspending, only ask for confirmation. The consequence is
+mechanical: `cost` cannot fail a gate at any `--fail-on` above `info` — not
+even `--fail-on warning`, which is enough to make `security`'s value rules
+block.
+
+### What the cost pack cannot say
+
+Three real gaps. They are written down rather than worked around, for the
+same reason the security pack's five are: each comes from a property the rule
+grammar does not have, and adding one would be an engine change, not a pack
+change.
+
+1. **A limit set with no matching request is unsaid.** Kubernetes defaults an
+   unset request to the limit, so a container that sets a memory limit and no
+   memory request reserves the ceiling rather than the expected use — probably
+   the largest single cost defect in a typical cluster. The grammar has no
+   cross-field relation, so no rule here can compare a container's own request
+   to its own limit.
+2. **A Deployment with no CPU or memory request is unsaid when `cost` runs
+   alone.** That `exists` question is already `reliability.deploy-cpu-request`
+   and `reliability.deploy-memory-request`; `cost` asks it only for
+   StatefulSet, DaemonSet and CronJob, the three kinds `reliability` does not
+   cover it for, so `reliability` and `cost` never report the same gap under
+   two ids. Run both and the question is covered.
+3. **Absence across a whole namespace, and a comparison between two fields on
+   the same object, are both unexpressed.** A rule asserts over objects that
+   exist, so "this namespace has no `ResourceQuota`" cannot be a rule — there
+   is no object to fail against. The same grammar has no way to compare one
+   field to another on the same object, so "`minReplicas` equals
+   `maxReplicas`" cannot be a rule either.
+
+### kubeagent has no prices
+
+kubeagent has no prices. There is no billing data, no instance types, no node
+cost and no cloud API anywhere in the binary. The pack names shapes that
+usually cost money — an oversized request, an unbounded autoscaler ceiling, a
+retention window nobody trimmed — and claims nothing beyond that: it cannot
+tell you what anything costs, in any currency, and no rule here says it can.
+This is a third, separate claim from the two in **Guarantees**, above: it
+says nothing about whether a rule can write to the cluster or whether
+evaluating a pack calls a model.
+
 ## Two semantics a rule author must know
 
 These follow directly from how the [general policy evaluator](policy.md)
-works, and every rule in both shipped packs is written with them
+works, and every rule in every shipped pack is written with them
 in mind.
 
 **`[*]` produces one slot per element, and every slot must satisfy the
@@ -264,20 +344,21 @@ either rule alone to prove every image is pinned.
 
 A pack needs no grant beyond what a plain `kubeagent scan` — and `kubeagent
 rbac print` — already report. The kinds the shipped rules
-select (`Deployment`, `StatefulSet`, `DaemonSet`, `CronJob`,
-`PersistentVolumeClaim`) are all inside the policy engine's selectable kinds,
-which are pinned to the same core rules `rbacprofile` already grants. Turning
-on `--policy-pack` asks for no permission a plain `scan` did not
-already have.
+select (`Deployment`, `StatefulSet`, `DaemonSet`, `CronJob`, `Job`,
+`HorizontalPodAutoscaler`, `PersistentVolumeClaim`) are all inside the policy
+engine's selectable kinds, which are pinned to the same core rules
+`rbacprofile` already grants. Turning on `--policy-pack` asks for no
+permission a plain `scan` did not already have.
 
 It does add request volume, though: evaluating any policy — a pack included —
 builds its own dynamic client and lists every kind the loaded rules touch,
 independently of whatever `scan`'s typed collectors already read. For
 `reliability` that is six `List` calls, one each for the five kinds its rules
 select plus `PodDisruptionBudget` for the one relation rule. For `security` it
-is four, one per workload kind, since it has no relation rule. That extra,
-uncached read is how `--policy` has always evaluated a rule set; a pack does
-not change it. See [Least-privilege RBAC](rbac.md).
+is four, one per workload kind, since it has no relation rule. For `cost` it
+is seven, one per kind its rules select, since it has no relation rule
+either. That extra, uncached read is how `--policy` has always evaluated a
+rule set; a pack does not change it. See [Least-privilege RBAC](rbac.md).
 
 ## Forking a pack
 
@@ -307,10 +388,9 @@ running the fork instead of the original — before combining the two.
 
 Deliberately absent:
 
-- **A cost pack.** `reliability` and `security` ship; a cost pack does not.
-  Most cost claims are thresholds, and a threshold is cluster-specific, so
-  picking a curated default is a decision of its own rather than a third
-  transcription of this one.
+- **A pack contributed by someone other than kubeagent itself.**
+  `reliability`, `security` and `cost` are all kubeagent's own curation; a
+  pack authored outside the project does not exist yet.
 - **Operator-contributed packs at run time.** The registry is curated and
   compiled into the binary, the same as `known-issues`; there is no way to add
   a pack without a kubeagent release.

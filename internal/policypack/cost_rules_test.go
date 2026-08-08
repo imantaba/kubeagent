@@ -381,3 +381,36 @@ func TestCostThresholdsCompareQuantitiesNotStrings(t *testing.T) {
 		t.Errorf(`a request of 512Mi produced %d violations of a "lte 32Gi" rule, want 0 — the threshold is comparing bytes, not quantities`, len(got))
 	}
 }
+
+// TestCostShipsNoPairedRules pins the decision that the cost pack needs none of
+// the security pack's exists/value pairs, and pins the reason: every operator
+// except exists and notExists skips an absent slot, so a threshold fires only
+// on a value someone actually wrote. A workload that sets no CPU request is
+// never accused of setting a large one, and where the API defines a default —
+// three successful runs kept, one failed run kept, six retries — absence is
+// already the safe value.
+//
+// It is the inverse of the security pack's TestPairedRulesDivideTheWork. A
+// later edit that introduces a pair here has to delete this test, which makes
+// it a decision rather than a drift.
+func TestCostShipsNoPairedRules(t *testing.T) {
+	type slot struct{ kind, path string }
+	seen := map[slot]string{}
+
+	for _, r := range loadPack(t, "cost") {
+		s := slot{kind: r.Match.Kind, path: r.Assert.Path}
+		if first, ok := seen[s]; ok {
+			t.Errorf("%s and %s both assert %s on %s — the cost pack ships no paired rules", first, r.ID, r.Assert.Path, r.Match.Kind)
+			continue
+		}
+		seen[s] = r.ID
+	}
+
+	// The pack uses exactly two operators. A third would be a new claim shape
+	// that this test's reasoning has not been checked against.
+	for _, r := range loadPack(t, "cost") {
+		if r.Assert.Op != policy.OpExists && r.Assert.Op != policy.OpLte {
+			t.Errorf("rule %q uses %q — the cost pack asserts only exists and lte", r.ID, r.Assert.Op)
+		}
+	}
+}

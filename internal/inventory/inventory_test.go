@@ -769,7 +769,10 @@ func TestPodOwnersKeepsEveryPodOfAJob(t *testing.T) {
 }
 
 func TestPodRowFor_BuildsEveryRowFieldAndAssembleRoutesThroughIt(t *testing.T) {
-	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
+	// Deliberately far from any wall clock this test will run under: if
+	// PodRowFor ignored its now parameter and called time.Now(), Age would be
+	// hundreds of days rather than three, and the assertion below would say so.
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	p := pod("shop", "cart-0", nil, 4, "registry.example.com/cart:1.2.3")
 	p.CreationTimestamp = metav1.NewTime(now.Add(-72 * time.Hour))
 	p.Spec.NodeName = "node-a"
@@ -788,7 +791,7 @@ func TestPodRowFor_BuildsEveryRowFieldAndAssembleRoutesThroughIt(t *testing.T) {
 		Phase:       "Running",
 		Ready:       "0/1", // the pod helper's one container status is Ready: false
 		Restarts:    4,
-		LastRestart: "2026-08-08T11:00:00Z", // now - 1h, RFC3339 UTC
+		LastRestart: "2026-01-01T11:00:00Z", // now - 1h, RFC3339 UTC
 		Node:        "node-a",
 		IP:          "192.0.2.10",
 		Age:         "3d", // now - 72h

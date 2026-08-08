@@ -436,7 +436,7 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   now has a first form — not new Go detector code, but `kubeagent policy
   packs`: a kubeagent-curated `reliability` pack of fourteen rules, since
   slice 2 (v1.12.0) a `security` pack of twenty-three rules over workload pod
-  templates, and since slice 3 a `cost` pack of sixteen rules over seven
+  templates, and since slice 3 (v1.13.0) a `cost` pack of sixteen rules over seven
   kinds — Deployment, StatefulSet, DaemonSet, CronJob, Job,
   HorizontalPodAutoscaler and PersistentVolumeClaim — every one `info`. All
   three are compiled into `internal/policypack` and evaluated by the existing

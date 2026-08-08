@@ -17,8 +17,10 @@ Follow the `triaging-a-cluster` skill for the workflow and the
    `name` and its `kind` **lowercased** — a finding says `Pod`, the tool takes
    `pod`. Only `pod`, `deployment`, `statefulset`, `daemonset`, `replicaset`,
    `job` and `cronjob` are inspectable; a Service, Ingress, PVC,
-   PodDisruptionBudget, HPA or ResourceQuota finding is not, so report it from
-   its own `reason` and `detail`. `critical` and `warning` are the only two
+   PodDisruptionBudget, HPA, webhook configuration or ResourceQuota finding is
+   not, so report it from its own `reason` and `detail`. A pod answer names the
+   controller that owns it in `owner` — inspect that workload next if the
+   question is about the workload. `critical` and `warning` are the only two
    severities kubeagent emits.
 5. Do not call `kubeagent_advisory` unless a finding points at a specific
    section.

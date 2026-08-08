@@ -22,13 +22,61 @@ out to the CLI and parsing text.
 | Tool | Arguments | What it does |
 |------|-----------|---------------|
 | `kubeagent_triage` | `namespace` (optional), `context` (optional) | Runs the same scan `kubeagent scan` runs and returns a `healthy`/`degraded` verdict, the findings that support it, and a coverage block. |
-| `kubeagent_inspect` | `kind` (required — `pod`, `deployment`, `statefulset`, `daemonset`, `replicaset`, `job`, or `cronjob`), `namespace` (required), `name` (required), `context` (optional) | Drills into one workload or pod: its status, its pods, kubeagent's findings for it, and its recent Kubernetes events. |
+| `kubeagent_inspect` | `kind` (required — `pod`, `deployment`, `statefulset`, `daemonset`, `replicaset`, `job`, or `cronjob`), `namespace` (required), `name` (required), `context` (optional) | Drills into one workload or pod: its status, its pods, kubeagent's findings for it, and its recent Kubernetes events. A pod answer names the controller that owns it in `owner`. |
 | `kubeagent_advisory` | `sections` (required — any of `operators`, `drift`, `capacity`, `security`, `certificates`), `namespace` (optional), `context` (optional) | Runs kubeagent's opt-in advisory sections. Each section costs extra API reads, so it only runs what's requested. |
 | `list_contexts` | none | Lists the kubeconfig contexts the server may switch between. **Only registered when the server was started with `--allow-context-switch`.** |
 
 `context` on `kubeagent_triage`, `kubeagent_inspect`, and `kubeagent_advisory`
 is accepted only when the server was started with `--allow-context-switch`;
 otherwise a call naming one is rejected without ever reaching the cluster.
+
+## What `kubeagent_inspect` resolves
+
+`found: false` means one thing: no object of that kind, with that name, exists
+in that namespace in the snapshot the call collected. It is not a proxy for
+"healthy", and it is not a truncation artefact. Existence is answered against
+the raw objects the scan collected, not against the workload list the text
+report renders — that list is filtered for display, so it drops the healthy
+majority, which is right for a report an operator reads and wrong for a
+lookup.
+
+One display rule still shapes what a workload answer carries: a `job` or
+`cronjob` answer lists at most three pod rows, the same cap the text report
+uses, and the result carries no signal that rows were left out. The cap bounds
+the `pods` array, never the `found` verdict — and a pod it leaves out is still
+resolvable on its own, as `kind: pod` under its own name.
+
+A `found: false` result still carries the object's recent events. That is
+deliberate: "the object is gone but its events explain why" is exactly what a
+drill-down has to answer, and a deleted pod's events are often the whole story.
+
+A pod answer describes the pod, not its controller. `kind` is `Pod`, `status` is
+the pod's own phase, `pods` carries that one row, and `findings` are the pod's
+own. `desired` and `ready` are **absent** rather than `0` — a pod has no replica
+count, and absence must never read as zero. The controller that owns it is named
+in `owner`:
+
+```json
+{
+  "found": true,
+  "kind": "Pod",
+  "namespace": "payments",
+  "name": "worker-7d9c6f6b8-x2z4q",
+  "status": "Running",
+  "owner": "Deployment/worker",
+  "image": "registry.example.com/worker:1.4.0",
+  "pods": [ "…one row for this pod…" ],
+  "findings": [ "…this pod's own findings…" ],
+  "events": [ "…" ],
+  "coverage": { "…" }
+}
+```
+
+`owner` is the escalation pointer: `kubeagent_triage` reports a critical finding
+against a pod, and this is how a caller reaches the workload behind it without
+guessing its name. The key is absent for a bare pod — one with no controller,
+which must not claim an owner it does not have — and for every kind other than
+`pod`.
 
 ## The coverage block
 

@@ -100,10 +100,10 @@ func TestPodReadyAndIsReady(t *testing.T) {
 }
 
 func TestWorkloadStatusAndFlagged(t *testing.T) {
-	if workloadStatus(3, 3) != "Running" {
+	if WorkloadStatus(3, 3) != "Running" {
 		t.Error("3/3 should be Running")
 	}
-	if workloadStatus(1, 2) != "Degraded" {
+	if WorkloadStatus(1, 2) != "Degraded" {
 		t.Error("1/2 should be Degraded")
 	}
 	healthy := Workload{Ready: 3, Desired: 3}
@@ -118,7 +118,7 @@ func TestWorkloadStatusAndFlagged(t *testing.T) {
 	if !withFinding.Flagged() {
 		t.Error("a workload with a finding should be flagged even when ready==desired")
 	}
-	if workloadStatus(0, 0) != "Scaled Down" {
+	if WorkloadStatus(0, 0) != "Scaled Down" {
 		t.Error("0/0 should be Scaled Down, not Degraded")
 	}
 }
@@ -689,7 +689,7 @@ func TestPrioritize_CensusCountsFailedStatusAsBadEvenWhenFullyReady(t *testing.T
 }
 
 func TestPrioritize_CensusCountsScaledToZeroAsGood(t *testing.T) {
-	// Ready(0) < Desired(0) is false and workloadStatus(0, 0) is "Scaled Down",
+	// Ready(0) < Desired(0) is false and WorkloadStatus(0, 0) is "Scaled Down",
 	// not "Failed", so Flagged() is false and this workload counts as Good
 	// forever. That is the intended reading, not an oversight: an operator who
 	// deliberately scaled a Deployment to zero replicas is not experiencing an
@@ -765,5 +765,54 @@ func TestPodOwnersKeepsEveryPodOfAJob(t *testing.T) {
 	}
 	if got := len(PodOwners(in)); got != jobPodCap+4 {
 		t.Errorf("PodOwners returned %d entries, want %d — every pod must be resolved", got, jobPodCap+4)
+	}
+}
+
+func TestPodRowFor_BuildsEveryRowFieldAndAssembleRoutesThroughIt(t *testing.T) {
+	// Deliberately far from any wall clock this test will run under: if
+	// PodRowFor ignored its now parameter and called time.Now(), Age would be
+	// hundreds of days rather than three, and the assertion below would say so.
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	p := pod("shop", "cart-0", nil, 4, "registry.example.com/cart:1.2.3")
+	p.CreationTimestamp = metav1.NewTime(now.Add(-72 * time.Hour))
+	p.Spec.NodeName = "node-a"
+	p.Status.PodIP = "192.0.2.10"
+	p.Status.ContainerStatuses[0].LastTerminationState = corev1.ContainerState{
+		Terminated: &corev1.ContainerStateTerminated{
+			FinishedAt: metav1.NewTime(now.Add(-1 * time.Hour)),
+		},
+	}
+
+	// Every field spelled out rather than derived from Assemble. Assemble
+	// delegates to PodRowFor, so comparing the two would compare the function
+	// against itself and pass however wrong its body became.
+	want := PodRow{
+		Name:        "cart-0",
+		Phase:       "Running",
+		Ready:       "0/1", // the pod helper's one container status is Ready: false
+		Restarts:    4,
+		LastRestart: "2026-01-01T11:00:00Z", // now - 1h, RFC3339 UTC
+		Node:        "node-a",
+		IP:          "192.0.2.10",
+		Age:         "3d", // now - 72h
+		Image:       "registry.example.com/cart:1.2.3",
+	}
+
+	if got := PodRowFor(p, now); got != want {
+		t.Errorf("PodRowFor() = %+v\nwant            = %+v", got, want)
+	}
+
+	// Assemble must still route through it: a later edit that re-inlines the row
+	// literal would otherwise drift from PodRowFor silently. Age is the one field
+	// that cannot match — Assemble stamps it from the wall clock, not this test's
+	// fixed one.
+	ws := Assemble(Inputs{Pods: []corev1.Pod{p}}, nil)
+	if len(ws) != 1 || len(ws[0].Pods) != 1 {
+		t.Fatalf("Assemble() = %+v, want one workload carrying one pod row", ws)
+	}
+	wantRow, viaAssemble := want, ws[0].Pods[0]
+	wantRow.Age, viaAssemble.Age = "", ""
+	if wantRow != viaAssemble {
+		t.Errorf("Assemble's row = %+v\nwant           = %+v", viaAssemble, wantRow)
 	}
 }

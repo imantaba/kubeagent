@@ -98,12 +98,26 @@ accepts `pod`. Passing the finding's spelling through unchanged is rejected befo
 the call reaches the cluster.
 
 `kubeagent_inspect` takes seven kinds and no others: `pod`, `deployment`,
-`statefulset`, `daemonset`, `replicaset`, `job`, `cronjob`. Most of kubeagent's
-Service, Ingress, PVC, PodDisruptionBudget, HPA and quota findings are
-`warning`s, and **none of those six kinds can be inspected** — the call fails
-the schema. Report those findings from the `reason` and `detail` they already
-carry, and inspect the workload behind them if the user's question is about one.
-Do not skip them wholesale; that is how a real problem gets dismissed as noise.
+`statefulset`, `daemonset`, `replicaset`, `job`, `cronjob`.
+
+A `critical` finding names a `Pod`, and a pod is directly inspectable: pass
+`pod` with the finding's own `namespace` and `name`. The answer describes the
+pod — its phase, its single row, its own findings — and names the controller
+that owns it in `owner`, as `Deployment/web`. Inspect that workload next when
+the question is about the workload rather than the pod; you do not have to
+guess its name.
+
+`found: false` means no object of that kind with that name exists in that
+namespace. It is not a way of saying "healthy". The result still carries the
+object's recent events, which is often the whole story for a pod that has since
+been deleted.
+
+Most of kubeagent's Service, Ingress, PVC, PodDisruptionBudget, HPA, webhook
+configuration and ResourceQuota findings are `warning`s, and **none of those
+seven can be inspected** — the call fails the schema. Report those findings from
+the `reason` and `detail` they already carry, and inspect the workload behind
+them if the user's question is about one. Do not skip them wholesale; that is
+how a real problem gets dismissed as noise.
 
 Otherwise inspect a `warning` when it sits inside the scope the user asked about.
 

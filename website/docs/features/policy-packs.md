@@ -294,7 +294,7 @@ change.
    and `reliability.deploy-memory-request`; `cost` asks it only for
    StatefulSet, DaemonSet and CronJob, the three kinds `reliability` does not
    cover it for, so `reliability` and `cost` never report the same gap under
-   two ids. Run both and every kind is covered.
+   two ids. Run both and the question is covered.
 3. **Absence across a whole namespace, and a comparison between two fields on
    the same object, are both unexpressed.** A rule asserts over objects that
    exist, so "this namespace has no `ResourceQuota`" cannot be a rule — there

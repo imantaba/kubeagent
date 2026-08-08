@@ -768,11 +768,7 @@ func TestPodOwnersKeepsEveryPodOfAJob(t *testing.T) {
 	}
 }
 
-// TestPodRowFor_MatchesTheRowAssembleBuilds pins PodRowFor to Assemble's own
-// output. Assemble delegates to it, so a drift between the two would mean the
-// extraction changed a row's shape — which internal/report's golden output and
-// every kubeagent_inspect pod row both depend on.
-func TestPodRowFor_MatchesTheRowAssembleBuilds(t *testing.T) {
+func TestPodRowFor_BuildsEveryRowFieldAndAssembleRoutesThroughIt(t *testing.T) {
 	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
 	p := pod("shop", "cart-0", nil, 4, "registry.example.com/cart:1.2.3")
 	p.CreationTimestamp = metav1.NewTime(now.Add(-72 * time.Hour))
@@ -784,22 +780,36 @@ func TestPodRowFor_MatchesTheRowAssembleBuilds(t *testing.T) {
 		},
 	}
 
-	row := PodRowFor(p, now)
+	// Every field spelled out rather than derived from Assemble. Assemble
+	// delegates to PodRowFor, so comparing the two would compare the function
+	// against itself and pass however wrong its body became.
+	want := PodRow{
+		Name:        "cart-0",
+		Phase:       "Running",
+		Ready:       "0/1", // the pod helper's one container status is Ready: false
+		Restarts:    4,
+		LastRestart: "2026-08-08T11:00:00Z", // now - 1h, RFC3339 UTC
+		Node:        "node-a",
+		IP:          "192.0.2.10",
+		Age:         "3d", // now - 72h
+		Image:       "registry.example.com/cart:1.2.3",
+	}
 
+	if got := PodRowFor(p, now); got != want {
+		t.Errorf("PodRowFor() = %+v\nwant            = %+v", got, want)
+	}
+
+	// Assemble must still route through it: a later edit that re-inlines the row
+	// literal would otherwise drift from PodRowFor silently. Age is the one field
+	// that cannot match — Assemble stamps it from the wall clock, not this test's
+	// fixed one.
 	ws := Assemble(Inputs{Pods: []corev1.Pod{p}}, nil)
 	if len(ws) != 1 || len(ws[0].Pods) != 1 {
 		t.Fatalf("Assemble() = %+v, want one workload carrying one pod row", ws)
 	}
-	want := ws[0].Pods[0]
-
-	// Age is the one field that cannot match by construction: Assemble stamps
-	// it from the wall clock while PodRowFor was handed a fixed one. Check it
-	// against what the fixed clock implies, then compare every other field.
-	if row.Age != "3d" {
-		t.Errorf("Age = %q, want %q", row.Age, "3d")
-	}
-	row.Age, want.Age = "", ""
-	if row != want {
-		t.Errorf("PodRowFor() = %+v\nAssemble's row  = %+v", row, want)
+	got, viaAssemble := want, ws[0].Pods[0]
+	got.Age, viaAssemble.Age = "", ""
+	if got != viaAssemble {
+		t.Errorf("Assemble's row  = %+v\nPodRowFor's row = %+v", viaAssemble, got)
 	}
 }

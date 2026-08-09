@@ -37,7 +37,7 @@ NEEDS ATTENTION
 ✗ shop/reports  Deployment  0/1 Pending
     ↳ likely caused by PVC reports-data (ProvisioningFailed)
     image busybox:1.36
-    reports-6c9-fk2vw  0/1  Pending  restarts=0  worker-3    2h
+    reports-6c9-fk2vw  0/1  Pending  restarts=0  worker-3  —  2h
 ✗ shop/billing-worker  Deployment  0/1 Degraded  · 6 restarts, last 205d ago
     ↳ likely caused by node worker-2 (NotReady)
     image polinux/stress
@@ -51,7 +51,7 @@ NEEDS ATTENTION
     image busybox:1.36
     ⚠ Unschedulable: No node can schedule this pod (resources, taints, or affinity)
       ↳ 0/4 nodes are available: 1 node(s) had untolerated taint, 3 Insufficient cpu
-    report-cron-767-xghsp  0/1  Pending  restarts=0      20d
+    report-cron-767-xghsp  0/1  Pending  restarts=0  —  —  20d
 ✗ shop/cache  Deployment  1/1 Running  · 5 restarts, last 205d ago
     image redis:7-alpine
     ⚠ RestartLoop [medium]: Container keeps exiting with a non-OOM error and restarting
@@ -62,7 +62,7 @@ NEEDS ATTENTION
     image postgres:16
     ⚠ VolumeAttachError: A ReadWriteOnce volume is still attached to another node (Multi-Attach)
       ↳ Multi-Attach error for volume "pvc-data-0": volume is already used by pod(s) on node worker-1
-    data-0  0/1  Pending  restarts=0  worker-2    9d
+    data-0  0/1  Pending  restarts=0  worker-2  —  9d
 ✗ shop/checkout  Deployment  0/1 Degraded
     image checkout:2.1
     ⚠ ProbeFailure [medium]: the readiness probe keeps failing — the pod is kept out of Service endpoints

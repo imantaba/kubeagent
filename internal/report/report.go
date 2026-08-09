@@ -1142,7 +1142,7 @@ func printWorkload(wl inventory.Workload, now time.Time, suggest bool, w io.Writ
 			restarts += " (" + inventory.HumanSince(p.LastRestart, now) + ")"
 		}
 		if _, err := fmt.Fprintf(w, "    %s  %s  %s  restarts=%s  %s  %s  %s\n",
-			p.Name, p.Ready, p.Phase, restarts, p.Node, p.IP, p.Age); err != nil {
+			p.Name, p.Ready, p.Phase, restarts, orDash(p.Node), orDash(p.IP), p.Age); err != nil {
 			return err
 		}
 	}
@@ -1152,6 +1152,16 @@ func printWorkload(wl inventory.Workload, now time.Time, suggest bool, w io.Writ
 		}
 	}
 	return nil
+}
+
+// orDash renders an empty pod-row cell as a placeholder. A pod that has not
+// been scheduled has no node and no IP; without a placeholder those two cells
+// collapse into a run of spaces and the age reads as if it were the node.
+func orDash(s string) string {
+	if s == "" {
+		return "—"
+	}
+	return s
 }
 
 // controlPlaneRenders reports whether the CONTROL PLANE section would print.

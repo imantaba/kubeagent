@@ -2319,3 +2319,38 @@ func TestJSONReportCarriesBaselineWhenPresent(t *testing.T) {
 		t.Errorf("got %+v, want baseline.compared = 5: %s", got.Baseline, buf.String())
 	}
 }
+
+// A Pending pod has neither a node nor an IP. Rendering those cells as empty
+// strings collapses them into a run of spaces and the age reads as if it sat
+// in the node column, so each empty cell carries a placeholder instead.
+func TestPrintInventory_TextPodRowPlaceholderForEmptyNodeAndIP(t *testing.T) {
+	ws := []inventory.Workload{{
+		Namespace: "shop", Name: "web", Kind: "Deployment", Desired: 1, Ready: 0, Status: "Degraded",
+		Pods: []inventory.PodRow{{Name: "web-abc", Phase: "Pending", Ready: "0/1", Age: "18s"}},
+	}}
+	var buf bytes.Buffer
+	if err := PrintInventory(Input{Result: inventory.Result{Workloads: ws}}, "text", &buf); err != nil {
+		t.Fatalf("PrintInventory: %v", err)
+	}
+	want := "    web-abc  0/1  Pending  restarts=0  —  —  18s\n"
+	if !strings.Contains(buf.String(), want) {
+		t.Errorf("want pod row %q:\n%s", want, buf.String())
+	}
+}
+
+// A scheduled pod that has not been assigned an IP yet fills only the one
+// empty cell — the node it landed on still prints verbatim.
+func TestPrintInventory_TextPodRowPlaceholderOnlyForTheEmptyCell(t *testing.T) {
+	ws := []inventory.Workload{{
+		Namespace: "shop", Name: "data", Kind: "StatefulSet", Desired: 1, Ready: 0, Status: "Degraded",
+		Pods: []inventory.PodRow{{Name: "data-0", Phase: "Pending", Ready: "0/1", Node: "worker-2", Age: "9d"}},
+	}}
+	var buf bytes.Buffer
+	if err := PrintInventory(Input{Result: inventory.Result{Workloads: ws}}, "text", &buf); err != nil {
+		t.Fatalf("PrintInventory: %v", err)
+	}
+	want := "    data-0  0/1  Pending  restarts=0  worker-2  —  9d\n"
+	if !strings.Contains(buf.String(), want) {
+		t.Errorf("want pod row %q:\n%s", want, buf.String())
+	}
+}

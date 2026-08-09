@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A pod row's empty node and IP cells now carry a `—` placeholder.** An
+  unscheduled pod has neither, and two empty cells collapsed into a run of
+  spaces, so the age column read as if it were the node. Text renderer only;
+  the JSON keeps the empty strings.
+- **`diagnostics.md` said the image pull error is read "from the pod's
+  conditions".** It is read from the container status's `waiting.message`;
+  `status.conditions` is a different field and a reader who went looking there
+  would not have found the text.
+
 ## [1.14.0] - 2026-08-08
 
 ### Added

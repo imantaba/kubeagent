@@ -28,7 +28,7 @@ can spot crash loops without tailing logs manually.
 
 The image cannot be pulled — either the image tag does not exist or the node
 lacks credentials for the registry. `kubeagent` reports the image reference and
-the pull error from the pod's conditions.
+the pull error from the pod's container status.
 
 ### OOMKilled
 

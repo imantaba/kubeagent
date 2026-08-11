@@ -54,6 +54,20 @@ jobs:
             target: FuzzDashboardRender
           - package: ./internal/alert
             target: FuzzEncodePagerDuty
+          - package: ./internal/batchhealth
+            target: FuzzBatchAnnotate
+          - package: ./internal/rollouthealth
+            target: FuzzRolloutAnnotate
+          - package: ./internal/createhealth
+            target: FuzzCreateAnnotate
+          - package: ./internal/pvchealth
+            target: FuzzPVCAssess
+          - package: ./internal/hpahealth
+            target: FuzzHPAAssess
+          - package: ./internal/termhealth
+            target: FuzzTermAssess
+          - package: ./internal/clusterhealth
+            target: FuzzClusterAssess
     name: ${{ matrix.target }}
     steps:
       - uses: actions/checkout@v4

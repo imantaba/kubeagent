@@ -22,6 +22,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   issue kind is a string rather than an enum in every published schema, so no
   `schemaVersion` moves.
 
+- **Seven fuzz targets over the workload and cluster health packages.**
+  `batchhealth`, `rollouthealth`, `createhealth`, `pvchealth`, `hpahealth`,
+  `termhealth` and `clusterhealth` each gained a target that builds its own
+  objects from hostile bytes and asserts that no invalid UTF-8, control
+  character or formatting character reaches a finding — plus, per package, that
+  the issue kind stays inside its own closed vocabulary and that the entry point
+  is deterministic. These are the guard for the sanitize fixes below: a wrap
+  removed by a later edit fails a campaign instead of shipping. The nightly
+  matrix grows from fourteen pairs to twenty-one, and every seed corpus replays
+  on a plain `go test`, so a regression fails a pull request without waiting for
+  a campaign. Objects are drawn from the test-only `internal/fuzzgen`: a field
+  the API server validates is drawn from the alphabet it enforces, because
+  drawing it hostile would assert something false about production.
+
 ### Fixed
 
 - **`kubeagent_inspect` returned an event's text unsanitized.** The `type`,

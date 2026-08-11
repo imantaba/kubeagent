@@ -56,7 +56,23 @@ func initFinding(pod *corev1.Pod, cs corev1.ContainerStatus, idx, total int) *Fi
 			}
 		}
 	}
+	// The crash-loop arm matches two windows of the same fault. Waiting +
+	// CrashLoopBackOff is the kubelet's own verdict that the container is
+	// looping. Terminated with a non-zero exit is kubeagent inferring the loop
+	// from one sample, so it carries a threshold the Waiting arm does not: one
+	// prior restart is the price of inferring. The asymmetry is deliberate.
+	//
+	// State.Terminated only, never LastTerminationState — an init container that
+	// failed once and then succeeded is healthy, and its last termination still
+	// carries the error.
+	crashing := false
 	if w := cs.State.Waiting; w != nil && w.Reason == "CrashLoopBackOff" {
+		crashing = true
+	}
+	if t := cs.State.Terminated; t != nil && t.ExitCode != 0 && t.Reason != "OOMKilled" && cs.RestartCount >= 1 {
+		crashing = true
+	}
+	if crashing {
 		return &Finding{
 			Pod:       podName,
 			Issue:     "Init:CrashLoopBackOff",

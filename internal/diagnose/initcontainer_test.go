@@ -107,3 +107,70 @@ func TestInitContainerDetector_NoInitContainers(t *testing.T) {
 		t.Errorf("a pod with no init containers must not be flagged, got %+v", f)
 	}
 }
+
+// R11: an init container caught mid-cycle — terminated with an error rather than
+// waiting in back-off — is the same fault as the CrashLoopBackOff arm and must
+// produce the same finding, byte-identical evidence included.
+func TestInitContainerDetector_TerminatedError(t *testing.T) {
+	pod := podWithInit("shop", "orders",
+		corev1.ContainerStatus{Name: "wait-for-db", RestartCount: 4,
+			State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 1, Reason: "Error"}}},
+		corev1.ContainerStatus{Name: "migrate"},
+	)
+	f := InitContainerDetector{}.Detect(PodFacts{Pod: pod})
+	if f == nil {
+		t.Fatal("expected an Init:CrashLoopBackOff finding, got nil")
+	}
+	if f.Issue != "Init:CrashLoopBackOff" || f.Container != "wait-for-db" {
+		t.Errorf("Issue/Container = %q/%q, want Init:CrashLoopBackOff/wait-for-db", f.Issue, f.Container)
+	}
+	// Byte-identical to the Waiting arm: no exit code, no last-exit clause.
+	if want := `init container "wait-for-db" (1/2), restartCount=4`; f.Evidence != want {
+		t.Errorf("Evidence = %q, want %q", f.Evidence, want)
+	}
+}
+
+// R11 constraint 2: one prior restart is the price of inferring a loop the
+// kubelet has not declared. A first, still-running failure is not yet a loop.
+func TestInitContainerDetector_TerminatedErrorNoRestartYet(t *testing.T) {
+	pod := podWithInit("shop", "orders",
+		corev1.ContainerStatus{Name: "wait-for-db", RestartCount: 0,
+			State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 1, Reason: "Error"}}},
+	)
+	f := InitContainerDetector{}.Detect(PodFacts{Pod: pod})
+	if f != nil {
+		t.Fatalf("expected no finding at restartCount=0, got %+v", f)
+	}
+}
+
+// R11 constraint 1: State.Terminated only, never LastTerminationState. An init
+// container that failed once and then succeeded is healthy — flagging it would
+// break the no-overlap claim from the inside. Mandatory regression, kept even
+// though a current kubelet clears the field.
+func TestInitContainerDetector_FailedThenSucceeded(t *testing.T) {
+	pod := podWithInit("shop", "orders",
+		corev1.ContainerStatus{Name: "wait-for-db", RestartCount: 1,
+			State:                corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0, Reason: "Completed"}},
+			LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 1, Reason: "Error"}}},
+	)
+	f := InitContainerDetector{}.Detect(PodFacts{Pod: pod})
+	if f != nil {
+		t.Fatalf("expected no finding for a failed-then-succeeded init container, got %+v", f)
+	}
+}
+
+// R11: the OOM arm still wins over the new terminated-error arm. Ordering is
+// asserted, not assumed — an OOMKilled termination is also a non-zero exit.
+func TestInitContainerDetector_OOMBeatsTerminatedError(t *testing.T) {
+	pod := podWithInit("shop", "orders",
+		corev1.ContainerStatus{Name: "wait-for-db", RestartCount: 4,
+			State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 137, Reason: "OOMKilled"}}},
+	)
+	f := InitContainerDetector{}.Detect(PodFacts{Pod: pod})
+	if f == nil {
+		t.Fatal("expected an Init:OOMKilled finding, got nil")
+	}
+	if f.Issue != "Init:OOMKilled" {
+		t.Errorf("Issue = %q, want Init:OOMKilled", f.Issue)
+	}
+}

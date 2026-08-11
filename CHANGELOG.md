@@ -24,6 +24,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`scan --output text` caps a finding's evidence line at 500 characters.**
+  Nothing bounded the `↳` signal, and a container runtime repeats every layer of
+  a failure — the back-off preamble, the rpc error, the unpack failure, the
+  resolve failure, the bare image reference — so on a long registry path the
+  line ran past the screen and took the alignment of the rows below it with it.
+  A cut line now ends in `… (truncated)`, because a silently shortened error
+  reads as the whole error. The cut is on characters rather than bytes, so a
+  multi-byte character is never split. Real errors measure a few hundred
+  characters and still arrive whole; the cap bites only on the pathological.
+  `--output json` carries the full string — the cap is a terminal-layout
+  decision, and the machine surface is where an operator goes for the complete
+  cause. It narrows no claim: evidence quotes what the cluster said, and the
+  finding's own reason is untouched.
+
 - **A Deployment's first rollout no longer reports itself as a change.** A
   flagged Deployment still on revision 1 carried `changed: rollout to revision
   1, 4d ago` — but revision 1 is the Deployment's creation, so there was no

@@ -800,6 +800,17 @@ they differ:
 This is a text-rendering decision only. `--output json` still carries one
 finding per pod, each naming its own pod, and no count appears in it.
 
+A `↳` signal is capped at 500 characters in the text output, ending in
+`… (truncated)` when the cap bites. A container runtime repeats every layer of a
+failure — the back-off preamble, the rpc error, the unpack failure, the resolve
+failure, the bare image reference — and on a long registry path that line runs
+past the screen and takes the alignment of the rows below it with it. Real ones
+measure a few hundred characters and arrive whole; the cap is set where it bites
+only on the pathological. The cut is on characters, not bytes, so a multi-byte
+character is never split, and it is marked because a silently shortened error
+reads as the whole error. `--output json` carries the full string — it is the
+machine surface and the place to go for the complete cause.
+
 ### Agentic investigation (`--investigate`)
 
 `kubeagent scan --investigate` runs the full scan, then — for each finding —

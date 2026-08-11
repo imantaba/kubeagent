@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/imantaba/kubeagent/internal/baseline"
 	"github.com/imantaba/kubeagent/internal/certhealth"
@@ -1101,6 +1102,82 @@ func TestPrintInventory_JSONKeepsOneFindingPerPod(t *testing.T) {
 	}
 	if strings.Contains(out, "×") {
 		t.Errorf("the count is a text-renderer device and must not reach the JSON:\n%s", out)
+	}
+}
+
+// evidenceLine returns the rendered "↳" evidence line's text, without its
+// indent. The evidence indent is six spaces; a rollout's "changed:" line and a
+// --suggest step use four, so this cannot pick up the wrong one.
+func evidenceLine(t *testing.T, out string) string {
+	t.Helper()
+	const prefix = "      ↳ "
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, prefix) {
+			return strings.TrimPrefix(l, prefix)
+		}
+	}
+	t.Fatalf("no evidence line in:\n%s", out)
+	return ""
+}
+
+// A containerd pull error repeats every layer of the failure — the back-off
+// preamble, the rpc error, the unpack failure, the resolve failure and the bare
+// reference — and nothing bounded the composed line.
+func TestPrintInventory_TextCapsALongEvidenceLine(t *testing.T) {
+	out := renderFindings(t, false, crashFinding("web-abc", strings.Repeat("x", 600)))
+	got := evidenceLine(t, out)
+	if n := utf8.RuneCountInString(got); n != maxEvidence {
+		t.Errorf("want the line capped at %d runes, got %d", maxEvidence, n)
+	}
+	if !strings.HasSuffix(got, evidenceCut) {
+		t.Errorf("a cut line must say so; got the tail %q", got[len(got)-40:])
+	}
+}
+
+// The cap exists for pathological lines. Real pull errors run to a few hundred
+// characters and are the only place the true cause appears, so they must arrive
+// whole.
+func TestPrintInventory_TextLeavesARealisticEvidenceLineIntact(t *testing.T) {
+	ev := strings.Repeat("y", 313) // the length observed on a live cluster
+	out := renderFindings(t, false, crashFinding("web-abc", ev))
+	if got := evidenceLine(t, out); got != ev {
+		t.Errorf("a %d-rune line must render unchanged, got %d runes", len(ev), utf8.RuneCountInString(got))
+	}
+}
+
+// The budget counts runes, so a multi-byte character is never cut in half.
+func TestPrintInventory_TextCutsEvidenceAtARuneBoundary(t *testing.T) {
+	out := renderFindings(t, false, crashFinding("web-abc", strings.Repeat("é", 600)))
+	got := evidenceLine(t, out)
+	if !utf8.ValidString(got) {
+		t.Errorf("cut produced invalid UTF-8: %q", got)
+	}
+	if strings.ContainsRune(got, utf8.RuneError) {
+		t.Errorf("cut split a multi-byte rune: %q", got)
+	}
+	if n := utf8.RuneCountInString(got); n != maxEvidence {
+		t.Errorf("want %d runes, got %d", maxEvidence, n)
+	}
+}
+
+// The cap is a terminal-layout decision. JSON is the machine surface and the
+// place an operator goes for the complete cause, so it carries the whole string.
+func TestPrintInventory_JSONKeepsTheFullEvidence(t *testing.T) {
+	ev := strings.Repeat("z", 600)
+	var buf bytes.Buffer
+	in := Input{Result: inventory.Result{Workloads: []inventory.Workload{{
+		Namespace: "shop", Name: "web", Kind: "Deployment", Desired: 1, Ready: 0, Status: "Degraded",
+		Findings: []diagnose.Finding{crashFinding("web-abc", ev)},
+	}}}}
+	if err := PrintInventory(in, "json", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, ev) {
+		t.Errorf("JSON must carry the full evidence, not the capped line:\n%s", out)
+	}
+	if strings.Contains(out, evidenceCut) {
+		t.Errorf("the truncation marker is a text-renderer device and must not reach the JSON")
 	}
 }
 

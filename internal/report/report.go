@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/imantaba/kubeagent/internal/baseline"
 	"github.com/imantaba/kubeagent/internal/capacity"
@@ -1104,6 +1105,48 @@ func hasLine(lines []string, s string) bool {
 	return false
 }
 
+const (
+	// maxEvidence is the rune budget for one rendered evidence line, marker
+	// included, so the line is never longer than this.
+	//
+	// A container runtime repeats every layer of a failure — the back-off
+	// preamble, the rpc error, the unpack failure, the resolve failure, the bare
+	// reference — and on a long registry path that composed line runs past the
+	// screen and takes the alignment of the rows below it with it. Real ones
+	// measure a few hundred characters and are the only place the true cause
+	// appears, so the budget is set where it keeps them whole and bites only on
+	// the pathological.
+	//
+	// This is not safetext.MaxLine restated. That budget bounds each hostile
+	// value at the moment it enters kubeagent; this one bounds the line a
+	// detector composed, which may join several already-sanitized values and
+	// several of kubeagent's own words. Different units, so neither implies the
+	// other.
+	maxEvidence = 500
+
+	// evidenceCut ends a line the budget cut. A silently shortened error reads
+	// as the whole error, which is a claim the output would not be keeping.
+	evidenceCut = "… (truncated)"
+)
+
+// capEvidence fits s inside maxEvidence runes, marking the cut when it makes
+// one. Runes, not bytes, so a multi-byte character is never split.
+//
+// Text only: --output json is the machine surface and the place an operator
+// goes for the complete cause, so it carries the whole string. The cap is a
+// terminal-layout decision and narrows no claim — evidence quotes what the
+// cluster said, and the finding's own reason is untouched.
+func capEvidence(s string) string {
+	if len(s) <= maxEvidence { // bytes >= runes, so most lines end here
+		return s
+	}
+	r := []rune(s)
+	if len(r) <= maxEvidence {
+		return s
+	}
+	return string(r[:maxEvidence-utf8.RuneCountInString(evidenceCut)]) + evidenceCut
+}
+
 // renderFinding splits one finding's block into the three parts groupFindings
 // keys on. Concatenating head+"\n", evidence+"\n" and tail is exactly what the
 // renderer emitted before findings were grouped.
@@ -1114,7 +1157,7 @@ func renderFinding(f diagnose.Finding, suggest bool) (head, evidence, tail strin
 	}
 	head = fmt.Sprintf("    ⚠ %s%s: %s", f.Issue, tag, f.Reason)
 	if f.Evidence != "" && f.Evidence != f.Reason {
-		evidence = "      ↳ " + f.Evidence
+		evidence = "      ↳ " + capEvidence(f.Evidence)
 	}
 	var b strings.Builder
 	if f.Resources != nil {

@@ -91,6 +91,56 @@ func TestAnnotate_CronJobNewestCompleteOlderFailed(t *testing.T) {
 	}
 }
 
+// A flagged CronJob's header word says what happened. "Idle" is what assembly
+// computes from the active-job count, and it is true — the schedule is alive
+// and nothing is running right now — but printed above a JobFailed finding it
+// reads as "nothing to see". The word is set here, where the newest owned Job
+// has actually been judged, rather than in inventory.cronJobStatus, which runs
+// before any Job has been looked at.
+func TestAnnotate_CronJobStatusSaysTheLastRunFailed(t *testing.T) {
+	ws := []inventory.Workload{{Namespace: "shop", Name: "nightly", Kind: "CronJob", Status: "Idle"}}
+	j := failedJob("shop", "nightly-1", "BackoffLimitExceeded", "Job has reached the specified backoff limit")
+	j.OwnerReferences = cronOwner("nightly")
+	Annotate(ws, []batchv1.Job{j})
+	if len(ws[0].Findings) != 1 {
+		t.Fatalf("want 1 finding on the CronJob, got %d", len(ws[0].Findings))
+	}
+	if want := "Last run failed"; ws[0].Status != want {
+		t.Errorf("Status = %q, want %q", ws[0].Status, want)
+	}
+}
+
+// A CronJob mid-run keeps the word assembly computed. Only the branch that
+// attaches a finding rewrites the status, so Active(1) and Idle both survive
+// when nothing failed — the header never disagrees with the findings below it.
+func TestAnnotate_CronJobStatusUntouchedWithoutAFailure(t *testing.T) {
+	for _, status := range []string{"Idle", "Active(1)"} {
+		ws := []inventory.Workload{{Namespace: "shop", Name: "nightly", Kind: "CronJob", Status: status}}
+		ok := batchv1.Job{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "nightly-1", OwnerReferences: cronOwner("nightly"), CreationTimestamp: metav1.Unix(1000, 0)},
+			Status:     batchv1.JobStatus{Conditions: []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}},
+		}
+		Annotate(ws, []batchv1.Job{ok})
+		if ws[0].Status != status {
+			t.Errorf("Status = %q, want it left as %q", ws[0].Status, status)
+		}
+	}
+}
+
+// A standalone Job keeps its own word. "Failed" is exactly right for a Job —
+// it has no schedule to fire again — and rewriting it would flatten the
+// difference this wording exists to preserve.
+func TestAnnotate_JobStatusIsNotRewritten(t *testing.T) {
+	ws := []inventory.Workload{{Namespace: "shop", Name: "db-migrate", Kind: "Job", Status: "Failed"}}
+	Annotate(ws, []batchv1.Job{failedJob("shop", "db-migrate", "BackoffLimitExceeded", "Job has reached the specified backoff limit")})
+	if len(ws[0].Findings) != 1 {
+		t.Fatalf("want 1 finding, got %d", len(ws[0].Findings))
+	}
+	if ws[0].Status != "Failed" {
+		t.Errorf("Status = %q, want it left as Failed", ws[0].Status)
+	}
+}
+
 func TestAnnotate_CronJobNewestRunning(t *testing.T) {
 	ws := []inventory.Workload{{Namespace: "shop", Name: "nightly", Kind: "CronJob"}}
 	running := batchv1.Job{

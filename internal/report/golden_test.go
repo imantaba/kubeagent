@@ -279,7 +279,10 @@ func goldenWorkloads() []inventory.Workload {
 			Findings: []diagnose.Finding{{Pod: "shop/db-migrate", Issue: "JobFailed",
 				Reason:   "the Job failed — exhausted its retries (BackoffLimitExceeded)",
 				Evidence: "Job has reached the specified backoff limit"}}},
-		{Namespace: "shop", Name: "nightly-report", Kind: "CronJob", Desired: 0, Ready: 0, Status: "Idle", Schedule: "0 2 * * *",
+		// "Last run failed", not "Idle": batchhealth.Annotate rewrites the status on
+		// the same branch that attaches this finding, so a CronJob carrying one can
+		// no longer reach the renderer saying "Idle".
+		{Namespace: "shop", Name: "nightly-report", Kind: "CronJob", Desired: 0, Ready: 0, Status: "Last run failed", Schedule: "0 2 * * *",
 			Findings: []diagnose.Finding{{Pod: "shop/nightly-report", Issue: "JobFailed",
 				Reason:   "the most recent scheduled run failed — hit its deadline (DeadlineExceeded)",
 				Evidence: `job "nightly-report-28901234": Job was active longer than specified deadline`}}},

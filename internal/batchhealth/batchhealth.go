@@ -14,9 +14,28 @@ import (
 	"github.com/imantaba/kubeagent/internal/inventory"
 )
 
+// cronFailedStatus is the header word a flagged CronJob carries.
+//
+// Assembly computes "Idle" from the active-job count, before any Job has been
+// judged, and it is true — the schedule is alive and nothing is running right
+// now. Printed above a JobFailed finding it reads as "nothing to see", so the
+// word is rewritten here, on the one branch that has actually looked at the
+// newest owned Job. The same fact is not derived twice: inventory.cronJobStatus
+// would have to re-implement this walk to know it.
+//
+// Not "Failed", which is a standalone Job's word. A Job that failed is failed;
+// a CronJob is not — it will fire again on schedule — and this phrasing matches
+// the finding's own "the most recent scheduled run failed", so the header and
+// the line beneath it agree.
+//
+// It moves no schemaVersion: Workload.Status is published as a bare string with
+// no enum, so a new value is not a shape change.
+const cronFailedStatus = "Last run failed"
+
 // Annotate appends a "JobFailed" finding to each Job workload whose Job failed, and to
 // each CronJob workload whose newest owned Job failed. CronJob→Jobs are derived from the
-// Jobs' owner references, so the CronJob objects themselves are not needed.
+// Jobs' owner references, so the CronJob objects themselves are not needed. A flagged
+// CronJob's Status is rewritten to cronFailedStatus; a Job's is left alone.
 func Annotate(workloads []inventory.Workload, jobs []batchv1.Job) {
 	byKey := make(map[string]*batchv1.Job, len(jobs))
 	cronJobJobs := map[string][]*batchv1.Job{}
@@ -41,6 +60,7 @@ func Annotate(workloads []inventory.Workload, jobs []batchv1.Job) {
 			if latest := newestJob(cronJobJobs[wkey]); latest != nil {
 				if f := jobFailedFinding(*latest, wkey, true); f != nil {
 					w.Findings = append(w.Findings, *f)
+					w.Status = cronFailedStatus
 				}
 			}
 		}

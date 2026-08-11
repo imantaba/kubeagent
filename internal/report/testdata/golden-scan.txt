@@ -76,7 +76,7 @@ NEEDS ATTENTION
 ✗ shop/db-migrate  Job  Failed
     ⚠ JobFailed: the Job failed — exhausted its retries (BackoffLimitExceeded)
       ↳ Job has reached the specified backoff limit
-✗ shop/nightly-report  CronJob  Idle  (0 2 * * *)
+✗ shop/nightly-report  CronJob  Last run failed  (0 2 * * *)
     ⚠ JobFailed: the most recent scheduled run failed — hit its deadline (DeadlineExceeded)
       ↳ job "nightly-report-28901234": Job was active longer than specified deadline
 ✗ shop/storefront  Deployment  0/3 Degraded

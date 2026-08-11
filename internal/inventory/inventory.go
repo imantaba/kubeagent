@@ -36,7 +36,7 @@ type Workload struct {
 	Kind            string             `json:"kind"` // Deployment | StatefulSet | DaemonSet | ReplicaSet | Job | CronJob | Pod
 	Desired         int                `json:"desired"`
 	Ready           int                `json:"ready"`
-	Status          string             `json:"status"` // Running | Degraded | Scaled Down | Complete | Failed | Pending | Active(N) | Idle
+	Status          string             `json:"status"` // Running | Degraded | Scaled Down | Complete | Failed | Pending | Active(N) | Idle | Last run failed (set by batchhealth.Annotate)
 	Restarts        int                `json:"restarts"`
 	LastRestart     string             `json:"lastRestart,omitempty"`
 	Image           string             `json:"image"`

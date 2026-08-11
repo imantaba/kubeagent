@@ -24,6 +24,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A CronJob whose last run failed no longer reports itself as `Idle`.** The
+  status word is computed from the active-job count during assembly, before any
+  Job has been judged, so a CronJob with a `JobFailed` finding printed
+  `✗ shop/nightly-report  CronJob  Idle` — a true statement (the schedule is
+  alive and nothing is running right now) that reads as "nothing to see"
+  directly above the finding explaining that the most recent run failed. It now
+  says `Last run failed`, set on the one branch that has actually looked at the
+  newest owned Job. Not `Failed`, which is a standalone Job's word: a Job that
+  failed is failed, a CronJob will fire again on schedule. A CronJob mid-run or
+  with a clean newest run keeps the word assembly computed, and a Job's status
+  is untouched. `status` is published as a bare string with no enum in every
+  document that carries it, so no `schemaVersion` moves.
+
 - **`known-issues RolloutStuck` no longer calls an emitted kind unknown.**
   `RolloutStuck`, `FailedCreate` and `JobFailed` come from `scan`'s workload
   passes rather than from the pod detector set the reference documents, so

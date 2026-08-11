@@ -2,6 +2,8 @@ package hpahealth
 
 import (
 	"testing"
+	"unicode"
+	"unicode/utf8"
 
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
@@ -122,5 +124,46 @@ func TestAssess_MetricsBeatsCapped(t *testing.T) {
 		cond(autoscalingv2.ScalingLimited, corev1.ConditionTrue, "TooManyReplicas", "clamped"))
 	if is, _ := find(Assess([]autoscalingv2.HorizontalPodAutoscaler{h}), "mc"); is.Category != "metrics" {
 		t.Fatalf("metrics must win over capped, got %+v", is)
+	}
+}
+
+// hostileMsg carries what a condition message may contain but a terminal must
+// never receive: an ANSI escape that clears the screen, a right-to-left override
+// that reorders everything after it, a NUL, and an invalid UTF-8 byte.
+const hostileMsg = "no metrics\x1b[2J‮gnp\x00 for \xff target"
+
+// A condition message is free text the API server does not validate, and this
+// one lands in the Issue's Reason — which travels into findings.Finding.Reason,
+// gate's verdict JSON and the SARIF a pipeline uploads.
+func TestAssess_SanitizesAConditionMessage(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cond autoscalingv2.HorizontalPodAutoscalerCondition
+	}{
+		{"AbleToScale", cond(autoscalingv2.AbleToScale, corev1.ConditionFalse, "FailedGetScale", hostileMsg)},
+		{"ScalingActive", cond(autoscalingv2.ScalingActive, corev1.ConditionFalse, "FailedGetResourceMetric", hostileMsg)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Assess([]autoscalingv2.HorizontalPodAutoscaler{hpa("shop", "web", "Deployment", "web", 10, tc.cond)})
+			if len(got) != 1 {
+				t.Fatalf("want one issue, got %d", len(got))
+			}
+			assertSanitized(t, got[0].Reason)
+		})
+	}
+}
+
+// assertSanitized fails when s carries anything safetext.Line removes. It is
+// deliberately not "s == safetext.Line(raw)": the point is what reaches the
+// terminal, not which helper produced it.
+func assertSanitized(t *testing.T, s string) {
+	t.Helper()
+	if !utf8.ValidString(s) {
+		t.Errorf("invalid UTF-8 reached the reason: %q", s)
+	}
+	for _, r := range s {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			t.Errorf("control or formatting character %U reached the reason: %q", r, s)
+		}
 	}
 }

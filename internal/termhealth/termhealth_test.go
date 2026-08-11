@@ -3,6 +3,8 @@ package termhealth
 import (
 	"testing"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -116,4 +118,45 @@ func indexOf(s, sub string) int {
 		}
 	}
 	return -1
+}
+
+// hostileMsg carries what a condition message may contain but a terminal must
+// never receive: an ANSI escape that clears the screen, a right-to-left override
+// that reorders everything after it, a NUL, and an invalid UTF-8 byte.
+const hostileMsg = "content has finalizers\x1b[2J‮gnp\x00 remaining\xff"
+
+// A namespace condition's message is free text the API server does not validate,
+// and it lands in the Issue's Reason — which travels into findings.Finding.Reason,
+// gate's verdict JSON and the SARIF a pipeline uploads.
+func TestAssess_SanitizesANamespaceConditionMessage(t *testing.T) {
+	ns := corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: "legacy-ns", DeletionTimestamp: delTime(3 * time.Hour)},
+		Status: corev1.NamespaceStatus{Conditions: []corev1.NamespaceCondition{
+			{Type: "NamespaceFinalizersRemaining", Status: corev1.ConditionTrue, Message: hostileMsg}}},
+	}
+	got := Assess([]corev1.Namespace{ns}, nil, nil, 2*time.Minute, now)
+	if len(got) != 1 {
+		t.Fatalf("want one issue, got %d", len(got))
+	}
+	assertSanitized(t, got[0].Reason)
+	// The condition is selected by type, so sanitizing the message changes no
+	// matching decision — the type must still name itself in the reason.
+	if !contains(got[0].Reason, "NamespaceFinalizersRemaining") {
+		t.Errorf("Reason = %q, want it to still name the condition type", got[0].Reason)
+	}
+}
+
+// assertSanitized fails when s carries anything safetext.Line removes. It is
+// deliberately not "s == safetext.Line(raw)": the point is what reaches the
+// terminal, not which helper produced it.
+func assertSanitized(t *testing.T, s string) {
+	t.Helper()
+	if !utf8.ValidString(s) {
+		t.Errorf("invalid UTF-8 reached the reason: %q", s)
+	}
+	for _, r := range s {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			t.Errorf("control or formatting character %U reached the reason: %q", r, s)
+		}
+	}
 }

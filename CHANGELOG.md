@@ -22,6 +22,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   issue kind is a string rather than an enum in every published schema, so no
   `schemaVersion` moves.
 
+### Fixed
+
+- **Three condition messages reached a finding's reason unsanitized.** A
+  HorizontalPodAutoscaler's `AbleToScale`/`ScalingActive` message, a Namespace's
+  termination condition message, and a Node's `NodeReady` reason *and* message
+  were read straight into the reason kubeagent prints. All four are free text
+  the API server does not validate, so a control character, an ANSI escape or a
+  right-to-left override placed in one of them travelled intact. A reason
+  travels further than a terminal: it is carried in `gate`'s verdict JSON and in
+  the SARIF a pipeline uploads. Each value now passes through
+  `internal/safetext.Line` at the point it first becomes a kubeagent value, per
+  the project's sanitize-at-ingress rule. Matching decisions are untouched and
+  still run on the raw value — the HPA's `TooManyReplicas` comparison, the
+  namespace condition's type, and the node condition's type and status.
+
+  One visible consequence: a multi-line `NodeReady` message used to be cut at
+  its first line, and now folds to one line with the breaks turned into spaces,
+  which is what every other kubeagent surface does. The row stays bounded at 120
+  characters, and the second line of a kubelet message is often where the cause
+  is.
+
 ### Changed
 
 - **`scan --output text` caps a finding's evidence line at 500 characters.**

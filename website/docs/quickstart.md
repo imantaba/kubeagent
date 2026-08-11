@@ -116,13 +116,11 @@ NEEDS ATTENTION
     ⚠ OOMKilled: Container exceeded its memory limit and was killed
       ↳ container "worker", exitCode=137
       resources: memory req=32Mi limit=64Mi · cpu req=unset limit=unset
-    ↳ changed: rollout to revision 1, 2m ago
     billing-worker-7c7df46f98-vbgd7  0/1  CrashLoopBackOff  restarts=4 (27s ago)  worker-2  10.244.1.2  2m
 ✗ shop/web  Deployment  0/1 Degraded  · 4 restarts, last 38s ago
     image busybox:1.36
     ⚠ CrashLoopBackOff: Container repeatedly crashes after starting
       ↳ container "web", restartCount=4
-    ↳ changed: rollout to revision 1, 2m ago
     web-5b85758b4c-8fskg  0/1  CrashLoopBackOff  restarts=4 (38s ago)  worker-1  10.244.2.2  2m
   ✗ shop/payments  NodePort  no ready endpoints
   ✗ shop/app-config  ConfigMap[AWS_SECRET_ACCESS_KEY]  AWS access key

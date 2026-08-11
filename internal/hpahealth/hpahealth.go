@@ -35,9 +35,18 @@ func Assess(hpas []autoscalingv2.HorizontalPodAutoscaler) []Issue {
 			out = append(out, Issue{
 				Namespace: h.Namespace,
 				Name:      h.Name,
-				Target:    h.Spec.ScaleTargetRef.Kind + "/" + h.Spec.ScaleTargetRef.Name,
-				Category:  cat,
-				Reason:    reason,
+				// The HPA's own namespace and name are DNS-1123 labels the API
+				// server validates, but its scale-target reference is not: kind
+				// and name are checked with IsPathSegmentName, which refuses
+				// only ".", "..", and a value containing "/" or "%". A control
+				// character, invalid UTF-8 and an unbounded length all pass, so
+				// this is where those two become kubeagent values. They are
+				// sanitized separately rather than after joining, so a long kind
+				// cannot push the name out of one line's budget.
+				Target: safetext.Line(h.Spec.ScaleTargetRef.Kind) + "/" +
+					safetext.Line(h.Spec.ScaleTargetRef.Name),
+				Category: cat,
+				Reason:   reason,
 			})
 		}
 	}

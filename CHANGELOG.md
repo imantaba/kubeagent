@@ -55,8 +55,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   characters, and the second line of a kubelet message is often where the cause
   is.
 
-- **Four workload findings carried the API's text into their evidence
-  unsanitized.** A failed Job's condition message (`batchhealth`), a
+- **Five message sites carried the API's text into a finding unsanitized.** A
+  failed Job's condition message (`batchhealth`), a
   Deployment's `ReplicaFailure` and `Progressing`/`ProgressDeadlineExceeded`
   condition messages (`rollouthealth`), a PersistentVolumeClaim's
   `ProvisioningFailed`/`FailedBinding` event message (`pvchealth`) and a
@@ -76,6 +76,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `FailedBinding`, and `createhealth`'s reason is one of six phrases the
   package writes itself, chosen by a classifier that reads the raw message and
   never echoes it.
+
+- **A HorizontalPodAutoscaler's scale-target reference reached the report
+  unsanitized.** An HPA issue names what the autoscaler targets, composed from
+  `spec.scaleTargetRef`'s kind and name. Neither is a DNS name: the API server
+  checks both with `IsPathSegmentName`, which refuses only `.`, `..`, and a
+  value containing `/` or `%` — a control character, invalid UTF-8 and an
+  unbounded length all pass it. The composed value is printed by the text
+  renderer and carried in `scan`'s JSON document, which is written to a file and
+  forwarded. Both halves now pass through `internal/safetext.Line`, separately
+  rather than after joining, so a long kind cannot push the name out of one
+  line's budget. This site was absent from the original sweep's table, which had
+  treated an object reference as validated; the HPA's own namespace and name
+  really are DNS-1123 labels and stay as they were read.
 
 ### Changed
 

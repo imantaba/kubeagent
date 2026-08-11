@@ -1,6 +1,7 @@
 package hpahealth
 
 import (
+	"strings"
 	"testing"
 	"unicode"
 	"unicode/utf8"
@@ -148,22 +149,43 @@ func TestAssess_SanitizesAConditionMessage(t *testing.T) {
 			if len(got) != 1 {
 				t.Fatalf("want one issue, got %d", len(got))
 			}
-			assertSanitized(t, got[0].Reason)
+			assertSanitized(t, "reason", got[0].Reason)
 		})
+	}
+}
+
+// An HPA's scale-target reference is not a DNS name. The API server validates
+// spec.scaleTargetRef.kind and .name with IsPathSegmentName, which refuses only
+// ".", "..", and a value containing "/" or "%" — a control character, invalid
+// UTF-8 and an unbounded length all pass it. The two are composed into the
+// Issue's Target, which the text renderer prints and scan's JSON document
+// carries, so this is the point at which they become kubeagent values.
+func TestAssess_SanitizesTheScaleTargetReference(t *testing.T) {
+	h := hpa("shop", "web", "Deploy\x1b[2Jment", "we\x00b\xff‮gnp", 10,
+		cond(autoscalingv2.AbleToScale, corev1.ConditionFalse, "FailedGetScale", "the scale target was not found"))
+	got := Assess([]autoscalingv2.HorizontalPodAutoscaler{h})
+	if len(got) != 1 {
+		t.Fatalf("want one issue, got %d", len(got))
+	}
+	assertSanitized(t, "target", got[0].Target)
+	// The two halves are sanitized separately, so the separator survives and a
+	// long kind cannot push the name out of one line's budget.
+	if !strings.Contains(got[0].Target, "/") {
+		t.Errorf("target = %q, want the kind and name still separated", got[0].Target)
 	}
 }
 
 // assertSanitized fails when s carries anything safetext.Line removes. It is
 // deliberately not "s == safetext.Line(raw)": the point is what reaches the
 // terminal, not which helper produced it.
-func assertSanitized(t *testing.T, s string) {
+func assertSanitized(t *testing.T, where, s string) {
 	t.Helper()
 	if !utf8.ValidString(s) {
-		t.Errorf("invalid UTF-8 reached the reason: %q", s)
+		t.Errorf("invalid UTF-8 reached the %s: %q", where, s)
 	}
 	for _, r := range s {
 		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
-			t.Errorf("control or formatting character %U reached the reason: %q", r, s)
+			t.Errorf("control or formatting character %U reached the %s: %q", r, where, s)
 		}
 	}
 }

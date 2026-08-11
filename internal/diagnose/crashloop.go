@@ -43,7 +43,7 @@ func (d CrashLoopDetector) Detect(facts PodFacts) *Finding {
 // the kubelet's own verdict, and this is evidence for it, not a second opinion.
 func (d CrashLoopDetector) evidence(cs corev1.ContainerStatus) string {
 	plain := fmt.Sprintf("container %q, restartCount=%d", cs.Name, cs.RestartCount)
-	if int(cs.RestartCount) < restartThreshold {
+	if int(cs.RestartCount) < RestartThreshold {
 		return plain
 	}
 	term := cs.LastTerminationState.Terminated

@@ -102,7 +102,7 @@ func TestCrashLoopDetector_EnrichmentChangesNothingElse(t *testing.T) {
 // The enrichment fires only when the container also satisfies RestartLoop's
 // durable conditions. Below the threshold there is no loop to describe yet.
 func TestCrashLoopDetector_NoEnrichmentBelowTheRestartThreshold(t *testing.T) {
-	f := CrashLoopDetector{Now: clNow}.Detect(PodFacts{Pod: backingOffPod(restartThreshold-1, 1, "Error", 27*time.Second)})
+	f := CrashLoopDetector{Now: clNow}.Detect(PodFacts{Pod: backingOffPod(RestartThreshold-1, 1, "Error", 27*time.Second)})
 	if f == nil {
 		t.Fatal("expected a finding, got nil")
 	}

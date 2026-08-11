@@ -24,6 +24,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`RolloutStuck` no longer flips on and off across scans of an unchanged
+  crash-looping Deployment.** The suppression gate in `internal/rollouthealth`
+  tested only whether the workload already carried a finding, which is a single
+  momentary sample: a crash-looping container is in `Waiting` only between
+  restart attempts, so `CrashLoopBackOff` matched on some scans and not others.
+  Forty consecutive scans of one unchanged Deployment reported `RolloutStuck` 32
+  times and `CrashLoopBackOff` 8 — and `issue` is what gate verdicts, SARIF
+  results, alert dedup keys and the watch daemon's `/issues` are keyed on, so a
+  CI gate could pass and fail alternately and an alert could re-fire as "new".
+  The gate now also asks whether any pod in the workload has restarted at least
+  `diagnose.RestartThreshold` times, a durable fact that holds across the whole
+  restart cycle. The threshold is read from where `RestartLoopDetector` defines
+  it rather than re-typed. No detector changed, no new cluster read, no new
+  RBAC.
+
 - **A `FailedCreate` caused by an admission webhook that could not be reached
   is now named as such.** `classifyCreateFailure` matched the literal
   `admission webhook`, which is what the API server writes when a webhook

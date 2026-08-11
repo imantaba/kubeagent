@@ -207,8 +207,17 @@ available. `kubeagent` checks two signals on the Deployment's conditions:
   controller level.
 
 The finding is surfaced **only when no pod-level detector already explains the
-failure** — zero redundancy. If `ImagePullBackOff` or `CrashLoopBackOff` already
-names the cause on the pods, `RolloutStuck` stays silent.
+failure** — zero redundancy. It stays silent when a pod-level detector has fired
+in that scan, **or** when a pod in the workload has restarted repeatedly (three
+or more times, the same threshold `RestartLoop` uses).
+
+The second half of that test is what makes the answer stable. A crash-looping
+container is only in `Waiting` between restart attempts, so `CrashLoopBackOff`
+matches on some scans and not others; a gate reading only the first half
+reported `RolloutStuck` on one sample and `CrashLoopBackOff` on the next for the
+same unchanged Deployment. The restart count is durable across the whole cycle.
+`ImagePullBackOff` never had this problem — an unpullable image parks the
+container in `Waiting` and keeps it there.
 
 Read-only, always-on, no new flag, metric, or RBAC. Example output:
 

@@ -17,9 +17,10 @@ import (
 )
 
 // Annotate appends a "RolloutStuck" finding to each flagged Deployment workload
-// that has no existing finding and whose Deployment status shows a stuck rollout.
-// It mutates the slice elements in place. Runs after createhealth.Annotate so a
-// lingering FailedCreate event wins the "no existing finding" gate.
+// whose Deployment status shows a stuck rollout, and which no pod-level cause
+// already explains — see restarting for the second half of that test. It mutates
+// the slice elements in place. Runs after createhealth.Annotate so a lingering
+// FailedCreate event wins the "no existing finding" gate.
 func Annotate(workloads []inventory.Workload, deployments []appsv1.Deployment) {
 	byName := make(map[string]*appsv1.Deployment, len(deployments))
 	for i := range deployments {
@@ -28,7 +29,7 @@ func Annotate(workloads []inventory.Workload, deployments []appsv1.Deployment) {
 	}
 	for i := range workloads {
 		w := &workloads[i]
-		if !w.Flagged() || w.Kind != "Deployment" || len(w.Findings) > 0 {
+		if !w.Flagged() || w.Kind != "Deployment" || len(w.Findings) > 0 || restarting(w) {
 			continue
 		}
 		dep, ok := byName[w.Namespace+"/"+w.Name]
@@ -44,6 +45,36 @@ func Annotate(workloads []inventory.Workload, deployments []appsv1.Deployment) {
 			})
 		}
 	}
+}
+
+// restarting reports whether any pod in the workload has restarted enough times
+// to be crash-looping rather than to have hit one bad moment.
+//
+// It sits beside the len(w.Findings) > 0 clause, not in place of it. That clause
+// is this package's zero-redundancy rule — RolloutStuck says nothing a pod-level
+// detector has already said — but it is evaluated against one momentary sample,
+// and a crash-looping container is only in Waiting between restart attempts.
+// Forty consecutive scans of one unchanged Deployment reported RolloutStuck 32
+// times and CrashLoopBackOff 8, so the issue kind that gate verdicts, SARIF
+// results, alert dedup keys and the watch daemon's /issues are keyed on depended
+// on which millisecond the scan landed in. The restart count is durable across
+// the whole cycle, so it answers the question the instant state cannot.
+//
+// The identical clause in internal/createhealth was replaced rather than
+// extended, and deliberately: there a workload with a pod finding is still
+// short of pods and the second cause is real, so suppressing it lost half the
+// story. Here the pod finding IS the cause, and a second finding for the same
+// thing is the redundancy this package exists to avoid.
+//
+// diagnose.RestartThreshold is read rather than re-typed so the number this
+// package uses and the one RestartLoopDetector uses cannot drift apart.
+func restarting(w *inventory.Workload) bool {
+	for _, p := range w.Pods {
+		if p.Restarts >= diagnose.RestartThreshold {
+			return true
+		}
+	}
+	return false
 }
 
 // stuckCondition returns the evidence string and true when the Deployment's

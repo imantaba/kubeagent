@@ -131,6 +131,81 @@ func TestAnnotate_SkipsWorkloadWithExistingFinding(t *testing.T) {
 	}
 }
 
+// A crash-looping container is only in Waiting between restart attempts; the
+// rest of the cycle it is Terminated or Running and no pod-level detector
+// matches. A gate reading that one momentary sample attached RolloutStuck in 32
+// of 40 consecutive scans of the same unchanged Deployment, and CrashLoopBackOff
+// in the other 8 — the reported issue kind depended on which millisecond the
+// scan landed in. The restart count is durable across the whole cycle, so it
+// answers the question the instant state cannot.
+func TestAnnotate_SkipsWorkloadWithARestartingPod(t *testing.T) {
+	w := degraded("shop", "api")
+	w.Pods = []inventory.PodRow{{Name: "api-7f9c-aaa", Phase: "Running", Restarts: diagnose.RestartThreshold}}
+	ws := []inventory.Workload{w}
+	ds := []appsv1.Deployment{deploy("shop", "api",
+		cond(appsv1.DeploymentProgressing, corev1.ConditionFalse, "ProgressDeadlineExceeded", deadlineMsg))}
+
+	Annotate(ws, ds)
+
+	if len(ws[0].Findings) != 0 {
+		t.Errorf("a workload whose pod is restarting repeatedly must not also be told its rollout is stuck, got %+v", ws[0].Findings)
+	}
+}
+
+// The threshold is a floor, not a tripwire: a pod that has restarted once or
+// twice is not crash-looping, and suppressing RolloutStuck for it would trade
+// the instability for silence on a genuinely wedged rollout.
+func TestAnnotate_FiresBelowTheRestartThreshold(t *testing.T) {
+	w := degraded("shop", "api")
+	w.Pods = []inventory.PodRow{{Name: "api-7f9c-aaa", Phase: "Running", Restarts: diagnose.RestartThreshold - 1}}
+	ws := []inventory.Workload{w}
+	ds := []appsv1.Deployment{deploy("shop", "api",
+		cond(appsv1.DeploymentProgressing, corev1.ConditionFalse, "ProgressDeadlineExceeded", deadlineMsg))}
+
+	Annotate(ws, ds)
+
+	if len(ws[0].Findings) != 1 || ws[0].Findings[0].Issue != "RolloutStuck" {
+		t.Errorf("want RolloutStuck below the restart threshold, got %+v", ws[0].Findings)
+	}
+}
+
+// One restarting pod is enough. A Deployment whose other replicas are healthy is
+// still a Deployment with a crash-looping pod, and the pod-level finding is the
+// one that names the cause.
+func TestAnnotate_OneRestartingPodAmongHealthyOnesSuppresses(t *testing.T) {
+	w := degraded("shop", "api")
+	w.Pods = []inventory.PodRow{
+		{Name: "api-7f9c-aaa", Phase: "Running", Restarts: 0},
+		{Name: "api-7f9c-bbb", Phase: "Running", Restarts: diagnose.RestartThreshold + 4},
+	}
+	ws := []inventory.Workload{w}
+	ds := []appsv1.Deployment{deploy("shop", "api",
+		cond(appsv1.DeploymentProgressing, corev1.ConditionFalse, "ProgressDeadlineExceeded", deadlineMsg))}
+
+	Annotate(ws, ds)
+
+	if len(ws[0].Findings) != 0 {
+		t.Errorf("want no finding when any pod is restarting repeatedly, got %+v", ws[0].Findings)
+	}
+}
+
+// The regression fixture from the campaign: the pod is Terminated — the phase in
+// which no pod-level detector matches — and carries a restart count above the
+// threshold. This is the exact sample that produced 32 of the 40 unstable runs.
+func TestAnnotate_TerminatedPodWithRestartsProducesNoRolloutStuck(t *testing.T) {
+	w := degraded("shop", "api")
+	w.Pods = []inventory.PodRow{{Name: "api-7f9c-aaa", Phase: "Terminated", Restarts: diagnose.RestartThreshold + 1}}
+	ws := []inventory.Workload{w}
+	ds := []appsv1.Deployment{deploy("shop", "api",
+		cond(appsv1.DeploymentProgressing, corev1.ConditionFalse, "ProgressDeadlineExceeded", deadlineMsg))}
+
+	Annotate(ws, ds)
+
+	if len(ws[0].Findings) != 0 {
+		t.Errorf("want no RolloutStuck for a Terminated pod with a restart history, got %+v", ws[0].Findings)
+	}
+}
+
 func TestAnnotate_SkipsNonDeploymentAndUnflagged(t *testing.T) {
 	// A flagged StatefulSet named like a stuck Deployment: the Kind gate must skip it
 	// even though a same-named Deployment with the stuck condition is present.

@@ -1253,8 +1253,13 @@ func printWorkload(wl inventory.Workload, now time.Time, suggest bool, w io.Writ
 		if p.LastRestart != "" {
 			restarts += " (" + inventory.HumanSince(p.LastRestart, now) + ")"
 		}
+		// State, not Phase: a row printing status.phase reads "Running" for a pod
+		// kubectl calls CrashLoopBackOff, and an operator holding both outputs has
+		// to work out which tool is wrong. inventory.PodRowFor computes State from
+		// the containers and leaves Phase carrying the raw phase for any consumer
+		// of the JSON that wants it.
 		if _, err := fmt.Fprintf(w, "    %s  %s  %s  restarts=%s  %s  %s  %s\n",
-			p.Name, p.Ready, p.Phase, restarts, orDash(p.Node), orDash(p.IP), p.Age); err != nil {
+			p.Name, p.Ready, p.State, restarts, orDash(p.Node), orDash(p.IP), p.Age); err != nil {
 			return err
 		}
 	}

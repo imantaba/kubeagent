@@ -49,7 +49,7 @@ is a choice, not an oversight:
 
 Every `schemaVersion` is `MAJOR.MINOR`. Every surface starts at `1.0`;
 `gate` is at `1.1` today, having gained one optional field; `scan` is at
-`1.2`, having gained two; `fleet` is at `1.2` too, having gained two
+`1.3`, having gained three; `fleet` is at `1.2`, having gained two
 optional `name` properties — and **the schema version is not the kubeagent
 release version** — a surface's number moves only when its own document's
 shape moves, so a new `scan` field does not disturb a script reading the

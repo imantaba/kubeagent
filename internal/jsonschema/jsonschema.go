@@ -25,7 +25,15 @@ type Schema = map[string]any
 // release version: a surface's version moves only when its own shape does, so a
 // new scan field does not disturb a CI pipeline reading the gate document.
 const (
-	ScanVersion     = "1.2"
+	// ScanVersion is `kubeagent scan --output json`. 1.1 added `policy`; 1.2
+	// added `baseline`; 1.3 added `state` on a pod row, the kubectl-style
+	// display value computed beside the raw `phase`, which is unchanged. All
+	// three are additive: every added property is omitempty and absent from
+	// `required`, so a document produced without them still validates against
+	// the older schema. `state` is omitempty for that reason and no other — it
+	// is set on every row of every real scan, but a property in `required` is a
+	// MAJOR change however new it is.
+	ScanVersion     = "1.3"
 	GateVersion     = "1.1"
 	RBACVersion     = "1.0"
 	WatchVersion    = "1.0"

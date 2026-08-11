@@ -44,7 +44,7 @@ func sampleWorkloads() []inventory.Workload {
 		Desired: 3, Ready: 3, Status: "Running", Restarts: 64, LastRestart: "2026-06-02T08:14:03Z",
 		Image: "rancher/rancher:v2.14.1",
 		Pods: []inventory.PodRow{
-			{Name: "rancher-64smq", Phase: "Running", Ready: "1/1", Restarts: 31, LastRestart: "2026-06-02T08:14:03Z", Node: "nova-worker-3", IP: "10.42.4.41", Age: "36d", Image: "rancher/rancher:v2.14.1"},
+			{Name: "rancher-64smq", Phase: "Running", State: "Running", Ready: "1/1", Restarts: 31, LastRestart: "2026-06-02T08:14:03Z", Node: "nova-worker-3", IP: "10.42.4.41", Age: "36d", Image: "rancher/rancher:v2.14.1"},
 		},
 	}}
 }
@@ -2517,7 +2517,7 @@ func TestJSONReportCarriesBaselineWhenPresent(t *testing.T) {
 func TestPrintInventory_TextPodRowPlaceholderForEmptyNodeAndIP(t *testing.T) {
 	ws := []inventory.Workload{{
 		Namespace: "shop", Name: "web", Kind: "Deployment", Desired: 1, Ready: 0, Status: "Degraded",
-		Pods: []inventory.PodRow{{Name: "web-abc", Phase: "Pending", Ready: "0/1", Age: "18s"}},
+		Pods: []inventory.PodRow{{Name: "web-abc", Phase: "Pending", State: "Pending", Ready: "0/1", Age: "18s"}},
 	}}
 	var buf bytes.Buffer
 	if err := PrintInventory(Input{Result: inventory.Result{Workloads: ws}}, "text", &buf); err != nil {
@@ -2534,7 +2534,7 @@ func TestPrintInventory_TextPodRowPlaceholderForEmptyNodeAndIP(t *testing.T) {
 func TestPrintInventory_TextPodRowPlaceholderOnlyForTheEmptyCell(t *testing.T) {
 	ws := []inventory.Workload{{
 		Namespace: "shop", Name: "data", Kind: "StatefulSet", Desired: 1, Ready: 0, Status: "Degraded",
-		Pods: []inventory.PodRow{{Name: "data-0", Phase: "Pending", Ready: "0/1", Node: "worker-2", Age: "9d"}},
+		Pods: []inventory.PodRow{{Name: "data-0", Phase: "Pending", State: "Pending", Ready: "0/1", Node: "worker-2", Age: "9d"}},
 	}}
 	var buf bytes.Buffer
 	if err := PrintInventory(Input{Result: inventory.Result{Workloads: ws}}, "text", &buf); err != nil {

@@ -874,6 +874,9 @@
         },
         "restarts": {
           "type": "integer"
+        },
+        "state": {
+          "type": "string"
         }
       },
       "required": [

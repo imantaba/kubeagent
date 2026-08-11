@@ -14,12 +14,17 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/imantaba/kubeagent/internal/diagnose"
+	"github.com/imantaba/kubeagent/internal/safetext"
 )
 
 // PodRow is one pod under a workload.
 type PodRow struct {
-	Name        string `json:"name"`
+	Name string `json:"name"`
+	// Phase is status.phase verbatim: Pending, Running, Succeeded, Failed or
+	// Unknown. State is the kubectl-style display value computed beside it —
+	// see podState for why both exist and which one a report should print.
 	Phase       string `json:"phase"`
+	State       string `json:"state,omitempty"`
 	Ready       string `json:"ready"` // "1/1"
 	Restarts    int    `json:"restarts"`
 	LastRestart string `json:"lastRestart,omitempty"` // RFC3339 UTC, "" if none
@@ -170,11 +175,65 @@ func podImage(p corev1.Pod) string {
 func PodRowFor(p corev1.Pod, now time.Time) PodRow {
 	restarts, last := podRestarts(p)
 	return PodRow{
-		Name: p.Name, Phase: string(p.Status.Phase), Ready: podReady(p),
+		Name: p.Name, Phase: string(p.Status.Phase), State: podState(p), Ready: podReady(p),
 		Restarts: restarts, LastRestart: termTime(last),
 		Node: p.Spec.NodeName, IP: p.Status.PodIP,
 		Age: HumanAge(p.CreationTimestamp.Time, now), Image: podImage(p),
 	}
+}
+
+// podState renders what a pod is doing the way `kubectl get pods` does, from the
+// containers rather than from status.phase. The two disagree often enough to
+// matter: a pod whose container is in CrashLoopBackOff has phase Running, and
+// one whose container cannot pull its image has phase Pending, so an operator
+// reading a kubeagent row beside a kubectl row sees two different words for the
+// same pod and has to work out which tool is wrong. Neither is; they answer
+// different questions.
+//
+// The rule is deliberately smaller than kubectl's own column logic, which
+// kubeagent has no reason to reimplement in full. Anything outside it falls
+// through to the phase, which is what every row printed before this existed.
+//
+// A container's waiting and terminated reasons are API text the API server does
+// not validate — the kubelet writes them — so this is the point at which they
+// become kubeagent values, and safetext.Line is applied here rather than at any
+// renderer. The emptiness test that decides whether a reason is worth naming
+// runs on the *sanitized* value, not the raw one: a reason with no printable
+// content is nothing to say, and testing the raw value would render "Init:"
+// with nothing after it.
+func podState(p corev1.Pod) string {
+	if p.DeletionTimestamp != nil {
+		return "Terminating"
+	}
+	for _, cs := range p.Status.InitContainerStatuses {
+		if r := safetext.Line(containerReason(cs, true)); r != "" {
+			return "Init:" + r
+		}
+	}
+	for _, cs := range p.Status.ContainerStatuses {
+		if r := safetext.Line(containerReason(cs, false)); r != "" {
+			return r
+		}
+	}
+	return string(p.Status.Phase)
+}
+
+// containerReason returns the reason a container status is worth naming, or ""
+// when it is not. An init container is worth naming only when it failed —
+// exiting zero is how an init container succeeds, and the pod moves on — while a
+// main container's terminated reason is worth naming whatever its exit code, so
+// a finished pod reads "Completed" rather than "Succeeded".
+func containerReason(cs corev1.ContainerStatus, isInit bool) string {
+	if w := cs.State.Waiting; w != nil {
+		return w.Reason
+	}
+	if t := cs.State.Terminated; t != nil {
+		if isInit && t.ExitCode == 0 {
+			return ""
+		}
+		return t.Reason
+	}
+	return ""
 }
 
 // WorkloadStatus renders a ready-versus-desired pair as the one status

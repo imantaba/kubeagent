@@ -108,7 +108,7 @@ NEEDS ATTENTION
     ⚠ ImagePullBackOff: Bad image reference or registry authentication
       ↳ container "api": Back-off pulling image "nginx:9.9.9-does-not-exist": not found
     ↳ changed: rollout to revision 2, 1m ago · image nginx:1.27-alpine → nginx:9.9.9-does-not-exist
-    api-7cdbc7fdf7-htfzc  0/1  Pending  restarts=0  worker-1  10.244.2.4  1m
+    api-7cdbc7fdf7-htfzc  0/1  ImagePullBackOff  restarts=0  worker-1  10.244.2.4  1m
 ✗ shop/billing-worker  Deployment  0/1 Degraded  · 4 restarts, last 27s ago
     image polinux/stress
     ⚠ CrashLoopBackOff: Container repeatedly crashes after starting
@@ -117,13 +117,13 @@ NEEDS ATTENTION
       ↳ container "worker", exitCode=137
       resources: memory req=32Mi limit=64Mi · cpu req=unset limit=unset
     ↳ changed: rollout to revision 1, 2m ago
-    billing-worker-7c7df46f98-vbgd7  0/1  Running  restarts=4 (27s ago)  worker-2  10.244.1.2  2m
+    billing-worker-7c7df46f98-vbgd7  0/1  CrashLoopBackOff  restarts=4 (27s ago)  worker-2  10.244.1.2  2m
 ✗ shop/web  Deployment  0/1 Degraded  · 4 restarts, last 38s ago
     image busybox:1.36
     ⚠ CrashLoopBackOff: Container repeatedly crashes after starting
       ↳ container "web", restartCount=4
     ↳ changed: rollout to revision 1, 2m ago
-    web-5b85758b4c-8fskg  0/1  Running  restarts=4 (38s ago)  worker-1  10.244.2.2  2m
+    web-5b85758b4c-8fskg  0/1  CrashLoopBackOff  restarts=4 (38s ago)  worker-1  10.244.2.2  2m
   ✗ shop/payments  NodePort  no ready endpoints
   ✗ shop/app-config  ConfigMap[AWS_SECRET_ACCESS_KEY]  AWS access key
   ✗ ingress shop/storefront  shop.example.com/  backend Service payments:80 has no ready endpoints (likely 502/503)

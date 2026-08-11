@@ -106,6 +106,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A pod row now names what the pod is doing, the way `kubectl get pods` does.**
+  The third column printed `status.phase`, so a pod whose container was in
+  `CrashLoopBackOff` read `Running` and one that could not pull its image read
+  `Pending` — an operator holding a kubeagent row beside a `kubectl` row saw two
+  different words for the same pod and had to work out which tool was wrong.
+  Neither was; they answer different questions. `inventory.PodRowFor` now
+  computes a display value beside the raw phase — deleting is `Terminating`, a
+  failed or waiting init container is `Init:<reason>`, a main container's
+  waiting or terminated reason is that reason, and anything outside that rule
+  falls through to the phase, which is what every row printed before. The rule
+  is deliberately smaller than `kubectl`'s own column logic, which kubeagent has
+  no reason to reimplement in full. A container's reasons are API text the API
+  server does not validate, so they pass through `internal/safetext.Line` at
+  that one site. `scan --output json` gains `state` beside `phase` on a pod row
+  and moves to schema version **1.3**; `phase` is untouched and still carries
+  one of the five phase words verbatim, so nothing reading it changes. The
+  addition is additive — `state` is absent from `required`, and a document
+  written without it still validates against the older schema.
+
 - **`scan --output text` caps a finding's evidence line at 500 characters.**
   Nothing bounded the `↳` signal, and a container runtime repeats every layer of
   a failure — the back-off preamble, the rpc error, the unpack failure, the

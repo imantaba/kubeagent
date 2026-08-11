@@ -2,8 +2,11 @@ package inventory
 
 import (
 	"strconv"
+	"strings"
 	"testing"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -787,8 +790,11 @@ func TestPodRowFor_BuildsEveryRowFieldAndAssembleRoutesThroughIt(t *testing.T) {
 	// delegates to PodRowFor, so comparing the two would compare the function
 	// against itself and pass however wrong its body became.
 	want := PodRow{
-		Name:        "cart-0",
-		Phase:       "Running",
+		Name:  "cart-0",
+		Phase: "Running",
+		// The helper's container is neither waiting nor terminated, so the
+		// display rule has nothing to say and falls through to the phase.
+		State:       "Running",
 		Ready:       "0/1", // the pod helper's one container status is Ready: false
 		Restarts:    4,
 		LastRestart: "2026-01-01T11:00:00Z", // now - 1h, RFC3339 UTC
@@ -815,4 +821,174 @@ func TestPodRowFor_BuildsEveryRowFieldAndAssembleRoutesThroughIt(t *testing.T) {
 	if wantRow != viaAssemble {
 		t.Errorf("Assemble's row = %+v\nwant           = %+v", viaAssemble, wantRow)
 	}
+}
+
+// waiting sets a container status's waiting reason on the pod's main container,
+// replacing whatever the pod helper left there.
+func waiting(p corev1.Pod, reason string) corev1.Pod {
+	p.Status.ContainerStatuses[0].State = corev1.ContainerState{
+		Waiting: &corev1.ContainerStateWaiting{Reason: reason},
+	}
+	return p
+}
+
+// initStatus appends an init container and its status to a pod. The container
+// list matters as well as the status list: a pod row's ready count is over
+// spec.containers, and the init containers must not land there.
+func initStatus(p corev1.Pod, name string, st corev1.ContainerState) corev1.Pod {
+	p.Spec.InitContainers = append(p.Spec.InitContainers, corev1.Container{Name: name})
+	p.Status.InitContainerStatuses = append(p.Status.InitContainerStatuses,
+		corev1.ContainerStatus{Name: name, State: st})
+	return p
+}
+
+// TestPodRowFor_State covers the whole of the display rule, arm by arm, in the
+// order the rule applies them. The phase is asserted alongside every case: the
+// point of the field is that it sits *beside* status.phase rather than replacing
+// it, so a case where the two agree proves as much as one where they differ.
+func TestPodRowFor_State(t *testing.T) {
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	base := func() corev1.Pod { return pod("shop", "cart-0", nil, 0, "registry.example.com/cart:1") }
+
+	deleting := waiting(base(), "CrashLoopBackOff")
+	del := metav1.NewTime(now.Add(-time.Minute))
+	deleting.DeletionTimestamp = &del
+
+	// An init container still running while a later one waits: the rule reads the
+	// first init container that is *waiting with a reason* or *terminated
+	// non-zero*, not simply the first init container.
+	initSkipsRunning := initStatus(initStatus(base(), "warm",
+		corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}),
+		"migrate", corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff"}})
+
+	initTerminatedZero := initStatus(waiting(base(), "PodInitializing"), "migrate",
+		corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0, Reason: "Completed"}})
+
+	tests := []struct {
+		name      string
+		p         corev1.Pod
+		wantState string
+		wantPhase string
+	}{
+		{
+			name:      "a pod being deleted is Terminating whatever its containers say",
+			p:         deleting,
+			wantState: "Terminating",
+			wantPhase: "Running",
+		},
+		{
+			name: "an init container waiting with a reason wins over a main container's",
+			p: initStatus(waiting(base(), "CrashLoopBackOff"), "migrate",
+				corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff"}}),
+			wantState: "Init:ImagePullBackOff",
+			wantPhase: "Running",
+		},
+		{
+			name:      "a running init container is skipped, a later waiting one is not",
+			p:         initSkipsRunning,
+			wantState: "Init:ImagePullBackOff",
+			wantPhase: "Running",
+		},
+		{
+			name: "an init container that exited non-zero names its reason",
+			p: initStatus(base(), "migrate",
+				corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 1, Reason: "Error"}}),
+			wantState: "Init:Error",
+			wantPhase: "Running",
+		},
+		{
+			name:      "an init container that exited zero is not a state at all",
+			p:         initTerminatedZero,
+			wantState: "PodInitializing",
+			wantPhase: "Running",
+		},
+		{
+			name:      "a main container waiting with a reason",
+			p:         waiting(base(), "CrashLoopBackOff"),
+			wantState: "CrashLoopBackOff",
+			wantPhase: "Running",
+		},
+		{
+			name: "a main container terminated with a reason, whatever its exit code",
+			p: func() corev1.Pod {
+				p := base()
+				p.Status.Phase = corev1.PodSucceeded
+				p.Status.ContainerStatuses[0].State = corev1.ContainerState{
+					Terminated: &corev1.ContainerStateTerminated{ExitCode: 0, Reason: "Completed"},
+				}
+				return p
+			}(),
+			wantState: "Completed",
+			wantPhase: "Succeeded",
+		},
+		{
+			name:      "nothing to say — the state is the phase, which is today's behaviour",
+			p:         base(),
+			wantState: "Running",
+			wantPhase: "Running",
+		},
+		{
+			name: "a waiting container with no reason falls through rather than saying nothing",
+			p: func() corev1.Pod {
+				p := base()
+				p.Status.Phase = corev1.PodPending
+				p.Status.ContainerStatuses[0].State = corev1.ContainerState{
+					Waiting: &corev1.ContainerStateWaiting{},
+				}
+				return p
+			}(),
+			wantState: "Pending",
+			wantPhase: "Pending",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := PodRowFor(tt.p, now)
+			if got.State != tt.wantState {
+				t.Errorf("State = %q, want %q", got.State, tt.wantState)
+			}
+			if got.Phase != tt.wantPhase {
+				t.Errorf("Phase = %q, want %q — the raw phase must be left alone", got.Phase, tt.wantPhase)
+			}
+		})
+	}
+}
+
+// A container's waiting and terminated reasons are API text kubeagent does not
+// validate: the API server writes whatever the kubelet reported. The state is
+// built from them and is rendered into a report and carried in scan's JSON
+// document, so PodRowFor is the point at which they become kubeagent values.
+func TestPodRowFor_SanitizesTheStateReason(t *testing.T) {
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	main := waiting(pod("shop", "cart-0", nil, 0, "img"), "Crash\x1b[2JLoop\x00\xffBack‮Off")
+	if got := PodRowFor(main, now).State; !safe(got) {
+		t.Errorf("unsanitized main-container reason reached the state: %q", got)
+	}
+
+	init := initStatus(pod("shop", "cart-1", nil, 0, "img"), "migrate",
+		corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "Image\x1b[2JPull\x00\xffBack‮Off"}})
+	got := PodRowFor(init, now).State
+	if !safe(got) {
+		t.Errorf("unsanitized init-container reason reached the state: %q", got)
+	}
+	if !strings.HasPrefix(got, "Init:") {
+		t.Errorf("State = %q, want the Init: prefix kept", got)
+	}
+}
+
+// safe reports whether s carries nothing safetext.Line removes. Deliberately not
+// "s == safetext.Line(raw)": the point is what reaches the terminal, not which
+// helper produced it.
+func safe(s string) bool {
+	if !utf8.ValidString(s) {
+		return false
+	}
+	for _, r := range s {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return false
+		}
+	}
+	return true
 }

@@ -35,13 +35,28 @@ func TestDefaultDetectorsOrder(t *testing.T) {
 
 func TestDefaultDetectorsInjectsTheClock(t *testing.T) {
 	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+	// Both clock-reading detectors must receive the same instant. A detector
+	// left at the zero value still returns findings, so nothing else in the
+	// suite would notice the omission — only this check.
+	var sawRestart, sawCrash bool
 	for _, d := range DefaultDetectors(now) {
-		if rl, ok := d.(RestartLoopDetector); ok {
-			if !rl.Now.Equal(now) {
-				t.Errorf("RestartLoopDetector.Now = %v, want %v", rl.Now, now)
+		switch v := d.(type) {
+		case RestartLoopDetector:
+			sawRestart = true
+			if !v.Now.Equal(now) {
+				t.Errorf("RestartLoopDetector.Now = %v, want %v", v.Now, now)
 			}
-			return
+		case CrashLoopDetector:
+			sawCrash = true
+			if !v.Now.Equal(now) {
+				t.Errorf("CrashLoopDetector.Now = %v, want %v", v.Now, now)
+			}
 		}
 	}
-	t.Fatal("no RestartLoopDetector in the default set — the injected clock is unreachable")
+	if !sawRestart {
+		t.Error("no RestartLoopDetector in the default set — the injected clock is unreachable")
+	}
+	if !sawCrash {
+		t.Error("no CrashLoopDetector in the default set — the injected clock is unreachable")
+	}
 }

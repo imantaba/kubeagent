@@ -24,6 +24,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A `CrashLoopBackOff` finding now carries the last exit code, its reason and
+  how long ago it happened.** It printed the restart count and nothing else, so
+  a flapping pod gave up that detail roughly half the time: the fields are
+  durable, but only `RestartLoop` read them, and `RestartLoop` fires only while
+  the container is `Running`. An operator scanning the same unchanged pod twice
+  got the exit code once. The enrichment applies the same durable conditions
+  `RestartLoop` uses — at least three restarts, a recorded non-OOM error
+  termination — so an OOM kill, a graceful exit and a container below the
+  threshold all keep the plain wording. The issue kind, the reason sentence and
+  the absent confidence tag are unchanged: this is evidence for the kubelet's
+  own verdict, not a second opinion about it.
 - **An init container blocked by a missing ConfigMap or Secret is now reported
   as `Init:CreateContainerConfigError`.** It was reported as
   `CreateContainerConfigError` — the main-container kind — because

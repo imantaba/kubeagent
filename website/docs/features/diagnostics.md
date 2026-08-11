@@ -21,8 +21,15 @@ See [Known issues reference](known-issues.md).
 ### CrashLoopBackOff
 
 The container keeps restarting. Kubernetes backs off exponentially between
-attempts. `kubeagent` surfaces the exit code and last termination reason so you
-can spot crash loops without tailing logs manually.
+attempts. `kubeagent` always names the container and its restart count, and
+adds the last exit code, its reason and how long ago it happened once the
+container has restarted at least three times with a non-OOM error termination
+— so you can spot crash loops without tailing logs manually.
+
+Those are the same durable fields [RestartLoop](#restartloop) reads. A flapping
+pod alternates between the two kinds depending on which instant the scan
+samples — one is `Waiting`, the other `Running` — and reading the exit code
+from both means an operator does not have to run the scan twice to see it.
 
 ### ImagePullBackOff / ErrImagePull
 

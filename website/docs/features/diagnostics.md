@@ -11,11 +11,11 @@ are failing — covering the most common pod failure modes.
 
 ## Failure modes detected
 
-Thirteen of the failure modes below — the pod-level ones a detector reports as
+Fourteen of the failure modes below — the pod-level ones a detector reports as
 an issue kind — are also in the binary's own offline reference:
 `kubeagent known-issues <kind>` prints what one means, what usually causes it,
 and what to check, with no cluster and no network. Run it with no argument to
-see exactly which thirteen; the rest of this page keeps its prose only here.
+see exactly which fourteen; the rest of this page keeps its prose only here.
 See [Known issues reference](known-issues.md).
 
 ### CrashLoopBackOff
@@ -76,12 +76,14 @@ lists `Unhealthy` events (no extra permission beyond the scan's existing event l
 
 A pod stuck in its **init phase** because an init container is failing —
 `Init:CrashLoopBackOff` (crash-looping), `Init:ImagePullBackOff` /
-`Init:ErrImagePull` (its image can't be pulled), or `Init:OOMKilled` (killed for
-exceeding its memory limit). `kubeagent` reads `Status.InitContainerStatuses` — the
-slice the main-container crash detectors don't look at — and names which init
+`Init:ErrImagePull` (its image can't be pulled), `Init:OOMKilled` (killed for
+exceeding its memory limit), or `Init:CreateContainerConfigError` (a ConfigMap or
+Secret it references is missing, or a required key is absent).
+`kubeagent` reads `Status.InitContainerStatuses` — the
+slice no other detector looks at — and names which init
 container is failing, its position, and the reason — for a crash loop, `init container
-"wait-for-db" (1/2), restartCount=6` (an image-pull or OOM failure shows the pull
-message or `exitCode` instead). Init containers run sequentially and block the
+"wait-for-db" (1/2), restartCount=6` (an image-pull, OOM or config failure shows the
+kubelet's message or `exitCode` instead). Init containers run sequentially and block the
 pod, so at most one is failing; a pod whose inits all succeeded is left to the
 main-container detectors (no overlap). Read-only; reads pod status already collected
 (no new RBAC).
@@ -112,16 +114,19 @@ are matched directly. Read-only, always-on, no new RBAC.
 
 ### CreateContainerConfigError
 
-A container (main or init) that cannot start because a referenced ConfigMap or
+A **main container** that cannot start because a referenced ConfigMap or
 Secret is **missing from the cluster**, or a **required key is absent** from an
 existing object. Kubernetes surfaces this as a `CreateContainerConfigError`
 **waiting state** on the container — the container never reaches `Running`.
 `kubeagent` reads the kubelet's message directly from the pod's container status
 (`containerStatuses[*].state.waiting.message`) and names the missing object, for
-example: `container "worker": configmap "worker-config" not found`. It covers
-main and init containers. Unlike pod events (which expire after ~1 h), the
-waiting state persists as long as the container is stuck — read-only, no new
-RBAC.
+example: `container "worker": configmap "worker-config" not found`. The same
+failure on an **init container** is reported as its own kind,
+`Init:CreateContainerConfigError`, which additionally names that container's
+position in the init sequence — see
+[Init container failures](#init-container-failures). Unlike pod events (which
+expire after ~1 h), the waiting state persists as long as the container is
+stuck — read-only, no new RBAC.
 
 ### RolloutStuck (Deployment rollout wedged)
 

@@ -144,9 +144,9 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   nothing, so it lives in `internal/diagnose/knownissues_test.go`, where both
   the registry and the detectors are in scope: a `go/parser` walk over every
   `Issue:` literal, a fixture table driving all nine detectors to all
-  thirteen kinds, a reverse check, and a second parser walk that reads the
+  fourteen kinds, a reverse check, and a second parser walk that reads the
   *guards* on the two sites that build a kind from a runtime value. The
-  vocabulary is closed at thirteen because both apparently-dynamic sites —
+  vocabulary is closed at fourteen because both apparently-dynamic sites —
   `imagepull.go` and `initcontainer.go` — are guarded to two reasons each,
   and that fourth test is what makes widening either guard fail the suite
   instead of quietly admitting a fourteenth kind. It understands a closed
@@ -433,7 +433,7 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   (see [website/docs/features/fleet.md](website/docs/features/fleet.md)).
 - **Post-1.0 — the known-issues knowledge base, slice 1 has shipped (v1.8.0):**
   `kubeagent known-issues [kind]` prints kubeagent's own reference for the
-  thirteen kinds `diagnose.DefaultDetectors` can emit, from a curated Go
+  fourteen kinds `diagnose.DefaultDetectors` can emit, from a curated Go
   slice literal in `internal/knownissues` — no cluster, no kubeconfig, no
   network, no flags, and no model call. The vocabulary is closed, and four
   tests in `internal/diagnose` keep it closed: they fail the suite if a

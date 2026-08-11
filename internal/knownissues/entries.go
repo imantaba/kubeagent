@@ -117,6 +117,29 @@ var entries = []Entry{
 		Docs: "https://k8sproject.top/features/diagnostics/#init-container-failures",
 	},
 	{
+		Kind:    "Init:CreateContainerConfigError",
+		Summary: "the kubelet cannot build an init container from its spec",
+		Detail: "The configuration failure CreateContainerConfigError describes, on an init " +
+			"container instead of a main one. The consequence differs: the init sequence " +
+			"stops at that container, so nothing later runs and the main containers are " +
+			"never created — their status says only PodInitializing, which names neither " +
+			"the missing object nor the container that wanted it. The kubelet's waiting " +
+			"message on the init container is the whole diagnosis, and it persists for as " +
+			"long as the container is stuck.",
+		Causes: []string{
+			"Every CreateContainerConfigError cause — this is that failure on an init container.",
+			"An init step often reads a different Secret from the workload: a migration credential, a bootstrap token.",
+			"The ConfigMap or Secret is created by a main-container sidecar, or by a Job that has not run yet, so nothing exists when the init phase starts.",
+			"A key was renamed in the object and only the init container's secretKeyRef still names the old one.",
+		},
+		Checks: []string{
+			"kubectl -n <namespace> describe pod <pod> — the waiting message names the init container and the missing object",
+			"kubectl -n <namespace> get pod <pod> -o jsonpath='{.status.initContainerStatuses}' — which init container, and its position in the sequence",
+			"kubectl -n <namespace> get configmap,secret — whether the referenced object exists in this namespace at all",
+		},
+		Docs: "https://k8sproject.top/features/diagnostics/#init-container-failures",
+	},
+	{
 		Kind:    "Init:ErrImagePull",
 		Summary: "an init container's image could not be pulled",
 		Detail: "The pull failure is the one ErrImagePull describes, on an init container " +

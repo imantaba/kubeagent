@@ -27,21 +27,24 @@ func TestConfigErrorDetector_MainContainer(t *testing.T) {
 	}
 }
 
-func TestConfigErrorDetector_InitContainer(t *testing.T) {
+// R18: the init case belongs to InitContainerDetector, which reports it as
+// Init:CreateContainerConfigError with the (i/N) position marker. This detector
+// reads main containers only — the fallback it used to carry is gone, and the
+// doc comment's no-overlap claim is true again.
+func TestConfigErrorDetector_IgnoresInitContainers(t *testing.T) {
 	init := corev1.ContainerStatus{
 		Name:  "wait-db",
 		State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CreateContainerConfigError", Message: `secret "db-creds" not found`}},
 	}
-	f := ConfigErrorDetector{}.Detect(PodFacts{Pod: podWithInit("shop", "api", init)})
-	if f == nil {
-		t.Fatal("expected a finding for an init container, got nil")
-	}
-	if !strings.HasPrefix(f.Evidence, `init container "wait-db"`) {
-		t.Errorf("Evidence = %q, want it to start with init container", f.Evidence)
+	if f := (ConfigErrorDetector{}).Detect(PodFacts{Pod: podWithInit("shop", "api", init)}); f != nil {
+		t.Fatalf("an init container is not this detector's to report, got %+v", f)
 	}
 }
 
-func TestConfigErrorDetector_MainBeatsInit(t *testing.T) {
+// R18: with both failing, this detector still names the main container — it no
+// longer looks at the init slice at all. Which of the two a *scan* reports is
+// DefaultDetectors' business, and InitContainerDetector runs first there.
+func TestConfigErrorDetector_MainContainerOnly(t *testing.T) {
 	pod := podWaiting("shop", "api", "app", "CreateContainerConfigError", `configmap "main" not found`)
 	pod.Status.InitContainerStatuses = []corev1.ContainerStatus{{
 		Name:  "wait",
@@ -49,7 +52,10 @@ func TestConfigErrorDetector_MainBeatsInit(t *testing.T) {
 	}}
 	f := ConfigErrorDetector{}.Detect(PodFacts{Pod: pod})
 	if f == nil || f.Container != "app" {
-		t.Fatalf("main container must take precedence, got %+v", f)
+		t.Fatalf("main container must be the one named, got %+v", f)
+	}
+	if strings.Contains(f.Evidence, "init") {
+		t.Errorf("Evidence = %q, want no init-container text", f.Evidence)
 	}
 }
 

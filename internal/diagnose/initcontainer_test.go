@@ -174,3 +174,58 @@ func TestInitContainerDetector_OOMBeatsTerminatedError(t *testing.T) {
 		t.Errorf("Issue = %q, want Init:OOMKilled", f.Issue)
 	}
 }
+
+// R18: an init container whose ConfigMap or Secret is missing is an init-phase
+// failure like the other three, and is reported as its own kind rather than
+// folded into the main-container one. The evidence carries the (i/N) position
+// marker every other arm here carries.
+func TestInitContainerDetector_ConfigError(t *testing.T) {
+	pod := podWithInit("shop", "orders",
+		corev1.ContainerStatus{Name: "setup",
+			State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{
+				Reason: "CreateContainerConfigError", Message: `configmap "app-config" not found`}}},
+	)
+	f := InitContainerDetector{}.Detect(PodFacts{Pod: pod})
+	if f == nil {
+		t.Fatal("expected an Init:CreateContainerConfigError finding, got nil")
+	}
+	if f.Issue != "Init:CreateContainerConfigError" || f.Container != "setup" {
+		t.Errorf("Issue/Container = %q/%q, want Init:CreateContainerConfigError/setup", f.Issue, f.Container)
+	}
+	if want := `init container "setup" (1/1): configmap "app-config" not found`; f.Evidence != want {
+		t.Errorf("Evidence = %q, want %q", f.Evidence, want)
+	}
+	if f.Reason != "an init container's ConfigMap or Secret is missing, or a required key is absent — the pod cannot start" {
+		t.Errorf("Reason = %q", f.Reason)
+	}
+}
+
+// R18: the config-error arm sits between OOMKilled and CrashLoopBackOff. Both
+// neighbours are asserted rather than assumed — a container stuck in
+// CreateContainerConfigError can also carry a prior OOM termination, and a
+// waiting reason is only ever one string, so the crash-loop side is exercised
+// through the terminated arm the same status can satisfy.
+func TestInitContainerDetector_ConfigErrorPrecedence(t *testing.T) {
+	oom := podWithInit("shop", "orders",
+		corev1.ContainerStatus{Name: "setup", RestartCount: 2,
+			State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{
+				Reason: "CreateContainerConfigError", Message: `secret "db-creds" not found`}},
+			LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+				Reason: "OOMKilled", ExitCode: 137}}},
+	)
+	if f := (InitContainerDetector{}).Detect(PodFacts{Pod: oom}); f == nil || f.Issue != "Init:OOMKilled" {
+		t.Errorf("OOMKilled must win over the config-error arm, got %+v", f)
+	}
+
+	crash := podWithInit("shop", "orders",
+		corev1.ContainerStatus{Name: "setup", RestartCount: 3,
+			State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{
+				Reason: "CreateContainerConfigError", Message: `configmap "app-config" not found`}}},
+	)
+	// A waiting container has no State.Terminated, so the terminated crash arm
+	// cannot fire here; what this pins is that the restart count alone does not
+	// reclassify a config error as a crash loop.
+	if f := (InitContainerDetector{}).Detect(PodFacts{Pod: crash}); f == nil || f.Issue != "Init:CreateContainerConfigError" {
+		t.Errorf("config error must win over a bare restart count, got %+v", f)
+	}
+}

@@ -7,8 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **An init container blocked by a missing ConfigMap or Secret is now reported
+  as `Init:CreateContainerConfigError`.** It was reported as
+  `CreateContainerConfigError` — the main-container kind — because
+  `ConfigErrorDetector` read the init container status slice as a fallback. The
+  two are different diagnoses: an init failure blocks the whole pod, and nothing
+  else in it has run. The finding now names the init container's position in the
+  sequence (`init container "setup" (1/1): …`) the way every other init finding
+  does, and `ConfigErrorDetector` reads main containers only, which makes
+  `InitContainerDetector`'s no-overlap claim true again. The issue kind is a
+  string rather than an enum in every published schema, so no `schemaVersion`
+  moves.
+
 ### Fixed
 
+- **An init container caught terminated with an error is now reported as
+  crash-looping.** The detector matched only the kubelet's
+  `Waiting`/`CrashLoopBackOff` window, so the same pod produced a finding or
+  produced nothing depending on which moment the scan sampled. The terminated
+  window carries a threshold the waiting one does not — at least one prior
+  restart, the price of inferring a loop the kubelet has not declared — and a
+  container that failed once and then succeeded is still not flagged.
 - **A pod row's empty node and IP cells now carry a `—` placeholder.** An
   unscheduled pod has neither, and two empty cells collapsed into a run of
   spaces, so the age column read as if it were the node. Text renderer only;

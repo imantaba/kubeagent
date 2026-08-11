@@ -24,6 +24,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`FailedCreate` no longer hides behind a pod-level finding.** The check
+  skipped any workload that already carried a finding, so a workload that was
+  both quota-blocked and crash-looping reported whichever cause the scan
+  happened to catch — `FailedCreate` between restarts, `CrashLoopBackOff` during
+  the back-off, on the same unchanged workload seconds apart. Both findings now
+  attach. The guard is replaced by a replica gap rather than removed: a workload
+  is told its controller cannot create pods only while it is short of the pods
+  it wants, so a `FailedCreate` event still sitting in the cluster after the
+  quota was raised is not re-attached to a workload that has all its pods again.
+  Omitted pods count toward the gap, so a truncated pod list is not mistaken for
+  a creation failure. The identical clause in the rollout check is deliberately
+  untouched — there it is the documented zero-redundancy rule, not this hazard.
 - **`ProbeFailure` now names the heaviest failing probe, not the most recent
   one.** With a liveness and a readiness probe both failing, whichever event the
   kubelet wrote last decided the finding — so the same unchanged pod reported a

@@ -158,7 +158,18 @@ controller's `FailedCreate` events and names the cause on the workload — e.g.
 `⚠ FailedCreate: the controller cannot create pods — blocked by a ResourceQuota`,
 with the raw admission message as evidence. A Deployment's event lands on its
 ReplicaSet and is resolved back to the Deployment; StatefulSets and DaemonSets
-are matched directly. Read-only, always-on, no new RBAC.
+are matched directly.
+
+"No pods at all" is the motivating case, not the rule: the check fires whenever a
+workload has **fewer pods than it wants**, so a quota that allows one of two
+replicas is named too — and there the `FailedCreate` finding appears **beside** the
+pod-level finding for the one pod that did get created, because both causes are
+real and fixing either alone leaves the workload broken. A workload that has all
+its pods is never told its controller cannot create pods, even while a
+`FailedCreate` event from before the fix is still in the cluster (Kubernetes keeps
+events for about an hour).
+
+Read-only, always-on, no new RBAC.
 
 ### CreateContainerConfigError
 

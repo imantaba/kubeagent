@@ -84,8 +84,38 @@ func TestAnnotate_DaemonSetLimitRange(t *testing.T) {
 	}
 }
 
-func TestAnnotate_SkipsWorkloadWithExistingFinding(t *testing.T) {
-	ws := []inventory.Workload{{Namespace: "shop", Name: "api", Kind: "Deployment", Desired: 3, Ready: 0, Status: "Degraded",
+// A workload can be short of pods and have its existing pods failing at the
+// same time — a quota that allows one of two replicas, whose one pod then
+// crash-loops. Both causes are real and each is half the story, so both
+// findings attach. This package used to skip a workload that already carried a
+// finding, which made the answer depend on which phase of the back-off cycle
+// the scan happened to catch.
+func TestAnnotate_AttachesAlongsideAPodFinding(t *testing.T) {
+	ws := []inventory.Workload{{Namespace: "shop", Name: "api", Kind: "Deployment", Desired: 2, Ready: 0, Status: "Degraded",
+		Pods:     []inventory.PodRow{{Name: "api-7c9f-aaa"}},
+		Findings: []diagnose.Finding{{Issue: "CrashLoopBackOff"}}}}
+	rss := []appsv1.ReplicaSet{ownedRS("shop", "api-7c9f", "api")}
+	evs := []corev1.Event{fcEvent("ReplicaSet", "shop", "api-7c9f", quotaMsg, 100)}
+
+	Annotate(ws, rss, evs)
+
+	if len(ws[0].Findings) != 2 {
+		t.Fatalf("want both findings, got %+v", ws[0].Findings)
+	}
+	if ws[0].Findings[0].Issue != "CrashLoopBackOff" || ws[0].Findings[1].Issue != "FailedCreate" {
+		t.Errorf("findings = %q/%q, want CrashLoopBackOff then FailedCreate", ws[0].Findings[0].Issue, ws[0].Findings[1].Issue)
+	}
+}
+
+// An event outlives the condition that produced it — the API server keeps one
+// for about an hour. A Deployment whose quota was raised has all its pods back;
+// if those pods then fail for an unrelated reason, the stale FailedCreate event
+// is still in etcd and must not be re-attached. The replica gap, not the
+// event's age, is what answers "is the controller still failing to create
+// pods".
+func TestAnnotate_SkipsRecoveredWorkloadWithAStaleEvent(t *testing.T) {
+	ws := []inventory.Workload{{Namespace: "shop", Name: "api", Kind: "Deployment", Desired: 2, Ready: 0, Status: "Degraded",
+		Pods:     []inventory.PodRow{{Name: "api-7c9f-aaa"}, {Name: "api-7c9f-bbb"}},
 		Findings: []diagnose.Finding{{Issue: "CrashLoopBackOff"}}}}
 	rss := []appsv1.ReplicaSet{ownedRS("shop", "api-7c9f", "api")}
 	evs := []corev1.Event{fcEvent("ReplicaSet", "shop", "api-7c9f", quotaMsg, 100)}
@@ -93,7 +123,25 @@ func TestAnnotate_SkipsWorkloadWithExistingFinding(t *testing.T) {
 	Annotate(ws, rss, evs)
 
 	if len(ws[0].Findings) != 1 || ws[0].Findings[0].Issue != "CrashLoopBackOff" {
-		t.Fatalf("must not annotate a workload that already has a finding, got %+v", ws[0].Findings)
+		t.Fatalf("a workload with all its pods must not be told its controller cannot create pods, got %+v", ws[0].Findings)
+	}
+}
+
+// Assemble truncates a long pod list and records the remainder in PodsOmitted.
+// A gap test written as len(w.Pods) < w.Desired would read that truncation as a
+// creation failure and flag a workload that has every pod it asked for.
+func TestAnnotate_CountsOmittedPodsInTheGap(t *testing.T) {
+	ws := []inventory.Workload{{Namespace: "shop", Name: "api", Kind: "Deployment", Desired: 50, Ready: 0, Status: "Degraded",
+		Pods:        []inventory.PodRow{{Name: "api-7c9f-aaa"}, {Name: "api-7c9f-bbb"}, {Name: "api-7c9f-ccc"}},
+		PodsOmitted: 47,
+		Findings:    []diagnose.Finding{{Issue: "CrashLoopBackOff"}}}}
+	rss := []appsv1.ReplicaSet{ownedRS("shop", "api-7c9f", "api")}
+	evs := []corev1.Event{fcEvent("ReplicaSet", "shop", "api-7c9f", quotaMsg, 100)}
+
+	Annotate(ws, rss, evs)
+
+	if len(ws[0].Findings) != 1 || ws[0].Findings[0].Issue != "CrashLoopBackOff" {
+		t.Fatalf("a truncated pod list is not a replica gap, got %+v", ws[0].Findings)
 	}
 }
 

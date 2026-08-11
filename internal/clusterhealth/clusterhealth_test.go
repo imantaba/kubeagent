@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -155,10 +157,19 @@ func TestNodeHealth_NotReadyFallsBackWhenEmpty(t *testing.T) {
 	}
 }
 
-func TestNodeHealth_FirstLineOfMessageOnly(t *testing.T) {
+// A multi-line condition message reads as words on one line, not as a first
+// line with the rest discarded.
+//
+// This is a retraction: clusterhealth used to keep only the first line, which
+// was its own local answer to "a row must not wrap". Sanitizing the message at
+// ingress supersedes it — safetext.Line folds a newline to a space, which is
+// what every other kubeagent surface does with a multi-line message, and it is
+// the rune budget rather than the line break that now keeps the row short. The
+// second line of a kubelet message is often where the cause is.
+func TestNodeHealth_MultiLineMessageFoldsToOneLine(t *testing.T) {
 	_, issues := nodeHealth(notReadyNode("n1", "KubeletNotReady", "first line\nsecond line"))
-	if len(issues) != 1 || issues[0] != "NotReady: KubeletNotReady — first line" {
-		t.Errorf("want only the first line of the message, got %v", issues)
+	if len(issues) != 1 || issues[0] != "NotReady: KubeletNotReady — first line second line" {
+		t.Errorf("want the newline folded to a space, got %v", issues)
 	}
 }
 
@@ -365,5 +376,64 @@ func TestAssess_NoDownNodesWhenHealthy(t *testing.T) {
 	ch := Assess([]corev1.Node{node("a", true, nil, false)}, Heartbeat{}, nil, nil)
 	if len(ch.DownNodes) != 0 {
 		t.Errorf("healthy cluster must have no down nodes, got %+v", ch.DownNodes)
+	}
+}
+
+// hostileText carries what a node condition may contain but a terminal must
+// never receive: an ANSI escape that clears the screen, a right-to-left override
+// that reorders everything after it, a NUL, and an invalid UTF-8 byte.
+const hostileText = "runtime\x1b[2J‮gnp\x00 down\xff"
+
+// A NodeReady condition's reason and message are both free text the API server
+// does not validate, and both land in the NotReady issue string — which reaches
+// findings.Finding.Reason, gate's verdict JSON and the SARIF a pipeline uploads.
+// The rest of nodeHealth selects by condition type and status, so no matching
+// decision reads either value.
+func TestNodeHealth_SanitizesTheNodeReadyReasonAndMessage(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		reason, message string
+	}{
+		{"message", "KubeletNotReady", hostileText},
+		{"reason", hostileText, "container runtime network not ready"},
+		{"both", hostileText, hostileText},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, issues := nodeHealth(notReadyNode("n1", tc.reason, tc.message))
+			if len(issues) != 1 {
+				t.Fatalf("want one issue, got %v", issues)
+			}
+			assertSanitized(t, issues[0])
+		})
+	}
+}
+
+// safetext.Line folds a newline to a space, so trimLine's first-line split no
+// longer cuts a multi-line message short — but the 120-rune bound still holds,
+// which is what keeps a NotReady row one line.
+func TestNodeHealth_LongMessageStaysBounded(t *testing.T) {
+	_, issues := nodeHealth(notReadyNode("n1", "", strings.Repeat("x", 400)))
+	if len(issues) != 1 {
+		t.Fatalf("want one issue, got %v", issues)
+	}
+	// 120 runes of message plus the ellipsis trimLine adds when it cuts.
+	if want := len("NotReady: ") + 121; len([]rune(issues[0])) != want {
+		t.Errorf("issue is %d runes, want %d — the message bounded at 120 plus an ellipsis: %q",
+			len([]rune(issues[0])), want, issues[0])
+	}
+}
+
+// assertSanitized fails when s carries anything safetext.Line removes. It is
+// deliberately not "s == safetext.Line(raw)": the point is what reaches the
+// terminal, not which helper produced it.
+func assertSanitized(t *testing.T, s string) {
+	t.Helper()
+	if !utf8.ValidString(s) {
+		t.Errorf("invalid UTF-8 reached the issue: %q", s)
+	}
+	for _, r := range s {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			t.Errorf("control or formatting character %U reached the issue: %q", r, s)
+		}
 	}
 }

@@ -13,6 +13,8 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/imantaba/kubeagent/internal/safetext"
 )
 
 // Issue is one resource stuck Terminating past the threshold.
@@ -138,7 +140,10 @@ func nsReason(ns corev1.Namespace) string {
 	}
 	for _, t := range nsConditionOrder {
 		if c, ok := byType[t]; ok {
-			return string(t) + " — " + trimMsg(c.Message)
+			// The condition is selected by type, never by its message, so no
+			// matching decision reads this value — sanitizing it here is the
+			// point at which the API's free text becomes a kubeagent value.
+			return string(t) + " — " + trimMsg(safetext.Line(c.Message))
 		}
 	}
 	if len(ns.Spec.Finalizers) > 0 {

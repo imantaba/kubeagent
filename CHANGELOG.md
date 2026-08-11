@@ -7,6 +7,321 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **New detector: `VolumeMountError`.** A pod stuck at container creation
+  because a volume cannot be *mounted* now carries a finding. Previously only
+  `FailedAttachVolume` was matched (`VolumeAttachError`), so the most common
+  mount failure — a ConfigMap or Secret named as a **volume source** that does
+  not exist — produced no diagnosis anywhere: the kubelet raises
+  `CreateContainerConfigError` only for a reference consumed through
+  `env`/`envFrom`, and a volume that cannot be resolved never reaches container
+  creation. The detector reads the pod's `FailedMount` Warning events, names the
+  missing-object case specifically, and for every other mount failure claims
+  only that the mount did not complete. `VolumeAttachDetector` is unchanged. The
+  issue kind is a string rather than an enum in every published schema, so no
+  `schemaVersion` moves.
+
+- **Seven fuzz targets over the workload and cluster health packages.**
+  `batchhealth`, `rollouthealth`, `createhealth`, `pvchealth`, `hpahealth`,
+  `termhealth` and `clusterhealth` each gained a target that builds its own
+  objects from hostile bytes and asserts that no invalid UTF-8, control
+  character or formatting character reaches a finding — plus, per package, that
+  the issue kind stays inside its own closed vocabulary and that the entry point
+  is deterministic. These are the guard for the sanitize fixes below: a wrap
+  removed by a later edit fails a campaign instead of shipping. The nightly
+  matrix grows from fourteen pairs to twenty-one, and every seed corpus replays
+  on a plain `go test`, so a regression fails a pull request without waiting for
+  a campaign. Objects are drawn from the test-only `internal/fuzzgen`: a field
+  the API server validates is drawn from the alphabet it enforces, because
+  drawing it hostile would assert something false about production.
+
+### Fixed
+
+- **`kubeagent_inspect` returned an event's text unsanitized.** The `type`,
+  `reason` and `message` of every event in a tool result were copied straight
+  from the API object, and all three are free text the API server does not
+  validate. This is the one place in the sweep where the bytes leave the
+  operator's own terminal: a tool result is forwarded verbatim to a client that
+  renders it however it likes, and JSON encoding is not sanitizing — it escapes
+  an ESC byte and passes U+202E RIGHT-TO-LEFT OVERRIDE through unchanged. All
+  three now go through `internal/safetext.Line`. Event ordering is unaffected:
+  it already ran before this point, on the raw values. `internal/mcp`'s import
+  wall is untouched — `safetext` is neither `remediate` nor `explain` — and
+  sanitizing a string makes no model call.
+
+- **Three condition messages reached a finding's reason unsanitized.** A
+  HorizontalPodAutoscaler's `AbleToScale`/`ScalingActive` message, a Namespace's
+  termination condition message, and a Node's `NodeReady` reason *and* message
+  were read straight into the reason kubeagent prints. All four are free text
+  the API server does not validate, so a control character, an ANSI escape or a
+  right-to-left override placed in one of them travelled intact. A reason
+  travels further than a terminal: it is carried in `gate`'s verdict JSON and in
+  the SARIF a pipeline uploads. Each value now passes through
+  `internal/safetext.Line` at the point it first becomes a kubeagent value, per
+  the project's sanitize-at-ingress rule. Matching decisions are untouched and
+  still run on the raw value — the HPA's `TooManyReplicas` comparison, the
+  namespace condition's type, and the node condition's type and status.
+
+  One visible consequence: a multi-line `NodeReady` message used to be cut at
+  its first line, and now folds to one line with the breaks turned into spaces,
+  which is what every other kubeagent surface does. The row stays bounded at 120
+  characters, and the second line of a kubelet message is often where the cause
+  is.
+
+- **Five message sites carried the API's text into a finding unsanitized.** A
+  failed Job's condition message (`batchhealth`), a
+  Deployment's `ReplicaFailure` and `Progressing`/`ProgressDeadlineExceeded`
+  condition messages (`rollouthealth`), a PersistentVolumeClaim's
+  `ProvisioningFailed`/`FailedBinding` event message (`pvchealth`) and a
+  `FailedCreate` event's message (`createhealth`) all reached a finding
+  straight from the API object. Each now passes through
+  `internal/safetext.Line` where it first becomes a kubeagent value.
+
+  One of the five was also a *reason* site, which the original sweep had
+  classified as evidence-only: `batchhealth`'s `humanReason` recognises two Job
+  failure reasons by name and returns every other one verbatim, so an
+  unrecognised reason was printed as kubeagent's own words. The `switch` is the
+  matching decision and still reads the raw value; the default arm — the one
+  that echoes — sanitizes.
+
+  Two reasons are deliberately left as they were read, because neither is text
+  from the cluster: `pvchealth` admits only the literals `ProvisioningFailed`
+  and `FailedBinding`, and `createhealth`'s reason is one of six phrases the
+  package writes itself, chosen by a classifier that reads the raw message and
+  never echoes it.
+
+- **A HorizontalPodAutoscaler's scale-target reference reached the report
+  unsanitized.** An HPA issue names what the autoscaler targets, composed from
+  `spec.scaleTargetRef`'s kind and name. Neither is a DNS name: the API server
+  checks both with `IsPathSegmentName`, which refuses only `.`, `..`, and a
+  value containing `/` or `%` — a control character, invalid UTF-8 and an
+  unbounded length all pass it. The composed value is printed by the text
+  renderer and carried in `scan`'s JSON document, which is written to a file and
+  forwarded. Both halves now pass through `internal/safetext.Line`, separately
+  rather than after joining, so a long kind cannot push the name out of one
+  line's budget. This site was absent from the original sweep's table, which had
+  treated an object reference as validated; the HPA's own namespace and name
+  really are DNS-1123 labels and stay as they were read.
+
+### Changed
+
+- **A pod row now names what the pod is doing, the way `kubectl get pods` does.**
+  The third column printed `status.phase`, so a pod whose container was in
+  `CrashLoopBackOff` read `Running` and one that could not pull its image read
+  `Pending` — an operator holding a kubeagent row beside a `kubectl` row saw two
+  different words for the same pod and had to work out which tool was wrong.
+  Neither was; they answer different questions. `inventory.PodRowFor` now
+  computes a display value beside the raw phase — deleting is `Terminating`, a
+  failed or waiting init container is `Init:<reason>`, a main container's
+  waiting or terminated reason is that reason, and anything outside that rule
+  falls through to the phase, which is what every row printed before. The rule
+  is deliberately smaller than `kubectl`'s own column logic, which kubeagent has
+  no reason to reimplement in full. A container's reasons are API text the API
+  server does not validate, so they pass through `internal/safetext.Line` at
+  that one site. `scan --output json` gains `state` beside `phase` on a pod row
+  and moves to schema version **1.3**; `phase` is untouched and still carries
+  one of the five phase words verbatim, so nothing reading it changes. The
+  addition is additive — `state` is absent from `required`, and a document
+  written without it still validates against the older schema.
+
+- **`scan --output text` caps a finding's evidence line at 500 characters.**
+  Nothing bounded the `↳` signal, and a container runtime repeats every layer of
+  a failure — the back-off preamble, the rpc error, the unpack failure, the
+  resolve failure, the bare image reference — so on a long registry path the
+  line ran past the screen and took the alignment of the rows below it with it.
+  A cut line now ends in `… (truncated)`, because a silently shortened error
+  reads as the whole error. The cut is on characters rather than bytes, so a
+  multi-byte character is never split. Real errors measure a few hundred
+  characters and still arrive whole; the cap bites only on the pathological.
+  `--output json` carries the full string — the cap is a terminal-layout
+  decision, and the machine surface is where an operator goes for the complete
+  cause. It narrows no claim: evidence quotes what the cluster said, and the
+  finding's own reason is untouched.
+
+- **A Deployment's first rollout no longer reports itself as a change.** A
+  flagged Deployment still on revision 1 carried `changed: rollout to revision
+  1, 4d ago` — but revision 1 is the Deployment's creation, so there was no
+  prior state for it to be a change from, and indeed no image delta was ever
+  printed beside it. It is now suppressed, which is what makes the line's
+  presence meaningful. The gate is the revision number, not the survival of an
+  older ReplicaSet: a Deployment at revision 6 whose predecessors have been
+  garbage-collected still reports its rollout, without the delta. Suppression
+  happens in `rollout.Annotate` rather than in a renderer, so `--output json`
+  agrees — the `rollout` key is simply absent, as it already was for workloads
+  that are not flagged Deployments and for rollouts older than the seven-day
+  window. It is an optional key, so no `schemaVersion` moves.
+
+- **`scan --output text` collapses findings that would print the same lines.**
+  A Deployment whose replicas all fail the same way printed one identical pair
+  of lines per pod — twenty of them on a twenty-replica Deployment — and the
+  text renderer prints no pod name, so there was nothing to tell them apart
+  with. They now render as one block with a count: `⚠ CrashLoopBackOff: …
+  ×20`. A collapsed block can never print fewer lines than the findings it
+  stands for: the key is the whole rendered block bar the `↳` signal line, so a
+  `--suggest` command naming the pod or a per-container resources block keeps
+  the findings apart, and every distinct signal inside a block is printed on
+  its own line — which is what shows the restart counts when they differ. Text
+  only: `--output json` still carries one finding per pod, each naming its own
+  pod, and no count appears in it.
+
+- **A CronJob whose last run failed no longer reports itself as `Idle`.** The
+  status word is computed from the active-job count during assembly, before any
+  Job has been judged, so a CronJob with a `JobFailed` finding printed
+  `✗ shop/nightly-report  CronJob  Idle` — a true statement (the schedule is
+  alive and nothing is running right now) that reads as "nothing to see"
+  directly above the finding explaining that the most recent run failed. It now
+  says `Last run failed`, set on the one branch that has actually looked at the
+  newest owned Job. Not `Failed`, which is a standalone Job's word: a Job that
+  failed is failed, a CronJob will fire again on schedule. A CronJob mid-run or
+  with a clean newest run keeps the word assembly computed, and a Job's status
+  is untouched. `status` is published as a bare string with no enum in every
+  document that carries it, so no `schemaVersion` moves.
+
+- **`known-issues RolloutStuck` no longer calls an emitted kind unknown.**
+  `RolloutStuck`, `FailedCreate` and `JobFailed` come from `scan`'s workload
+  passes rather than from the pod detector set the reference documents, so
+  asking about one — a minute after a scan printed it — was answered with
+  "unknown issue kind". They now get their own message: the kind is a
+  **workload-level finding**, not one of the pod detectors this reference
+  covers, and it is explained on the diagnostics page. A typo keeps the
+  unknown-kind message verbatim, because that is the correct word for a typo,
+  and the exit code is unchanged either way. No entry is added to the
+  reference: those three stay undocumented there on purpose.
+  `internal/knownissues` gains the three-name list — it imports nothing from
+  kubeagent and nothing outside the standard library, and a `[]string` keeps
+  both halves true. The list is closed by a new test that reads the `Issue:`
+  literals the workload passes build and fails if they are not exactly those
+  three, deriving the packages to walk from `scan.go`'s own `Annotate` call
+  sites; the four existing closure tests are scoped to `internal/diagnose` and
+  could not have caught a fourth.
+
+- **`RolloutStuck` now covers a wedged StatefulSet and a wedged DaemonSet, not
+  only a Deployment.** A StatefulSet and a DaemonSet publish no status
+  conditions at all, so a scan could see one sitting at `0/3 Degraded` with no
+  finding attached and nothing naming the cause. `internal/rollouthealth` gains
+  an arm for each, reading the revision and replica counters `scan` already
+  collects — a StatefulSet whose `updateRevision` differs from its
+  `currentRevision` with `updatedReplicas` short of `spec.replicas`, one whose
+  revisions match with `readyReplicas` short, and a DaemonSet whose
+  `numberReady` is short of `desiredNumberScheduled`. Because a counter cannot
+  distinguish "wedged" from "started ten seconds ago", both arms require the
+  controller **and** every not-ready pod it owns to be older than 600 seconds —
+  Kubernetes' own default `spec.progressDeadlineSeconds` on a Deployment, so
+  the three kinds are equally patient. It is a package constant, not a flag.
+  The existing `RolloutStuck` kind is reused, so no consumer filter, SARIF rule
+  id or alert dedup key changes, and no `schemaVersion` moves; the reason string
+  now names the workload's own kind and renders byte-identically for a
+  Deployment. Evidence is only the counters that fired — never a pod, node,
+  image or revision name. No new cluster read, no new RBAC.
+
+- **The `RolloutStuck` next step no longer suggests `describe deployment`.** A
+  finding carries no kind, and the kind is now one of three, so the suggested
+  command was wrong two times in three. It is now
+  `kubectl -n <ns> get events --field-selector involvedObject.name=<name>`,
+  which is addressable by name alone and correct whichever kind fired. Still
+  read-only, still never run by kubeagent.
+
+- **`RolloutStuck` no longer flips on and off across scans of an unchanged
+  crash-looping Deployment.** The suppression gate in `internal/rollouthealth`
+  tested only whether the workload already carried a finding, which is a single
+  momentary sample: a crash-looping container is in `Waiting` only between
+  restart attempts, so `CrashLoopBackOff` matched on some scans and not others.
+  Forty consecutive scans of one unchanged Deployment reported `RolloutStuck` 32
+  times and `CrashLoopBackOff` 8 — and `issue` is what gate verdicts, SARIF
+  results, alert dedup keys and the watch daemon's `/issues` are keyed on, so a
+  CI gate could pass and fail alternately and an alert could re-fire as "new".
+  The gate now also asks whether any pod in the workload has restarted at least
+  `diagnose.RestartThreshold` times, a durable fact that holds across the whole
+  restart cycle. The threshold is read from where `RestartLoopDetector` defines
+  it rather than re-typed. No detector changed, no new cluster read, no new
+  RBAC.
+
+- **A `FailedCreate` caused by an admission webhook that could not be reached
+  is now named as such.** `classifyCreateFailure` matched the literal
+  `admission webhook`, which is what the API server writes when a webhook
+  *denies* a request. A webhook whose backend is down, mis-served or
+  cert-expired produces `failed calling webhook` instead, so the commonest
+  real-world webhook outage — the one case where an operator most needs to be
+  pointed at the webhook — classified as the vague default `pod creation is
+  failing`. It now reads `an admission webhook could not be reached`, which
+  claims only that the API server's call did not complete; kubeagent read one
+  event message and does not know whether the backend is down, mis-served,
+  cert-expired or merely slow. The denial arm keeps priority over it, and a
+  message containing both phrasings is pinned by a test.
+- **`FailedCreate` no longer hides behind a pod-level finding.** The check
+  skipped any workload that already carried a finding, so a workload that was
+  both quota-blocked and crash-looping reported whichever cause the scan
+  happened to catch — `FailedCreate` between restarts, `CrashLoopBackOff` during
+  the back-off, on the same unchanged workload seconds apart. Both findings now
+  attach. The guard is replaced by a replica gap rather than removed: a workload
+  is told its controller cannot create pods only while it is short of the pods
+  it wants, so a `FailedCreate` event still sitting in the cluster after the
+  quota was raised is not re-attached to a workload that has all its pods again.
+  Omitted pods count toward the gap, so a truncated pod list is not mistaken for
+  a creation failure. The identical clause in the rollout check is deliberately
+  untouched — there it is the documented zero-redundancy rule, not this hazard.
+- **`ProbeFailure` now names the heaviest failing probe, not the most recent
+  one.** With a liveness and a readiness probe both failing, whichever event the
+  kubelet wrote last decided the finding — so the same unchanged pod reported a
+  readiness problem or a container-restart problem depending on the second it
+  was scanned. The types are ranked by consequence instead (liveness, then
+  startup, then readiness), inside a two-minute window ending at the newest
+  `Unhealthy` event so a long-resolved liveness failure cannot outrank a
+  readiness failure that is happening now. The window is anchored on that event
+  rather than on the clock, so the detector stays a pure function of the objects
+  it is handed. The evidence line now lists every probe type failing on the
+  selected container — and only that container's, so a sidecar's liveness
+  failure does not collect the app container's probe into its own line.
+- **An `exec` probe failure now says what kind of probe it was.** The reason
+  vocabulary is HTTP- and TCP-shaped and an `exec` probe's failure text is the
+  command's own output, which is exactly the text that may not be forwarded, so
+  the evidence line used to end after `probe failed` with no explanation of the
+  silence. It now reads `exec probe, output withheld`, with the handler kind
+  read from the pod spec's typed `exec`/`httpGet`/`tcpSocket`/`grpc` field
+  rather than from any message. The command, the HTTP path and the port are
+  still never read.
+- **A `CrashLoopBackOff` finding now carries the last exit code, its reason and
+  how long ago it happened.** It printed the restart count and nothing else, so
+  a flapping pod gave up that detail roughly half the time: the fields are
+  durable, but only `RestartLoop` read them, and `RestartLoop` fires only while
+  the container is `Running`. An operator scanning the same unchanged pod twice
+  got the exit code once. The enrichment applies the same durable conditions
+  `RestartLoop` uses — at least three restarts, a recorded non-OOM error
+  termination — so an OOM kill, a graceful exit and a container below the
+  threshold all keep the plain wording. The issue kind, the reason sentence and
+  the absent confidence tag are unchanged: this is evidence for the kubelet's
+  own verdict, not a second opinion about it.
+- **An init container blocked by a missing ConfigMap or Secret is now reported
+  as `Init:CreateContainerConfigError`.** It was reported as
+  `CreateContainerConfigError` — the main-container kind — because
+  `ConfigErrorDetector` read the init container status slice as a fallback. The
+  two are different diagnoses: an init failure blocks the whole pod, and nothing
+  else in it has run. The finding now names the init container's position in the
+  sequence (`init container "setup" (1/1): …`) the way every other init finding
+  does, and `ConfigErrorDetector` reads main containers only, which makes
+  `InitContainerDetector`'s no-overlap claim true again. The issue kind is a
+  string rather than an enum in every published schema, so no `schemaVersion`
+  moves.
+
+### Fixed
+
+- **An init container caught terminated with an error is now reported as
+  crash-looping.** The detector matched only the kubelet's
+  `Waiting`/`CrashLoopBackOff` window, so the same pod produced a finding or
+  produced nothing depending on which moment the scan sampled. The terminated
+  window carries a threshold the waiting one does not — at least one prior
+  restart, the price of inferring a loop the kubelet has not declared — and a
+  container that failed once and then succeeded is still not flagged.
+- **A pod row's empty node and IP cells now carry a `—` placeholder.** An
+  unscheduled pod has neither, and two empty cells collapsed into a run of
+  spaces, so the age column read as if it were the node. Text renderer only;
+  the JSON keeps the empty strings.
+- **`diagnostics.md` said the image pull error is read "from the pod's
+  conditions".** It is read from the container status's `waiting.message`;
+  `status.conditions` is a different field and a reader who went looking there
+  would not have found the text.
+
 ## [1.14.0] - 2026-08-08
 
 ### Added

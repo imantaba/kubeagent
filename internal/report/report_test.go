@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/imantaba/kubeagent/internal/baseline"
 	"github.com/imantaba/kubeagent/internal/certhealth"
@@ -43,7 +44,7 @@ func sampleWorkloads() []inventory.Workload {
 		Desired: 3, Ready: 3, Status: "Running", Restarts: 64, LastRestart: "2026-06-02T08:14:03Z",
 		Image: "rancher/rancher:v2.14.1",
 		Pods: []inventory.PodRow{
-			{Name: "rancher-64smq", Phase: "Running", Ready: "1/1", Restarts: 31, LastRestart: "2026-06-02T08:14:03Z", Node: "nova-worker-3", IP: "10.42.4.41", Age: "36d", Image: "rancher/rancher:v2.14.1"},
+			{Name: "rancher-64smq", Phase: "Running", State: "Running", Ready: "1/1", Restarts: 31, LastRestart: "2026-06-02T08:14:03Z", Node: "nova-worker-3", IP: "10.42.4.41", Age: "36d", Image: "rancher/rancher:v2.14.1"},
 		},
 	}}
 }
@@ -987,6 +988,196 @@ func TestPrintInventory_TextOmitsEvidenceWhenEmptyOrDuplicate(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), "↳") {
 		t.Errorf("no Evidence sub-line expected for empty/duplicate evidence:\n%s", buf.String())
+	}
+}
+
+// renderFindings prints one Deployment carrying the given findings and returns
+// the text report, so the collapse tests below differ only in their findings.
+func renderFindings(t *testing.T, suggest bool, findings ...diagnose.Finding) string {
+	t.Helper()
+	var buf bytes.Buffer
+	in := Input{
+		Result: inventory.Result{Workloads: []inventory.Workload{{
+			Namespace: "shop", Name: "web", Kind: "Deployment",
+			Desired: 2, Ready: 0, Status: "Degraded", Findings: findings,
+		}}},
+		Suggest: suggest,
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	return buf.String()
+}
+
+func crashFinding(pod, evidence string) diagnose.Finding {
+	return diagnose.Finding{
+		Pod: "shop/" + pod, Issue: "CrashLoopBackOff", Container: "app",
+		Reason: "Container repeatedly crashes after starting", Evidence: evidence,
+	}
+}
+
+// Two pods crashing the same way rendered two byte-identical pairs of lines,
+// and the text renderer prints no pod name, so there was nothing to tell them
+// apart with. A 20-replica Deployment printed the pair twenty times.
+func TestPrintInventory_TextCollapsesIdenticalFindings(t *testing.T) {
+	ev := `container "app", restartCount=1`
+	out := renderFindings(t, false, crashFinding("web-abc", ev), crashFinding("web-def", ev))
+	if got := strings.Count(out, "⚠ CrashLoopBackOff"); got != 1 {
+		t.Errorf("want one finding line for two identical findings, got %d:\n%s", got, out)
+	}
+	if !strings.Contains(out, "⚠ CrashLoopBackOff: Container repeatedly crashes after starting ×2") {
+		t.Errorf("want the count on the finding line:\n%s", out)
+	}
+	if got := strings.Count(out, "↳ "+ev); got != 1 {
+		t.Errorf("want one evidence line, got %d:\n%s", got, out)
+	}
+}
+
+// The count is the point of the collapse, so a lone finding must not grow one.
+func TestPrintInventory_TextOmitsTheCountForOneFinding(t *testing.T) {
+	out := renderFindings(t, false, crashFinding("web-abc", `container "app", restartCount=1`))
+	if strings.Contains(out, "×") {
+		t.Errorf("a single finding must carry no count:\n%s", out)
+	}
+}
+
+// Collapsing must not swallow what distinguishes the pods. Restart counts live
+// in the evidence, so a group prints every distinct evidence it holds.
+func TestPrintInventory_TextKeepsDistinctRestartCounts(t *testing.T) {
+	out := renderFindings(t, false,
+		crashFinding("web-abc", `container "app", restartCount=1`),
+		crashFinding("web-def", `container "app", restartCount=7`),
+	)
+	if got := strings.Count(out, "⚠ CrashLoopBackOff"); got != 1 {
+		t.Errorf("want one finding line, got %d:\n%s", got, out)
+	}
+	if !strings.Contains(out, "restartCount=1") || !strings.Contains(out, "restartCount=7") {
+		t.Errorf("both restart counts must survive the collapse:\n%s", out)
+	}
+}
+
+// Findings that say different things are different findings.
+func TestPrintInventory_TextDoesNotCollapseUnlikeFindings(t *testing.T) {
+	a := crashFinding("web-abc", "boom")
+	b := crashFinding("web-def", "boom")
+	b.Reason = "Container repeatedly crashes before starting"
+	out := renderFindings(t, false, a, b)
+	if got := strings.Count(out, "⚠ CrashLoopBackOff"); got != 2 {
+		t.Errorf("want two finding lines for two different reasons, got %d:\n%s", got, out)
+	}
+	if strings.Contains(out, "×") {
+		t.Errorf("nothing collapsed, so no count belongs here:\n%s", out)
+	}
+}
+
+// A --suggest command names the pod, so two pods have two different commands.
+// The collapse keys on the whole block for exactly this reason: it may never
+// print fewer lines than the findings it stands for.
+func TestPrintInventory_TextSuggestKeepsEveryPodsCommand(t *testing.T) {
+	ev := `container "app", restartCount=1`
+	out := renderFindings(t, true, crashFinding("web-abc", ev), crashFinding("web-def", ev))
+	if !strings.Contains(out, "logs web-abc") || !strings.Contains(out, "logs web-def") {
+		t.Errorf("every pod's own command must survive:\n%s", out)
+	}
+	if strings.Contains(out, "×") {
+		t.Errorf("blocks that differ must not collapse:\n%s", out)
+	}
+}
+
+// The collapse is a rendering decision. The JSON document is the one that gets
+// forwarded, and it still carries one finding per pod.
+func TestPrintInventory_JSONKeepsOneFindingPerPod(t *testing.T) {
+	ev := `container "app", restartCount=1`
+	var buf bytes.Buffer
+	in := Input{Result: inventory.Result{Workloads: []inventory.Workload{{
+		Namespace: "shop", Name: "web", Kind: "Deployment", Desired: 2, Ready: 0, Status: "Degraded",
+		Findings: []diagnose.Finding{crashFinding("web-abc", ev), crashFinding("web-def", ev)},
+	}}}}
+	if err := PrintInventory(in, "json", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "shop/web-abc") || !strings.Contains(out, "shop/web-def") {
+		t.Errorf("both pods must still appear in the JSON:\n%s", out)
+	}
+	if strings.Contains(out, "×") {
+		t.Errorf("the count is a text-renderer device and must not reach the JSON:\n%s", out)
+	}
+}
+
+// evidenceLine returns the rendered "↳" evidence line's text, without its
+// indent. The evidence indent is six spaces; a rollout's "changed:" line and a
+// --suggest step use four, so this cannot pick up the wrong one.
+func evidenceLine(t *testing.T, out string) string {
+	t.Helper()
+	const prefix = "      ↳ "
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, prefix) {
+			return strings.TrimPrefix(l, prefix)
+		}
+	}
+	t.Fatalf("no evidence line in:\n%s", out)
+	return ""
+}
+
+// A containerd pull error repeats every layer of the failure — the back-off
+// preamble, the rpc error, the unpack failure, the resolve failure and the bare
+// reference — and nothing bounded the composed line.
+func TestPrintInventory_TextCapsALongEvidenceLine(t *testing.T) {
+	out := renderFindings(t, false, crashFinding("web-abc", strings.Repeat("x", 600)))
+	got := evidenceLine(t, out)
+	if n := utf8.RuneCountInString(got); n != maxEvidence {
+		t.Errorf("want the line capped at %d runes, got %d", maxEvidence, n)
+	}
+	if !strings.HasSuffix(got, evidenceCut) {
+		t.Errorf("a cut line must say so; got the tail %q", got[len(got)-40:])
+	}
+}
+
+// The cap exists for pathological lines. Real pull errors run to a few hundred
+// characters and are the only place the true cause appears, so they must arrive
+// whole.
+func TestPrintInventory_TextLeavesARealisticEvidenceLineIntact(t *testing.T) {
+	ev := strings.Repeat("y", 313) // the length observed on a live cluster
+	out := renderFindings(t, false, crashFinding("web-abc", ev))
+	if got := evidenceLine(t, out); got != ev {
+		t.Errorf("a %d-rune line must render unchanged, got %d runes", len(ev), utf8.RuneCountInString(got))
+	}
+}
+
+// The budget counts runes, so a multi-byte character is never cut in half.
+func TestPrintInventory_TextCutsEvidenceAtARuneBoundary(t *testing.T) {
+	out := renderFindings(t, false, crashFinding("web-abc", strings.Repeat("é", 600)))
+	got := evidenceLine(t, out)
+	if !utf8.ValidString(got) {
+		t.Errorf("cut produced invalid UTF-8: %q", got)
+	}
+	if strings.ContainsRune(got, utf8.RuneError) {
+		t.Errorf("cut split a multi-byte rune: %q", got)
+	}
+	if n := utf8.RuneCountInString(got); n != maxEvidence {
+		t.Errorf("want %d runes, got %d", maxEvidence, n)
+	}
+}
+
+// The cap is a terminal-layout decision. JSON is the machine surface and the
+// place an operator goes for the complete cause, so it carries the whole string.
+func TestPrintInventory_JSONKeepsTheFullEvidence(t *testing.T) {
+	ev := strings.Repeat("z", 600)
+	var buf bytes.Buffer
+	in := Input{Result: inventory.Result{Workloads: []inventory.Workload{{
+		Namespace: "shop", Name: "web", Kind: "Deployment", Desired: 1, Ready: 0, Status: "Degraded",
+		Findings: []diagnose.Finding{crashFinding("web-abc", ev)},
+	}}}}
+	if err := PrintInventory(in, "json", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, ev) {
+		t.Errorf("JSON must carry the full evidence, not the capped line:\n%s", out)
+	}
+	if strings.Contains(out, evidenceCut) {
+		t.Errorf("the truncation marker is a text-renderer device and must not reach the JSON")
 	}
 }
 
@@ -2317,5 +2508,40 @@ func TestJSONReportCarriesBaselineWhenPresent(t *testing.T) {
 	}
 	if got.Baseline == nil || got.Baseline.Compared != 5 {
 		t.Errorf("got %+v, want baseline.compared = 5: %s", got.Baseline, buf.String())
+	}
+}
+
+// A Pending pod has neither a node nor an IP. Rendering those cells as empty
+// strings collapses them into a run of spaces and the age reads as if it sat
+// in the node column, so each empty cell carries a placeholder instead.
+func TestPrintInventory_TextPodRowPlaceholderForEmptyNodeAndIP(t *testing.T) {
+	ws := []inventory.Workload{{
+		Namespace: "shop", Name: "web", Kind: "Deployment", Desired: 1, Ready: 0, Status: "Degraded",
+		Pods: []inventory.PodRow{{Name: "web-abc", Phase: "Pending", State: "Pending", Ready: "0/1", Age: "18s"}},
+	}}
+	var buf bytes.Buffer
+	if err := PrintInventory(Input{Result: inventory.Result{Workloads: ws}}, "text", &buf); err != nil {
+		t.Fatalf("PrintInventory: %v", err)
+	}
+	want := "    web-abc  0/1  Pending  restarts=0  —  —  18s\n"
+	if !strings.Contains(buf.String(), want) {
+		t.Errorf("want pod row %q:\n%s", want, buf.String())
+	}
+}
+
+// A scheduled pod that has not been assigned an IP yet fills only the one
+// empty cell — the node it landed on still prints verbatim.
+func TestPrintInventory_TextPodRowPlaceholderOnlyForTheEmptyCell(t *testing.T) {
+	ws := []inventory.Workload{{
+		Namespace: "shop", Name: "data", Kind: "StatefulSet", Desired: 1, Ready: 0, Status: "Degraded",
+		Pods: []inventory.PodRow{{Name: "data-0", Phase: "Pending", State: "Pending", Ready: "0/1", Node: "worker-2", Age: "9d"}},
+	}}
+	var buf bytes.Buffer
+	if err := PrintInventory(Input{Result: inventory.Result{Workloads: ws}}, "text", &buf); err != nil {
+		t.Fatalf("PrintInventory: %v", err)
+	}
+	want := "    data-0  0/1  Pending  restarts=0  worker-2  —  9d\n"
+	if !strings.Contains(buf.String(), want) {
+		t.Errorf("want pod row %q:\n%s", want, buf.String())
 	}
 }

@@ -78,6 +78,46 @@ func Kinds() []string {
 	return out
 }
 
+// workloadKinds are the Finding.Issue values kubeagent emits from scan's
+// workload passes rather than from the pod detector set this reference
+// documents. They are deliberately absent from entries: known-issues covers the
+// deterministic detectors, and a workload-level finding is explained on the
+// diagnostics page instead.
+//
+// The list exists so the CLI can tell two different situations apart. An
+// operator who reads RolloutStuck off a scan and asks about it must not be told
+// the kind is unknown — kubeagent emitted it a second earlier. A typo must
+// still be called unknown, because that is the correct word for it.
+//
+// It is closed the same way entries is, and by the same kind of test — but that
+// test cannot live here. This package imports nothing, so it cannot see scan's
+// workload passes; internal/scan/workloadkinds_test.go holds the check, where
+// the passes are in scope.
+var workloadKinds = []string{"RolloutStuck", "FailedCreate", "JobFailed"}
+
+// WorkloadKinds returns the workload-level kinds, in registry order.
+//
+// The result is a copy: a caller may sort, filter or rewrite what it is handed
+// without any of it reaching the next caller, the same promise All and Lookup
+// make.
+func WorkloadKinds() []string {
+	return append([]string(nil), workloadKinds...)
+}
+
+// IsWorkloadKind reports whether kind is one of the workload-level kinds.
+//
+// Matched byte for byte, for the reason Lookup is: the caller passes a
+// Finding.Issue value verbatim, so a near miss is a typo and belongs in the
+// unknown-kind message rather than in this one.
+func IsWorkloadKind(kind string) bool {
+	for _, k := range workloadKinds {
+		if k == kind {
+			return true
+		}
+	}
+	return false
+}
+
 // Lookup returns the entry for a kind, matched byte for byte.
 //
 // Deliberately no normalisation: no case folding, no Init: stripping, no fuzzy

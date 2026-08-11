@@ -3,6 +3,8 @@ package createhealth
 import (
 	"strings"
 	"testing"
+	"unicode"
+	"unicode/utf8"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -84,8 +86,38 @@ func TestAnnotate_DaemonSetLimitRange(t *testing.T) {
 	}
 }
 
-func TestAnnotate_SkipsWorkloadWithExistingFinding(t *testing.T) {
-	ws := []inventory.Workload{{Namespace: "shop", Name: "api", Kind: "Deployment", Desired: 3, Ready: 0, Status: "Degraded",
+// A workload can be short of pods and have its existing pods failing at the
+// same time — a quota that allows one of two replicas, whose one pod then
+// crash-loops. Both causes are real and each is half the story, so both
+// findings attach. This package used to skip a workload that already carried a
+// finding, which made the answer depend on which phase of the back-off cycle
+// the scan happened to catch.
+func TestAnnotate_AttachesAlongsideAPodFinding(t *testing.T) {
+	ws := []inventory.Workload{{Namespace: "shop", Name: "api", Kind: "Deployment", Desired: 2, Ready: 0, Status: "Degraded",
+		Pods:     []inventory.PodRow{{Name: "api-7c9f-aaa"}},
+		Findings: []diagnose.Finding{{Issue: "CrashLoopBackOff"}}}}
+	rss := []appsv1.ReplicaSet{ownedRS("shop", "api-7c9f", "api")}
+	evs := []corev1.Event{fcEvent("ReplicaSet", "shop", "api-7c9f", quotaMsg, 100)}
+
+	Annotate(ws, rss, evs)
+
+	if len(ws[0].Findings) != 2 {
+		t.Fatalf("want both findings, got %+v", ws[0].Findings)
+	}
+	if ws[0].Findings[0].Issue != "CrashLoopBackOff" || ws[0].Findings[1].Issue != "FailedCreate" {
+		t.Errorf("findings = %q/%q, want CrashLoopBackOff then FailedCreate", ws[0].Findings[0].Issue, ws[0].Findings[1].Issue)
+	}
+}
+
+// An event outlives the condition that produced it — the API server keeps one
+// for about an hour. A Deployment whose quota was raised has all its pods back;
+// if those pods then fail for an unrelated reason, the stale FailedCreate event
+// is still in etcd and must not be re-attached. The replica gap, not the
+// event's age, is what answers "is the controller still failing to create
+// pods".
+func TestAnnotate_SkipsRecoveredWorkloadWithAStaleEvent(t *testing.T) {
+	ws := []inventory.Workload{{Namespace: "shop", Name: "api", Kind: "Deployment", Desired: 2, Ready: 0, Status: "Degraded",
+		Pods:     []inventory.PodRow{{Name: "api-7c9f-aaa"}, {Name: "api-7c9f-bbb"}},
 		Findings: []diagnose.Finding{{Issue: "CrashLoopBackOff"}}}}
 	rss := []appsv1.ReplicaSet{ownedRS("shop", "api-7c9f", "api")}
 	evs := []corev1.Event{fcEvent("ReplicaSet", "shop", "api-7c9f", quotaMsg, 100)}
@@ -93,7 +125,25 @@ func TestAnnotate_SkipsWorkloadWithExistingFinding(t *testing.T) {
 	Annotate(ws, rss, evs)
 
 	if len(ws[0].Findings) != 1 || ws[0].Findings[0].Issue != "CrashLoopBackOff" {
-		t.Fatalf("must not annotate a workload that already has a finding, got %+v", ws[0].Findings)
+		t.Fatalf("a workload with all its pods must not be told its controller cannot create pods, got %+v", ws[0].Findings)
+	}
+}
+
+// Assemble truncates a long pod list and records the remainder in PodsOmitted.
+// A gap test written as len(w.Pods) < w.Desired would read that truncation as a
+// creation failure and flag a workload that has every pod it asked for.
+func TestAnnotate_CountsOmittedPodsInTheGap(t *testing.T) {
+	ws := []inventory.Workload{{Namespace: "shop", Name: "api", Kind: "Deployment", Desired: 50, Ready: 0, Status: "Degraded",
+		Pods:        []inventory.PodRow{{Name: "api-7c9f-aaa"}, {Name: "api-7c9f-bbb"}, {Name: "api-7c9f-ccc"}},
+		PodsOmitted: 47,
+		Findings:    []diagnose.Finding{{Issue: "CrashLoopBackOff"}}}}
+	rss := []appsv1.ReplicaSet{ownedRS("shop", "api-7c9f", "api")}
+	evs := []corev1.Event{fcEvent("ReplicaSet", "shop", "api-7c9f", quotaMsg, 100)}
+
+	Annotate(ws, rss, evs)
+
+	if len(ws[0].Findings) != 1 || ws[0].Findings[0].Issue != "CrashLoopBackOff" {
+		t.Fatalf("a truncated pod list is not a replica gap, got %+v", ws[0].Findings)
 	}
 }
 
@@ -135,6 +185,73 @@ func TestClassifyCreateFailure(t *testing.T) {
 	for msg, want := range cases {
 		if got := classifyCreateFailure(msg); got != want {
 			t.Errorf("classifyCreateFailure(%q) = %q, want %q", msg, got, want)
+		}
+	}
+}
+
+// A webhook whose backend is down is a far more common outage than a webhook
+// deliberately denying a pod, and the API server phrases it differently: the
+// message says "failed calling webhook", never "admission webhook". It used to
+// classify as the default, "pod creation is failing" — the one case where an
+// operator most needs to be pointed at the webhook.
+func TestClassifyCreateFailure_UnreachableWebhook(t *testing.T) {
+	const msg = `Internal error occurred: failed calling webhook "deny.example.com": ` +
+		`failed to call webhook: Post "https://webhook-svc.example.com/validate": service "webhook-svc" not found`
+	if got, want := classifyCreateFailure(msg), "an admission webhook could not be reached"; got != want {
+		t.Errorf("classifyCreateFailure(unreachable) = %q, want %q", got, want)
+	}
+}
+
+// The two webhook phrasings are disjoint on every message observed, but arm
+// order is what resolves an overlap and nothing guarantees a future API server
+// keeps them apart. The denial arm keeps priority: a message containing both
+// describes a webhook that answered, and "rejected" is the more specific and
+// more actionable word. Pinned here so a reordering fails the suite instead of
+// silently changing the answer.
+func TestClassifyCreateFailure_DenialOutranksUnreachable(t *testing.T) {
+	const msg = `admission webhook "deny.example.com" denied the request, after failed calling webhook "other.example.com"`
+	if got, want := classifyCreateFailure(msg), "rejected by an admission webhook"; got != want {
+		t.Errorf("classifyCreateFailure(both) = %q, want %q", got, want)
+	}
+}
+
+// hostileText is what a rejecting admission webhook's event message carries
+// when the webhook is not the one you think: invalid UTF-8, a screen-clearing
+// ANSI escape, a right-to-left override and a NUL.
+const hostileText = "\x1b[2J‮gnp\x00 by policy\xff"
+
+// The event's message is free text the API server does not validate, and it
+// reaches the finding's evidence. The finding's reason does not carry it:
+// classifyCreateFailure reads the raw message — that is the matching decision —
+// and returns one of six kubeagent literals, never the message itself.
+func TestAnnotate_SanitizesTheEventMessage(t *testing.T) {
+	ws := []inventory.Workload{{Namespace: "shop", Name: "api", Kind: "Deployment", Desired: 3, Ready: 0, Status: "Degraded"}}
+	rss := []appsv1.ReplicaSet{ownedRS("shop", "api-7c9f", "api")}
+	evs := []corev1.Event{fcEvent("ReplicaSet", "shop", "api-7c9f", "exceeded quota: compute"+hostileText, 100)}
+
+	Annotate(ws, rss, evs)
+
+	if len(ws[0].Findings) != 1 {
+		t.Fatalf("want one finding, got %+v", ws[0].Findings)
+	}
+	f := ws[0].Findings[0]
+	if !strings.Contains(f.Reason, "ResourceQuota") {
+		t.Errorf("Reason = %q, want the classifier to have matched the raw message", f.Reason)
+	}
+	assertSanitized(t, "Reason", f.Reason)
+	assertSanitized(t, "Evidence", f.Evidence)
+}
+
+// assertSanitized fails unless s is what safetext.Line guarantees: valid UTF-8
+// with no control characters and no Unicode formatting characters.
+func assertSanitized(t *testing.T, where, s string) {
+	t.Helper()
+	if !utf8.ValidString(s) {
+		t.Errorf("%s is not valid UTF-8: %q", where, s)
+	}
+	for _, r := range s {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			t.Errorf("%s carries %U: %q", where, r, s)
 		}
 	}
 }

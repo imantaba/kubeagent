@@ -118,7 +118,7 @@ func TestBuildIncidentPromptKeepsTheCommandUsable(t *testing.T) {
 	}
 }
 
-// Not every finding is diagnosed on a pod: RolloutStuck names the Deployment
+// Not every finding is diagnosed on a pod: RolloutStuck names the workload
 // itself, and that name is the object the alert fired for — already in the
 // prompt's first line. Replacing it would cost the model the one command it is
 // told to reproduce verbatim, for no privacy gain.
@@ -133,7 +133,7 @@ func TestBuildIncidentPromptKeepsTheObjectsOwnName(t *testing.T) {
 	}}
 	p := BuildIncidentPrompt("Deployment/shop/web", []string{"RolloutStuck"},
 		clusterhealth.ClusterHealth{Verdict: "Healthy"}, ws, nil)
-	if !strings.Contains(p, "kubectl -n shop describe deployment web") {
+	if !strings.Contains(p, "--field-selector involvedObject.name=web") {
 		t.Errorf("prompt must keep the command targeting the object itself:\n%s", p)
 	}
 }

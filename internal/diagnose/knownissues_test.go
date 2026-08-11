@@ -213,6 +213,12 @@ func producedKinds(t *testing.T) []string {
 			Name: "setup", RestartCount: 4,
 			State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
 		})},
+		// Init:CreateContainerConfigError
+		{Pod: podWithInit("example-ns", "web-13", corev1.ContainerStatus{
+			Name: "setup",
+			State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{
+				Reason: "CreateContainerConfigError", Message: `configmap "app-config" not found`}},
+		})},
 		// Init:ErrImagePull
 		{Pod: podWithInit("example-ns", "web-6", corev1.ContainerStatus{
 			Name:  "setup",
@@ -242,6 +248,11 @@ func producedKinds(t *testing.T) []string {
 		{Pod: podCreating("example-ns", "web-12"), Events: []corev1.Event{
 			attachEvent("example-ns", "web-12",
 				`Multi-Attach error for volume "pvc-example" Volume is already exclusively attached to one node`),
+		}},
+		// VolumeMountError
+		{Pod: podCreating("example-ns", "web-14"), Events: []corev1.Event{
+			mountEvent("example-ns", "web-14",
+				`MountVolume.SetUp failed for volume "config" : configmap "app-config" not found`),
 		}},
 	}
 

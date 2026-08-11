@@ -11,24 +11,31 @@ are failing — covering the most common pod failure modes.
 
 ## Failure modes detected
 
-Thirteen of the failure modes below — the pod-level ones a detector reports as
+Fifteen of the failure modes below — the pod-level ones a detector reports as
 an issue kind — are also in the binary's own offline reference:
 `kubeagent known-issues <kind>` prints what one means, what usually causes it,
 and what to check, with no cluster and no network. Run it with no argument to
-see exactly which thirteen; the rest of this page keeps its prose only here.
+see exactly which fifteen; the rest of this page keeps its prose only here.
 See [Known issues reference](known-issues.md).
 
 ### CrashLoopBackOff
 
 The container keeps restarting. Kubernetes backs off exponentially between
-attempts. `kubeagent` surfaces the exit code and last termination reason so you
-can spot crash loops without tailing logs manually.
+attempts. `kubeagent` always names the container and its restart count, and
+adds the last exit code, its reason and how long ago it happened once the
+container has restarted at least three times with a non-OOM error termination
+— so you can spot crash loops without tailing logs manually.
+
+Those are the same durable fields [RestartLoop](#restartloop) reads. A flapping
+pod alternates between the two kinds depending on which instant the scan
+samples — one is `Waiting`, the other `Running` — and reading the exit code
+from both means an operator does not have to run the scan twice to see it.
 
 ### ImagePullBackOff / ErrImagePull
 
 The image cannot be pulled — either the image tag does not exist or the node
 lacks credentials for the registry. `kubeagent` reports the image reference and
-the pull error from the pod's conditions.
+the pull error from the pod's container status.
 
 ### OOMKilled
 
@@ -50,6 +57,28 @@ A pod stuck at container creation because a volume cannot be attached.
 **Multi-Attach** case specifically (a ReadWriteOnce volume still attached to
 another node). Read-only: events are fetched with a single field-selected List.
 
+### VolumeMountError
+
+A pod stuck at container creation because a volume cannot be **mounted**.
+`kubeagent` reads the kubelet's `FailedMount` Warning events. This is a
+different failure from `VolumeAttachError`, which matches `FailedAttachVolume`
+only: an attach failure is a storage problem, while the most common mount
+failure has no storage in it at all.
+
+That common case is a **ConfigMap or Secret named in the pod spec as a volume
+source that does not exist**. It lands here rather than in
+[CreateContainerConfigError](#createcontainerconfigerror), because the kubelet
+reports a container config error only for a ConfigMap or Secret consumed
+through `env`/`envFrom` — a *volume* source that cannot be resolved never
+reaches container creation at all, so no container ever enters a waiting state
+naming it. Without this detector such a pod carries no diagnosis anywhere.
+`kubeagent` names that case specifically; for every other mount failure it says
+only that the mount did not complete, which is all it knows.
+
+Read-only: events are fetched with a single field-selected List. Note the
+consequence of being event-based — Kubernetes expires events after ~1 h, so a
+pod left stuck overnight loses this finding while staying just as stuck.
+
 ### RestartLoop
 
 A container that keeps exiting with a non-OOM error and restarting (≥ 3
@@ -67,21 +96,42 @@ A pod that is **Running but not Ready** because a container's **readiness**,
 (`HTTP 503`, `connection refused`, `timed out`, `DNS lookup failed`,
 `gRPC NOT_SERVING`, …) — for example `container "web": readiness probe failed —
 HTTP 503`. It is complementary to `RestartLoop`/`CrashLoopBackOff`: a liveness probe
-that restarts a container shows both the pattern and the probe as the cause. To keep
-the failure reason safe for `--explain`, the raw probe message is never surfaced — no
-pod IP and no `exec`-probe command output ever leaves the local report. Read-only: it
-lists `Unhealthy` events (no extra permission beyond the scan's existing event list).
+that restarts a container shows both the pattern and the probe as the cause.
+
+When more than one probe on a container is failing at once, the finding names the
+**heaviest** one rather than the most recent: liveness (the kubelet restarts the
+container), then startup (it never finishes starting), then readiness (it is only
+kept out of Service endpoints). The evidence line still lists every probe type
+failing on that container — `container "web": liveness and readiness probes failed
+— connection refused`. The comparison is bounded to a two-minute window ending at
+the newest `Unhealthy` event, so a liveness probe that failed once an hour ago
+cannot outrank a readiness probe that is failing now. The window is anchored on
+that newest event rather than on the clock, which keeps the detector a pure
+function of the objects it is handed.
+
+To keep the failure reason safe for `--explain`, the raw probe message is never
+surfaced — no pod IP and no `exec`-probe command output ever leaves the local
+report. That is why an `exec` probe usually has no reason to show: its failure text
+is the command's own output. `kubeagent` names the **handler kind** instead, read
+from the pod spec's typed `exec`/`httpGet`/`tcpSocket`/`grpc` field rather than from
+any message — `container "web": readiness probe failed — exec probe, output
+withheld`. The command, the HTTP path and the port are not read.
+
+Read-only: it lists `Unhealthy` events and reads the pod spec already collected (no
+extra permission beyond the scan's existing event list).
 
 ### Init container failures
 
 A pod stuck in its **init phase** because an init container is failing —
 `Init:CrashLoopBackOff` (crash-looping), `Init:ImagePullBackOff` /
-`Init:ErrImagePull` (its image can't be pulled), or `Init:OOMKilled` (killed for
-exceeding its memory limit). `kubeagent` reads `Status.InitContainerStatuses` — the
-slice the main-container crash detectors don't look at — and names which init
+`Init:ErrImagePull` (its image can't be pulled), `Init:OOMKilled` (killed for
+exceeding its memory limit), or `Init:CreateContainerConfigError` (a ConfigMap or
+Secret it references is missing, or a required key is absent).
+`kubeagent` reads `Status.InitContainerStatuses` — the
+slice no other detector looks at — and names which init
 container is failing, its position, and the reason — for a crash loop, `init container
-"wait-for-db" (1/2), restartCount=6` (an image-pull or OOM failure shows the pull
-message or `exitCode` instead). Init containers run sequentially and block the
+"wait-for-db" (1/2), restartCount=6` (an image-pull, OOM or config failure shows the
+kubelet's message or `exitCode` instead). Init containers run sequentially and block the
 pod, so at most one is failing; a pod whose inits all succeeded is left to the
 main-container detectors (no overlap). Read-only; reads pod status already collected
 (no new RBAC).
@@ -101,32 +151,56 @@ re-flagged. Read-only; Jobs/CronJobs are already listed, so it needs no extra pe
 
 A workload can sit below its desired replicas with **no pods at all** when its
 controller is being denied pod *creation* — a `ResourceQuota` is exhausted, a
-`LimitRange` rejects the pod's resources, or an admission webhook blocks it. The
+`LimitRange` rejects the pod's resources, or an admission webhook blocks it —
+either by denying the pod (`rejected by an admission webhook`) or by not
+answering at all, its backend down, mis-served or cert-expired
+(`an admission webhook could not be reached`, which claims only that the API
+server's call did not complete, not why). The
 pod-level detectors see nothing (there is no pod), so the workload would
 otherwise show only `0/N Degraded` with no cause. kubeagent reads the
 controller's `FailedCreate` events and names the cause on the workload — e.g.
 `⚠ FailedCreate: the controller cannot create pods — blocked by a ResourceQuota`,
 with the raw admission message as evidence. A Deployment's event lands on its
 ReplicaSet and is resolved back to the Deployment; StatefulSets and DaemonSets
-are matched directly. Read-only, always-on, no new RBAC.
+are matched directly.
+
+"No pods at all" is the motivating case, not the rule: the check fires whenever a
+workload has **fewer pods than it wants**, so a quota that allows one of two
+replicas is named too — and there the `FailedCreate` finding appears **beside** the
+pod-level finding for the one pod that did get created, because both causes are
+real and fixing either alone leaves the workload broken. A workload that has all
+its pods is never told its controller cannot create pods, even while a
+`FailedCreate` event from before the fix is still in the cluster (Kubernetes keeps
+events for about an hour).
+
+Read-only, always-on, no new RBAC.
 
 ### CreateContainerConfigError
 
-A container (main or init) that cannot start because a referenced ConfigMap or
+A **main container** that cannot start because a referenced ConfigMap or
 Secret is **missing from the cluster**, or a **required key is absent** from an
 existing object. Kubernetes surfaces this as a `CreateContainerConfigError`
 **waiting state** on the container — the container never reaches `Running`.
 `kubeagent` reads the kubelet's message directly from the pod's container status
 (`containerStatuses[*].state.waiting.message`) and names the missing object, for
-example: `container "worker": configmap "worker-config" not found`. It covers
-main and init containers. Unlike pod events (which expire after ~1 h), the
-waiting state persists as long as the container is stuck — read-only, no new
-RBAC.
+example: `container "worker": configmap "worker-config" not found`. The same
+failure on an **init container** is reported as its own kind,
+`Init:CreateContainerConfigError`, which additionally names that container's
+position in the init sequence — see
+[Init container failures](#init-container-failures). A ConfigMap or Secret the
+pod mounts as a **volume** is a third case again and is reported as
+[VolumeMountError](#volumemounterror) — the kubelet raises this waiting state
+only for a reference consumed through `env`/`envFrom`. Unlike pod events (which
+expire after ~1 h), the waiting state persists as long as the container is
+stuck — read-only, no new RBAC.
 
-### RolloutStuck (Deployment rollout wedged)
+### RolloutStuck (rollout wedged)
 
-A **Deployment** whose rollout has stalled and the new pods are not becoming
-available. `kubeagent` checks two signals on the Deployment's conditions:
+A **Deployment**, **StatefulSet** or **DaemonSet** whose rollout has stalled and
+whose new pods are not becoming available.
+
+For a **Deployment**, `kubeagent` checks two signals on the Deployment's
+conditions:
 
 - **`ProgressDeadlineExceeded`** — the `Progressing` condition has flipped to
   `status: False` with reason `ProgressDeadlineExceeded`, meaning the rollout did
@@ -135,9 +209,45 @@ available. `kubeagent` checks two signals on the Deployment's conditions:
   new pods (e.g. a quota or admission block), so the Deployment is wedged at the
   controller level.
 
+A creation block produces both signals from one cause, and which one you see
+depends on how long it has been going on: while the ReplicaSet's events are
+still alive, [FailedCreate](#failedcreate-controller-cant-create-pods) names
+the cause specifically and `RolloutStuck` stays silent; a Kubernetes event
+expires after about an hour, and once they have aged out the `ReplicaFailure`
+condition — which does not expire — is the evidence that remains. The same
+cause, reported more specifically early and more generally later.
+
+A **StatefulSet** and a **DaemonSet** publish no conditions at all, so their
+counters are read instead:
+
+- **StatefulSet, stuck update** — `updateRevision` differs from `currentRevision`
+  and `updatedReplicas` is short of `spec.replicas`: the new revision is not
+  reaching the replicas.
+- **StatefulSet, stuck without an update** — the revisions match and
+  `readyReplicas` is short of `spec.replicas`.
+- **DaemonSet** — `numberReady` is short of `desiredNumberScheduled`. Whether
+  `updatedNumberScheduled` has also fallen behind only decides which counters the
+  evidence names.
+
+Because a counter cannot say whether a rollout is wedged or merely young, those
+two arms wait **600 seconds** before claiming anything — the controller itself
+and every not-ready pod it owns must be older than that. The number is not
+kubeagent's: it is Kubernetes' own default `spec.progressDeadlineSeconds` on a
+Deployment, so all three kinds are exactly as patient as the Deployment arm
+already was. It is not configurable.
+
 The finding is surfaced **only when no pod-level detector already explains the
-failure** — zero redundancy. If `ImagePullBackOff` or `CrashLoopBackOff` already
-names the cause on the pods, `RolloutStuck` stays silent.
+failure** — zero redundancy. It stays silent when a pod-level detector has fired
+in that scan, **or** when a pod in the workload has restarted repeatedly (three
+or more times, the same threshold `RestartLoop` uses).
+
+The second half of that test is what makes the answer stable. A crash-looping
+container is only in `Waiting` between restart attempts, so `CrashLoopBackOff`
+matches on some scans and not others; a gate reading only the first half
+reported `RolloutStuck` on one sample and `CrashLoopBackOff` on the next for the
+same unchanged Deployment. The restart count is durable across the whole cycle.
+`ImagePullBackOff` never had this problem — an unpullable image parks the
+container in `Waiting` and keeps it there.
 
 Read-only, always-on, no new flag, metric, or RBAC. Example output:
 
@@ -145,7 +255,14 @@ Read-only, always-on, no new flag, metric, or RBAC. Example output:
 ✗ shop/api  Deployment  2/3 Degraded
     ⚠ RolloutStuck: the Deployment's rollout cannot complete — the new pods are not becoming available
       ↳ Progressing (ProgressDeadlineExceeded): ReplicaSet "api-7f9c" has timed out progressing.
+✗ shop/db  StatefulSet  0/3 Degraded
+    ⚠ RolloutStuck: the StatefulSet's rollout cannot complete — the new pods are not becoming available
+      ↳ updatedReplicas 0/3, update revision pending
 ```
+
+The evidence for a StatefulSet or a DaemonSet is only ever those counters. The
+revision names are compared and never printed, and no pod, node or image is
+named.
 
 ### ResourceQuota near-exhaustion
 
@@ -656,6 +773,44 @@ a `NotReady` node names its kubelet-reported cause (the `NodeReady` condition's
 reason and message) instead of a bare `NotReady`. The cluster verdict and JSON
 schema are unchanged.
 
+Findings on the same workload that would print the same lines are collapsed into
+one block with a count, so a twenty-replica Deployment whose replicas all crash
+the same way prints one `⚠` line reading `×20` rather than twenty identical
+ones:
+
+```text
+✗ shop/web  Deployment  0/20 Degraded
+    ⚠ CrashLoopBackOff: Container repeatedly crashes after starting ×20
+      ↳ container "web", restartCount=4
+```
+
+A collapsed block never prints fewer lines than the findings it stands for.
+Anything that differs between pods keeps them apart — a `--suggest` command
+names the pod, a resources block names that container's limits — and the one
+part allowed to vary inside a block is the `↳` signal, where every distinct
+value is printed on its own line. That is what shows the restart counts when
+they differ:
+
+```text
+    ⚠ CrashLoopBackOff: Container repeatedly crashes after starting ×2
+      ↳ container "web", restartCount=1
+      ↳ container "web", restartCount=7
+```
+
+This is a text-rendering decision only. `--output json` still carries one
+finding per pod, each naming its own pod, and no count appears in it.
+
+A `↳` signal is capped at 500 characters in the text output, ending in
+`… (truncated)` when the cap bites. A container runtime repeats every layer of a
+failure — the back-off preamble, the rpc error, the unpack failure, the resolve
+failure, the bare image reference — and on a long registry path that line runs
+past the screen and takes the alignment of the rows below it with it. Real ones
+measure a few hundred characters and arrive whole; the cap is set where it bites
+only on the pathological. The cut is on characters, not bytes, so a multi-byte
+character is never split, and it is marked because a silently shortened error
+reads as the whole error. `--output json` carries the full string — it is the
+machine surface and the place to go for the complete cause.
+
 ### Agentic investigation (`--investigate`)
 
 `kubeagent scan --investigate` runs the full scan, then — for each finding —
@@ -706,7 +861,7 @@ Investigation  shop/api  Deployment
 
 `kubeagent scan` performs a read-only, whole-cluster scan and reports
 CrashLoopBackOff, ImagePullBackOff/ErrImagePull, OOMKilled,
-Pending/Unschedulable, VolumeAttachError (Multi-Attach), RestartLoop, ProbeFailure, init-container failures, failed Jobs/CronJobs, controllers that cannot create pods (FailedCreate), containers blocked by a missing ConfigMap or Secret (CreateContainerConfigError), and Deployments whose rollout has wedged (RolloutStuck), in text or JSON.
+Pending/Unschedulable, VolumeAttachError (Multi-Attach), VolumeMountError, RestartLoop, ProbeFailure, init-container failures, failed Jobs/CronJobs, controllers that cannot create pods (FailedCreate), containers blocked by a missing ConfigMap or Secret (CreateContainerConfigError), and Deployments, StatefulSets and DaemonSets whose rollout has wedged (RolloutStuck), in text or JSON.
 
 The optional `--suggest` flag prints a deterministic next-step suggestion and
 a read-only `kubectl` investigation command under each finding — offline, no
@@ -770,3 +925,13 @@ first-container image delta:
 It reuses the ReplicaSet history already collected (read-only), states only what
 changed and when, and never claims the rollout caused the problem — that
 connection is left to you (or `--explain`).
+
+Revision 1 gets no line. That revision is the Deployment's creation, not a
+change from anything, so reporting it would be the one case where `changed:`
+named no change — and its absence is what lets the line's presence mean
+something. The gate is the revision number, not the survival of an older
+ReplicaSet: a Deployment at revision 6 whose earlier ReplicaSets have been
+garbage-collected still gets its line, without the image delta. The rule holds
+for `--output json` too, where the `rollout` key is simply absent — it is an
+optional key, already absent for workloads that are not flagged Deployments and
+for rollouts older than the window.

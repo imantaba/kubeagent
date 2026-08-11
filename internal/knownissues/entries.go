@@ -117,6 +117,29 @@ var entries = []Entry{
 		Docs: "https://k8sproject.top/features/diagnostics/#init-container-failures",
 	},
 	{
+		Kind:    "Init:CreateContainerConfigError",
+		Summary: "the kubelet cannot build an init container from its spec",
+		Detail: "The configuration failure CreateContainerConfigError describes, on an init " +
+			"container instead of a main one. The consequence differs: the init sequence " +
+			"stops at that container, so nothing later runs and the main containers are " +
+			"never created — their status says only PodInitializing, which names neither " +
+			"the missing object nor the container that wanted it. The kubelet's waiting " +
+			"message on the init container is the whole diagnosis, and it persists for as " +
+			"long as the container is stuck.",
+		Causes: []string{
+			"Every CreateContainerConfigError cause — this is that failure on an init container.",
+			"An init step often reads a different Secret from the workload: a migration credential, a bootstrap token.",
+			"The ConfigMap or Secret is created by a main-container sidecar, or by a Job that has not run yet, so nothing exists when the init phase starts.",
+			"A key was renamed in the object and only the init container's secretKeyRef still names the old one.",
+		},
+		Checks: []string{
+			"kubectl -n <namespace> describe pod <pod> — the waiting message names the init container and the missing object",
+			"kubectl -n <namespace> get pod <pod> -o jsonpath='{.status.initContainerStatuses}' — which init container, and its position in the sequence",
+			"kubectl -n <namespace> get configmap,secret — whether the referenced object exists in this namespace at all",
+		},
+		Docs: "https://k8sproject.top/features/diagnostics/#init-container-failures",
+	},
+	{
 		Kind:    "Init:ErrImagePull",
 		Summary: "an init container's image could not be pulled",
 		Detail: "The pull failure is the one ErrImagePull describes, on an init container " +
@@ -285,5 +308,31 @@ var entries = []Entry{
 			"kubectl -n <namespace> get pvc — the claim's phase and the volume it is bound to",
 		},
 		Docs: "https://k8sproject.top/features/diagnostics/#volumeattacherror",
+	},
+	{
+		Kind:    "VolumeMountError",
+		Summary: "a volume cannot be mounted, so the container never starts",
+		Detail: "The pod is scheduled, its volumes were accepted by the API server, and the " +
+			"kubelet cannot set one of them up. Despite the name this is most often not a " +
+			"storage problem at all: a ConfigMap or Secret named in the pod spec as a volume " +
+			"source does not exist. That case produces no CreateContainerConfigError — the " +
+			"kubelet reports a container config error only for env and envFrom references — " +
+			"so the container sits in ContainerCreating and the kubelet's FailedMount event " +
+			"is the only place the missing object is named. Events expire after about an " +
+			"hour, and the pod stays stuck long after that.",
+		Causes: []string{
+			"A ConfigMap or Secret used as a volume source does not exist, or is in another namespace.",
+			"The object name in the volume's configMap/secret block has a typo the env path would have caught elsewhere.",
+			"A projected volume names a key that is not in the object.",
+			"An NFS or CIFS server is unreachable, or the export path does not exist.",
+			"The CSI driver on the node cannot stage or publish the volume, so the mount times out.",
+			"A subPath refers to a directory that the volume does not contain.",
+		},
+		Checks: []string{
+			"kubectl -n <namespace> describe pod <pod> — the FailedMount events, which name the volume and the missing object",
+			"kubectl -n <namespace> get configmap,secret — whether the referenced source exists in this namespace",
+			"kubectl -n <namespace> get pod <pod> -o jsonpath='{.spec.volumes}' — every volume source the pod asks for",
+		},
+		Docs: "https://k8sproject.top/features/diagnostics/#volumemounterror",
 	},
 }

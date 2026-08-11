@@ -12,6 +12,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/safetext"
 )
 
 const systemNamespace = "kube-system"
@@ -152,7 +153,10 @@ func nodeHealth(n corev1.Node) (ready bool, issues []string) {
 		switch c.Type {
 		case corev1.NodeReady:
 			ready = c.Status == corev1.ConditionTrue
-			readyReason, readyMessage = c.Reason, c.Message
+			// Both are free text the API server does not validate, and both are
+			// rendered by notReadyIssue. The condition is selected by type and
+			// judged by status, so no matching decision reads either value.
+			readyReason, readyMessage = safetext.Line(c.Reason), safetext.Line(c.Message)
 		case corev1.NodeMemoryPressure, corev1.NodeDiskPressure, corev1.NodePIDPressure:
 			if c.Status == corev1.ConditionTrue {
 				issues = append(issues, string(c.Type))
@@ -172,6 +176,11 @@ func nodeHealth(n corev1.Node) (ready bool, issues []string) {
 // condition's reason and trimmed message when present.
 func notReadyIssue(reason, message string) string {
 	s := "NotReady"
+	// The message arrives already sanitized, so it is already one line —
+	// safetext.Line folds a newline to a space rather than cutting there, which
+	// is what the rest of kubeagent does with a multi-line condition message.
+	// trimLine's own split is therefore belt-and-braces here; the rune budget is
+	// what keeps a NotReady row to one line.
 	m := trimLine(message, 120)
 	switch {
 	case reason != "" && m != "":

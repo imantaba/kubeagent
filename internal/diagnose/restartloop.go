@@ -8,7 +8,11 @@ import (
 )
 
 const (
-	restartThreshold = 3
+	// RestartThreshold is how many restarts make a container "restarting
+	// repeatedly" rather than one that hit a bad moment. It is exported because
+	// internal/rollouthealth asks the same question of a workload's pod rows —
+	// reading the number from here is what keeps the two from drifting apart.
+	RestartThreshold = 3
 	restartRecency   = 10 * time.Minute
 )
 
@@ -28,7 +32,7 @@ func (d RestartLoopDetector) Detect(facts PodFacts) *Finding {
 		if d.Now.Sub(run.StartedAt.Time) > restartRecency {
 			continue // recovered: has run stably past the window
 		}
-		if int(cs.RestartCount) < restartThreshold {
+		if int(cs.RestartCount) < RestartThreshold {
 			continue
 		}
 		term := cs.LastTerminationState.Terminated

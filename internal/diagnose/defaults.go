@@ -6,17 +6,19 @@ import "time"
 // order findings are reported.
 //
 // now is a parameter rather than a time.Now() call because RestartLoopDetector
-// measures how long ago a container last exited, and it is the only detector in
-// this set that reads a clock. Injecting the instant keeps the whole set a pure
-// function of its inputs, which is what the determinism property in
-// FuzzDetectors and the report package's golden test both depend on.
+// and CrashLoopDetector both measure how long ago a container last exited, and
+// they are the only detectors in this set that read a clock. Injecting the
+// instant keeps the whole set a pure function of its inputs, which is what the
+// determinism property in FuzzDetectors and the report package's golden test
+// both depend on.
 func DefaultDetectors(now time.Time) []Detector {
 	return []Detector{
-		CrashLoopDetector{},
+		CrashLoopDetector{Now: now},
 		ImagePullDetector{},
 		OOMKilledDetector{},
 		PendingDetector{},
 		VolumeAttachDetector{},
+		VolumeMountDetector{},
 		RestartLoopDetector{Now: now},
 		InitContainerDetector{},
 		ProbeFailureDetector{},

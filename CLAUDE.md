@@ -143,13 +143,14 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   promises. The completeness check cannot live inside a package that imports
   nothing, so it lives in `internal/diagnose/knownissues_test.go`, where both
   the registry and the detectors are in scope: a `go/parser` walk over every
-  `Issue:` literal, a fixture table driving all nine detectors to all
-  thirteen kinds, a reverse check, and a second parser walk that reads the
+  `Issue:` literal, a fixture table driving all ten detectors to all
+  fifteen kinds, a reverse check, and a second parser walk that reads the
   *guards* on the two sites that build a kind from a runtime value. The
-  vocabulary is closed at thirteen because both apparently-dynamic sites —
-  `imagepull.go` and `initcontainer.go` — are guarded to two reasons each,
+  vocabulary is closed at fifteen because both apparently-dynamic sites —
+  `imagepull.go` and `initcontainer.go` — are guarded against a closed set
+  of string literals, every composition of which the reference documents,
   and that fourth test is what makes widening either guard fail the suite
-  instead of quietly admitting a fourteenth kind. It understands a closed
+  instead of quietly admitting a sixteenth kind. It understands a closed
   set of guard and value shapes — an `==` or `switch` against a string
   literal, and an `Issue` that is a `.Reason` field or a literal prefix
   added to one — and **refuses** every other shape by name rather than
@@ -236,14 +237,18 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   bumping the surface's version in `internal/jsonschema` and regenerating with
   `go test ./internal/schemadoc -run TestSchemaDrift -update`. The drift test
   says whether the change was additive (MINOR) or breaking (MAJOR). `scan` is
-  at schema version **1.2** (added `policy`, then `baseline`, both
-  `omitempty`), `gate` is at **1.1** (added `policyNotEvaluated`, `omitempty`),
-  and `fleet` is at **1.2** (added `shared` at 1.1, then `name` at 1.2, both
-  `omitempty`) — all three additive; `baseline` enters at **1.0**. A run
+  at schema version **1.3** (added `policy`, then `baseline`, then a pod row's
+  `state`, all three `omitempty`), `gate` is at **1.1** (added
+  `policyNotEvaluated`, `omitempty`), and `fleet` is at **1.2** (added `shared`
+  at 1.1, then `name` at 1.2, both `omitempty`) — all three additive;
+  `baseline` enters at **1.0**. A run
   without `--policy` or `--baseline` encodes none of those keys, a sweep that
   correlates nothing encodes no `shared` key, and a sweep selected from a
   kubeconfig writes no `name` key either, because a row identity that equals
-  its context is not written — every existing consumer is unaffected.
+  its context is not written — every existing consumer is unaffected. A pod
+  row's `state` is `omitempty` for schema-additivity reasons and no other: it
+  is set on every row of every real scan, and dropping `omitempty` would make
+  it a newly *required* property, which the drift classifier calls BREAKING.
 
 ## Commit conventions
 
@@ -433,7 +438,7 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   (see [website/docs/features/fleet.md](website/docs/features/fleet.md)).
 - **Post-1.0 — the known-issues knowledge base, slice 1 has shipped (v1.8.0):**
   `kubeagent known-issues [kind]` prints kubeagent's own reference for the
-  thirteen kinds `diagnose.DefaultDetectors` can emit, from a curated Go
+  fifteen kinds `diagnose.DefaultDetectors` can emit, from a curated Go
   slice literal in `internal/knownissues` — no cluster, no kubeconfig, no
   network, no flags, and no model call. The vocabulary is closed, and four
   tests in `internal/diagnose` keep it closed: they fail the suite if a

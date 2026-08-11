@@ -177,8 +177,8 @@ func TestRunKnownIssuesRejectsAnUnknownKind(t *testing.T) {
 
 // The message must be honest about coverage rather than implying the operator
 // mistyped. This reference documents the deterministic detector set; a kind
-// from elsewhere in kubeagent — NoEndpoints, RolloutStuck, JobFailed — is real
-// and simply not in it yet, so the message says where those are explained.
+// from elsewhere in kubeagent — NoEndpoints is one, from the cluster pass — is
+// real and simply not in it, so the message says where those are explained.
 func TestUnknownKindMessageIsHonestAboutCoverage(t *testing.T) {
 	err := runKnownIssues([]string{"NoEndpoints"}, &bytes.Buffer{})
 	if err == nil {
@@ -189,6 +189,67 @@ func TestUnknownKindMessageIsHonestAboutCoverage(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "https://k8sproject.top/features/diagnostics/") {
 		t.Errorf("error = %v, want it to point at where the rest are explained", err)
+	}
+}
+
+// A workload-level kind gets its own message. kubeagent emitted RolloutStuck,
+// FailedCreate or JobFailed a moment earlier, so telling the operator who asks
+// about one that the kind is unknown would be false. The message says the kind
+// is real and not part of the detector set this reference covers.
+func TestWorkloadKindMessageDoesNotSayUnknown(t *testing.T) {
+	for _, kind := range knownissues.WorkloadKinds() {
+		err := runKnownIssues([]string{kind}, &bytes.Buffer{})
+		if err == nil {
+			t.Fatalf("runKnownIssues(%q) returned no error; the exit code must not change", kind)
+		}
+		if strings.Contains(err.Error(), "unknown") {
+			t.Errorf("%q: error = %v, want it not to call an emitted kind unknown", kind, err)
+		}
+		if !strings.Contains(err.Error(), kind) {
+			t.Errorf("%q: error = %v, want it to name the kind", kind, err)
+		}
+		if !strings.Contains(err.Error(), "workload-level") {
+			t.Errorf("%q: error = %v, want it to say what the kind is", kind, err)
+		}
+		if !strings.Contains(err.Error(), "https://k8sproject.top/features/diagnostics/") {
+			t.Errorf("%q: error = %v, want it to point at where it is explained", kind, err)
+		}
+	}
+}
+
+// The two cases must not blur into one softer message. A typo is unknown —
+// that is the correct word for it — and its message still lists what the
+// reference documents, which the workload-kind message does not.
+func TestWorkloadKindMessageIsDistinctFromTheUnknownOne(t *testing.T) {
+	unknown := runKnownIssues([]string{"RolloutStucc"}, &bytes.Buffer{})
+	if unknown == nil {
+		t.Fatal("runKnownIssues() accepted a typo")
+	}
+	if !strings.Contains(unknown.Error(), "unknown issue kind") {
+		t.Errorf("error = %v, want the unknown-kind wording verbatim", unknown)
+	}
+	if !strings.Contains(unknown.Error(), "OOMKilled") {
+		t.Errorf("error = %v, want it to list what is documented", unknown)
+	}
+
+	workload := runKnownIssues([]string{"RolloutStuck"}, &bytes.Buffer{})
+	if workload == nil {
+		t.Fatal("runKnownIssues() accepted a workload kind")
+	}
+	if workload.Error() == unknown.Error() {
+		t.Error("the two messages are identical; the cases must stay distinct")
+	}
+}
+
+// A workload kind writes nothing to the output, exactly as an unknown one does:
+// this is an error path, not a second rendering of the reference.
+func TestWorkloadKindWritesNothing(t *testing.T) {
+	var buf bytes.Buffer
+	if err := runKnownIssues([]string{"JobFailed"}, &buf); err == nil {
+		t.Fatal("runKnownIssues() accepted a workload kind")
+	}
+	if buf.Len() != 0 {
+		t.Errorf("wrote %q to the output on an error", buf.String())
 	}
 }
 

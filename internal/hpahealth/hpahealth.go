@@ -12,6 +12,8 @@ import (
 
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
+
+	"github.com/imantaba/kubeagent/internal/safetext"
 )
 
 // Issue is one HorizontalPodAutoscaler that cannot scale as intended.
@@ -33,9 +35,18 @@ func Assess(hpas []autoscalingv2.HorizontalPodAutoscaler) []Issue {
 			out = append(out, Issue{
 				Namespace: h.Namespace,
 				Name:      h.Name,
-				Target:    h.Spec.ScaleTargetRef.Kind + "/" + h.Spec.ScaleTargetRef.Name,
-				Category:  cat,
-				Reason:    reason,
+				// The HPA's own namespace and name are DNS-1123 labels the API
+				// server validates, but its scale-target reference is not: kind
+				// and name are checked with IsPathSegmentName, which refuses
+				// only ".", "..", and a value containing "/" or "%". A control
+				// character, invalid UTF-8 and an unbounded length all pass, so
+				// this is where those two become kubeagent values. They are
+				// sanitized separately rather than after joining, so a long kind
+				// cannot push the name out of one line's budget.
+				Target: safetext.Line(h.Spec.ScaleTargetRef.Kind) + "/" +
+					safetext.Line(h.Spec.ScaleTargetRef.Name),
+				Category: cat,
+				Reason:   reason,
 			})
 		}
 	}
@@ -61,13 +72,15 @@ func reason(prefix, msg string) string {
 // HPA, or ok=false when it is healthy/benign.
 func classify(h autoscalingv2.HorizontalPodAutoscaler) (category, msg string, ok bool) {
 	if c := condition(h, autoscalingv2.AbleToScale); c != nil && c.Status == corev1.ConditionFalse {
-		return "unable", reason("can't scale", c.Message), true
+		return "unable", reason("can't scale", safetext.Line(c.Message)), true
 	}
 	if c := condition(h, autoscalingv2.ScalingActive); c != nil && c.Status == corev1.ConditionFalse {
-		return "metrics", reason("can't fetch metrics", c.Message), true
+		return "metrics", reason("can't fetch metrics", safetext.Line(c.Message)), true
 	}
 	// "TooManyReplicas" is the literal reason the upstream HPA controller sets on
-	// ScalingLimited when it clamps the desired count down to maxReplicas.
+	// ScalingLimited when it clamps the desired count down to maxReplicas. The
+	// comparison is a matching decision, so it runs on the raw value — a control
+	// character spliced into the reason must not make it stop matching.
 	if c := condition(h, autoscalingv2.ScalingLimited); c != nil && c.Status == corev1.ConditionTrue && c.Reason == "TooManyReplicas" {
 		return "capped", fmt.Sprintf("pinned at maxReplicas %d — desired exceeds the cap", h.Spec.MaxReplicas), true
 	}

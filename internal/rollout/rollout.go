@@ -26,6 +26,21 @@ const recencyWindow = 7 * 24 * time.Hour
 // revision, its age, and the first-container image delta versus the previous
 // revision (image left empty when unchanged or when there is no prior revision).
 // It mutates the slice elements in place.
+//
+// Revision 1 is excluded: it is the Deployment's creation, so there is no prior
+// state for it to be a change from, and a workload flagged since it was created
+// gains nothing from being told it was created. Suppressing it is what makes the
+// annotation's presence mean something — that this workload changed recently.
+// The gate is the revision number rather than the absence of a prior ReplicaSet:
+// revision 5 with its predecessors garbage-collected still changed, and prints
+// without a delta for a different reason.
+//
+// Suppression happens here rather than in a renderer so every surface agrees:
+// the JSON document is the one that gets forwarded, and a rollout key describing
+// a creation is the same non-signal there as on a terminal. The field is already
+// omitempty and already absent for non-Deployments, unflagged workloads and
+// rollouts past recencyWindow, so narrowing when it appears moves no
+// schemaVersion.
 func Annotate(workloads []inventory.Workload, replicaSets []appsv1.ReplicaSet, now time.Time) {
 	for i := range workloads {
 		w := workloads[i]
@@ -38,6 +53,9 @@ func Annotate(workloads []inventory.Workload, replicaSets []appsv1.ReplicaSet, n
 		}
 		if now.Sub(cur.CreationTimestamp.Time) > recencyWindow {
 			continue // rollout too old to be "what changed"
+		}
+		if revOf(*cur) <= 1 {
+			continue // revision 1 is the Deployment's creation; nothing changed
 		}
 		rc := &inventory.RolloutChange{
 			Revision: strconv.Itoa(revOf(*cur)),

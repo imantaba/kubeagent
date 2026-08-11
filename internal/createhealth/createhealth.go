@@ -124,6 +124,12 @@ func workloadKeyForEvent(e *corev1.Event, rsToDeploy map[string]string) string {
 // classifyCreateFailure names the pod-creation failure mode from the controller's
 // FailedCreate event message. Order matters: a quota/LimitRange denial is also
 // phrased as "forbidden", so those are matched before the generic forbidden case.
+// For the same reason a webhook that answered is matched before one that could
+// not be reached — a message carrying both phrasings describes a webhook that
+// answered, and "rejected" is the more specific and more actionable word.
+//
+// The default arm stays deliberately vague. It is honest about knowing nothing,
+// and each new arm narrows what reaches it rather than replacing it.
 func classifyCreateFailure(msg string) string {
 	m := strings.ToLower(msg)
 	switch {
@@ -131,6 +137,12 @@ func classifyCreateFailure(msg string) string {
 		return "blocked by a ResourceQuota"
 	case strings.Contains(m, "admission webhook"):
 		return "rejected by an admission webhook"
+	// A webhook whose backend is down, mis-served or cert-expired: the API
+	// server says "failed calling webhook", never "admission webhook", so this
+	// used to fall to the default. The wording claims only what was observed —
+	// the call did not complete — not why.
+	case strings.Contains(m, "failed calling webhook"):
+		return "an admission webhook could not be reached"
 	case strings.Contains(m, "limitrange"), strings.Contains(m, "minimum "), strings.Contains(m, "maximum "):
 		return "violates a LimitRange"
 	case strings.Contains(m, "forbidden"):

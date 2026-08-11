@@ -24,6 +24,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A `FailedCreate` caused by an admission webhook that could not be reached
+  is now named as such.** `classifyCreateFailure` matched the literal
+  `admission webhook`, which is what the API server writes when a webhook
+  *denies* a request. A webhook whose backend is down, mis-served or
+  cert-expired produces `failed calling webhook` instead, so the commonest
+  real-world webhook outage — the one case where an operator most needs to be
+  pointed at the webhook — classified as the vague default `pod creation is
+  failing`. It now reads `an admission webhook could not be reached`, which
+  claims only that the API server's call did not complete; kubeagent read one
+  event message and does not know whether the backend is down, mis-served,
+  cert-expired or merely slow. The denial arm keeps priority over it, and a
+  message containing both phrasings is pinned by a test.
 - **`FailedCreate` no longer hides behind a pod-level finding.** The check
   skipped any workload that already carried a finding, so a workload that was
   both quota-blocked and crash-looping reported whichever cause the scan

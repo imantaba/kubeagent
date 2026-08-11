@@ -186,3 +186,29 @@ func TestClassifyCreateFailure(t *testing.T) {
 		}
 	}
 }
+
+// A webhook whose backend is down is a far more common outage than a webhook
+// deliberately denying a pod, and the API server phrases it differently: the
+// message says "failed calling webhook", never "admission webhook". It used to
+// classify as the default, "pod creation is failing" — the one case where an
+// operator most needs to be pointed at the webhook.
+func TestClassifyCreateFailure_UnreachableWebhook(t *testing.T) {
+	const msg = `Internal error occurred: failed calling webhook "deny.example.com": ` +
+		`failed to call webhook: Post "https://webhook-svc.example.com/validate": service "webhook-svc" not found`
+	if got, want := classifyCreateFailure(msg), "an admission webhook could not be reached"; got != want {
+		t.Errorf("classifyCreateFailure(unreachable) = %q, want %q", got, want)
+	}
+}
+
+// The two webhook phrasings are disjoint on every message observed, but arm
+// order is what resolves an overlap and nothing guarantees a future API server
+// keeps them apart. The denial arm keeps priority: a message containing both
+// describes a webhook that answered, and "rejected" is the more specific and
+// more actionable word. Pinned here so a reordering fails the suite instead of
+// silently changing the answer.
+func TestClassifyCreateFailure_DenialOutranksUnreachable(t *testing.T) {
+	const msg = `admission webhook "deny.example.com" denied the request, after failed calling webhook "other.example.com"`
+	if got, want := classifyCreateFailure(msg), "rejected by an admission webhook"; got != want {
+		t.Errorf("classifyCreateFailure(both) = %q, want %q", got, want)
+	}
+}

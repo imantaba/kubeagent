@@ -151,7 +151,11 @@ re-flagged. Read-only; Jobs/CronJobs are already listed, so it needs no extra pe
 
 A workload can sit below its desired replicas with **no pods at all** when its
 controller is being denied pod *creation* — a `ResourceQuota` is exhausted, a
-`LimitRange` rejects the pod's resources, or an admission webhook blocks it. The
+`LimitRange` rejects the pod's resources, or an admission webhook blocks it —
+either by denying the pod (`rejected by an admission webhook`) or by not
+answering at all, its backend down, mis-served or cert-expired
+(`an admission webhook could not be reached`, which claims only that the API
+server's call did not complete, not why). The
 pod-level detectors see nothing (there is no pod), so the workload would
 otherwise show only `0/N Degraded` with no cause. kubeagent reads the
 controller's `FailedCreate` events and names the cause on the workload — e.g.

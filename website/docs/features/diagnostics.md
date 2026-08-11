@@ -914,3 +914,13 @@ first-container image delta:
 It reuses the ReplicaSet history already collected (read-only), states only what
 changed and when, and never claims the rollout caused the problem — that
 connection is left to you (or `--explain`).
+
+Revision 1 gets no line. That revision is the Deployment's creation, not a
+change from anything, so reporting it would be the one case where `changed:`
+named no change — and its absence is what lets the line's presence mean
+something. The gate is the revision number, not the survival of an older
+ReplicaSet: a Deployment at revision 6 whose earlier ReplicaSets have been
+garbage-collected still gets its line, without the image delta. The rule holds
+for `--output json` too, where the `rollout` key is simply absent — it is an
+optional key, already absent for workloads that are not flagged Deployments and
+for rollouts older than the window.

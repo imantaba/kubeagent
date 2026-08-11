@@ -24,6 +24,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A Deployment's first rollout no longer reports itself as a change.** A
+  flagged Deployment still on revision 1 carried `changed: rollout to revision
+  1, 4d ago` — but revision 1 is the Deployment's creation, so there was no
+  prior state for it to be a change from, and indeed no image delta was ever
+  printed beside it. It is now suppressed, which is what makes the line's
+  presence meaningful. The gate is the revision number, not the survival of an
+  older ReplicaSet: a Deployment at revision 6 whose predecessors have been
+  garbage-collected still reports its rollout, without the delta. Suppression
+  happens in `rollout.Annotate` rather than in a renderer, so `--output json`
+  agrees — the `rollout` key is simply absent, as it already was for workloads
+  that are not flagged Deployments and for rollouts older than the seven-day
+  window. It is an optional key, so no `schemaVersion` moves.
+
 - **`scan --output text` collapses findings that would print the same lines.**
   A Deployment whose replicas all fail the same way printed one identical pair
   of lines per pod — twenty of them on a twenty-replica Deployment — and the

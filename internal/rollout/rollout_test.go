@@ -80,13 +80,25 @@ func TestAnnotate_ImageUnchanged(t *testing.T) {
 	}
 }
 
-func TestAnnotate_SingleRevisionNoDelta(t *testing.T) {
+func TestAnnotate_FirstRevisionNotAnnotated(t *testing.T) {
 	wls := []inventory.Workload{flaggedDep("shop", "web")}
 	rss := []appsv1.ReplicaSet{rs("shop", "web-1", "web", "1", "nginx:bad", 1*24*time.Hour)}
 	Annotate(wls, rss, now)
+	if got := wls[0].Rollout; got != nil {
+		t.Errorf("revision 1 is the Deployment's creation, not a change; want no annotation, got %+v", got)
+	}
+}
+
+// The gate is the revision number, not the presence of a prior ReplicaSet: a
+// Deployment at revision 2 whose revision-1 ReplicaSet was garbage-collected
+// did change, and there is no delta to print only because the old spec is gone.
+func TestAnnotate_LaterRevisionAnnotatedWithoutAPriorReplicaSet(t *testing.T) {
+	wls := []inventory.Workload{flaggedDep("shop", "web")}
+	rss := []appsv1.ReplicaSet{rs("shop", "web-2", "web", "2", "nginx:bad", 1*24*time.Hour)}
+	Annotate(wls, rss, now)
 	got := wls[0].Rollout
-	if got == nil || got.Revision != "1" {
-		t.Fatalf("expected rollout revision 1, got %+v", got)
+	if got == nil || got.Revision != "2" {
+		t.Fatalf("expected rollout revision 2, got %+v", got)
 	}
 	if got.OldImage != "" || got.NewImage != "" {
 		t.Errorf("no prior revision -> no delta, got %+v", got)

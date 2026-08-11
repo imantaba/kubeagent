@@ -249,6 +249,11 @@ func producedKinds(t *testing.T) []string {
 			attachEvent("example-ns", "web-12",
 				`Multi-Attach error for volume "pvc-example" Volume is already exclusively attached to one node`),
 		}},
+		// VolumeMountError
+		{Pod: podCreating("example-ns", "web-14"), Events: []corev1.Event{
+			mountEvent("example-ns", "web-14",
+				`MountVolume.SetUp failed for volume "config" : configmap "app-config" not found`),
+		}},
 	}
 
 	seen := map[string]bool{}

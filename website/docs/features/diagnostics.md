@@ -11,11 +11,11 @@ are failing — covering the most common pod failure modes.
 
 ## Failure modes detected
 
-Fourteen of the failure modes below — the pod-level ones a detector reports as
+Fifteen of the failure modes below — the pod-level ones a detector reports as
 an issue kind — are also in the binary's own offline reference:
 `kubeagent known-issues <kind>` prints what one means, what usually causes it,
 and what to check, with no cluster and no network. Run it with no argument to
-see exactly which fourteen; the rest of this page keeps its prose only here.
+see exactly which fifteen; the rest of this page keeps its prose only here.
 See [Known issues reference](known-issues.md).
 
 ### CrashLoopBackOff
@@ -49,6 +49,28 @@ A pod stuck at container creation because a volume cannot be attached.
 `kubeagent` reads the pod's `FailedAttachVolume` Warning events and names the
 **Multi-Attach** case specifically (a ReadWriteOnce volume still attached to
 another node). Read-only: events are fetched with a single field-selected List.
+
+### VolumeMountError
+
+A pod stuck at container creation because a volume cannot be **mounted**.
+`kubeagent` reads the kubelet's `FailedMount` Warning events. This is a
+different failure from `VolumeAttachError`, which matches `FailedAttachVolume`
+only: an attach failure is a storage problem, while the most common mount
+failure has no storage in it at all.
+
+That common case is a **ConfigMap or Secret named in the pod spec as a volume
+source that does not exist**. It lands here rather than in
+[CreateContainerConfigError](#createcontainerconfigerror), because the kubelet
+reports a container config error only for a ConfigMap or Secret consumed
+through `env`/`envFrom` — a *volume* source that cannot be resolved never
+reaches container creation at all, so no container ever enters a waiting state
+naming it. Without this detector such a pod carries no diagnosis anywhere.
+`kubeagent` names that case specifically; for every other mount failure it says
+only that the mount did not complete, which is all it knows.
+
+Read-only: events are fetched with a single field-selected List. Note the
+consequence of being event-based — Kubernetes expires events after ~1 h, so a
+pod left stuck overnight loses this finding while staying just as stuck.
 
 ### RestartLoop
 
@@ -124,7 +146,10 @@ example: `container "worker": configmap "worker-config" not found`. The same
 failure on an **init container** is reported as its own kind,
 `Init:CreateContainerConfigError`, which additionally names that container's
 position in the init sequence — see
-[Init container failures](#init-container-failures). Unlike pod events (which
+[Init container failures](#init-container-failures). A ConfigMap or Secret the
+pod mounts as a **volume** is a third case again and is reported as
+[VolumeMountError](#volumemounterror) — the kubelet raises this waiting state
+only for a reference consumed through `env`/`envFrom`. Unlike pod events (which
 expire after ~1 h), the waiting state persists as long as the container is
 stuck — read-only, no new RBAC.
 
@@ -711,7 +736,7 @@ Investigation  shop/api  Deployment
 
 `kubeagent scan` performs a read-only, whole-cluster scan and reports
 CrashLoopBackOff, ImagePullBackOff/ErrImagePull, OOMKilled,
-Pending/Unschedulable, VolumeAttachError (Multi-Attach), RestartLoop, ProbeFailure, init-container failures, failed Jobs/CronJobs, controllers that cannot create pods (FailedCreate), containers blocked by a missing ConfigMap or Secret (CreateContainerConfigError), and Deployments whose rollout has wedged (RolloutStuck), in text or JSON.
+Pending/Unschedulable, VolumeAttachError (Multi-Attach), VolumeMountError, RestartLoop, ProbeFailure, init-container failures, failed Jobs/CronJobs, controllers that cannot create pods (FailedCreate), containers blocked by a missing ConfigMap or Secret (CreateContainerConfigError), and Deployments whose rollout has wedged (RolloutStuck), in text or JSON.
 
 The optional `--suggest` flag prints a deterministic next-step suggestion and
 a read-only `kubectl` investigation command under each finding — offline, no

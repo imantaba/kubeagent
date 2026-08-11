@@ -8,7 +8,7 @@ import (
 	"unicode"
 )
 
-// The fourteen kinds DefaultDetectors can emit. This list is duplicated from
+// The fifteen kinds DefaultDetectors can emit. This list is duplicated from
 // internal/diagnose deliberately: this package imports nothing from kubeagent,
 // so the join is proved from the other side, in
 // internal/diagnose/knownissues_test.go, where both sets are in scope.
@@ -27,9 +27,10 @@ var wantKinds = []string{
 	"RestartLoop",
 	"Unschedulable",
 	"VolumeAttachError",
+	"VolumeMountError",
 }
 
-func TestKindsAreTheFourteen(t *testing.T) {
+func TestKindsAreTheFifteen(t *testing.T) {
 	got := Kinds()
 	if len(got) != len(wantKinds) {
 		t.Fatalf("Kinds() has %d entries, want %d: %v", len(got), len(wantKinds), got)

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **New detector: `VolumeMountError`.** A pod stuck at container creation
+  because a volume cannot be *mounted* now carries a finding. Previously only
+  `FailedAttachVolume` was matched (`VolumeAttachError`), so the most common
+  mount failure — a ConfigMap or Secret named as a **volume source** that does
+  not exist — produced no diagnosis anywhere: the kubelet raises
+  `CreateContainerConfigError` only for a reference consumed through
+  `env`/`envFrom`, and a volume that cannot be resolved never reaches container
+  creation. The detector reads the pod's `FailedMount` Warning events, names the
+  missing-object case specifically, and for every other mount failure claims
+  only that the mount did not complete. `VolumeAttachDetector` is unchanged. The
+  issue kind is a string rather than an enum in every published schema, so no
+  `schemaVersion` moves.
+
 ### Changed
 
 - **An init container blocked by a missing ConfigMap or Secret is now reported

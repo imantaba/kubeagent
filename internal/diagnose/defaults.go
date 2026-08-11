@@ -17,6 +17,7 @@ func DefaultDetectors(now time.Time) []Detector {
 		OOMKilledDetector{},
 		PendingDetector{},
 		VolumeAttachDetector{},
+		VolumeMountDetector{},
 		RestartLoopDetector{Now: now},
 		InitContainerDetector{},
 		ProbeFailureDetector{},

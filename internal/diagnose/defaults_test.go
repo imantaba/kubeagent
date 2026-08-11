@@ -16,6 +16,7 @@ func TestDefaultDetectorsOrder(t *testing.T) {
 		"diagnose.OOMKilledDetector",
 		"diagnose.PendingDetector",
 		"diagnose.VolumeAttachDetector",
+		"diagnose.VolumeMountDetector",
 		"diagnose.RestartLoopDetector",
 		"diagnose.InitContainerDetector",
 		"diagnose.ProbeFailureDetector",

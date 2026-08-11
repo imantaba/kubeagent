@@ -309,4 +309,30 @@ var entries = []Entry{
 		},
 		Docs: "https://k8sproject.top/features/diagnostics/#volumeattacherror",
 	},
+	{
+		Kind:    "VolumeMountError",
+		Summary: "a volume cannot be mounted, so the container never starts",
+		Detail: "The pod is scheduled, its volumes were accepted by the API server, and the " +
+			"kubelet cannot set one of them up. Despite the name this is most often not a " +
+			"storage problem at all: a ConfigMap or Secret named in the pod spec as a volume " +
+			"source does not exist. That case produces no CreateContainerConfigError — the " +
+			"kubelet reports a container config error only for env and envFrom references — " +
+			"so the container sits in ContainerCreating and the kubelet's FailedMount event " +
+			"is the only place the missing object is named. Events expire after about an " +
+			"hour, and the pod stays stuck long after that.",
+		Causes: []string{
+			"A ConfigMap or Secret used as a volume source does not exist, or is in another namespace.",
+			"The object name in the volume's configMap/secret block has a typo the env path would have caught elsewhere.",
+			"A projected volume names a key that is not in the object.",
+			"An NFS or CIFS server is unreachable, or the export path does not exist.",
+			"The CSI driver on the node cannot stage or publish the volume, so the mount times out.",
+			"A subPath refers to a directory that the volume does not contain.",
+		},
+		Checks: []string{
+			"kubectl -n <namespace> describe pod <pod> — the FailedMount events, which name the volume and the missing object",
+			"kubectl -n <namespace> get configmap,secret — whether the referenced source exists in this namespace",
+			"kubectl -n <namespace> get pod <pod> -o jsonpath='{.spec.volumes}' — every volume source the pod asks for",
+		},
+		Docs: "https://k8sproject.top/features/diagnostics/#volumemounterror",
+	},
 }

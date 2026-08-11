@@ -64,13 +64,13 @@ it.
 
 ## The vocabulary is closed
 
-`kubeagent known-issues` documents exactly the fourteen kinds the
+`kubeagent known-issues` documents exactly the fifteen kinds the
 deterministic detector set can report, and the repository checks that rather
 than asserting it. Four tests in `internal/diagnose` run on every `go test`:
 
 - a `go/parser` walk over the detector sources, checking every string literal
   that reaches a finding's issue field;
-- a fixture table that drives all nine detectors to produce all fourteen
+- a fixture table that drives all ten detectors to produce all fifteen
   kinds and looks each one up in the registry — this is what covers the kinds
   composed at run time, which the parser cannot see;
 - the reverse check, refusing an entry for a kind no detector emits;

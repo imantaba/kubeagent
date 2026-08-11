@@ -9,6 +9,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/imantaba/kubeagent/internal/createhealth"
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/inventory"
 )
@@ -532,5 +533,51 @@ func TestAnnotate_StatefulSetWithARestartingPodIsSkipped(t *testing.T) {
 
 	if len(ws[0].Findings) != 0 {
 		t.Errorf("want no finding when a pod is restarting repeatedly, got %+v", ws[0].Findings)
+	}
+}
+
+// The ReplicaFailure arm is the long-horizon fallback, and no live test can
+// reach it.
+//
+// A Deployment blocked from creating pods produces two signals from one cause:
+// a FailedCreate event on its ReplicaSet, and a ReplicaFailure condition on the
+// Deployment. createhealth.Annotate runs first and reads the events, so while
+// the event is alive the workload already carries a FailedCreate finding and
+// this package's existing-finding gate keeps RolloutStuck silent — which is the
+// correct precedence, because FailedCreate names the cause specifically. A
+// Kubernetes event expires after about an hour; the condition does not. Once
+// the events have aged out the general answer is the only one left, and this
+// arm is what supplies it.
+//
+// That is why the event slice here is empty rather than merely absent: it is
+// the aged-out cluster, not a simplification. Every short live test — including
+// the validation run that prompted this test — exercises the first hour and
+// therefore always sees FailedCreate, so this arm has no live coverage at all.
+func TestAnnotate_ReplicaFailureIsTheFallbackOnceEventsHaveAgedOut(t *testing.T) {
+	const msg = `pods "api-7f9c-" is forbidden: exceeded quota: compute, requested: pods=1, used: pods=4, limited: pods=4`
+	w := degraded("shop", "api")
+	w.Desired, w.Ready = 1, 0 // the controller created nothing at all
+	ws := []inventory.Workload{w}
+
+	// The events have expired. createhealth reads events and nothing else, so
+	// it attaches nothing and leaves the existing-finding gate open.
+	createhealth.Annotate(ws, nil, nil)
+	if len(ws[0].Findings) != 0 {
+		t.Fatalf("createhealth must attach nothing with no events, got %+v", ws[0].Findings)
+	}
+
+	deps := []appsv1.Deployment{deploy("shop", "api",
+		cond(appsv1.DeploymentReplicaFailure, corev1.ConditionTrue, "FailedCreate", msg))}
+	Annotate(ws, deps, nil, nil, nil, rhNow)
+
+	if len(ws[0].Findings) != 1 {
+		t.Fatalf("want exactly one finding, got %+v", ws[0].Findings)
+	}
+	f := ws[0].Findings[0]
+	if f.Issue != "RolloutStuck" {
+		t.Errorf("Issue = %q, want RolloutStuck", f.Issue)
+	}
+	if want := "ReplicaFailure: " + msg; f.Evidence != want {
+		t.Errorf("Evidence = %q, want %q", f.Evidence, want)
 	}
 }

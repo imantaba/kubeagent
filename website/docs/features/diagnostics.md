@@ -209,6 +209,14 @@ conditions:
   new pods (e.g. a quota or admission block), so the Deployment is wedged at the
   controller level.
 
+A creation block produces both signals from one cause, and which one you see
+depends on how long it has been going on: while the ReplicaSet's events are
+still alive, [FailedCreate](#failedcreate-controller-cant-create-pods) names
+the cause specifically and `RolloutStuck` stays silent; a Kubernetes event
+expires after about an hour, and once they have aged out the `ReplicaFailure`
+condition — which does not expire — is the evidence that remains. The same
+cause, reported more specifically early and more generally later.
+
 A **StatefulSet** and a **DaemonSet** publish no conditions at all, so their
 counters are read instead:
 

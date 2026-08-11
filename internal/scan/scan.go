@@ -688,7 +688,7 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 		}
 	}
 	createhealth.Annotate(result.Workloads, inputs.ReplicaSets, failedCreateEvents)
-	rollouthealth.Annotate(result.Workloads, inputs.Deployments)
+	rollouthealth.Annotate(result.Workloads, inputs.Deployments, inputs.StatefulSets, inputs.DaemonSets, inputs.Pods, now)
 	netpolicy.Annotate(result.Workloads, podLabels, nps)
 	rollout.Annotate(result.Workloads, inputs.ReplicaSets, now)
 	rootcause.Annotate(result.Workloads, health.DownNodes)

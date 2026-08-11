@@ -3,6 +3,7 @@ package rollouthealth
 import (
 	"strings"
 	"testing"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -27,7 +28,58 @@ func deploy(ns, name string, conds ...appsv1.DeploymentCondition) appsv1.Deploym
 
 // degraded builds a flagged (Ready < Desired) Deployment workload with no findings.
 func degraded(ns, name string) inventory.Workload {
-	return inventory.Workload{Namespace: ns, Name: name, Kind: "Deployment", Desired: 3, Ready: 2, Status: "Degraded"}
+	return degradedKind(ns, name, "Deployment")
+}
+
+// degradedKind builds a flagged workload of the given controller kind.
+func degradedKind(ns, name, kind string) inventory.Workload {
+	return inventory.Workload{Namespace: ns, Name: name, Kind: kind, Desired: 3, Ready: 2, Status: "Degraded"}
+}
+
+// rhNow is the injected clock every test in this file reads.
+var rhNow = time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
+
+// oldEnough and tooYoung sit either side of the grace period.
+const (
+	oldEnough = 20 * time.Minute
+	tooYoung  = 60 * time.Second
+)
+
+func boolPtr(b bool) *bool    { return &b }
+func int32Ptr(i int32) *int32 { return &i }
+
+// ownedPod builds a pod controlled by the named workload, created ago before rhNow.
+func ownedPod(ns, name, ownerKind, owner string, ready bool, ago time.Duration) corev1.Pod {
+	st := corev1.ConditionFalse
+	if ready {
+		st = corev1.ConditionTrue
+	}
+	return corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: ns, Name: name,
+			CreationTimestamp: metav1.NewTime(rhNow.Add(-ago)),
+			OwnerReferences:   []metav1.OwnerReference{{Kind: ownerKind, Name: owner, Controller: boolPtr(true)}},
+		},
+		Status: corev1.PodStatus{Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: st}}},
+	}
+}
+
+// statefulSet builds a StatefulSet wanting desired replicas, with the given
+// status, created ago before rhNow.
+func statefulSet(ns, name string, desired int32, s appsv1.StatefulSetStatus, ago time.Duration) appsv1.StatefulSet {
+	return appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name, CreationTimestamp: metav1.NewTime(rhNow.Add(-ago))},
+		Spec:       appsv1.StatefulSetSpec{Replicas: int32Ptr(desired)},
+		Status:     s,
+	}
+}
+
+// daemonSet builds a DaemonSet with the given status, created ago before rhNow.
+func daemonSet(ns, name string, s appsv1.DaemonSetStatus, ago time.Duration) appsv1.DaemonSet {
+	return appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name, CreationTimestamp: metav1.NewTime(rhNow.Add(-ago))},
+		Status:     s,
+	}
 }
 
 const deadlineMsg = `ReplicaSet "api-7f9c" has timed out progressing.`
@@ -38,7 +90,7 @@ func TestAnnotate_ProgressDeadlineExceeded(t *testing.T) {
 	ds := []appsv1.Deployment{deploy("shop", "api",
 		cond(appsv1.DeploymentProgressing, corev1.ConditionFalse, "ProgressDeadlineExceeded", deadlineMsg))}
 
-	Annotate(ws, ds)
+	Annotate(ws, ds, nil, nil, nil, rhNow)
 
 	if len(ws[0].Findings) != 1 {
 		t.Fatalf("want one finding, got %+v", ws[0].Findings)
@@ -63,7 +115,7 @@ func TestAnnotate_ReplicaFailure(t *testing.T) {
 	ds := []appsv1.Deployment{deploy("shop", "api",
 		cond(appsv1.DeploymentReplicaFailure, corev1.ConditionTrue, "FailedCreate", replicaFailMsg))}
 
-	Annotate(ws, ds)
+	Annotate(ws, ds, nil, nil, nil, rhNow)
 
 	if len(ws[0].Findings) != 1 || ws[0].Findings[0].Issue != "RolloutStuck" {
 		t.Fatalf("want one RolloutStuck finding, got %+v", ws[0].Findings)
@@ -79,7 +131,7 @@ func TestAnnotate_ReplicaFailureWinsOverProgressing(t *testing.T) {
 		cond(appsv1.DeploymentProgressing, corev1.ConditionFalse, "ProgressDeadlineExceeded", deadlineMsg),
 		cond(appsv1.DeploymentReplicaFailure, corev1.ConditionTrue, "FailedCreate", replicaFailMsg))}
 
-	Annotate(ws, ds)
+	Annotate(ws, ds, nil, nil, nil, rhNow)
 
 	if len(ws[0].Findings) != 1 {
 		t.Fatalf("want one finding, got %+v", ws[0].Findings)
@@ -109,7 +161,7 @@ func TestAnnotate_NotFlaggedCases(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ws := []inventory.Workload{tc.w}
-			Annotate(ws, []appsv1.Deployment{tc.d})
+			Annotate(ws, []appsv1.Deployment{tc.d}, nil, nil, nil, rhNow)
 			if len(ws[0].Findings) != 0 {
 				t.Errorf("%s: want no finding, got %+v", tc.name, ws[0].Findings)
 			}
@@ -124,7 +176,7 @@ func TestAnnotate_SkipsWorkloadWithExistingFinding(t *testing.T) {
 	ds := []appsv1.Deployment{deploy("shop", "api",
 		cond(appsv1.DeploymentProgressing, corev1.ConditionFalse, "ProgressDeadlineExceeded", deadlineMsg))}
 
-	Annotate(ws, ds)
+	Annotate(ws, ds, nil, nil, nil, rhNow)
 
 	if len(ws[0].Findings) != 1 || ws[0].Findings[0].Issue != "ImagePullBackOff" {
 		t.Errorf("want the existing finding untouched, got %+v", ws[0].Findings)
@@ -145,7 +197,7 @@ func TestAnnotate_SkipsWorkloadWithARestartingPod(t *testing.T) {
 	ds := []appsv1.Deployment{deploy("shop", "api",
 		cond(appsv1.DeploymentProgressing, corev1.ConditionFalse, "ProgressDeadlineExceeded", deadlineMsg))}
 
-	Annotate(ws, ds)
+	Annotate(ws, ds, nil, nil, nil, rhNow)
 
 	if len(ws[0].Findings) != 0 {
 		t.Errorf("a workload whose pod is restarting repeatedly must not also be told its rollout is stuck, got %+v", ws[0].Findings)
@@ -162,7 +214,7 @@ func TestAnnotate_FiresBelowTheRestartThreshold(t *testing.T) {
 	ds := []appsv1.Deployment{deploy("shop", "api",
 		cond(appsv1.DeploymentProgressing, corev1.ConditionFalse, "ProgressDeadlineExceeded", deadlineMsg))}
 
-	Annotate(ws, ds)
+	Annotate(ws, ds, nil, nil, nil, rhNow)
 
 	if len(ws[0].Findings) != 1 || ws[0].Findings[0].Issue != "RolloutStuck" {
 		t.Errorf("want RolloutStuck below the restart threshold, got %+v", ws[0].Findings)
@@ -182,7 +234,7 @@ func TestAnnotate_OneRestartingPodAmongHealthyOnesSuppresses(t *testing.T) {
 	ds := []appsv1.Deployment{deploy("shop", "api",
 		cond(appsv1.DeploymentProgressing, corev1.ConditionFalse, "ProgressDeadlineExceeded", deadlineMsg))}
 
-	Annotate(ws, ds)
+	Annotate(ws, ds, nil, nil, nil, rhNow)
 
 	if len(ws[0].Findings) != 0 {
 		t.Errorf("want no finding when any pod is restarting repeatedly, got %+v", ws[0].Findings)
@@ -199,7 +251,7 @@ func TestAnnotate_TerminatedPodWithRestartsProducesNoRolloutStuck(t *testing.T) 
 	ds := []appsv1.Deployment{deploy("shop", "api",
 		cond(appsv1.DeploymentProgressing, corev1.ConditionFalse, "ProgressDeadlineExceeded", deadlineMsg))}
 
-	Annotate(ws, ds)
+	Annotate(ws, ds, nil, nil, nil, rhNow)
 
 	if len(ws[0].Findings) != 0 {
 		t.Errorf("want no RolloutStuck for a Terminated pod with a restart history, got %+v", ws[0].Findings)
@@ -207,8 +259,9 @@ func TestAnnotate_TerminatedPodWithRestartsProducesNoRolloutStuck(t *testing.T) 
 }
 
 func TestAnnotate_SkipsNonDeploymentAndUnflagged(t *testing.T) {
-	// A flagged StatefulSet named like a stuck Deployment: the Kind gate must skip it
-	// even though a same-named Deployment with the stuck condition is present.
+	// A flagged StatefulSet named like a stuck Deployment. The workload's kind
+	// selects which object list is consulted, so a StatefulSet workload is never
+	// answered from a Deployment's conditions even when the names collide.
 	sts := inventory.Workload{Namespace: "db", Name: "pg", Kind: "StatefulSet", Desired: 3, Ready: 0, Status: "Degraded"}
 	// An unflagged Deployment (Ready == Desired) must be skipped.
 	healthy := inventory.Workload{Namespace: "shop", Name: "web", Kind: "Deployment", Desired: 3, Ready: 3, Status: "Running"}
@@ -218,7 +271,7 @@ func TestAnnotate_SkipsNonDeploymentAndUnflagged(t *testing.T) {
 		deploy("shop", "web", cond(appsv1.DeploymentProgressing, corev1.ConditionFalse, "ProgressDeadlineExceeded", deadlineMsg)),
 	}
 
-	Annotate(ws, ds)
+	Annotate(ws, ds, nil, nil, nil, rhNow)
 
 	if len(ws[0].Findings) != 0 {
 		t.Errorf("StatefulSet: want no finding, got %+v", ws[0].Findings)
@@ -230,8 +283,254 @@ func TestAnnotate_SkipsNonDeploymentAndUnflagged(t *testing.T) {
 
 func TestAnnotate_NoMatchingDeployment(t *testing.T) {
 	ws := []inventory.Workload{degraded("shop", "api")}
-	Annotate(ws, nil) // no Deployments at all — must not panic, no finding
+	Annotate(ws, nil, nil, nil, nil, rhNow) // no controller objects at all — must not panic, no finding
 	if len(ws[0].Findings) != 0 {
 		t.Errorf("want no finding when the Deployment is absent, got %+v", ws[0].Findings)
+	}
+}
+
+// A StatefulSet carries no Progressing and no ReplicaFailure condition — it has
+// no conditions at all — so stuckCondition has nothing to read and a wedged
+// StatefulSet used to render `0/N Degraded` with no cause. The signal lives in
+// the revision and replica counters instead.
+func TestAnnotate_StatefulSetStuckUpdate(t *testing.T) {
+	ws := []inventory.Workload{degradedKind("db", "pg", "StatefulSet")}
+	sets := []appsv1.StatefulSet{statefulSet("db", "pg", 3, appsv1.StatefulSetStatus{
+		Replicas: 3, ReadyReplicas: 2, UpdatedReplicas: 0,
+		CurrentRevision: "pg-6d4b", UpdateRevision: "pg-7f9c",
+	}, oldEnough)}
+	pods := []corev1.Pod{ownedPod("db", "pg-0", "StatefulSet", "pg", false, oldEnough)}
+
+	Annotate(ws, nil, sets, nil, pods, rhNow)
+
+	if len(ws[0].Findings) != 1 {
+		t.Fatalf("want one finding, got %+v", ws[0].Findings)
+	}
+	f := ws[0].Findings[0]
+	if f.Issue != "RolloutStuck" {
+		t.Errorf("Issue = %q, want the existing RolloutStuck kind", f.Issue)
+	}
+	if f.Reason != "the StatefulSet's rollout cannot complete — the new pods are not becoming available" {
+		t.Errorf("Reason = %q, want the workload's own kind named", f.Reason)
+	}
+	if f.Evidence != "updatedReplicas 0/3, update revision pending" {
+		t.Errorf("Evidence = %q", f.Evidence)
+	}
+	if f.Pod != "db/pg" {
+		t.Errorf("Pod = %q, want db/pg", f.Pod)
+	}
+}
+
+// No update is in flight, so the counters that matter are the ready ones: the
+// StatefulSet cannot bring its replicas up.
+func TestAnnotate_StatefulSetStuckScaleUp(t *testing.T) {
+	ws := []inventory.Workload{degradedKind("db", "pg", "StatefulSet")}
+	sets := []appsv1.StatefulSet{statefulSet("db", "pg", 3, appsv1.StatefulSetStatus{
+		Replicas: 3, ReadyReplicas: 1, UpdatedReplicas: 3,
+		CurrentRevision: "pg-6d4b", UpdateRevision: "pg-6d4b",
+	}, oldEnough)}
+	pods := []corev1.Pod{ownedPod("db", "pg-1", "StatefulSet", "pg", false, oldEnough)}
+
+	Annotate(ws, nil, sets, nil, pods, rhNow)
+
+	if len(ws[0].Findings) != 1 || ws[0].Findings[0].Evidence != "readyReplicas 1/3, revision unchanged" {
+		t.Fatalf("want the readyReplicas evidence, got %+v", ws[0].Findings)
+	}
+}
+
+// "Not yet finished" and "wedged" look identical in a single sample, so the arm
+// waits out the grace period before claiming anything.
+func TestAnnotate_StatefulSetYoungPodIsNotYetStuck(t *testing.T) {
+	ws := []inventory.Workload{degradedKind("db", "pg", "StatefulSet")}
+	sets := []appsv1.StatefulSet{statefulSet("db", "pg", 3, appsv1.StatefulSetStatus{
+		Replicas: 3, ReadyReplicas: 2, UpdatedReplicas: 0,
+		CurrentRevision: "pg-6d4b", UpdateRevision: "pg-7f9c",
+	}, oldEnough)}
+	pods := []corev1.Pod{
+		ownedPod("db", "pg-0", "StatefulSet", "pg", false, oldEnough),
+		ownedPod("db", "pg-1", "StatefulSet", "pg", false, tooYoung), // still starting
+	}
+
+	Annotate(ws, nil, sets, nil, pods, rhNow)
+
+	if len(ws[0].Findings) != 0 {
+		t.Errorf("a rollout still inside the grace period is not stuck, got %+v", ws[0].Findings)
+	}
+}
+
+// A ready pod's age is irrelevant — it is already where the rollout wants it.
+func TestAnnotate_StatefulSetYoungReadyPodDoesNotHold(t *testing.T) {
+	ws := []inventory.Workload{degradedKind("db", "pg", "StatefulSet")}
+	sets := []appsv1.StatefulSet{statefulSet("db", "pg", 3, appsv1.StatefulSetStatus{
+		Replicas: 3, ReadyReplicas: 2, UpdatedReplicas: 0,
+		CurrentRevision: "pg-6d4b", UpdateRevision: "pg-7f9c",
+	}, oldEnough)}
+	pods := []corev1.Pod{
+		ownedPod("db", "pg-0", "StatefulSet", "pg", false, oldEnough),
+		ownedPod("db", "pg-1", "StatefulSet", "pg", true, tooYoung),
+	}
+
+	Annotate(ws, nil, sets, nil, pods, rhNow)
+
+	if len(ws[0].Findings) != 1 {
+		t.Errorf("want the finding — the young pod is ready, got %+v", ws[0].Findings)
+	}
+}
+
+// A StatefulSet whose controller has created nothing yet has no young pod to
+// hold the arm back, so its own age is what says whether it has had time.
+func TestAnnotate_YoungStatefulSetWithNoPodsIsNotYetStuck(t *testing.T) {
+	ws := []inventory.Workload{degradedKind("db", "pg", "StatefulSet")}
+	sets := []appsv1.StatefulSet{statefulSet("db", "pg", 3, appsv1.StatefulSetStatus{
+		Replicas: 0, ReadyReplicas: 0, UpdatedReplicas: 0,
+		CurrentRevision: "pg-6d4b", UpdateRevision: "pg-6d4b",
+	}, tooYoung)}
+
+	Annotate(ws, nil, sets, nil, nil, rhNow)
+
+	if len(ws[0].Findings) != 0 {
+		t.Errorf("a StatefulSet created a minute ago is not a wedged rollout, got %+v", ws[0].Findings)
+	}
+}
+
+// A pod owned by a different StatefulSet in the same namespace must not hold
+// this one's arm back.
+func TestAnnotate_StatefulSetIgnoresAnotherWorkloadsPod(t *testing.T) {
+	ws := []inventory.Workload{degradedKind("db", "pg", "StatefulSet")}
+	sets := []appsv1.StatefulSet{statefulSet("db", "pg", 3, appsv1.StatefulSetStatus{
+		Replicas: 3, ReadyReplicas: 2, UpdatedReplicas: 0,
+		CurrentRevision: "pg-6d4b", UpdateRevision: "pg-7f9c",
+	}, oldEnough)}
+	pods := []corev1.Pod{ownedPod("db", "cache-0", "StatefulSet", "cache", false, tooYoung)}
+
+	Annotate(ws, nil, sets, nil, pods, rhNow)
+
+	if len(ws[0].Findings) != 1 {
+		t.Errorf("another workload's young pod must not suppress this one, got %+v", ws[0].Findings)
+	}
+}
+
+func TestAnnotate_DaemonSetStuckUpdate(t *testing.T) {
+	ws := []inventory.Workload{degradedKind("sys", "agent", "DaemonSet")}
+	sets := []appsv1.DaemonSet{daemonSet("sys", "agent", appsv1.DaemonSetStatus{
+		DesiredNumberScheduled: 3, NumberReady: 1, UpdatedNumberScheduled: 1,
+	}, oldEnough)}
+	pods := []corev1.Pod{ownedPod("sys", "agent-aaa", "DaemonSet", "agent", false, oldEnough)}
+
+	Annotate(ws, nil, nil, sets, pods, rhNow)
+
+	if len(ws[0].Findings) != 1 {
+		t.Fatalf("want one finding, got %+v", ws[0].Findings)
+	}
+	f := ws[0].Findings[0]
+	if f.Issue != "RolloutStuck" {
+		t.Errorf("Issue = %q, want the existing RolloutStuck kind", f.Issue)
+	}
+	if f.Reason != "the DaemonSet's rollout cannot complete — the new pods are not becoming available" {
+		t.Errorf("Reason = %q, want the workload's own kind named", f.Reason)
+	}
+	if f.Evidence != "numberReady 1/3, updatedNumberScheduled 1/3" {
+		t.Errorf("Evidence = %q", f.Evidence)
+	}
+}
+
+// Every node has the new pod and none of them come ready — the update rolled
+// out, the pods do not work.
+func TestAnnotate_DaemonSetAllUpdatedNoneReady(t *testing.T) {
+	ws := []inventory.Workload{degradedKind("sys", "agent", "DaemonSet")}
+	sets := []appsv1.DaemonSet{daemonSet("sys", "agent", appsv1.DaemonSetStatus{
+		DesiredNumberScheduled: 3, NumberReady: 0, UpdatedNumberScheduled: 3,
+	}, oldEnough)}
+	pods := []corev1.Pod{ownedPod("sys", "agent-aaa", "DaemonSet", "agent", false, oldEnough)}
+
+	Annotate(ws, nil, nil, sets, pods, rhNow)
+
+	if len(ws[0].Findings) != 1 || ws[0].Findings[0].Evidence != "numberReady 0/3, all pods updated" {
+		t.Fatalf("want the all-updated evidence, got %+v", ws[0].Findings)
+	}
+}
+
+func TestAnnotate_DaemonSetYoungPodIsNotYetStuck(t *testing.T) {
+	ws := []inventory.Workload{degradedKind("sys", "agent", "DaemonSet")}
+	sets := []appsv1.DaemonSet{daemonSet("sys", "agent", appsv1.DaemonSetStatus{
+		DesiredNumberScheduled: 3, NumberReady: 1, UpdatedNumberScheduled: 1,
+	}, oldEnough)}
+	pods := []corev1.Pod{ownedPod("sys", "agent-aaa", "DaemonSet", "agent", false, tooYoung)}
+
+	Annotate(ws, nil, nil, sets, pods, rhNow)
+
+	if len(ws[0].Findings) != 0 {
+		t.Errorf("a rollout still inside the grace period is not stuck, got %+v", ws[0].Findings)
+	}
+}
+
+// A DaemonSet that wants no pods at all — every node excluded by a selector or
+// a taint — is not a wedged rollout, and 0/0 is not a shortfall.
+func TestAnnotate_DaemonSetWantingNothingIsNotStuck(t *testing.T) {
+	ws := []inventory.Workload{degradedKind("sys", "agent", "DaemonSet")}
+	sets := []appsv1.DaemonSet{daemonSet("sys", "agent", appsv1.DaemonSetStatus{
+		DesiredNumberScheduled: 0, NumberReady: 0, UpdatedNumberScheduled: 0,
+	}, oldEnough)}
+
+	Annotate(ws, nil, nil, sets, nil, rhNow)
+
+	if len(ws[0].Findings) != 0 {
+		t.Errorf("want no finding for a DaemonSet scheduled nowhere, got %+v", ws[0].Findings)
+	}
+}
+
+// The report a fleet or gate run forwards must not carry cluster identity. The
+// two new arms read status counters only, so a pod, node or image name cannot
+// reach the evidence — pinned here rather than left to review.
+func TestAnnotate_EvidenceNamesNoPodNodeOrImage(t *testing.T) {
+	ws := []inventory.Workload{
+		degradedKind("db", "pg", "StatefulSet"),
+		degradedKind("sys", "agent", "DaemonSet"),
+	}
+	sets := []appsv1.StatefulSet{statefulSet("db", "pg", 3, appsv1.StatefulSetStatus{
+		Replicas: 3, ReadyReplicas: 2, UpdatedReplicas: 0,
+		CurrentRevision: "pg-6d4b", UpdateRevision: "pg-7f9c",
+	}, oldEnough)}
+	dsets := []appsv1.DaemonSet{daemonSet("sys", "agent", appsv1.DaemonSetStatus{
+		DesiredNumberScheduled: 3, NumberReady: 1, UpdatedNumberScheduled: 1,
+	}, oldEnough)}
+	pods := []corev1.Pod{
+		ownedPod("db", "pg-0", "StatefulSet", "pg", false, oldEnough),
+		ownedPod("sys", "agent-aaa", "DaemonSet", "agent", false, oldEnough),
+	}
+	pods[0].Spec.NodeName = "node-a"
+	pods[1].Spec.NodeName = "node-b"
+
+	Annotate(ws, nil, sets, dsets, pods, rhNow)
+
+	for _, w := range ws {
+		if len(w.Findings) != 1 {
+			t.Fatalf("%s: want one finding, got %+v", w.Kind, w.Findings)
+		}
+		ev := w.Findings[0].Evidence
+		for _, leak := range []string{"pg-0", "agent-aaa", "node-a", "node-b", "pg-6d4b", "pg-7f9c"} {
+			if strings.Contains(ev, leak) {
+				t.Errorf("%s: Evidence = %q, must not name %q", w.Kind, ev, leak)
+			}
+		}
+	}
+}
+
+// The restart-count and existing-finding gates are the workload's, not the
+// Deployment arm's: a crash-looping StatefulSet gets the same silence.
+func TestAnnotate_StatefulSetWithARestartingPodIsSkipped(t *testing.T) {
+	w := degradedKind("db", "pg", "StatefulSet")
+	w.Pods = []inventory.PodRow{{Name: "pg-0", Restarts: diagnose.RestartThreshold}}
+	ws := []inventory.Workload{w}
+	sets := []appsv1.StatefulSet{statefulSet("db", "pg", 3, appsv1.StatefulSetStatus{
+		Replicas: 3, ReadyReplicas: 2, UpdatedReplicas: 0,
+		CurrentRevision: "pg-6d4b", UpdateRevision: "pg-7f9c",
+	}, oldEnough)}
+	pods := []corev1.Pod{ownedPod("db", "pg-0", "StatefulSet", "pg", false, oldEnough)}
+
+	Annotate(ws, nil, sets, nil, pods, rhNow)
+
+	if len(ws[0].Findings) != 0 {
+		t.Errorf("want no finding when a pod is restarting repeatedly, got %+v", ws[0].Findings)
 	}
 }

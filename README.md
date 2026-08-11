@@ -58,11 +58,14 @@ kubeagent scan
 - **CreateContainerConfigError** — a container (main or init) that cannot start
   because a referenced ConfigMap or Secret is missing, or a required key is
   absent; the finding names the object from the kubelet message.
-- **RolloutStuck** — a Deployment whose rollout has wedged: its `Progressing`
-  condition is `ProgressDeadlineExceeded`, or the ReplicaSet controller reports a
-  `ReplicaFailure` and new pods are not becoming available. Surfaced only when no
-  pod-level finding already explains the failure (zero redundancy). Read-only,
-  always-on, no new flag or RBAC.
+- **RolloutStuck** — a Deployment, StatefulSet, or DaemonSet whose rollout has
+  wedged. A Deployment says so in its conditions (`ProgressDeadlineExceeded`, or a
+  `ReplicaFailure` from the ReplicaSet controller); a StatefulSet and a DaemonSet
+  publish none, so their revision and replica counters are read instead, after a
+  600 s grace period borrowed from Kubernetes' own default
+  `progressDeadlineSeconds`. Surfaced only when no pod-level finding already
+  explains the failure and no pod is restarting repeatedly (zero redundancy).
+  Read-only, always-on, no new flag or RBAC.
 - **Node reservation check** — warns when a node's kubelet reserves no memory
   (allocatable == capacity), meaning OS or kubelet memory pressure can destabilise
   the node. Advisory and read-only; no new RBAC.

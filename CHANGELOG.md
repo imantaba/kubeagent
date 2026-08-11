@@ -24,6 +24,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`RolloutStuck` now covers a wedged StatefulSet and a wedged DaemonSet, not
+  only a Deployment.** A StatefulSet and a DaemonSet publish no status
+  conditions at all, so a scan could see one sitting at `0/3 Degraded` with no
+  finding attached and nothing naming the cause. `internal/rollouthealth` gains
+  an arm for each, reading the revision and replica counters `scan` already
+  collects — a StatefulSet whose `updateRevision` differs from its
+  `currentRevision` with `updatedReplicas` short of `spec.replicas`, one whose
+  revisions match with `readyReplicas` short, and a DaemonSet whose
+  `numberReady` is short of `desiredNumberScheduled`. Because a counter cannot
+  distinguish "wedged" from "started ten seconds ago", both arms require the
+  controller **and** every not-ready pod it owns to be older than 600 seconds —
+  Kubernetes' own default `spec.progressDeadlineSeconds` on a Deployment, so
+  the three kinds are equally patient. It is a package constant, not a flag.
+  The existing `RolloutStuck` kind is reused, so no consumer filter, SARIF rule
+  id or alert dedup key changes, and no `schemaVersion` moves; the reason string
+  now names the workload's own kind and renders byte-identically for a
+  Deployment. Evidence is only the counters that fired — never a pod, node,
+  image or revision name. No new cluster read, no new RBAC.
+
+- **The `RolloutStuck` next step no longer suggests `describe deployment`.** A
+  finding carries no kind, and the kind is now one of three, so the suggested
+  command was wrong two times in three. It is now
+  `kubectl -n <ns> get events --field-selector involvedObject.name=<name>`,
+  which is addressable by name alone and correct whichever kind fired. Still
+  read-only, still never run by kubeagent.
+
 - **`RolloutStuck` no longer flips on and off across scans of an unchanged
   crash-looping Deployment.** The suppression gate in `internal/rollouthealth`
   tested only whether the workload already carried a finding, which is a single

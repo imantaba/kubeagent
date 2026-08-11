@@ -45,7 +45,7 @@ func For(f diagnose.Finding) Suggestion {
 	case "JobFailed":
 		return Suggestion{"the Job exhausted its retries — inspect the failed pod's logs", logsCmd(ns, pod, "")}
 	case "RolloutStuck":
-		return Suggestion{"the rollout is wedged — inspect the new ReplicaSet's pods and events", describeDeployCmd(ns, pod)}
+		return Suggestion{"the rollout is wedged — inspect the workload's pods and its events", objectEventsCmd(ns, pod)}
 	default:
 		return Suggestion{"inspect the object for details", describeCmd(ns, pod)}
 	}
@@ -70,8 +70,14 @@ func describeCmd(ns, pod string) string {
 	return fmt.Sprintf("kubectl -n %s describe pod %s", ns, pod)
 }
 
-func describeDeployCmd(ns, deploy string) string {
-	return fmt.Sprintf("kubectl -n %s describe deployment %s", ns, deploy)
+// objectEventsCmd lists the events recorded against one object, by name.
+//
+// A RolloutStuck finding names a Deployment, a StatefulSet or a DaemonSet, and a
+// Finding carries no kind — so `describe <kind> <name>` cannot be built without
+// guessing one, and the guess would be wrong two times in three. An event is
+// addressable by name alone, so this command is correct whichever kind fired.
+func objectEventsCmd(ns, name string) string {
+	return fmt.Sprintf("kubectl -n %s get events --field-selector involvedObject.name=%s", ns, name)
 }
 
 func eventsCmd(ns, reason string) string {

@@ -25,7 +25,9 @@ func TestFor_TableAndCommands(t *testing.T) {
 		{"Init:ImagePullBackOff", "wait-db", "init container's image can't be pulled", "kubectl -n shop describe pod web-abc"},
 		{"FailedCreate", "", "the controller can't create pods", "kubectl -n shop get events --field-selector reason=FailedCreate"},
 		{"JobFailed", "", "exhausted its retries", "kubectl -n shop logs web-abc --previous"},
-		{"RolloutStuck", "", "the rollout is wedged", "kubectl -n shop describe deployment web-abc"},
+		// RolloutStuck names a Deployment, a StatefulSet or a DaemonSet, and a
+		// Finding carries no kind — so the command is one that needs none.
+		{"RolloutStuck", "", "the rollout is wedged", "kubectl -n shop get events --field-selector involvedObject.name=web-abc"},
 		{"SomethingNew", "", "inspect the object for details", "kubectl -n shop describe pod web-abc"},
 	}
 	for _, tc := range cases {

@@ -194,10 +194,13 @@ only for a reference consumed through `env`/`envFrom`. Unlike pod events (which
 expire after ~1 h), the waiting state persists as long as the container is
 stuck — read-only, no new RBAC.
 
-### RolloutStuck (Deployment rollout wedged)
+### RolloutStuck (rollout wedged)
 
-A **Deployment** whose rollout has stalled and the new pods are not becoming
-available. `kubeagent` checks two signals on the Deployment's conditions:
+A **Deployment**, **StatefulSet** or **DaemonSet** whose rollout has stalled and
+whose new pods are not becoming available.
+
+For a **Deployment**, `kubeagent` checks two signals on the Deployment's
+conditions:
 
 - **`ProgressDeadlineExceeded`** — the `Progressing` condition has flipped to
   `status: False` with reason `ProgressDeadlineExceeded`, meaning the rollout did
@@ -205,6 +208,25 @@ available. `kubeagent` checks two signals on the Deployment's conditions:
 - **`ReplicaFailure`** — the ReplicaSet controller reports it cannot create the
   new pods (e.g. a quota or admission block), so the Deployment is wedged at the
   controller level.
+
+A **StatefulSet** and a **DaemonSet** publish no conditions at all, so their
+counters are read instead:
+
+- **StatefulSet, stuck update** — `updateRevision` differs from `currentRevision`
+  and `updatedReplicas` is short of `spec.replicas`: the new revision is not
+  reaching the replicas.
+- **StatefulSet, stuck without an update** — the revisions match and
+  `readyReplicas` is short of `spec.replicas`.
+- **DaemonSet** — `numberReady` is short of `desiredNumberScheduled`. Whether
+  `updatedNumberScheduled` has also fallen behind only decides which counters the
+  evidence names.
+
+Because a counter cannot say whether a rollout is wedged or merely young, those
+two arms wait **600 seconds** before claiming anything — the controller itself
+and every not-ready pod it owns must be older than that. The number is not
+kubeagent's: it is Kubernetes' own default `spec.progressDeadlineSeconds` on a
+Deployment, so all three kinds are exactly as patient as the Deployment arm
+already was. It is not configurable.
 
 The finding is surfaced **only when no pod-level detector already explains the
 failure** — zero redundancy. It stays silent when a pod-level detector has fired
@@ -225,7 +247,14 @@ Read-only, always-on, no new flag, metric, or RBAC. Example output:
 ✗ shop/api  Deployment  2/3 Degraded
     ⚠ RolloutStuck: the Deployment's rollout cannot complete — the new pods are not becoming available
       ↳ Progressing (ProgressDeadlineExceeded): ReplicaSet "api-7f9c" has timed out progressing.
+✗ shop/db  StatefulSet  0/3 Degraded
+    ⚠ RolloutStuck: the StatefulSet's rollout cannot complete — the new pods are not becoming available
+      ↳ updatedReplicas 0/3, update revision pending
 ```
+
+The evidence for a StatefulSet or a DaemonSet is only ever those counters. The
+revision names are compared and never printed, and no pod, node or image is
+named.
 
 ### ResourceQuota near-exhaustion
 
@@ -786,7 +815,7 @@ Investigation  shop/api  Deployment
 
 `kubeagent scan` performs a read-only, whole-cluster scan and reports
 CrashLoopBackOff, ImagePullBackOff/ErrImagePull, OOMKilled,
-Pending/Unschedulable, VolumeAttachError (Multi-Attach), VolumeMountError, RestartLoop, ProbeFailure, init-container failures, failed Jobs/CronJobs, controllers that cannot create pods (FailedCreate), containers blocked by a missing ConfigMap or Secret (CreateContainerConfigError), and Deployments whose rollout has wedged (RolloutStuck), in text or JSON.
+Pending/Unschedulable, VolumeAttachError (Multi-Attach), VolumeMountError, RestartLoop, ProbeFailure, init-container failures, failed Jobs/CronJobs, controllers that cannot create pods (FailedCreate), containers blocked by a missing ConfigMap or Secret (CreateContainerConfigError), and Deployments, StatefulSets and DaemonSets whose rollout has wedged (RolloutStuck), in text or JSON.
 
 The optional `--suggest` flag prints a deterministic next-step suggestion and
 a read-only `kubectl` investigation command under each finding — offline, no

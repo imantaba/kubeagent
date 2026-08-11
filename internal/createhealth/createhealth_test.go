@@ -3,6 +3,8 @@ package createhealth
 import (
 	"strings"
 	"testing"
+	"unicode"
+	"unicode/utf8"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -210,5 +212,46 @@ func TestClassifyCreateFailure_DenialOutranksUnreachable(t *testing.T) {
 	const msg = `admission webhook "deny.example.com" denied the request, after failed calling webhook "other.example.com"`
 	if got, want := classifyCreateFailure(msg), "rejected by an admission webhook"; got != want {
 		t.Errorf("classifyCreateFailure(both) = %q, want %q", got, want)
+	}
+}
+
+// hostileText is what a rejecting admission webhook's event message carries
+// when the webhook is not the one you think: invalid UTF-8, a screen-clearing
+// ANSI escape, a right-to-left override and a NUL.
+const hostileText = "\x1b[2J‮gnp\x00 by policy\xff"
+
+// The event's message is free text the API server does not validate, and it
+// reaches the finding's evidence. The finding's reason does not carry it:
+// classifyCreateFailure reads the raw message — that is the matching decision —
+// and returns one of six kubeagent literals, never the message itself.
+func TestAnnotate_SanitizesTheEventMessage(t *testing.T) {
+	ws := []inventory.Workload{{Namespace: "shop", Name: "api", Kind: "Deployment", Desired: 3, Ready: 0, Status: "Degraded"}}
+	rss := []appsv1.ReplicaSet{ownedRS("shop", "api-7c9f", "api")}
+	evs := []corev1.Event{fcEvent("ReplicaSet", "shop", "api-7c9f", "exceeded quota: compute"+hostileText, 100)}
+
+	Annotate(ws, rss, evs)
+
+	if len(ws[0].Findings) != 1 {
+		t.Fatalf("want one finding, got %+v", ws[0].Findings)
+	}
+	f := ws[0].Findings[0]
+	if !strings.Contains(f.Reason, "ResourceQuota") {
+		t.Errorf("Reason = %q, want the classifier to have matched the raw message", f.Reason)
+	}
+	assertSanitized(t, "Reason", f.Reason)
+	assertSanitized(t, "Evidence", f.Evidence)
+}
+
+// assertSanitized fails unless s is what safetext.Line guarantees: valid UTF-8
+// with no control characters and no Unicode formatting characters.
+func assertSanitized(t *testing.T, where, s string) {
+	t.Helper()
+	if !utf8.ValidString(s) {
+		t.Errorf("%s is not valid UTF-8: %q", where, s)
+	}
+	for _, r := range s {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			t.Errorf("%s carries %U: %q", where, r, s)
+		}
 	}
 }

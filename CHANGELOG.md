@@ -55,6 +55,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   characters, and the second line of a kubelet message is often where the cause
   is.
 
+- **Four workload findings carried the API's text into their evidence
+  unsanitized.** A failed Job's condition message (`batchhealth`), a
+  Deployment's `ReplicaFailure` and `Progressing`/`ProgressDeadlineExceeded`
+  condition messages (`rollouthealth`), a PersistentVolumeClaim's
+  `ProvisioningFailed`/`FailedBinding` event message (`pvchealth`) and a
+  `FailedCreate` event's message (`createhealth`) all reached a finding
+  straight from the API object. Each now passes through
+  `internal/safetext.Line` where it first becomes a kubeagent value.
+
+  One of the five was also a *reason* site, which the original sweep had
+  classified as evidence-only: `batchhealth`'s `humanReason` recognises two Job
+  failure reasons by name and returns every other one verbatim, so an
+  unrecognised reason was printed as kubeagent's own words. The `switch` is the
+  matching decision and still reads the raw value; the default arm — the one
+  that echoes — sanitizes.
+
+  Two reasons are deliberately left as they were read, because neither is text
+  from the cluster: `pvchealth` admits only the literals `ProvisioningFailed`
+  and `FailedBinding`, and `createhealth`'s reason is one of six phrases the
+  package writes itself, chosen by a classifier that reads the raw message and
+  never echoes it.
+
 ### Changed
 
 - **`scan --output text` caps a finding's evidence line at 500 characters.**

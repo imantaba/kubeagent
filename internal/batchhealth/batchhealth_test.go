@@ -2,6 +2,8 @@ package batchhealth
 
 import (
 	"testing"
+	"unicode"
+	"unicode/utf8"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -150,5 +152,51 @@ func TestAnnotate_CronJobNewestRunning(t *testing.T) {
 	Annotate(ws, []batchv1.Job{running})
 	if len(ws[0].Findings) != 0 {
 		t.Errorf("a Running latest run must not be flagged, got %+v", ws[0].Findings)
+	}
+}
+
+// hostileText is what a Job's condition carries when whatever wrote it was not
+// the kube-controller-manager: invalid UTF-8, a screen-clearing ANSI escape, a
+// right-to-left override and a NUL.
+const hostileText = "exit\x1b[2J‮gnp\x00 code 1\xff"
+
+// A condition's reason and message are both free text, and both reach a
+// finding — the reason through humanReason's default arm, which returns an
+// unrecognised reason verbatim.
+func TestAnnotate_SanitizesAFailedConditionsReasonAndMessage(t *testing.T) {
+	t.Run("Job", func(t *testing.T) {
+		ws := []inventory.Workload{{Namespace: "shop", Name: "db-migrate", Kind: "Job"}}
+		Annotate(ws, []batchv1.Job{failedJob("shop", "db-migrate", hostileText, hostileText)})
+		if len(ws[0].Findings) != 1 {
+			t.Fatalf("want 1 finding, got %d", len(ws[0].Findings))
+		}
+		assertSanitized(t, "Reason", ws[0].Findings[0].Reason)
+		assertSanitized(t, "Evidence", ws[0].Findings[0].Evidence)
+	})
+	t.Run("CronJob", func(t *testing.T) {
+		ws := []inventory.Workload{{Namespace: "shop", Name: "nightly", Kind: "CronJob"}}
+		job := failedJob("shop", "nightly-1", hostileText, hostileText)
+		job.OwnerReferences = cronOwner("nightly")
+		job.CreationTimestamp = metav1.Unix(2000, 0)
+		Annotate(ws, []batchv1.Job{job})
+		if len(ws[0].Findings) != 1 {
+			t.Fatalf("want 1 finding, got %d", len(ws[0].Findings))
+		}
+		assertSanitized(t, "Reason", ws[0].Findings[0].Reason)
+		assertSanitized(t, "Evidence", ws[0].Findings[0].Evidence)
+	})
+}
+
+// assertSanitized fails unless s is what safetext.Line guarantees: valid UTF-8
+// with no control characters and no Unicode formatting characters.
+func assertSanitized(t *testing.T, where, s string) {
+	t.Helper()
+	if !utf8.ValidString(s) {
+		t.Errorf("%s is not valid UTF-8: %q", where, s)
+	}
+	for _, r := range s {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			t.Errorf("%s carries %U: %q", where, r, s)
+		}
 	}
 }

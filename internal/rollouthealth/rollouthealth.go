@@ -16,6 +16,7 @@ import (
 
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/safetext"
 )
 
 // rolloutGrace is how long a rollout is given before "not finished yet" is
@@ -211,14 +212,18 @@ func podReady(p *corev1.Pod) bool {
 // status shows a wedged rollout. ReplicaFailure (the concrete pod-creation
 // blocker) takes precedence over Progressing/ProgressDeadlineExceeded.
 func stuckCondition(dep *appsv1.Deployment) (string, bool) {
+	// Both arms select their condition by type and status — and the second one
+	// by reason, a matching decision that runs on the raw value. Neither reads
+	// the message, which is free text the API server does not validate, so this
+	// is where it becomes a kubeagent value.
 	for _, c := range dep.Status.Conditions {
 		if c.Type == appsv1.DeploymentReplicaFailure && c.Status == corev1.ConditionTrue {
-			return fmt.Sprintf("ReplicaFailure: %s", c.Message), true
+			return fmt.Sprintf("ReplicaFailure: %s", safetext.Line(c.Message)), true
 		}
 	}
 	for _, c := range dep.Status.Conditions {
 		if c.Type == appsv1.DeploymentProgressing && c.Status == corev1.ConditionFalse && c.Reason == "ProgressDeadlineExceeded" {
-			return fmt.Sprintf("Progressing (ProgressDeadlineExceeded): %s", c.Message), true
+			return fmt.Sprintf("Progressing (ProgressDeadlineExceeded): %s", safetext.Line(c.Message)), true
 		}
 	}
 	return "", false

@@ -12,6 +12,8 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
+
+	"github.com/imantaba/kubeagent/internal/safetext"
 )
 
 // Issue is one PVC stuck Pending because provisioning/binding failed.
@@ -44,9 +46,14 @@ func Assess(pvcs []corev1.PersistentVolumeClaim, events []corev1.Event, storageC
 		if ev == nil {
 			continue
 		}
+		// The message is free text the API server does not validate, and this is
+		// where it becomes a kubeagent value. The reason is not sanitized, and
+		// deliberately: newestFailureEvent admits only "ProvisioningFailed" and
+		// "FailedBinding", so what reaches an issue is one of two literals this
+		// package already knows, not text from the cluster.
 		issues = append(issues, Issue{
 			Namespace: c.Namespace, Name: c.Name, Phase: "Pending",
-			Reason: ev.Reason, Detail: ev.Message, StorageClass: storageClass(c),
+			Reason: ev.Reason, Detail: safetext.Line(ev.Message), StorageClass: storageClass(c),
 		})
 	}
 	sort.Slice(issues, func(i, j int) bool {

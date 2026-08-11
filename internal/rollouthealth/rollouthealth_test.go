@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -579,5 +581,46 @@ func TestAnnotate_ReplicaFailureIsTheFallbackOnceEventsHaveAgedOut(t *testing.T)
 	}
 	if want := "ReplicaFailure: " + msg; f.Evidence != want {
 		t.Errorf("Evidence = %q, want %q", f.Evidence, want)
+	}
+}
+
+// hostileText is what a Deployment's condition message carries when whatever
+// wrote it was not the kube-controller-manager: invalid UTF-8, a
+// screen-clearing ANSI escape, a right-to-left override and a NUL.
+const hostileText = "timed\x1b[2J‮gnp\x00 out\xff"
+
+// Both condition arms read a message the API server does not validate. A
+// condition is selected by type, status and (for Progressing) reason, so no
+// matching decision reads the message itself.
+func TestAnnotate_SanitizesAConditionMessage(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		c    appsv1.DeploymentCondition
+	}{
+		{"ReplicaFailure", cond(appsv1.DeploymentReplicaFailure, corev1.ConditionTrue, "FailedCreate", hostileText)},
+		{"ProgressDeadlineExceeded", cond(appsv1.DeploymentProgressing, corev1.ConditionFalse, "ProgressDeadlineExceeded", hostileText)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ws := []inventory.Workload{degraded("shop", "api")}
+			Annotate(ws, []appsv1.Deployment{deploy("shop", "api", tc.c)}, nil, nil, nil, rhNow)
+			if len(ws[0].Findings) != 1 {
+				t.Fatalf("want one finding, got %+v", ws[0].Findings)
+			}
+			assertSanitized(t, "Evidence", ws[0].Findings[0].Evidence)
+		})
+	}
+}
+
+// assertSanitized fails unless s is what safetext.Line guarantees: valid UTF-8
+// with no control characters and no Unicode formatting characters.
+func assertSanitized(t *testing.T, where, s string) {
+	t.Helper()
+	if !utf8.ValidString(s) {
+		t.Errorf("%s is not valid UTF-8: %q", where, s)
+	}
+	for _, r := range s {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			t.Errorf("%s carries %U: %q", where, r, s)
+		}
 	}
 }

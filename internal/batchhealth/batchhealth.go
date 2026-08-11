@@ -12,6 +12,7 @@ import (
 
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/safetext"
 )
 
 // cronFailedStatus is the header word a flagged CronJob carries.
@@ -93,10 +94,16 @@ func newestJob(jobs []*batchv1.Job) *batchv1.Job {
 func jobFailedFinding(j batchv1.Job, wkey string, fromCronJob bool) *diagnose.Finding {
 	for _, c := range j.Status.Conditions {
 		if c.Type == batchv1.JobFailed && c.Status == corev1.ConditionTrue {
-			base, evidence := "the Job failed", c.Message
+			// The condition is selected by type and status, so no matching
+			// decision reads its message — this is the point at which the API's
+			// free text becomes a kubeagent value. The reason is matched on, in
+			// humanReason, so it is sanitized there instead: on the one arm that
+			// echoes it rather than on the switch's input.
+			msg := safetext.Line(c.Message)
+			base, evidence := "the Job failed", msg
 			if fromCronJob {
 				base = "the most recent scheduled run failed"
-				evidence = fmt.Sprintf("job %q: %s", j.Name, c.Message)
+				evidence = fmt.Sprintf("job %q: %s", j.Name, msg)
 			}
 			reason := base
 			if p := humanReason(c.Reason); p != "" {
@@ -109,6 +116,11 @@ func jobFailedFinding(j batchv1.Job, wkey string, fromCronJob bool) *diagnose.Fi
 }
 
 // humanReason maps a Job failure reason to a plain-language phrase.
+//
+// The switch is a matching decision, so it reads the raw value — a control
+// character spliced into "BackoffLimitExceeded" must not make it stop matching.
+// The default arm is the one that echoes the API's text into a finding's reason,
+// so that arm sanitizes.
 func humanReason(reason string) string {
 	switch reason {
 	case "BackoffLimitExceeded":
@@ -116,6 +128,6 @@ func humanReason(reason string) string {
 	case "DeadlineExceeded":
 		return "hit its deadline (DeadlineExceeded)"
 	default:
-		return reason
+		return safetext.Line(reason)
 	}
 }

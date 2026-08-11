@@ -3,6 +3,8 @@ package pvchealth
 import (
 	"testing"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
@@ -265,5 +267,46 @@ func TestAssess_NoMatchingPV_DynamicPVNotCandidate(t *testing.T) {
 	pvs := []corev1.PersistentVolume{availPV("pv-1", "20Gi", "standard", corev1.ReadWriteOnce)} // dynamic class
 	if got := Assess([]corev1.PersistentVolumeClaim{pvc}, nil, nil, pvs); len(got) != 1 || got[0].Reason != "NoMatchingPV" {
 		t.Fatalf("a dynamic-class PV must not satisfy a static claim, got %+v", got)
+	}
+}
+
+// hostileText is what a provisioner's event message carries when the
+// provisioner is not the one you think: invalid UTF-8, a screen-clearing ANSI
+// escape, a right-to-left override and a NUL.
+const hostileText = "no\x1b[2J‮gnp\x00 volume plugin\xff"
+
+// The event's message is free text the API server does not validate. Its reason
+// is not: newestFailureEvent admits only "ProvisioningFailed" and
+// "FailedBinding", so the reason that reaches an issue is one of two kubeagent-
+// known literals and is deliberately left as it was read.
+func TestAssess_SanitizesTheEventMessage(t *testing.T) {
+	for _, reason := range []string{"ProvisioningFailed", "FailedBinding"} {
+		t.Run(reason, func(t *testing.T) {
+			got := Assess(
+				[]corev1.PersistentVolumeClaim{pendingPVC("shop", "data-pvc", "fast")},
+				[]corev1.Event{pvcEvent("shop", "data-pvc", reason, hostileText)},
+				[]storagev1.StorageClass{scClass("fast")}, nil)
+			if len(got) != 1 {
+				t.Fatalf("want 1 issue, got %d", len(got))
+			}
+			if got[0].Reason != reason {
+				t.Errorf("Reason = %q, want the bounded literal %q", got[0].Reason, reason)
+			}
+			assertSanitized(t, "Detail", got[0].Detail)
+		})
+	}
+}
+
+// assertSanitized fails unless s is what safetext.Line guarantees: valid UTF-8
+// with no control characters and no Unicode formatting characters.
+func assertSanitized(t *testing.T, where, s string) {
+	t.Helper()
+	if !utf8.ValidString(s) {
+		t.Errorf("%s is not valid UTF-8: %q", where, s)
+	}
+	for _, r := range s {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			t.Errorf("%s carries %U: %q", where, r, s)
+		}
 	}
 }

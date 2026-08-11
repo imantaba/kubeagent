@@ -15,6 +15,7 @@ import (
 
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/safetext"
 )
 
 // Annotate appends a "FailedCreate" finding to each flagged workload that is
@@ -55,11 +56,16 @@ func Annotate(workloads []inventory.Workload, replicaSets []appsv1.ReplicaSet, e
 		if !ok {
 			continue
 		}
+		// The evidence is the API's free text and this is where it becomes a
+		// kubeagent value. The reason is not sanitized here, and deliberately:
+		// classifyCreateFailure is the matching decision, so it reads the raw
+		// message, and what it returns is one of six literals this package
+		// writes itself — never the message.
 		w.Findings = append(w.Findings, diagnose.Finding{
 			Pod:      w.Namespace + "/" + w.Name,
 			Issue:    "FailedCreate",
 			Reason:   "the controller cannot create pods — " + classifyCreateFailure(e.Message),
-			Evidence: e.Message,
+			Evidence: safetext.Line(e.Message),
 		})
 	}
 }

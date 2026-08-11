@@ -990,6 +990,120 @@ func TestPrintInventory_TextOmitsEvidenceWhenEmptyOrDuplicate(t *testing.T) {
 	}
 }
 
+// renderFindings prints one Deployment carrying the given findings and returns
+// the text report, so the collapse tests below differ only in their findings.
+func renderFindings(t *testing.T, suggest bool, findings ...diagnose.Finding) string {
+	t.Helper()
+	var buf bytes.Buffer
+	in := Input{
+		Result: inventory.Result{Workloads: []inventory.Workload{{
+			Namespace: "shop", Name: "web", Kind: "Deployment",
+			Desired: 2, Ready: 0, Status: "Degraded", Findings: findings,
+		}}},
+		Suggest: suggest,
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	return buf.String()
+}
+
+func crashFinding(pod, evidence string) diagnose.Finding {
+	return diagnose.Finding{
+		Pod: "shop/" + pod, Issue: "CrashLoopBackOff", Container: "app",
+		Reason: "Container repeatedly crashes after starting", Evidence: evidence,
+	}
+}
+
+// Two pods crashing the same way rendered two byte-identical pairs of lines,
+// and the text renderer prints no pod name, so there was nothing to tell them
+// apart with. A 20-replica Deployment printed the pair twenty times.
+func TestPrintInventory_TextCollapsesIdenticalFindings(t *testing.T) {
+	ev := `container "app", restartCount=1`
+	out := renderFindings(t, false, crashFinding("web-abc", ev), crashFinding("web-def", ev))
+	if got := strings.Count(out, "⚠ CrashLoopBackOff"); got != 1 {
+		t.Errorf("want one finding line for two identical findings, got %d:\n%s", got, out)
+	}
+	if !strings.Contains(out, "⚠ CrashLoopBackOff: Container repeatedly crashes after starting ×2") {
+		t.Errorf("want the count on the finding line:\n%s", out)
+	}
+	if got := strings.Count(out, "↳ "+ev); got != 1 {
+		t.Errorf("want one evidence line, got %d:\n%s", got, out)
+	}
+}
+
+// The count is the point of the collapse, so a lone finding must not grow one.
+func TestPrintInventory_TextOmitsTheCountForOneFinding(t *testing.T) {
+	out := renderFindings(t, false, crashFinding("web-abc", `container "app", restartCount=1`))
+	if strings.Contains(out, "×") {
+		t.Errorf("a single finding must carry no count:\n%s", out)
+	}
+}
+
+// Collapsing must not swallow what distinguishes the pods. Restart counts live
+// in the evidence, so a group prints every distinct evidence it holds.
+func TestPrintInventory_TextKeepsDistinctRestartCounts(t *testing.T) {
+	out := renderFindings(t, false,
+		crashFinding("web-abc", `container "app", restartCount=1`),
+		crashFinding("web-def", `container "app", restartCount=7`),
+	)
+	if got := strings.Count(out, "⚠ CrashLoopBackOff"); got != 1 {
+		t.Errorf("want one finding line, got %d:\n%s", got, out)
+	}
+	if !strings.Contains(out, "restartCount=1") || !strings.Contains(out, "restartCount=7") {
+		t.Errorf("both restart counts must survive the collapse:\n%s", out)
+	}
+}
+
+// Findings that say different things are different findings.
+func TestPrintInventory_TextDoesNotCollapseUnlikeFindings(t *testing.T) {
+	a := crashFinding("web-abc", "boom")
+	b := crashFinding("web-def", "boom")
+	b.Reason = "Container repeatedly crashes before starting"
+	out := renderFindings(t, false, a, b)
+	if got := strings.Count(out, "⚠ CrashLoopBackOff"); got != 2 {
+		t.Errorf("want two finding lines for two different reasons, got %d:\n%s", got, out)
+	}
+	if strings.Contains(out, "×") {
+		t.Errorf("nothing collapsed, so no count belongs here:\n%s", out)
+	}
+}
+
+// A --suggest command names the pod, so two pods have two different commands.
+// The collapse keys on the whole block for exactly this reason: it may never
+// print fewer lines than the findings it stands for.
+func TestPrintInventory_TextSuggestKeepsEveryPodsCommand(t *testing.T) {
+	ev := `container "app", restartCount=1`
+	out := renderFindings(t, true, crashFinding("web-abc", ev), crashFinding("web-def", ev))
+	if !strings.Contains(out, "logs web-abc") || !strings.Contains(out, "logs web-def") {
+		t.Errorf("every pod's own command must survive:\n%s", out)
+	}
+	if strings.Contains(out, "×") {
+		t.Errorf("blocks that differ must not collapse:\n%s", out)
+	}
+}
+
+// The collapse is a rendering decision. The JSON document is the one that gets
+// forwarded, and it still carries one finding per pod.
+func TestPrintInventory_JSONKeepsOneFindingPerPod(t *testing.T) {
+	ev := `container "app", restartCount=1`
+	var buf bytes.Buffer
+	in := Input{Result: inventory.Result{Workloads: []inventory.Workload{{
+		Namespace: "shop", Name: "web", Kind: "Deployment", Desired: 2, Ready: 0, Status: "Degraded",
+		Findings: []diagnose.Finding{crashFinding("web-abc", ev), crashFinding("web-def", ev)},
+	}}}}
+	if err := PrintInventory(in, "json", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "shop/web-abc") || !strings.Contains(out, "shop/web-def") {
+		t.Errorf("both pods must still appear in the JSON:\n%s", out)
+	}
+	if strings.Contains(out, "×") {
+		t.Errorf("the count is a text-renderer device and must not reach the JSON:\n%s", out)
+	}
+}
+
 func TestPrintInventory_TextShowsIngressIssues(t *testing.T) {
 	var buf bytes.Buffer
 	in := Input{

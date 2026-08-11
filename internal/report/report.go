@@ -15,6 +15,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/confidence"
 	"github.com/imantaba/kubeagent/internal/controlplane"
 	"github.com/imantaba/kubeagent/internal/credlint"
+	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/diskusage"
 	"github.com/imantaba/kubeagent/internal/dnshealth"
 	"github.com/imantaba/kubeagent/internal/gitops"
@@ -1046,6 +1047,96 @@ func printCredentialWarnings(findings []credlint.Finding, w io.Writer) error {
 	return nil
 }
 
+// findingGroup is one or more findings that render to the same block, kept in
+// the order the first of them appeared.
+type findingGroup struct {
+	head     string   // the "⚠ …" line, without its count suffix
+	evidence []string // the distinct "↳ …" lines, first-seen order
+	tail     string   // everything below the evidence: resources, logs, suggestions
+	count    int      // how many findings this block stands for
+}
+
+// groupFindings collapses findings that would render alike into one block
+// carrying a count.
+//
+// A Deployment whose replicas all crash the same way produced one identical
+// pair of lines per pod — twenty of them on a twenty-replica Deployment — and
+// the text renderer prints no pod name, so there was nothing to tell them
+// apart with. Only the text output collapses: the JSON document is the one
+// that gets forwarded, and it still carries one finding per pod.
+//
+// The key is the whole rendered block bar the evidence line, so a group can
+// never print fewer lines than the findings it stands for. Everything that
+// varies per pod and is not evidence keeps the findings apart: a --suggest
+// command names the pod, a resources block names the container's limits, a log
+// excerpt is that pod's own. Evidence is the one part allowed to vary inside a
+// group, and every distinct value is printed — which is what shows the restart
+// counts when they differ, since that is where a restart count lives.
+func groupFindings(findings []diagnose.Finding, suggest bool) []findingGroup {
+	var groups []findingGroup
+	at := map[string]int{} // block key -> index into groups
+	for _, f := range findings {
+		head, evidence, tail := renderFinding(f, suggest)
+		key := head + "\x00" + tail
+		i, ok := at[key]
+		if !ok {
+			at[key] = len(groups)
+			groups = append(groups, findingGroup{head: head, tail: tail})
+			i = len(groups) - 1
+		}
+		g := &groups[i]
+		g.count++
+		if evidence != "" && !hasLine(g.evidence, evidence) {
+			g.evidence = append(g.evidence, evidence)
+		}
+	}
+	return groups
+}
+
+// hasLine reports whether lines already holds s. A group's evidence list is
+// bounded by the number of findings on one workload, so a scan is enough.
+func hasLine(lines []string, s string) bool {
+	for _, l := range lines {
+		if l == s {
+			return true
+		}
+	}
+	return false
+}
+
+// renderFinding splits one finding's block into the three parts groupFindings
+// keys on. Concatenating head+"\n", evidence+"\n" and tail is exactly what the
+// renderer emitted before findings were grouped.
+func renderFinding(f diagnose.Finding, suggest bool) (head, evidence, tail string) {
+	tag := ""
+	if f.Confidence != "" && f.Confidence != "high" {
+		tag = " [" + f.Confidence + "]"
+	}
+	head = fmt.Sprintf("    ⚠ %s%s: %s", f.Issue, tag, f.Reason)
+	if f.Evidence != "" && f.Evidence != f.Reason {
+		evidence = "      ↳ " + f.Evidence
+	}
+	var b strings.Builder
+	if f.Resources != nil {
+		r := f.Resources
+		b.WriteString(fmt.Sprintf("      resources: memory req=%s limit=%s · cpu req=%s limit=%s\n",
+			r.MemRequest, r.MemLimit, r.CPURequest, r.CPULimit))
+	}
+	if f.LogExcerpt != "" {
+		b.WriteString(fmt.Sprintf("      logs (previous container):\n        %s\n        → %s\n", f.LogExcerpt, f.LogCause))
+	}
+	if suggest {
+		s := remediation.For(f)
+		if s.NextStep != "" {
+			b.WriteString(fmt.Sprintf("      ↳ next step: %s\n", s.NextStep))
+		}
+		if s.Command != "" {
+			b.WriteString(fmt.Sprintf("      ↳ try: %s\n", s.Command))
+		}
+	}
+	return head, evidence, b.String()
+}
+
 func printWorkload(wl inventory.Workload, now time.Time, suggest bool, w io.Writer) error {
 	flag := "  "
 	if wl.Flagged() {
@@ -1083,43 +1174,21 @@ func printWorkload(wl inventory.Workload, now time.Time, suggest bool, w io.Writ
 			return err
 		}
 	}
-	for _, f := range wl.Findings {
-		tag := ""
-		if f.Confidence != "" && f.Confidence != "high" {
-			tag = " [" + f.Confidence + "]"
+	for _, g := range groupFindings(wl.Findings, suggest) {
+		head := g.head
+		if g.count > 1 {
+			head += fmt.Sprintf(" ×%d", g.count)
 		}
-		if _, err := fmt.Fprintf(w, "    ⚠ %s%s: %s\n", f.Issue, tag, f.Reason); err != nil {
+		if _, err := fmt.Fprintln(w, head); err != nil {
 			return err
 		}
-		if f.Evidence != "" && f.Evidence != f.Reason {
-			if _, err := fmt.Fprintf(w, "      ↳ %s\n", f.Evidence); err != nil {
+		for _, e := range g.evidence {
+			if _, err := fmt.Fprintln(w, e); err != nil {
 				return err
 			}
 		}
-		if f.Resources != nil {
-			r := f.Resources
-			if _, err := fmt.Fprintf(w, "      resources: memory req=%s limit=%s · cpu req=%s limit=%s\n",
-				r.MemRequest, r.MemLimit, r.CPURequest, r.CPULimit); err != nil {
-				return err
-			}
-		}
-		if f.LogExcerpt != "" {
-			if _, err := fmt.Fprintf(w, "      logs (previous container):\n        %s\n        → %s\n", f.LogExcerpt, f.LogCause); err != nil {
-				return err
-			}
-		}
-		if suggest {
-			s := remediation.For(f)
-			if s.NextStep != "" {
-				if _, err := fmt.Fprintf(w, "      ↳ next step: %s\n", s.NextStep); err != nil {
-					return err
-				}
-			}
-			if s.Command != "" {
-				if _, err := fmt.Fprintf(w, "      ↳ try: %s\n", s.Command); err != nil {
-					return err
-				}
-			}
+		if _, err := io.WriteString(w, g.tail); err != nil {
+			return err
 		}
 	}
 	if len(wl.NetworkPolicies) > 0 {

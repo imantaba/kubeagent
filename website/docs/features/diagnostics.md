@@ -773,6 +773,33 @@ a `NotReady` node names its kubelet-reported cause (the `NodeReady` condition's
 reason and message) instead of a bare `NotReady`. The cluster verdict and JSON
 schema are unchanged.
 
+Findings on the same workload that would print the same lines are collapsed into
+one block with a count, so a twenty-replica Deployment whose replicas all crash
+the same way prints one `⚠` line reading `×20` rather than twenty identical
+ones:
+
+```text
+✗ shop/web  Deployment  0/20 Degraded
+    ⚠ CrashLoopBackOff: Container repeatedly crashes after starting ×20
+      ↳ container "web", restartCount=4
+```
+
+A collapsed block never prints fewer lines than the findings it stands for.
+Anything that differs between pods keeps them apart — a `--suggest` command
+names the pod, a resources block names that container's limits — and the one
+part allowed to vary inside a block is the `↳` signal, where every distinct
+value is printed on its own line. That is what shows the restart counts when
+they differ:
+
+```text
+    ⚠ CrashLoopBackOff: Container repeatedly crashes after starting ×2
+      ↳ container "web", restartCount=1
+      ↳ container "web", restartCount=7
+```
+
+This is a text-rendering decision only. `--output json` still carries one
+finding per pod, each naming its own pod, and no count appears in it.
+
 ### Agentic investigation (`--investigate`)
 
 `kubeagent scan --investigate` runs the full scan, then — for each finding —

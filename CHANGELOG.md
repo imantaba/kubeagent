@@ -24,6 +24,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`scan --output text` collapses findings that would print the same lines.**
+  A Deployment whose replicas all fail the same way printed one identical pair
+  of lines per pod — twenty of them on a twenty-replica Deployment — and the
+  text renderer prints no pod name, so there was nothing to tell them apart
+  with. They now render as one block with a count: `⚠ CrashLoopBackOff: …
+  ×20`. A collapsed block can never print fewer lines than the findings it
+  stands for: the key is the whole rendered block bar the `↳` signal line, so a
+  `--suggest` command naming the pod or a per-container resources block keeps
+  the findings apart, and every distinct signal inside a block is printed on
+  its own line — which is what shows the restart counts when they differ. Text
+  only: `--output json` still carries one finding per pod, each naming its own
+  pod, and no count appears in it.
+
 - **A CronJob whose last run failed no longer reports itself as `Idle`.** The
   status word is computed from the active-job count during assembly, before any
   Job has been judged, so a CronJob with a `JobFailed` finding printed

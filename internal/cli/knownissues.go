@@ -36,15 +36,26 @@ func runKnownIssues(args []string, w io.Writer) error {
 	}
 	entry, ok := knownissues.Lookup(args[0])
 	if !ok {
-		// %q renders the argument as a Go string literal, so a control byte
-		// spliced into it prints as \x1b rather than reaching the terminal.
-		// That is why this path needs no safetext call of its own.
+		// Both branches below use %q, which renders the argument as a Go string
+		// literal — so a control byte spliced into it prints as \x1b rather than
+		// reaching the terminal. That is why this path needs no safetext call of
+		// its own.
 		//
-		// The message says what this reference covers rather than implying the
-		// kind is invalid. NoEndpoints, RolloutStuck, JobFailed and the rest of
-		// what kubeagent reports are real kinds from the workload and cluster
-		// passes; they are not in the detector set this slice documents, so the
-		// message points at where they are explained instead.
+		// A kind kubeagent emits from a workload pass is answered separately. An
+		// operator who reads RolloutStuck off a scan and asks about it must not
+		// be told the kind is unknown: kubeagent printed it a moment earlier.
+		// The exit code is the same either way — naming a workload kind is still
+		// not a documented-kind lookup — so only the wording differs.
+		if knownissues.IsWorkloadKind(args[0]) {
+			return fmt.Errorf("%q is a workload-level finding, not one of the pod detectors this reference covers; "+
+				"it is explained at https://k8sproject.top/features/diagnostics/", args[0])
+		}
+		// The unknown-kind message says what this reference covers rather than
+		// implying the kind is invalid — but it does keep the word "unknown",
+		// which is the correct word for a typo. NoEndpoints and the rest of what
+		// kubeagent reports from the cluster pass are real kinds that are not in
+		// the detector set this slice documents, so the message points at where
+		// they are explained instead.
 		return fmt.Errorf("unknown issue kind %q; kubeagent documents the deterministic detector set (%s). "+
 			"Other findings are explained at https://k8sproject.top/features/diagnostics/",
 			args[0], strings.Join(knownissues.Kinds(), ", "))

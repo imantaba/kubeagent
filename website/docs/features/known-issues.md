@@ -140,6 +140,14 @@ detectors. Other packages report their own findings — `FailedCreate`,
 vocabulary, with their prose on the [Failure diagnostics](diagnostics.md)
 page.
 
+Those three are named, though, so that asking about one gets an honest answer
+rather than "unknown" — see [Asking about a workload-level
+kind](#asking-about-a-workload-level-kind) below. That second list is closed
+the same way, and by the same kind of test: a fifth check reads the
+`Issue:` literals the workload passes build and fails if they are not exactly
+the three names. It cannot live beside the other four — they are scoped to
+`internal/diagnose` on purpose — so it lives where those passes are in scope.
+
 ## What a kind is
 
 The `Kind` is the exact issue string a scan prints, copied verbatim rather
@@ -149,12 +157,29 @@ Lookup is exact — no case folding, no fuzzy match, and no falling back from
 
 ```text
 $ kubeagent known-issues oomkilled
-kubeagent: unknown issue kind "oomkilled"; kubeagent documents the deterministic detector set (CrashLoopBackOff, CreateContainerConfigError, ErrImagePull, ImagePullBackOff, Init:CrashLoopBackOff, Init:ErrImagePull, Init:ImagePullBackOff, Init:OOMKilled, OOMKilled, ProbeFailure, RestartLoop, Unschedulable, VolumeAttachError). Other findings are explained at https://k8sproject.top/features/diagnostics/
+kubeagent: unknown issue kind "oomkilled"; kubeagent documents the deterministic detector set (CrashLoopBackOff, CreateContainerConfigError, ErrImagePull, ImagePullBackOff, Init:CrashLoopBackOff, Init:CreateContainerConfigError, Init:ErrImagePull, Init:ImagePullBackOff, Init:OOMKilled, OOMKilled, ProbeFailure, RestartLoop, Unschedulable, VolumeAttachError, VolumeMountError). Other findings are explained at https://k8sproject.top/features/diagnostics/
 ```
 
 An init container killed for memory blocks the pod from ever starting. That is
 a different failure from the same reason on a main container, with different
 causes and different next steps, so it is a different entry.
+
+## Asking about a workload-level kind
+
+`RolloutStuck`, `FailedCreate` and `JobFailed` have no entry here, and they are
+not typos either — kubeagent may have printed one a second earlier. They get
+their own answer:
+
+```text
+$ kubeagent known-issues RolloutStuck
+kubeagent: "RolloutStuck" is a workload-level finding, not one of the pod detectors this reference covers; it is explained at https://k8sproject.top/features/diagnostics/
+```
+
+The exit code does not change: naming one of the three is still not a lookup
+that found an entry, so it exits non-zero exactly as an unknown argument does.
+Only the wording changes, and only for those three. A typo keeps the message
+above verbatim, because **unknown** is the correct word for a typo and blurring
+the two cases into one softer message would lose that.
 
 ## What the entries may name
 
@@ -168,11 +193,15 @@ that no address or hostname reaches the prose.
 
 Deliberately absent:
 
-- **Kinds outside the detector set.** `NoEndpoints`, `RolloutStuck`,
-  `JobFailed`, `FailedCreate` and the rest are real findings from the workload
-  and cluster passes. They are not statically enumerable the way the detector
-  set is, so documenting them here could not carry the same guarantee. They
-  keep their prose in [Failure diagnostics](diagnostics.md).
+- **Entries for kinds outside the detector set.** `NoEndpoints`,
+  `RolloutStuck`, `JobFailed`, `FailedCreate` and the rest are real findings
+  from the workload and cluster passes, and none has an entry here. They keep
+  their prose in [Failure diagnostics](diagnostics.md). The three workload
+  kinds are at least named, so asking about one is [answered
+  honestly](#asking-about-a-workload-level-kind) rather than called unknown;
+  the cluster-pass kinds are not, because they are not statically enumerable
+  the way the other two lists are, so a list of them could not carry the same
+  guarantee.
 - **A link from `scan` output to an entry.** `scan`'s rendering is unchanged.
 - **JSON output.** This is a reference for a person, not a document to
   forward, so it adds no ninth [versioned document](json-schema.md).

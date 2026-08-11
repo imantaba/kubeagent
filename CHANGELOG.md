@@ -24,6 +24,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`known-issues RolloutStuck` no longer calls an emitted kind unknown.**
+  `RolloutStuck`, `FailedCreate` and `JobFailed` come from `scan`'s workload
+  passes rather than from the pod detector set the reference documents, so
+  asking about one — a minute after a scan printed it — was answered with
+  "unknown issue kind". They now get their own message: the kind is a
+  **workload-level finding**, not one of the pod detectors this reference
+  covers, and it is explained on the diagnostics page. A typo keeps the
+  unknown-kind message verbatim, because that is the correct word for a typo,
+  and the exit code is unchanged either way. No entry is added to the
+  reference: those three stay undocumented there on purpose.
+  `internal/knownissues` gains the three-name list — it imports nothing from
+  kubeagent and nothing outside the standard library, and a `[]string` keeps
+  both halves true. The list is closed by a new test that reads the `Issue:`
+  literals the workload passes build and fails if they are not exactly those
+  three, deriving the packages to walk from `scan.go`'s own `Annotate` call
+  sites; the four existing closure tests are scoped to `internal/diagnose` and
+  could not have caught a fourth.
+
 - **`RolloutStuck` now covers a wedged StatefulSet and a wedged DaemonSet, not
   only a Deployment.** A StatefulSet and a DaemonSet publish no status
   conditions at all, so a scan could see one sitting at `0/3 Degraded` with no

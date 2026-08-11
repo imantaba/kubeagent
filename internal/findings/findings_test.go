@@ -2,6 +2,7 @@ package findings
 
 import (
 	"encoding/json"
+	"sort"
 	"strings"
 	"testing"
 
@@ -310,5 +311,47 @@ func TestFromBaselineMapsDeviationsToInfo(t *testing.T) {
 func TestFromBaselineIsEmptyWithoutAReport(t *testing.T) {
 	if got := FromBaseline(nil); len(got) != 0 {
 		t.Errorf("FromBaseline(nil) = %+v, want nothing", got)
+	}
+}
+
+// TestFindingJSONKeySet pins the shape of a Finding, and specifically the
+// absence of an evidence field.
+//
+// A Finding's Reason travels: into gate's verdict JSON, into the SARIF a
+// pipeline uploads, and from there into whatever artifact store keeps it. A
+// diagnose.Finding's Evidence does not — it reaches scan's own output and the
+// HTML report and stops. Several annotator packages rely on that difference
+// when deciding how much care a message needs, so an evidence field added here
+// for a perfectly good reason would, in one line, move raw API text from the
+// operator's terminal onto the CI upload path, with nothing failing.
+//
+// This is a pin, not a prohibition. Updating it is the correct way to add a
+// field — alongside sanitizing every site that would fill it.
+func TestFindingJSONKeySet(t *testing.T) {
+	f := Finding{
+		Level: Critical, Kind: "Deployment", Namespace: "shop", Name: "web",
+		Issue: "CrashLoopBackOff", Reason: "Container repeatedly crashes after starting",
+		Owner: "Deployment/web",
+	}
+	b, err := json.Marshal(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, 0, len(m))
+	for k := range m {
+		got = append(got, k)
+	}
+	sort.Strings(got)
+	want := []string{"issue", "kind", "level", "name", "namespace", "owner", "reason"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("Finding's JSON keys changed.\n got: %v\nwant: %v\n\n"+
+			"If this added an evidence field: raw API text that today only reaches the "+
+			"operator's terminal would now be uploaded by CI, so the field must ship "+
+			"together with sanitizing every site that fills it. Then update this list.",
+			got, want)
 	}
 }

@@ -24,6 +24,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`kubeagent_inspect` returned an event's text unsanitized.** The `type`,
+  `reason` and `message` of every event in a tool result were copied straight
+  from the API object, and all three are free text the API server does not
+  validate. This is the one place in the sweep where the bytes leave the
+  operator's own terminal: a tool result is forwarded verbatim to a client that
+  renders it however it likes, and JSON encoding is not sanitizing — it escapes
+  an ESC byte and passes U+202E RIGHT-TO-LEFT OVERRIDE through unchanged. All
+  three now go through `internal/safetext.Line`. Event ordering is unaffected:
+  it already ran before this point, on the raw values. `internal/mcp`'s import
+  wall is untouched — `safetext` is neither `remediate` nor `explain` — and
+  sanitizing a string makes no model call.
+
 - **Three condition messages reached a finding's reason unsanitized.** A
   HorizontalPodAutoscaler's `AbleToScale`/`ScalingActive` message, a Namespace's
   termination condition message, and a Node's `NodeReady` reason *and* message

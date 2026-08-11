@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	appsv1 "k8s.io/api/apps/v1"
@@ -710,5 +712,57 @@ func TestResolveReplicaSet_CarriesOnlyItsOwnPods(t *testing.T) {
 	if got.Pods[0].Age != "3d" {
 		t.Errorf("Pods[0].Age = %q, want %q — the resolver's now parameter must drive "+
 			"the row's age, not the wall clock", got.Pods[0].Age, "3d")
+	}
+}
+
+// hostileText carries what an event field may contain but a terminal must never
+// receive: an ANSI escape that clears the screen, a right-to-left override that
+// reorders everything after it, a NUL, and an invalid UTF-8 byte.
+const hostileText = "back-off\x1b[2J‮gnp\x00 restarting\xff"
+
+// An event's reason and message are free text the API server does not validate,
+// and kubeagent_inspect is the one place in the sweep where they leave the
+// operator's own terminal entirely: they land in an MCP tool result, which a
+// client renders wherever it likes. Both are sanitized where the API value first
+// becomes a kubeagent value — building the Event this tool returns.
+//
+// The whole result is asserted, not only the two fields, because a tool result
+// is forwarded verbatim: anything hostile anywhere in it has already escaped.
+func TestInspect_SanitizesAnEventsReasonAndMessage(t *testing.T) {
+	event := &corev1.Event{
+		ObjectMeta:     metav1.ObjectMeta{Namespace: "ops", Name: "e-hostile"},
+		InvolvedObject: corev1.ObjectReference{Namespace: "ops", Name: "worker"},
+		Reason:         hostileText, Message: hostileText, Type: "Warning", Count: 3,
+		LastTimestamp: metav1.NewTime(fixedNow.Add(-2 * time.Minute)),
+	}
+	cs := connect(t, Config{Context: "kind-example"}, fake.NewSimpleClientset(event))
+
+	out := callInspect(t, cs, map[string]any{"kind": "pod", "namespace": "ops", "name": "worker"})
+
+	if len(out.Events) != 1 {
+		t.Fatalf("Events = %+v, want 1", out.Events)
+	}
+	assertSanitized(t, "Reason", out.Events[0].Reason)
+	assertSanitized(t, "Message", out.Events[0].Message)
+
+	blob, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSanitized(t, "the whole tool result", string(blob))
+}
+
+// assertSanitized fails when s carries anything safetext.Line removes. It is
+// deliberately not "s == safetext.Line(raw)": the point is what reaches the
+// client, not which helper produced it.
+func assertSanitized(t *testing.T, where, s string) {
+	t.Helper()
+	if !utf8.ValidString(s) {
+		t.Errorf("invalid UTF-8 reached %s: %q", where, s)
+	}
+	for _, r := range s {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			t.Errorf("control or formatting character %U reached %s: %q", r, where, s)
+		}
 	}
 }

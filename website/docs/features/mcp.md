@@ -50,6 +50,15 @@ A `found: false` result still carries the object's recent events. That is
 deliberate: "the object is gone but its events explain why" is exactly what a
 drill-down has to answer, and a deleted pod's events are often the whole story.
 
+An event's type, reason and message are free text the API server does not
+validate, so all three are sanitized before they reach a tool result: valid
+UTF-8, one line, no control characters and no Unicode formatting characters,
+bounded in length. This is the same treatment every other kubeagent surface
+gives an unvalidated API value, and it matters more here than on a terminal —
+a tool result is forwarded verbatim to a client that renders it however it
+likes, and JSON encoding is not sanitizing. It escapes an ESC byte; it passes
+U+202E RIGHT-TO-LEFT OVERRIDE through unchanged.
+
 A pod answer describes the pod, not its controller. `kind` is `Pod`, `status` is
 the pod's own phase, `pods` carries that one row, and `findings` are the pod's
 own. `desired` and `ready` are **absent** rather than `0` — a pod has no replica

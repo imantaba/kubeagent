@@ -16,6 +16,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/diagnose"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/redact"
+	"github.com/imantaba/kubeagent/internal/safetext"
 	"github.com/imantaba/kubeagent/internal/scan"
 )
 
@@ -150,10 +151,18 @@ func registerInspect(s *mcpsdk.Server, cfg Config, base kubernetes.Interface, sw
 			}
 			sortEvents(events)
 			for _, e := range events {
+				// An event's type, reason and message are all free text the API
+				// server does not validate, and this is where they first become
+				// a kubeagent value. Sanitizing here rather than in a renderer
+				// matters more for this surface than for a terminal one: a tool
+				// result is forwarded verbatim to a client that renders it
+				// however it likes, and JSON encoding is not sanitizing —
+				// U+202E RIGHT-TO-LEFT OVERRIDE survives it as a literal rune.
+				// Ordering already ran, on the raw values.
 				out.Events = append(out.Events, Event{
-					Type:    e.Type,
-					Reason:  e.Reason,
-					Message: e.Message,
+					Type:    safetext.Line(e.Type),
+					Reason:  safetext.Line(e.Reason),
+					Message: safetext.Line(e.Message),
 					Count:   e.Count,
 					Age:     eventAge(e, now()),
 				})

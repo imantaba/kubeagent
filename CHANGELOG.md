@@ -24,6 +24,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`ProbeFailure` now names the heaviest failing probe, not the most recent
+  one.** With a liveness and a readiness probe both failing, whichever event the
+  kubelet wrote last decided the finding — so the same unchanged pod reported a
+  readiness problem or a container-restart problem depending on the second it
+  was scanned. The types are ranked by consequence instead (liveness, then
+  startup, then readiness), inside a two-minute window ending at the newest
+  `Unhealthy` event so a long-resolved liveness failure cannot outrank a
+  readiness failure that is happening now. The window is anchored on that event
+  rather than on the clock, so the detector stays a pure function of the objects
+  it is handed. The evidence line now lists every probe type failing on the
+  selected container — and only that container's, so a sidecar's liveness
+  failure does not collect the app container's probe into its own line.
+- **An `exec` probe failure now says what kind of probe it was.** The reason
+  vocabulary is HTTP- and TCP-shaped and an `exec` probe's failure text is the
+  command's own output, which is exactly the text that may not be forwarded, so
+  the evidence line used to end after `probe failed` with no explanation of the
+  silence. It now reads `exec probe, output withheld`, with the handler kind
+  read from the pod spec's typed `exec`/`httpGet`/`tcpSocket`/`grpc` field
+  rather than from any message. The command, the HTTP path and the port are
+  still never read.
 - **A `CrashLoopBackOff` finding now carries the last exit code, its reason and
   how long ago it happened.** It printed the restart count and nothing else, so
   a flapping pod gave up that detail roughly half the time: the fields are

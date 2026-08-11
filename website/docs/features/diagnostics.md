@@ -96,10 +96,29 @@ A pod that is **Running but not Ready** because a container's **readiness**,
 (`HTTP 503`, `connection refused`, `timed out`, `DNS lookup failed`,
 `gRPC NOT_SERVING`, …) — for example `container "web": readiness probe failed —
 HTTP 503`. It is complementary to `RestartLoop`/`CrashLoopBackOff`: a liveness probe
-that restarts a container shows both the pattern and the probe as the cause. To keep
-the failure reason safe for `--explain`, the raw probe message is never surfaced — no
-pod IP and no `exec`-probe command output ever leaves the local report. Read-only: it
-lists `Unhealthy` events (no extra permission beyond the scan's existing event list).
+that restarts a container shows both the pattern and the probe as the cause.
+
+When more than one probe on a container is failing at once, the finding names the
+**heaviest** one rather than the most recent: liveness (the kubelet restarts the
+container), then startup (it never finishes starting), then readiness (it is only
+kept out of Service endpoints). The evidence line still lists every probe type
+failing on that container — `container "web": liveness and readiness probes failed
+— connection refused`. The comparison is bounded to a two-minute window ending at
+the newest `Unhealthy` event, so a liveness probe that failed once an hour ago
+cannot outrank a readiness probe that is failing now. The window is anchored on
+that newest event rather than on the clock, which keeps the detector a pure
+function of the objects it is handed.
+
+To keep the failure reason safe for `--explain`, the raw probe message is never
+surfaced — no pod IP and no `exec`-probe command output ever leaves the local
+report. That is why an `exec` probe usually has no reason to show: its failure text
+is the command's own output. `kubeagent` names the **handler kind** instead, read
+from the pod spec's typed `exec`/`httpGet`/`tcpSocket`/`grpc` field rather than from
+any message — `container "web": readiness probe failed — exec probe, output
+withheld`. The command, the HTTP path and the port are not read.
+
+Read-only: it lists `Unhealthy` events and reads the pod spec already collected (no
+extra permission beyond the scan's existing event list).
 
 ### Init container failures
 

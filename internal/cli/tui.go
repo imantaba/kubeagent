@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"io"
+	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -15,10 +17,14 @@ import (
 // `kubeagent scan` runs. The opt-in advisories stay opt-in — a browser that
 // silently ran more checks than the command it mirrors would make its coverage
 // claim untrue.
-func tuiScanOptions(namespace string) scan.Options {
+// Any warning about the environment goes to w, which the caller must resolve
+// before the TUI takes the screen: a line written from inside the refresh
+// closure would land underneath the alternate screen and repeat on every
+// refresh.
+func tuiScanOptions(namespace string, w io.Writer) scan.Options {
 	return scan.Options{
 		Namespace:               namespace,
-		QuotaThreshold:          envFloat("KUBEAGENT_QUOTA_THRESHOLD", 0.90),
+		QuotaThreshold:          quotaThresholdFromEnv(w),
 		WebhookTimeoutThreshold: int32(envInt("KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS", 15)),
 	}
 }
@@ -71,11 +77,16 @@ func runTUIOpts(o tuiOptions) error {
 		scope = "namespace " + o.namespace
 	}
 
+	// Resolved once, here, rather than per refresh: the environment does not
+	// change while the TUI runs, and this is the last point at which a warning
+	// line is still visible on the terminal.
+	scanOpts := tuiScanOptions(o.namespace, os.Stderr)
+
 	return tui.Run(context.Background(), tui.Options{
 		Version: version,
 		Scope:   scope,
 		Scan: func(ctx context.Context) (tui.ScanSnapshot, error) {
-			res, err := scan.Evaluate(ctx, client, tuiScanOptions(o.namespace))
+			res, err := scan.Evaluate(ctx, client, scanOpts)
 			if err != nil {
 				return tui.ScanSnapshot{}, err
 			}

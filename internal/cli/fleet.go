@@ -279,7 +279,7 @@ func runFleetOpts(o fleetOptions) error {
 
 	rep := fleet.Sweep(context.Background(), targets, fleet.Options{
 		FailOn:         level,
-		Scan:           gateScanOptions(o.namespace),
+		Scan:           gateScanOptions(o.namespace, os.Stderr),
 		Workers:        o.workers,
 		ClusterTimeout: o.clusterTimeout,
 	})

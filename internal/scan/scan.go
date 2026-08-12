@@ -53,6 +53,13 @@ import (
 	"github.com/imantaba/kubeagent/internal/webhookhealth"
 )
 
+// DefaultQuotaThreshold is the fraction of a ResourceQuota's hard limit at
+// which the used share is reported as near its limit. It is the default the
+// CLI applies to KUBEAGENT_QUOTA_THRESHOLD and the value Evaluate falls back
+// to when it is handed a threshold outside (0, 1] — one number, so the two
+// can never drift apart.
+const DefaultQuotaThreshold = 0.90
+
 // Options controls the evaluation scope.
 type Options struct {
 	Namespace               string
@@ -673,9 +680,12 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	pvcReclaim := pvcreclaim.Assess(pvcs, pvs)
 	pvcIssues := pvchealth.Assess(pvcs, pvcEvents, storageClasses, pvs)
 
+	// The CLI already refuses an out-of-range KUBEAGENT_QUOTA_THRESHOLD and
+	// says so. This clamp is for every other caller: Evaluate must stay safe
+	// on a zero-value Options, which no flag parser ever touched.
 	quotaThreshold := opts.QuotaThreshold
 	if quotaThreshold <= 0 || quotaThreshold > 1 {
-		quotaThreshold = 0.90
+		quotaThreshold = DefaultQuotaThreshold
 	}
 	quotaIssues := quotahealth.Assess(quotas, quotaThreshold)
 

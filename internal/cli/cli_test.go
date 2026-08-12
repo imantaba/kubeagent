@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -2107,7 +2108,7 @@ func TestGateScanOptionsIncludeTheEnvTunableThresholds(t *testing.T) {
 	t.Setenv("KUBEAGENT_QUOTA_THRESHOLD", "0.75")
 	t.Setenv("KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS", "30")
 
-	opts := gateScanOptions("prod")
+	opts := gateScanOptions("prod", io.Discard)
 
 	if opts.Namespace != "prod" {
 		t.Errorf("Namespace = %q, want %q", opts.Namespace, "prod")
@@ -2299,8 +2300,8 @@ func TestRunTUI_RejectsExplainAndInvestigate(t *testing.T) {
 // which makes the struct non-comparable with the operator the brief specifies.
 // DeepEqual still compares the whole value, not a field or two.
 func TestTUIScanOptions_MatchesGateDefaults(t *testing.T) {
-	got := tuiScanOptions("shop")
-	want := gateScanOptions("shop")
+	got := tuiScanOptions("shop", io.Discard)
+	want := gateScanOptions("shop", io.Discard)
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("tuiScanOptions = %+v, want %+v", got, want)
 	}
@@ -2886,5 +2887,58 @@ func TestRootHelpKeepsTheUsageError(t *testing.T) {
 	}
 	if got := exitCodeFor(err); got != 1 {
 		t.Errorf("exit code = %d, want 1", got)
+	}
+}
+
+// An operator who writes KUBEAGENT_QUOTA_THRESHOLD=80 means "warn me at 80%".
+// The value is not a fraction, so the scan runs at 0.90 — and used to say
+// nothing at all, so the operator believed they had changed the threshold.
+func TestQuotaThresholdFromEnv(t *testing.T) {
+	cases := []struct {
+		name    string
+		set     bool
+		value   string
+		want    float64
+		wantMsg bool
+	}{
+		{name: "unset", want: 0.90},
+		{name: "valid fraction", set: true, value: "0.80", want: 0.80},
+		{name: "exactly one is valid", set: true, value: "1", want: 1.0},
+		{name: "percentage", set: true, value: "80", want: 0.90, wantMsg: true},
+		{name: "above one", set: true, value: "1.5", want: 0.90, wantMsg: true},
+		{name: "zero", set: true, value: "0", want: 0.90, wantMsg: true},
+		{name: "negative", set: true, value: "-1", want: 0.90, wantMsg: true},
+		{name: "unparseable", set: true, value: "not-a-number", want: 0.90, wantMsg: true},
+		// Set but empty is indistinguishable from unset through os.Getenv, and
+		// warning on it would fire for an ordinary "KUBEAGENT_QUOTA_THRESHOLD="
+		// left in a shell profile.
+		{name: "set but empty", set: true, value: "", want: 0.90},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if c.set {
+				t.Setenv("KUBEAGENT_QUOTA_THRESHOLD", c.value)
+			} else {
+				os.Unsetenv("KUBEAGENT_QUOTA_THRESHOLD")
+			}
+			var buf bytes.Buffer
+			got := quotaThresholdFromEnv(&buf)
+			if got != c.want {
+				t.Errorf("threshold = %v, want %v", got, c.want)
+			}
+			msg := buf.String()
+			switch {
+			case c.wantMsg && strings.Count(msg, "\n") != 1:
+				t.Fatalf("want exactly one warning line, got %q", msg)
+			case c.wantMsg:
+				for _, want := range []string{"KUBEAGENT_QUOTA_THRESHOLD", strconv.Quote(c.value), "0.9"} {
+					if !strings.Contains(msg, want) {
+						t.Errorf("warning %q does not name %s", msg, want)
+					}
+				}
+			case msg != "":
+				t.Errorf("want no warning, got %q", msg)
+			}
+		})
 	}
 }

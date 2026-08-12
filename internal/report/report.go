@@ -785,7 +785,10 @@ func printQuotaIssues(issues []quotahealth.Issue, w io.Writer) error {
 		if is.Severity == "exhausted" {
 			label = "QuotaExhausted"
 		}
-		pct := int(is.Ratio*100 + 0.5)
+		// Floored, not rounded: 100% is what this line says about a quota that is
+		// at or over its limit, so a quota at 99.9% must not borrow the number.
+		// The JSON ratio carries the true value for anything that needs it.
+		pct := int(is.Ratio * 100)
 		if _, err := fmt.Fprintf(w, "      ⚠ %s: used %s / hard %s (%d%%)\n", label, is.Used, is.Hard, pct); err != nil {
 			return err
 		}

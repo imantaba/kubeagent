@@ -12,11 +12,13 @@ kubeagent known-issues OOMKilled  # one kind in full
 
 ```text
 $ kubeagent known-issues
+  ContainerStartError          the container was created but could not be started
   CrashLoopBackOff             a container starts, exits, and is restarted on a widening backoff
   CreateContainerConfigError   the kubelet cannot build the container from its spec
   ErrImagePull                 the kubelet's attempt to pull the image failed
   ImagePullBackOff             repeated pull failures, now backing off between attempts
   Init:CrashLoopBackOff        an init container is crash-looping, so the pod never starts
+  Init:CreateContainerConfigError the kubelet cannot build an init container from its spec
   Init:ErrImagePull            an init container's image could not be pulled
   Init:ImagePullBackOff        an init container's image pull is backing off
   Init:OOMKilled               an init container was killed for exceeding its memory limit
@@ -25,6 +27,7 @@ $ kubeagent known-issues
   RestartLoop                  a container keeps exiting and restarting while still Running
   Unschedulable                no node can place the pod
   VolumeAttachError            a volume cannot be attached, so the container never starts
+  VolumeMountError             a volume cannot be mounted, so the container never starts
 
 Print one:
   kubeagent known-issues <kind>
@@ -64,13 +67,13 @@ it.
 
 ## The vocabulary is closed
 
-`kubeagent known-issues` documents exactly the fifteen kinds the
+`kubeagent known-issues` documents exactly the sixteen kinds the
 deterministic detector set can report, and the repository checks that rather
 than asserting it. Four tests in `internal/diagnose` run on every `go test`:
 
 - a `go/parser` walk over the detector sources, checking every string literal
   that reaches a finding's issue field;
-- a fixture table that drives all ten detectors to produce all fifteen
+- a fixture table that drives all eleven detectors to produce all sixteen
   kinds and looks each one up in the registry — this is what covers the kinds
   composed at run time, which the parser cannot see;
 - the reverse check, refusing an entry for a kind no detector emits;
@@ -157,7 +160,7 @@ Lookup is exact — no case folding, no fuzzy match, and no falling back from
 
 ```text
 $ kubeagent known-issues oomkilled
-kubeagent: unknown issue kind "oomkilled"; kubeagent documents the deterministic detector set (CrashLoopBackOff, CreateContainerConfigError, ErrImagePull, ImagePullBackOff, Init:CrashLoopBackOff, Init:CreateContainerConfigError, Init:ErrImagePull, Init:ImagePullBackOff, Init:OOMKilled, OOMKilled, ProbeFailure, RestartLoop, Unschedulable, VolumeAttachError, VolumeMountError). Other findings are explained at https://k8sproject.top/features/diagnostics/
+kubeagent: unknown issue kind "oomkilled"; kubeagent documents the deterministic detector set (ContainerStartError, CrashLoopBackOff, CreateContainerConfigError, ErrImagePull, ImagePullBackOff, Init:CrashLoopBackOff, Init:CreateContainerConfigError, Init:ErrImagePull, Init:ImagePullBackOff, Init:OOMKilled, OOMKilled, ProbeFailure, RestartLoop, Unschedulable, VolumeAttachError, VolumeMountError). Other findings are explained at https://k8sproject.top/features/diagnostics/
 ```
 
 An init container killed for memory blocks the pod from ever starting. That is

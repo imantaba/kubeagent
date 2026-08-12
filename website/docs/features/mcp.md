@@ -246,3 +246,15 @@ would.
     logs. If your host treats its logs as shareable, know that this one
     startup error is the exception to "no kubeconfig paths cross the MCP
     boundary" — it is deliberate, not a defect, but it is not redacted.
+
+!!! note "A tool result carries API text, and API text can name a path"
+    "Free of kubeconfig paths" is the whole of that promise, and it is worth
+    stating what sits outside it. A `kubeagent_inspect` result quotes events
+    and condition messages — text the cluster itself wrote. kubeagent passes
+    them through `internal/safetext.Line`, which normalises control
+    characters and bounds length; it does not filter them. A kubelet
+    `FailedMount` message, for instance, routinely names a path under
+    `/var/lib/kubelet/`, and that path is usually the diagnostic an operator
+    needs. It describes the cluster's own layout — not the operator's
+    workstation, and not which kubeconfig they hold, which is what makes the
+    kubeconfig-path rule a credential rule in the first place.

@@ -11,11 +11,11 @@ are failing — covering the most common pod failure modes.
 
 ## Failure modes detected
 
-Fifteen of the failure modes below — the pod-level ones a detector reports as
+Sixteen of the failure modes below — the pod-level ones a detector reports as
 an issue kind — are also in the binary's own offline reference:
 `kubeagent known-issues <kind>` prints what one means, what usually causes it,
 and what to check, with no cluster and no network. Run it with no argument to
-see exactly which fifteen; the rest of this page keeps its prose only here.
+see exactly which sixteen; the rest of this page keeps its prose only here.
 See [Known issues reference](known-issues.md).
 
 ### CrashLoopBackOff
@@ -57,6 +57,16 @@ A pod stuck at container creation because a volume cannot be attached.
 **Multi-Attach** case specifically (a ReadWriteOnce volume still attached to
 another node). Read-only: events are fetched with a single field-selected List.
 
+The evidence is the **newest** `FailedAttachVolume` event still inside the API
+server's event TTL (~1 h), which is not necessarily the attempt happening now.
+What keeps a *resolved* attach failure from being reported is the pod's own
+state, not the event's age: the finding is raised only while the pod is
+currently not Ready and still at container creation, so a pod that progressed
+past volume setup is never described by an old attach event. The residual case
+is a pod stuck at `ContainerCreating` today for some other reason while an
+attach event from an earlier incident is still in the cluster — there, the
+newest event is quoted and the attribution is the older failure's.
+
 ### VolumeMountError
 
 A pod stuck at container creation because a volume cannot be **mounted**.
@@ -78,6 +88,12 @@ only that the mount did not complete, which is all it knows.
 Read-only: events are fetched with a single field-selected List. Note the
 consequence of being event-based — Kubernetes expires events after ~1 h, so a
 pod left stuck overnight loses this finding while staying just as stuck.
+
+As with `VolumeAttachError`, the evidence is the newest matching `FailedMount`
+event still inside that TTL rather than the mount attempt happening now, and the
+guard against reporting a mount failure that has since been fixed is the pod's
+own state — not Ready and still at container creation — rather than any age
+check on the event.
 
 ### RestartLoop
 
@@ -194,6 +210,43 @@ only for a reference consumed through `env`/`envFrom`. Unlike pod events (which
 expire after ~1 h), the waiting state persists as long as the container is
 stuck — read-only, no new RBAC.
 
+### ContainerStartError
+
+A **main container** whose image was resolved but which the kubelet **created
+and could not start**. This is the catch-all of the waiting-state family, and it
+exists because the alternative was silence: the kubelet emits many more waiting
+reasons than kubeagent names individually, and a container stuck on one nobody
+owned used to render as a failing workload with no `⚠` line under it at all.
+
+It fires on a closed set of five reasons — `RunContainerError`,
+`CreateContainerError`, `PreStartHookError`, `PostStartHookError` and
+`StartError` — and quotes the kubelet verbatim as its evidence: `container
+"web": RunContainerError: container init was OOM-killed (memory limit too
+low?)`. That example is the motivating case. A container killed for exceeding
+its memory limit *during startup* reports `RunContainerError` on the waiting
+state and records the OOM only in `lastState.terminated.Reason=StartError`, so
+[OOMKilled](#oomkilled) — which matches the reason `OOMKilled` — never sees it.
+
+The finding says the container did not start and does not claim to know why,
+which is why it is [medium confidence](#finding-confidence). The reason it
+quotes covers several unrelated causes: a lifecycle hook exiting non-zero, an
+entrypoint that is not executable, a read-only root filesystem, an unhealthy
+container runtime on the node.
+
+Two deliberate limits. **Image-family reasons are not in the set** —
+`InvalidImageName`, `ErrImageNeverPull`, `RegistryUnavailable` and
+`SignatureValidationFailed` are pull failures and belong beside
+[ImagePullBackOff](#imagepullbackoff-errimagepull); a container stuck on one of
+those is not reported here. And a brand-new pod gets a **minute of grace**:
+container creation is not instant, so the finding is raised only once the
+container has already restarted at least once, or the pod is at least 60 s old.
+The same failure on an **init container** is reported by
+[Init container failures](#init-container-failures) instead, which names the
+failing container's position in the sequence.
+
+Read-only; reads pod status the scan already collects, so no new RBAC and no
+extra cluster call.
+
 ### RolloutStuck (rollout wedged)
 
 A **Deployment**, **StatefulSet** or **DaemonSet** whose rollout has stalled and
@@ -269,13 +322,18 @@ named.
 `scan` flags a namespace's ResourceQuota entry whose `used/hard` ratio is at or
 over **90%** — catching a quota that is about to block new objects before the
 controller starts emitting `FailedCreate` events. Every resource in every
-ResourceQuota is evaluated generically (CPU, memory, pods, storage, …). Two
-severity levels are distinguished:
+ResourceQuota is evaluated generically (CPU, memory, pods, storage, …), except
+an entry whose `hard` is **zero**, which is skipped: a zero quota is a
+deliberate prohibition (`services.nodeports: "0"`, `count/secrets: "0"`) rather
+than a capacity about to run out, and `0/0` has no ratio to compare against a
+threshold. Two severity levels are distinguished:
 
-- **exhausted** (`used == hard`, 100%) — the quota is fully consumed; new
-  objects are being **blocked right now**.
-- **near limit** (90–99%) — the quota is nearly full; a burst of new pods,
-  requests, or storage claims will hit the wall.
+- **exhausted** (`used >= hard`) — the quota is fully consumed; new objects are
+  being **blocked right now**. A quota narrowed below its namespace's current
+  usage reports over 100%.
+- **near limit** (at or over the threshold, below 100%) — the quota is nearly
+  full; a burst of new pods, requests, or storage claims will hit the wall. The
+  floor of this band is the threshold below, not a fixed 90.
 
 This is the **proactive** complement to the reactive `FailedCreate` detector:
 `FailedCreate` fires after the controller is already being denied; the quota
@@ -283,17 +341,29 @@ check fires while there is still headroom to act.
 
 The threshold defaults to `0.90` and is tunable via the environment variable
 `KUBEAGENT_QUOTA_THRESHOLD` (e.g. `KUBEAGENT_QUOTA_THRESHOLD=0.80` to warn
-earlier). Read-only, always-on, no CLI flag required. The daemon exposes the
-gauge `kubeagent_resourcequota_issues`. Adds a `resourcequotas` read grant.
+earlier). It must be a fraction in `(0, 1]`: a value that is unparseable or out
+of range — `80` for "80%" is the common slip — is refused **out loud**, with one
+line on stderr naming the variable, the value received and the threshold
+actually used, and the scan continues at the default. Read-only, always-on, no
+CLI flag required. The daemon exposes the gauge
+`kubeagent_resourcequota_issues`. Adds a `resourcequotas` read grant.
 
 Example output:
 
 ```text
 ✗ shop/compute  ResourceQuota  requests.cpu
     ⚠ QuotaExhausted: used 4 / hard 4 (100%)
+✗ shop/compute  ResourceQuota  pods
+    ⚠ QuotaExhausted: used 8 / hard 4 (200%)
 ✗ web/compute  ResourceQuota  pods
     ⚠ QuotaNearLimit: used 47 / hard 50 (94%)
 ```
+
+The middle line is a quota that was narrowed below what its namespace was
+already using: it is being enforced now, and nothing new can be created until
+usage drops under the new limit. The percentage is **floored**, never rounded
+up, so `100%` on a `QuotaExhausted` line always means at or over the limit and a
+quota at 99.9% reads `99%` beside its `QuotaNearLimit` label.
 
 ### Root-cause attribution
 
@@ -737,8 +807,10 @@ the grant, `--logs` reports no log cause and continues non-fatally.
 Every finding carries a **confidence** level reflecting how directly the observed
 signal implies the diagnosis: **high** when Kubernetes itself asserts the state
 (CrashLoopBackOff, OOMKilled, Unschedulable, a controller event, …) and
-**medium** for a kubeagent heuristic (`RestartLoop`, `ProbeFailure`) or a
-statistical correlation (a shared-registry attribution). High is the unmarked
+**medium** for a kubeagent heuristic (`RestartLoop`, `ProbeFailure`), a finding
+that reports a failure without claiming to know its cause
+(`ContainerStartError`), or a statistical correlation (a shared-registry
+attribution). High is the unmarked
 default; the text report tags only the less-certain findings and hints
 (`⚠ RestartLoop [medium]: …`, `↳ likely caused by registry … [medium]`) so the
 tag draws the eye to exactly what to second-guess. JSON always carries

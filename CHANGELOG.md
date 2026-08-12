@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **New detector: `ContainerStartError`.** A main container the kubelet created
+  and could not start now carries a finding instead of rendering as a failing
+  workload with nothing under it. It fires on a closed set of five kubelet
+  waiting reasons — `RunContainerError`, `CreateContainerError`,
+  `PreStartHookError`, `PostStartHookError`, `StartError` — and quotes the
+  reason and message verbatim as evidence, at `medium` confidence, because it
+  reports that the container did not start without claiming to know why. The
+  motivating case is a container OOM-killed *during startup*: the kubelet
+  reports `RunContainerError` and records the OOM only in
+  `lastState.terminated.Reason=StartError`, which `OOMKilled` — matching the
+  reason `OOMKilled` — never sees. A brand-new pod gets a minute of grace
+  (`containerStartDwell`, skipped once the container has restarted), so an
+  ordinary startup is not reported as a failure. The image-family reasons
+  (`InvalidImageName`, `ErrImageNeverPull`, `RegistryUnavailable`,
+  `SignatureValidationFailed`) are deliberately not in the set: those are pull
+  failures. Registered last in `DefaultDetectors`, which is report order only —
+  `diagnose.Run` collects every detector's findings, so a catch-all shadows
+  nothing. The known-issues vocabulary moves from fifteen kinds to sixteen; the
+  issue kind is a string rather than an enum in every published schema, so no
+  `schemaVersion` moves.
+
+### Fixed
+
+- **`VolumeMountError` could never fire.** The detector shipped in 1.15.0 reads
+  the pod's `FailedMount` Warning events, and the scan pipeline collected only
+  `FailedAttachVolume` events, so `facts.Events` never contained one to match. A
+  pod stuck on a missing ConfigMap or Secret volume source still carried no
+  diagnosis. The scan now lists `FailedMount` events alongside the attach ones.
+
+- **A `KUBEAGENT_QUOTA_THRESHOLD` outside `(0, 1]` is refused out loud.**
+  `KUBEAGENT_QUOTA_THRESHOLD=80` — the obvious way to write "warn me at 80%" —
+  parsed as a float, failed the range check, and was silently replaced by the
+  default, so the scan ran at 0.90 while the operator believed they had changed
+  it. All four commands that read the variable (`scan`, `watch`, `gate`, `tui`)
+  now write one line to stderr naming the variable, the value received and the
+  threshold actually used, and continue at the default. stdout is untouched, so
+  a `--output json` consumer sees byte-identical bytes. A set-but-empty value is
+  left alone: `os.Getenv` cannot tell it from unset. The five literal `0.90`s
+  behind the message collapse into one `scan.DefaultQuotaThreshold`, so the line
+  cannot name a threshold the scan did not use.
+
+- **The quota percentage is floored, not rounded up.** A ratio of 0.999
+  rendered as `⚠ QuotaNearLimit: used 999m / hard 1 (100%)` — a line that
+  reports the same quota as both full and not full. The percentage now truncates,
+  so `100%` beside `QuotaExhausted` always means at or over the limit. The JSON
+  `ratio` is unchanged and still carries the true value.
+
+- **The quota summary line counts entries, not ResourceQuotas.** `7
+  ResourceQuotas near/over quota` was the count of `(quota, resource)` pairs, so
+  four ResourceQuota objects with several resources between them overstated how
+  many objects were in trouble. The line now names quota entries.
+
+### Changed
+
+- **Documentation narrowed to what the code keeps**, from the diagnostics
+  validation campaign: the ResourceQuota section's `exhausted` band is
+  `used >= hard` (a quota narrowed below live usage reports over 100%) and its
+  `near limit` band starts at the configured threshold rather than a hardcoded
+  90%; an entry whose `hard` is zero is documented as skipped, because a zero
+  quota is a prohibition rather than a capacity about to run out; both volume
+  sections state that the evidence is the newest matching event still inside the
+  API server's event TTL and that the guard against a resolved failure is the
+  pod's own state rather than the event's age; and `CLAUDE.md`'s paraphrase of
+  the MCP promise is narrowed from "path-free" to "free of kubeconfig paths and
+  context names", with `mcp.md` gaining a note that a tool result carries API
+  text and API text can name a filesystem path the kubelet chose. Nothing is
+  deleted: every promise the code keeps is restated where a reader will find it.
+
 ## [1.15.0] - 2026-08-11
 
 ### Added

@@ -58,6 +58,15 @@ kubeagent scan
 - **CreateContainerConfigError** — a container (main or init) that cannot start
   because a referenced ConfigMap or Secret is missing, or a required key is
   absent; the finding names the object from the kubelet message.
+- **VolumeMountError** — a pod stuck at container creation because a volume
+  cannot be **mounted** (`FailedMount`); most often a ConfigMap or Secret named
+  as a volume source that does not exist, which the kubelet reports as no
+  container config error at all.
+- **ContainerStartError** — the catch-all of the waiting-state family: a main
+  container the kubelet created and could not start (`RunContainerError`,
+  `CreateContainerError`, a lifecycle-hook failure, `StartError`). It quotes the
+  kubelet verbatim and does not claim to know why, which is what catches the
+  container OOM-killed *during startup* that `OOMKilled` cannot see.
 - **RolloutStuck** — a Deployment, StatefulSet, or DaemonSet whose rollout has
   wedged. A Deployment says so in its conditions (`ProgressDeadlineExceeded`, or a
   `ReplicaFailure` from the ReplicaSet controller); a StatefulSet and a DaemonSet

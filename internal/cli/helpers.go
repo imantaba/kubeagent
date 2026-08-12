@@ -1,10 +1,13 @@
 package cli
 
 import (
+	"io"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/imantaba/kubeagent/internal/scan"
 )
 
 // firstNonEmpty returns a if non-empty, else b.
@@ -59,6 +62,29 @@ func envFloat(key string, def float64) float64 {
 		}
 	}
 	return def
+}
+
+// quotaThresholdFromEnv reads KUBEAGENT_QUOTA_THRESHOLD as a fraction in
+// (0, 1], falling back to scan.DefaultQuotaThreshold.
+//
+// Unlike envFloat, it does not fall back silently. "80" is a plausible thing
+// to write for "warn me at 80%", parses as a float, and is not a fraction —
+// so the scan ran at the default while the operator believed they had changed
+// the threshold. One line on w says what was ignored and what is being used
+// instead. A set-but-empty value is left alone: os.Getenv cannot tell it from
+// unset, and warning on it would fire for an ordinary trailing
+// "KUBEAGENT_QUOTA_THRESHOLD=" in a shell profile.
+func quotaThresholdFromEnv(w io.Writer) float64 {
+	v := os.Getenv("KUBEAGENT_QUOTA_THRESHOLD")
+	if v == "" {
+		return scan.DefaultQuotaThreshold
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err == nil && f > 0 && f <= 1 {
+		return f
+	}
+	warnf(w, "KUBEAGENT_QUOTA_THRESHOLD=%q is not a fraction in (0, 1]; using %.2f", v, scan.DefaultQuotaThreshold)
+	return scan.DefaultQuotaThreshold
 }
 
 // envInt returns the env var parsed as an int, else def.

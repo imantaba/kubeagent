@@ -53,6 +53,13 @@ import (
 	"github.com/imantaba/kubeagent/internal/webhookhealth"
 )
 
+// DefaultQuotaThreshold is the fraction of a ResourceQuota's hard limit at
+// which the used share is reported as near its limit. It is the default the
+// CLI applies to KUBEAGENT_QUOTA_THRESHOLD and the value Evaluate falls back
+// to when it is handed a threshold outside (0, 1] — one number, so the two
+// can never drift apart.
+const DefaultQuotaThreshold = 0.90
+
 // Options controls the evaluation scope.
 type Options struct {
 	Namespace               string
@@ -226,6 +233,7 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 		nodes    []corev1.Node
 
 		attachEvents       []corev1.Event
+		mountEvents        []corev1.Event
 		unhealthyEvents    []corev1.Event
 		pvcEvents          []corev1.Event
 		failedCreateEvents []corev1.Event
@@ -289,6 +297,11 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	iAttach := add(func(ctx context.Context) error {
 		var err error
 		attachEvents, err = collect.VolumeAttachEvents(ctx, client, opts.Namespace)
+		return err
+	})
+	iMount := add(func(ctx context.Context) error {
+		var err error
+		mountEvents, err = collect.FailedMountEvents(ctx, client, opts.Namespace)
 		return err
 	})
 	iUnhealthy := add(func(ctx context.Context) error {
@@ -410,7 +423,10 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 
 	// Pure work that decides what phase 2 reads. Deciding it here, sequentially,
 	// is what makes the phase-2 work list independent of the schedule.
-	events := append(attachEvents, unhealthyEvents...)
+	events := make([]corev1.Event, 0, len(attachEvents)+len(mountEvents)+len(unhealthyEvents))
+	events = append(events, attachEvents...)
+	events = append(events, mountEvents...)
+	events = append(events, unhealthyEvents...)
 	findings := diagnose.Run(diagnose.DefaultDetectors(now), collect.FactsFrom(inputs.Pods, events))
 
 	type logTarget struct {
@@ -522,6 +538,7 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	// which read answered first. The numbers match the report-order table in
 	// docs/superpowers/specs/2026-07-30-bounded-scan-concurrency-design.md.
 	note("events", errs[iAttach])    // 1
+	note("events", errs[iMount])     // 1, same resource
 	note("events", errs[iUnhealthy]) // 2
 	for k := range logTargets {      // 3
 		if err := errs2[logIdx[k]]; apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err) {
@@ -663,9 +680,12 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	pvcReclaim := pvcreclaim.Assess(pvcs, pvs)
 	pvcIssues := pvchealth.Assess(pvcs, pvcEvents, storageClasses, pvs)
 
+	// The CLI already refuses an out-of-range KUBEAGENT_QUOTA_THRESHOLD and
+	// says so. This clamp is for every other caller: Evaluate must stay safe
+	// on a zero-value Options, which no flag parser ever touched.
 	quotaThreshold := opts.QuotaThreshold
 	if quotaThreshold <= 0 || quotaThreshold > 1 {
-		quotaThreshold = 0.90
+		quotaThreshold = DefaultQuotaThreshold
 	}
 	quotaIssues := quotahealth.Assess(quotas, quotaThreshold)
 

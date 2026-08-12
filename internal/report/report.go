@@ -513,7 +513,10 @@ func attentionLine(in Input, real []svchealth.Issue, realIng []ingresshealth.Rou
 		parts = append(parts, fmt.Sprintf("%d slow %s", webhookSlow, plural(webhookSlow, "admission webhook", "admission webhooks")))
 	}
 	if n := len(in.QuotaIssues); n > 0 {
-		parts = append(parts, fmt.Sprintf("%d %s near/over quota", n, plural(n, "ResourceQuota", "ResourceQuotas")))
+		// Entries, not objects: QuotaIssues holds one element per (quota, resource)
+		// pair, so one ResourceQuota with three resources over the line counts three
+		// — which is both the number of things to fix and the number of rows below.
+		parts = append(parts, fmt.Sprintf("%d %s near/over quota", n, plural(n, "ResourceQuota entry", "ResourceQuota entries")))
 	}
 	return strings.Join(parts, " · ")
 }
@@ -785,7 +788,10 @@ func printQuotaIssues(issues []quotahealth.Issue, w io.Writer) error {
 		if is.Severity == "exhausted" {
 			label = "QuotaExhausted"
 		}
-		pct := int(is.Ratio*100 + 0.5)
+		// Floored, not rounded: 100% is what this line says about a quota that is
+		// at or over its limit, so a quota at 99.9% must not borrow the number.
+		// The JSON ratio carries the true value for anything that needs it.
+		pct := int(is.Ratio * 100)
 		if _, err := fmt.Fprintf(w, "      ⚠ %s: used %s / hard %s (%d%%)\n", label, is.Used, is.Hard, pct); err != nil {
 			return err
 		}

@@ -227,7 +227,7 @@ func runWatchOpts(o watchOptions) error {
 		IncludeRestarts:         o.includeRestarts,
 		DiskUsage:               envBool("KUBEAGENT_DISK_USAGE", false),
 		DiskThreshold:           envFloat("KUBEAGENT_DISK_THRESHOLD", 0.80),
-		QuotaThreshold:          envFloat("KUBEAGENT_QUOTA_THRESHOLD", 0.90),
+		QuotaThreshold:          quotaThresholdFromEnv(os.Stderr),
 		NodeHeartbeatThreshold:  envDur("KUBEAGENT_NODE_HEARTBEAT_THRESHOLD", 40*time.Second),
 		ExpectedNodes:           splitCSV(envOr("KUBEAGENT_EXPECTED_NODES", "")),
 		KubeletHealth:           envBool("KUBEAGENT_KUBELET_HEALTH", false),

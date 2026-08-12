@@ -203,7 +203,7 @@ func runScan(o scanOptions) error {
 		Certs:                   o.certs,
 		CertWarnDays:            o.certWarnDays,
 		Logs:                    o.logs,
-		QuotaThreshold:          envFloat("KUBEAGENT_QUOTA_THRESHOLD", 0.90),
+		QuotaThreshold:          quotaThresholdFromEnv(os.Stderr),
 		WebhookTimeoutThreshold: int32(envInt("KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS", 15)),
 	})
 	if err != nil {

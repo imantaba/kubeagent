@@ -8,7 +8,7 @@ import (
 )
 
 func TestForIssue(t *testing.T) {
-	medium := []string{"RestartLoop", "ProbeFailure"}
+	medium := []string{"RestartLoop", "ProbeFailure", "ContainerStartError"}
 	high := []string{"CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull", "OOMKilled",
 		"Unschedulable", "VolumeAttachError", "Init:CrashLoopBackOff", "Init:ImagePullBackOff",
 		"Init:OOMKilled", "FailedCreate", "JobFailed", "CreateContainerConfigError", "RolloutStuck", "SomeFutureDirectDetector"}

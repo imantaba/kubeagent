@@ -64,7 +64,13 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   `kubeagent mcp`'s eager startup connection check exits with an error naming
   the kubeconfig path and context on stderr — the operator's channel, read
   before the process ever starts serving — while the protocol stream and
-  every tool result stay path-free (see
+  every tool result stay free of **kubeconfig paths and context names**. That
+  is the whole of the promise: a tool result also carries API text — an event
+  message, a container waiting message — and API text can contain a filesystem
+  path the kubelet chose (typically under `/var/lib/kubelet/`), which is the
+  cluster's own layout rather than the operator's workstation. kubeagent
+  normalises that text through `internal/safetext.Line`; it does not filter
+  paths out of it (see
   [website/docs/features/mcp.md](website/docs/features/mcp.md)). `kubeagent
   gate` (`internal/gate`, `internal/findings`, `internal/sarif`,
   `internal/rolloutwait`) is a third case, though it is not long-lived: it
@@ -143,14 +149,18 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   promises. The completeness check cannot live inside a package that imports
   nothing, so it lives in `internal/diagnose/knownissues_test.go`, where both
   the registry and the detectors are in scope: a `go/parser` walk over every
-  `Issue:` literal, a fixture table driving all ten detectors to all
-  fifteen kinds, a reverse check, and a second parser walk that reads the
+  `Issue:` literal, a fixture table driving all eleven detectors to all
+  sixteen kinds, a reverse check, and a second parser walk that reads the
   *guards* on the two sites that build a kind from a runtime value. The
-  vocabulary is closed at fifteen because both apparently-dynamic sites —
+  vocabulary is closed at sixteen because both apparently-dynamic sites —
   `imagepull.go` and `initcontainer.go` — are guarded against a closed set
   of string literals, every composition of which the reference documents,
   and that fourth test is what makes widening either guard fail the suite
-  instead of quietly admitting a sixteenth kind. It understands a closed
+  instead of quietly admitting a seventeenth kind. `containerstart.go` is
+  the catch-all of the waiting-state family and is deliberately **not** a
+  third runtime-valued site: its `Issue` is the literal
+  `"ContainerStartError"` and the kubelet's reason lives in the evidence.
+  It understands a closed
   set of guard and value shapes — an `==` or `switch` against a string
   literal, and an `Issue` that is a `.Reason` field or a literal prefix
   added to one — and **refuses** every other shape by name rather than
@@ -438,7 +448,7 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   (see [website/docs/features/fleet.md](website/docs/features/fleet.md)).
 - **Post-1.0 — the known-issues knowledge base, slice 1 has shipped (v1.8.0):**
   `kubeagent known-issues [kind]` prints kubeagent's own reference for the
-  fifteen kinds `diagnose.DefaultDetectors` can emit, from a curated Go
+  sixteen kinds `diagnose.DefaultDetectors` can emit, from a curated Go
   slice literal in `internal/knownissues` — no cluster, no kubeconfig, no
   network, no flags, and no model call. The vocabulary is closed, and four
   tests in `internal/diagnose` keep it closed: they fail the suite if a

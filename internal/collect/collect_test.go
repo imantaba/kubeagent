@@ -483,6 +483,34 @@ func TestUnhealthyEvents(t *testing.T) {
 	}
 }
 
+// The second event is the point of this test. client-go's fake clientset
+// ignores field selectors, so a lister that only sets one returns both events
+// here; only the client-side repeat drops the unrelated one.
+func TestFailedMountEvents_KeepsOnlyFailedMount(t *testing.T) {
+	mount := &corev1.Event{
+		ObjectMeta:     metav1.ObjectMeta{Namespace: "shop", Name: "api-0.mount"},
+		Reason:         "FailedMount",
+		Type:           "Warning",
+		Message:        `MountVolume.SetUp failed for volume "settings" : configmap "settings" not found`,
+		InvolvedObject: corev1.ObjectReference{Kind: "Pod", Namespace: "shop", Name: "api-0"},
+	}
+	other := &corev1.Event{
+		ObjectMeta:     metav1.ObjectMeta{Namespace: "shop", Name: "api-0.sched"},
+		Reason:         "Scheduled",
+		Type:           "Normal",
+		Message:        "Successfully assigned shop/api-0 to n1",
+		InvolvedObject: corev1.ObjectReference{Kind: "Pod", Namespace: "shop", Name: "api-0"},
+	}
+	client := fake.NewSimpleClientset(mount, other)
+	got, err := FailedMountEvents(context.Background(), client, "shop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Reason != "FailedMount" {
+		t.Errorf("want 1 FailedMount event, got %+v", got)
+	}
+}
+
 func TestPVCEvents(t *testing.T) {
 	ev := &corev1.Event{
 		ObjectMeta:     metav1.ObjectMeta{Namespace: "shop", Name: "data-pvc.ev"},

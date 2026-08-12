@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -37,10 +38,15 @@ func scopeTo(opts gate.Options, t rolloutwait.Target) gate.Options {
 // live cluster. That matters here because scan.Evaluate clamps an
 // out-of-range or zero threshold back to its own default, which would
 // silently mask a bug where an env var never reached the struct at all.
-func gateScanOptions(namespace string) scan.Options {
+//
+// Any warning about the environment goes to w, so a caller that must not
+// interleave with its own output can redirect it. A fleet sweep calls this
+// once for the whole run, not once per cluster, so an unusable
+// KUBEAGENT_QUOTA_THRESHOLD is reported once however many clusters follow.
+func gateScanOptions(namespace string, w io.Writer) scan.Options {
 	return scan.Options{
 		Namespace:               namespace,
-		QuotaThreshold:          envFloat("KUBEAGENT_QUOTA_THRESHOLD", 0.90),
+		QuotaThreshold:          quotaThresholdFromEnv(w),
 		WebhookTimeoutThreshold: int32(envInt("KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS", 15)),
 	}
 }
@@ -195,7 +201,7 @@ func runGateOpts(o gateOptions) error {
 	// sections are deliberately not exposed on gate in this slice: each one
 	// is extra API reads and its own gate tests, and adding them later is
 	// additive and breaks no contract.
-	scanRes, err := scan.Evaluate(ctx, client, gateScanOptions(o.namespace))
+	scanRes, err := scan.Evaluate(ctx, client, gateScanOptions(o.namespace, os.Stderr))
 	if err != nil {
 		// Exit 2 for the same reason the wait uses it: the scan failed outright,
 		// so there is no verdict, and a gate that saw nothing must never report

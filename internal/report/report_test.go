@@ -2018,6 +2018,74 @@ func TestPrintQuotaIssues(t *testing.T) {
 	}
 }
 
+// The summary counts QuotaIssues, which is one entry per (quota, resource) pair
+// — four ResourceQuota objects can contribute seven entries. The count is the
+// useful number (it is what the rows below it show), so the noun names entries.
+func TestSummary_QuotaClauseNamesEntriesNotObjects(t *testing.T) {
+	issue := func(resource string) quotahealth.Issue {
+		return quotahealth.Issue{Namespace: "shop", Quota: "compute", Resource: resource,
+			Used: "4", Hard: "4", Ratio: 1.0, Severity: "exhausted"}
+	}
+	for _, c := range []struct {
+		issues []quotahealth.Issue
+		want   string
+	}{
+		{[]quotahealth.Issue{issue("pods")}, "1 ResourceQuota entry near/over quota"},
+		{[]quotahealth.Issue{issue("pods"), issue("requests.cpu")}, "2 ResourceQuota entries near/over quota"},
+	} {
+		var buf bytes.Buffer
+		in := Input{
+			Result:      inventory.Result{},
+			Cluster:     clusterhealth.ClusterHealth{Verdict: "Degraded", NodesReady: 1, NodesTotal: 1},
+			QuotaIssues: c.issues,
+		}
+		if err := PrintInventory(in, "text", &buf); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(buf.String(), c.want) {
+			t.Errorf("want %q in:\n%s", c.want, buf.String())
+		}
+	}
+}
+
+// The rendered percentage is a floor, never a rounding. Rounding half up let a
+// quota at 99.9% render "100%" — the number the same line reserves for a quota
+// that is actually at or over its limit, which is the one distinction the line
+// exists to draw. The JSON ratio keeps the true value; only the rendering
+// truncates.
+func TestPrintQuotaIssues_PercentageIsFloored(t *testing.T) {
+	cases := []struct {
+		ratio float64
+		want  string
+	}{
+		{0.999, "(99%)"},
+		{0.9, "(90%)"},
+		{0.905, "(90%)"}, // round-half-up would say 91
+		{1.0, "(100%)"},
+		{2.0, "(200%)"},
+	}
+	for _, c := range cases {
+		severity := "near"
+		if c.ratio >= 1.0 {
+			severity = "exhausted"
+		}
+		in := Input{
+			Result: inventory.Result{},
+			QuotaIssues: []quotahealth.Issue{{
+				Namespace: "shop", Quota: "compute", Resource: "pods",
+				Used: "u", Hard: "h", Ratio: c.ratio, Severity: severity,
+			}},
+		}
+		var buf bytes.Buffer
+		if err := PrintInventory(in, "text", &buf); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(buf.String(), c.want) {
+			t.Errorf("ratio %v: want %s in:\n%s", c.ratio, c.want, buf.String())
+		}
+	}
+}
+
 func TestPrintControlPlane(t *testing.T) {
 	// unhealthy → section with the failing checks
 	unhealthy := &controlplane.Probe{Status: "unhealthy", Failed: []string{"etcd", "poststarthook/x"}}

@@ -24,6 +24,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	intstr "k8s.io/apimachinery/pkg/util/intstr"
@@ -115,6 +116,100 @@ func TestEvaluate_FlagsVolumeAttachError(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected a VolumeAttachError finding, got %+v", res.Inventory.Workloads)
+	}
+}
+
+// honourEventFieldSelectors makes a fake clientset filter event lists by the
+// field selector the caller passed, the way a real API server does. client-go's
+// fake ignores field selectors entirely, so by default every event lister sees
+// every event in the namespace — which means a test cannot tell a read that
+// asks for reason=X from one that was never wired up at all.
+//
+// The events live in this reactor rather than in the object tracker: the
+// reactor is prepended, so it answers every event list before the tracker is
+// consulted, and giving it the only copy keeps the two from disagreeing.
+func honourEventFieldSelectors(cli *fake.Clientset, events []corev1.Event) {
+	cli.PrependReactor("list", "events", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		sel := action.(k8stesting.ListActionImpl).GetListRestrictions().Fields
+		out := &corev1.EventList{}
+		for _, e := range events {
+			set := fields.Set{
+				"reason":              e.Reason,
+				"involvedObject.kind": e.InvolvedObject.Kind,
+				"involvedObject.name": e.InvolvedObject.Name,
+			}
+			if sel == nil || sel.Matches(set) {
+				out.Items = append(out.Items, e)
+			}
+		}
+		return true, out, nil
+	})
+}
+
+// TestEvaluate_FlagsVolumeMountError is the regression fixture for a detector
+// that could not fire in any real run: VolumeMountDetector matches FailedMount
+// events, and no read ever handed it one. Every surface reaches diagnosis
+// through Evaluate, so this test at this layer is what proves the wiring — a
+// unit test that hand-builds PodFacts cannot see the gap.
+//
+// The second, unrelated event is not decoration: client-go's fake clientset
+// ignores field selectors, so it is what proves the client-side repeat in
+// collect.FailedMountEvents actually filters.
+//
+// honourEventFieldSelectors is what makes this test mean anything at all.
+// Without it the fake hands every event to every event lister, so a FailedMount
+// event reaches diagnosis through the FailedAttachVolume read and the test is
+// green while the product is broken — which is precisely how this defect
+// survived.
+func TestEvaluate_FlagsVolumeMountError(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n1"},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "api-0"},
+		Status: corev1.PodStatus{
+			Phase:      corev1.PodPending,
+			Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionFalse}},
+			ContainerStatuses: []corev1.ContainerStatus{{Name: "api",
+				State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ContainerCreating"}}}},
+		},
+	}
+	mount := &corev1.Event{
+		ObjectMeta:     metav1.ObjectMeta{Namespace: "shop", Name: "api-0.mount"},
+		Reason:         "FailedMount",
+		Type:           "Warning",
+		Message:        `MountVolume.SetUp failed for volume "settings" : configmap "settings" not found`,
+		InvolvedObject: corev1.ObjectReference{Kind: "Pod", Namespace: "shop", Name: "api-0"},
+	}
+	other := &corev1.Event{
+		ObjectMeta:     metav1.ObjectMeta{Namespace: "shop", Name: "api-0.sched"},
+		Reason:         "Scheduled",
+		Type:           "Normal",
+		Message:        "Successfully assigned shop/api-0 to n1",
+		InvolvedObject: corev1.ObjectReference{Kind: "Pod", Namespace: "shop", Name: "api-0"},
+	}
+	cli := fake.NewSimpleClientset(node, pod)
+	honourEventFieldSelectors(cli, []corev1.Event{*mount, *other})
+	res, err := Evaluate(context.Background(), cli, Options{Namespace: "shop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, w := range res.Inventory.Workloads {
+		for _, f := range w.Findings {
+			got = append(got, f.Issue)
+			if f.Issue == "VolumeMountError" && !strings.Contains(f.Evidence, `configmap "settings" not found`) {
+				t.Errorf("evidence does not carry the kubelet message: %q", f.Evidence)
+			}
+		}
+	}
+	n := 0
+	for _, issue := range got {
+		if issue == "VolumeMountError" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("want exactly 1 VolumeMountError finding, got %d (all findings: %v)", n, got)
 	}
 }
 
@@ -1663,10 +1758,10 @@ func TestPartialReadsFollowReportOrderNotCompletionOrder(t *testing.T) {
 	}
 }
 
-// Four event lists fail with a transport error, so four entries are recorded —
+// Five event lists fail with a transport error, so five entries are recorded —
 // note() deduplicates only through blind(), i.e. only for refusals. This pins the
-// "four identical lines" behaviour that the report order deliberately keeps.
-func TestFourFailingEventListsRecordFourEntries(t *testing.T) {
+// "five identical lines" behaviour that the report order deliberately keeps.
+func TestFailingEventListsRecordOneEntryEach(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	client.Fake.PrependReactor("list", "events", func(k8stesting.Action) (bool, runtime.Object, error) {
 		return true, nil, errors.New("connection refused")
@@ -1678,8 +1773,8 @@ func TestFourFailingEventListsRecordFourEntries(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(res.PartialReads) != 4 {
-		t.Fatalf("PartialReads = %+v, want 4 entries (volume-attach, unhealthy, PVC, FailedCreate)", res.PartialReads)
+	if len(res.PartialReads) != 5 {
+		t.Fatalf("PartialReads = %+v, want 5 entries (volume-attach, volume-mount, unhealthy, PVC, FailedCreate)", res.PartialReads)
 	}
 	for i, p := range res.PartialReads {
 		if p.Resource != "events" {

@@ -174,6 +174,29 @@ func FailedCreateEvents(ctx context.Context, client kubernetes.Interface, namesp
 	return events.Items, nil
 }
 
+// FailedMountEvents lists the kubelet's "FailedMount" Warning events in the
+// namespace ("" = all) — a volume the pod needs could not be mounted, most often
+// a ConfigMap or Secret named in the pod spec that does not exist. Read-only;
+// mirrors VolumeAttachEvents. Needs no permission beyond the event list scan
+// already performs.
+//
+// The loop repeats the field selector client-side because client-go's fake
+// clientset ignores field selectors: without it a test would see every event in
+// the namespace and could not tell this read from one that was never wired up.
+func FailedMountEvents(ctx context.Context, client kubernetes.Interface, namespace string) ([]corev1.Event, error) {
+	list, err := client.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{FieldSelector: "reason=FailedMount"})
+	if err != nil {
+		return nil, fmt.Errorf("listing volume-mount (FailedMount) events: %w", err)
+	}
+	out := make([]corev1.Event, 0, len(list.Items))
+	for _, e := range list.Items {
+		if e.Reason == "FailedMount" {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
 // UnhealthyEvents lists the kubelet's probe-failure ("Unhealthy") Warning events
 // in the namespace ("" = all). Read-only; mirrors VolumeAttachEvents. Needs no
 // permission beyond the event list scan already performs.

@@ -2018,6 +2018,36 @@ func TestPrintQuotaIssues(t *testing.T) {
 	}
 }
 
+// The summary counts QuotaIssues, which is one entry per (quota, resource) pair
+// — four ResourceQuota objects can contribute seven entries. The count is the
+// useful number (it is what the rows below it show), so the noun names entries.
+func TestSummary_QuotaClauseNamesEntriesNotObjects(t *testing.T) {
+	issue := func(resource string) quotahealth.Issue {
+		return quotahealth.Issue{Namespace: "shop", Quota: "compute", Resource: resource,
+			Used: "4", Hard: "4", Ratio: 1.0, Severity: "exhausted"}
+	}
+	for _, c := range []struct {
+		issues []quotahealth.Issue
+		want   string
+	}{
+		{[]quotahealth.Issue{issue("pods")}, "1 ResourceQuota entry near/over quota"},
+		{[]quotahealth.Issue{issue("pods"), issue("requests.cpu")}, "2 ResourceQuota entries near/over quota"},
+	} {
+		var buf bytes.Buffer
+		in := Input{
+			Result:      inventory.Result{},
+			Cluster:     clusterhealth.ClusterHealth{Verdict: "Degraded", NodesReady: 1, NodesTotal: 1},
+			QuotaIssues: c.issues,
+		}
+		if err := PrintInventory(in, "text", &buf); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(buf.String(), c.want) {
+			t.Errorf("want %q in:\n%s", c.want, buf.String())
+		}
+	}
+}
+
 // The rendered percentage is a floor, never a rounding. Rounding half up let a
 // quota at 99.9% render "100%" — the number the same line reserves for a quota
 // that is actually at or over its limit, which is the one distinction the line

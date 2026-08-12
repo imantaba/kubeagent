@@ -513,7 +513,10 @@ func attentionLine(in Input, real []svchealth.Issue, realIng []ingresshealth.Rou
 		parts = append(parts, fmt.Sprintf("%d slow %s", webhookSlow, plural(webhookSlow, "admission webhook", "admission webhooks")))
 	}
 	if n := len(in.QuotaIssues); n > 0 {
-		parts = append(parts, fmt.Sprintf("%d %s near/over quota", n, plural(n, "ResourceQuota", "ResourceQuotas")))
+		// Entries, not objects: QuotaIssues holds one element per (quota, resource)
+		// pair, so one ResourceQuota with three resources over the line counts three
+		// — which is both the number of things to fix and the number of rows below.
+		parts = append(parts, fmt.Sprintf("%d %s near/over quota", n, plural(n, "ResourceQuota entry", "ResourceQuota entries")))
 	}
 	return strings.Join(parts, " · ")
 }

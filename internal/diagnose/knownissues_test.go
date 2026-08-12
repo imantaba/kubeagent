@@ -199,6 +199,10 @@ func producedKinds(t *testing.T) []string {
 	t.Helper()
 
 	facts := []PodFacts{
+		// ContainerStartError — the zero CreationTimestamp is older than the
+		// dwell measured against rlNow, so this fires without a restart count.
+		{Pod: podWaiting("example-ns", "web-15", "app", "RunContainerError",
+			"failed to start container")},
 		// CrashLoopBackOff
 		{Pod: podWaiting("example-ns", "web-1", "app", "CrashLoopBackOff", "")},
 		// CreateContainerConfigError

@@ -11,6 +11,31 @@ package knownissues
 // `go build` rejects a malformed entry and `go vet` sees the whole thing.
 var entries = []Entry{
 	{
+		Kind:    "ContainerStartError",
+		Summary: "the container was created but could not be started",
+		Detail: "The image was resolved and the container object was created, and then the " +
+			"runtime failed to start the process inside it. This is the kind kubeagent " +
+			"reports when it can see that a container did not start and cannot say why: " +
+			"the kubelet's own reason and message are quoted verbatim in the evidence and " +
+			"are the whole diagnosis. There are no logs, because the process never ran. " +
+			"It is reported at medium confidence for that reason — a start failure is a " +
+			"fact, its cause is not.",
+		Causes: []string{
+			"The container was killed by the OOM killer during startup — the memory limit is below what the process needs merely to start.",
+			"A postStart or preStop lifecycle hook exited non-zero, which fails the container even though the process itself was fine.",
+			"The command or entrypoint names a path that does not exist in the image, or a file that is not executable.",
+			"A read-only root filesystem, a securityContext the runtime refuses, or a device the node does not have.",
+			"The container runtime itself is unhealthy on that node — a full disk, an exhausted PID limit, a broken snapshotter.",
+		},
+		Checks: []string{
+			"kubectl -n <namespace> describe pod <pod> — the waiting reason and message the kubelet recorded, and the last terminated state",
+			"kubectl -n <namespace> get pod <pod> -o jsonpath='{.status.containerStatuses[*].lastState}' — a StartError here often names an OOM kill the pod's own reason does not",
+			"The container's memory limit against what the process needs to start, not what it needs at rest",
+			"kubectl describe node <node> — whether other pods are failing to start on the same node, which points at the runtime rather than the workload",
+		},
+		Docs: "https://k8sproject.top/features/diagnostics/#containerstarterror",
+	},
+	{
 		Kind:    "CrashLoopBackOff",
 		Summary: "a container starts, exits, and is restarted on a widening backoff",
 		Detail: "Kubernetes started the container, the process exited, and the kubelet " +

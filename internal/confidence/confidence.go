@@ -16,7 +16,11 @@ import (
 // so a new direct-state detector needs no change here.
 func ForIssue(issue string) string {
 	switch issue {
-	case "RestartLoop", "ProbeFailure":
+	// ContainerStartError is medium for a reason the other two do not share:
+	// the start failure itself is a direct read, but the finding does not say
+	// why the container did not start, and the kubelet reason it quotes covers
+	// several unrelated causes.
+	case "RestartLoop", "ProbeFailure", "ContainerStartError":
 		return "medium"
 	default:
 		return "high"

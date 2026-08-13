@@ -67,10 +67,13 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   every tool result stay free of **kubeconfig paths and context names**. That
   is the whole of the promise: a tool result also carries API text — an event
   message, a container waiting message — and API text can contain a filesystem
-  path the kubelet chose (typically under `/var/lib/kubelet/`), which is the
-  cluster's own layout rather than the operator's workstation. kubeagent
-  normalises that text through `internal/safetext.Line`; it does not filter
-  paths out of it (see
+  path the kubelet chose (typically under `/var/lib/kubelet/`) or a full URL
+  the API server quoted (an unreachable admission webhook's endpoint, with its
+  path and query), both of which are the cluster's own layout rather than the
+  operator's workstation. The `scheme://host` reduction applies to the API
+  server address kubeagent itself reports, not to a URL the cluster wrote.
+  kubeagent normalises that text through `internal/safetext.Line`; it does not
+  filter paths or URLs out of it (see
   [website/docs/features/mcp.md](website/docs/features/mcp.md)). `kubeagent
   gate` (`internal/gate`, `internal/findings`, `internal/sarif`,
   `internal/rolloutwait`) is a third case, though it is not long-lived: it

@@ -230,10 +230,13 @@ would.
   state between calls.
 
 !!! note "The startup error on stderr is not redacted"
-    Every result on the protocol stream is free of kubeconfig paths, and any
-    API server URL in it is reduced to `scheme://host` — that redaction is
-    what keeps `list_contexts` and every tool's error path safe to hand to a
-    remote model. Startup is different. `kubeagent mcp` validates the
+    Every result on the protocol stream is free of kubeconfig paths, and the
+    address of the API server kubeagent connects to is reduced to
+    `scheme://host` wherever kubeagent reports it — that redaction is what
+    keeps `list_contexts` and every tool's error path safe to hand to a
+    remote model. (It governs the URLs kubeagent builds. A URL the *cluster*
+    wrote, inside an event or condition message, is quoted as it was written;
+    see the note below.) Startup is different. `kubeagent mcp` validates the
     cluster connection *before* it starts serving — a server that starts
     happily and then fails every call teaches the calling agent that
     kubeagent is unreliable — and if the kubeconfig cannot be loaded, the
@@ -247,14 +250,24 @@ would.
     startup error is the exception to "no kubeconfig paths cross the MCP
     boundary" — it is deliberate, not a defect, but it is not redacted.
 
-!!! note "A tool result carries API text, and API text can name a path"
+!!! note "A tool result carries API text, and API text can name a path or a URL"
     "Free of kubeconfig paths" is the whole of that promise, and it is worth
-    stating what sits outside it. A `kubeagent_inspect` result quotes events
-    and condition messages — text the cluster itself wrote. kubeagent passes
-    them through `internal/safetext.Line`, which normalises control
-    characters and bounds length; it does not filter them. A kubelet
-    `FailedMount` message, for instance, routinely names a path under
-    `/var/lib/kubelet/`, and that path is usually the diagnostic an operator
-    needs. It describes the cluster's own layout — not the operator's
-    workstation, and not which kubeconfig they hold, which is what makes the
-    kubeconfig-path rule a credential rule in the first place.
+    stating what sits outside it. A `kubeagent_triage` or `kubeagent_inspect`
+    result quotes events and condition messages — text the cluster itself
+    wrote — as the finding's `detail`. kubeagent passes them through
+    `internal/safetext.Line`, which normalises control characters and bounds
+    length; it does not filter them. Two shapes turn up in practice. The
+    first is a **filesystem path**: a kubelet `FailedMount` message routinely
+    names one under `/var/lib/kubelet/`, and that path is usually the
+    diagnostic an operator needs. The second is a **full URL**: when an
+    admission webhook is unreachable, the API server's `FailedCreate` message
+    quotes the endpoint it called — `scheme://host/path?query`, in-cluster
+    Service DNS with the webhook's path and its query parameters. That is
+    more than the `scheme://host` kubeagent reduces its *own* API server
+    address to, because it is not kubeagent's address to reduce: it is a
+    verbatim quote of what the cluster reported.
+    Both describe the cluster's own layout — not the operator's workstation,
+    and not which kubeconfig they hold, which is what makes the
+    kubeconfig-path rule a credential rule in the first place. If your
+    cluster's webhook endpoints are themselves sensitive, that is the one
+    thing here to weigh before handing a result to a remote model.

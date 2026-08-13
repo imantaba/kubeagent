@@ -176,9 +176,21 @@ pod-level detectors see nothing (there is no pod), so the workload would
 otherwise show only `0/N Degraded` with no cause. kubeagent reads the
 controller's `FailedCreate` events and names the cause on the workload — e.g.
 `⚠ FailedCreate: the controller cannot create pods — blocked by a ResourceQuota`,
-with the raw admission message as evidence. A Deployment's event lands on its
-ReplicaSet and is resolved back to the Deployment; StatefulSets and DaemonSets
-are matched directly.
+with the admission message quoted beneath it as evidence. A Deployment's event
+lands on its ReplicaSet and is resolved back to the Deployment; StatefulSets and
+DaemonSets are matched directly.
+
+**The cause and the quote are read from two different forms of the same
+message, and they can disagree.** The cause is decided on the message exactly as
+the API server stored it; the evidence line prints that message's *printable*
+form, with control characters removed. The split is deliberate: matching on the
+printable form would let a control character spliced mid-word — `exceeded
+qu<NUL>ota` — slip past the signature it should have matched, so the match must
+see the bytes. It follows that a message carrying such a character can be named
+`forbidden by admission` while the line quoted below it reads `exceeded quota`,
+because the byte that made the match fail is not one a terminal may be shown.
+The named cause is the correct one. No controller writes messages like this;
+reaching it takes a hand-written event.
 
 "No pods at all" is the motivating case, not the rule: the check fires whenever a
 workload has **fewer pods than it wants**, so a quota that allows one of two
@@ -228,10 +240,21 @@ state and records the OOM only in `lastState.terminated.Reason=StartError`, so
 [OOMKilled](#oomkilled) — which matches the reason `OOMKilled` — never sees it.
 
 The finding says the container did not start and does not claim to know why,
-which is why it is [medium confidence](#finding-confidence). The reason it
-quotes covers several unrelated causes: a lifecycle hook exiting non-zero, an
-entrypoint that is not executable, a read-only root filesystem, an unhealthy
-container runtime on the node.
+which is why it is [medium confidence](#finding-confidence).
+
+**In practice this catches a narrower set of failures than the five reasons
+suggest**, and the difference is worth knowing before you go looking for it.
+A container that is created and *then* fails — a lifecycle hook exiting
+non-zero, an entrypoint that runs and dies — is restarted by the kubelet, and
+within a second or two its waiting reason is `CrashLoopBackOff`, not one of the
+five. Those land in [CrashLoopBackOff](#crashloopbackoff) instead, which is the
+right answer for a container that keeps crashing and which carries the start
+reason in its evidence — `last exit 128 (StartError)`. What reaches
+`ContainerStartError` is a container the kubelet could not *create*, on input it
+cannot satisfy however many times it retries: a `Localhost` seccomp profile
+naming a file that is not on the node, a mount point that cannot be made, an
+unhealthy container runtime. Those hold one of the five reasons indefinitely, at
+`restartCount=0`, which is why a scan sees them.
 
 Two deliberate limits. **Image-family reasons are not in the set** —
 `InvalidImageName`, `ErrImageNeverPull`, `RegistryUnavailable` and

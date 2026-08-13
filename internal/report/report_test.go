@@ -990,7 +990,7 @@ func TestPrintInventory_TextShowsFindingEvidence(t *testing.T) {
 		Namespace: "shop", Name: "web", Kind: "Deployment", Desired: 1, Ready: 0, Status: "Pending",
 		Findings: []diagnose.Finding{{
 			Issue:    "Unschedulable",
-			Reason:   "No node can schedule this pod (resources, taints, or affinity)",
+			Reason:   "No node can schedule this pod",
 			Evidence: "0/5 nodes are available: 3 Insufficient memory, 2 node(s) had untolerated taint",
 		}},
 	}}

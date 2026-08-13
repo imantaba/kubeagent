@@ -392,10 +392,20 @@ quota at 99.9% reads `99%` beside its `QuotaNearLimit` label.
 
 When a node is **hard-down** — `NotReady`, or Ready but its kubelet has stopped
 heartbeating (a stale `Lease`) — every workload with a pod on it fails at once.
+The stale-`Lease` half of that is the [node heartbeat
+check](#node-heartbeat-freshness) and follows its `--node-heartbeat-threshold`:
+setting the threshold to `0` turns the check off and, with it, every attribution
+that depended on it. The `NotReady` half is unaffected and keeps attributing.
+
 Instead of leaving those as disconnected findings, `scan` attributes each affected
 workload to the node with a hedged `↳ likely caused by node <name> (<reason>)`
 line, and rolls the count up on the attention line (`3 workloads failing (3 ⇐ node
-worker-2)`). The workload's own findings still show — attribution is additive, and
+worker-2)`). That naming form is used when every attribution in the report points
+at the **same** cause; when two or more distinct causes are attributed, the rollup
+counts them instead — `29 workloads failing (29 ⇐ 4 root causes)`, where the left
+number is how many failing workloads were attributed and the right is how many
+distinct causes they were attributed to. The workload's own findings still show —
+attribution is additive, and
 the wording is deliberately "likely" (correlation, not a hard causation claim).
 Read-only, always-on, no new RBAC. Cordoned and node-pressure causes are not yet
 attributed.
@@ -413,8 +423,12 @@ A **broken PersistentVolumeClaim** is joined the same way: when a workload's pod
 mounts a PVC that the [Pending-PVC check](#pending-pvc-storage-provisioning) has
 diagnosed as failing to provision or bind, the workload is attributed
 `↳ likely caused by PVC <name> (MissingStorageClass)` — the parenthetical is the PVC's failure reason and can be `MissingStorageClass`, `NoMatchingPV`, `ProvisioningFailed`, or `FailedBinding` depending on what the cluster reports — connecting a pod stuck in
-`Pending`/`ContainerCreating` (which has no pod-level finding of its own) to the
-storage cause kubeagent already reports. Because the PVC is independently
+`Pending`/`ContainerCreating` to the storage cause kubeagent already reports. The
+pod normally carries a finding of its own as well: one that cannot be scheduled
+because its claim is unbound is reported `Unschedulable` at **high** confidence,
+with the scheduler's `pod has unbound immediate PersistentVolumeClaims` as its
+evidence. What the attribution adds is the *cause* — which claim, and why that
+claim failed — not the first sign of trouble. Because the PVC is independently
 diagnosed, a single affected workload is enough — unlike the registry case, this
 is a join against evidence, not an inference. Node attribution still takes
 precedence.
@@ -837,7 +851,17 @@ attribution). High is the unmarked
 default; the text report tags only the less-certain findings and hints
 (`⚠ RestartLoop [medium]: …`, `↳ likely caused by registry … [medium]`) so the
 tag draws the eye to exactly what to second-guess. JSON always carries
-`"confidence"` on every finding. Confidence is informational — it never changes a
+`"confidence"` on every finding.
+
+The tag on a **hint** works differently from the one on a finding, and only in the
+text report. A root-cause attribution is not a finding and has no `confidence`
+field: JSON carries it as the plain string `"rootCause"`. The `[medium]` the text
+report prints beside one is derived from the *kind* of cause — node and PVC
+attributions are high (and so print unmarked), a shared-registry attribution is
+medium — so a JSON consumer reads the level from the cause type rather than from a
+field.
+
+Confidence is informational — it never changes a
 finding's priority or the cluster verdict.
 
 ### Output layout

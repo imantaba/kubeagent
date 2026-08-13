@@ -176,9 +176,21 @@ pod-level detectors see nothing (there is no pod), so the workload would
 otherwise show only `0/N Degraded` with no cause. kubeagent reads the
 controller's `FailedCreate` events and names the cause on the workload — e.g.
 `⚠ FailedCreate: the controller cannot create pods — blocked by a ResourceQuota`,
-with the raw admission message as evidence. A Deployment's event lands on its
-ReplicaSet and is resolved back to the Deployment; StatefulSets and DaemonSets
-are matched directly.
+with the admission message quoted beneath it as evidence. A Deployment's event
+lands on its ReplicaSet and is resolved back to the Deployment; StatefulSets and
+DaemonSets are matched directly.
+
+**The cause and the quote are read from two different forms of the same
+message, and they can disagree.** The cause is decided on the message exactly as
+the API server stored it; the evidence line prints that message's *printable*
+form, with control characters removed. The split is deliberate: matching on the
+printable form would let a control character spliced mid-word — `exceeded
+qu<NUL>ota` — slip past the signature it should have matched, so the match must
+see the bytes. It follows that a message carrying such a character can be named
+`forbidden by admission` while the line quoted below it reads `exceeded quota`,
+because the byte that made the match fail is not one a terminal may be shown.
+The named cause is the correct one. No controller writes messages like this;
+reaching it takes a hand-written event.
 
 "No pods at all" is the motivating case, not the rule: the check fires whenever a
 workload has **fewer pods than it wants**, so a quota that allows one of two

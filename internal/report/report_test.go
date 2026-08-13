@@ -898,6 +898,38 @@ func TestPrintInventory_TextShowsDiskUsageInNeedsAttention(t *testing.T) {
 	}
 }
 
+// The disk percentage is floored, never rounded up, for the same reason the
+// quota percentage is: the word beside it is "full", so 100% must mean at or
+// over capacity. Rounding half-up printed "100% full" for anything from 99.5%,
+// which on a 1 TiB volume claims there is no space left while about 5 GiB
+// remain — and the trailing (used/capacity) cannot rescue it, because fmtBytes
+// rounds to whole Gi as well.
+//
+// Both arms are asserted because the node line and the pvc line are separate
+// format strings, so a fix applied to only one of them would otherwise pass.
+func TestPrintInventory_DiskPercentIsFlooredNotRounded(t *testing.T) {
+	var buf bytes.Buffer
+	rep := &diskusage.Report{Threshold: 0.80, Over: []diskusage.VolumeUsage{
+		{Kind: "pvc", Namespace: "data", Name: "claim", UsedBytes: 1021 << 30, CapacityBytes: 1024 << 30, Ratio: 0.997},
+		{Kind: "node", Node: "n1", Name: "n1", UsedBytes: 1021 << 30, CapacityBytes: 1024 << 30, Ratio: 0.997},
+		{Kind: "node", Node: "n2", Name: "n2", UsedBytes: 1024 << 30, CapacityBytes: 1024 << 30, Ratio: 1.0},
+	}}
+	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1}, DiskUsage: rep}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "✗ pvc data/claim  99% full") {
+		t.Errorf("a pvc at 99.7%% must read 99%%, not 100%%:\n%s", out)
+	}
+	if !strings.Contains(out, "✗ node n1  disk 99% full") {
+		t.Errorf("a node at 99.7%% must read 99%%, not 100%%:\n%s", out)
+	}
+	if !strings.Contains(out, "✗ node n2  disk 100% full") {
+		t.Errorf("a node at exactly 100%% must still read 100%%:\n%s", out)
+	}
+}
+
 func TestPrintInventory_DiskUsageAbsentWhenNilOrEmpty(t *testing.T) {
 	var buf bytes.Buffer
 	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1}, DiskUsage: &diskusage.Report{Threshold: 0.80}}

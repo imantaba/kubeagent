@@ -679,7 +679,13 @@ func printDiskUsage(rep *diskusage.Report, w io.Writer) error {
 		return nil
 	}
 	for _, v := range rep.Over {
-		pct := int(v.Ratio*100 + 0.5)
+		// Floored, not rounded, for the same reason printQuotaIssues floors: the
+		// word beside this number is "full", so 100% must mean at or over
+		// capacity and a volume at 99.9% must not borrow it. The trailing
+		// (used/capacity) cannot stand in for the percentage either — fmtBytes
+		// rounds to whole Gi, so both figures can round together. The JSON
+		// ratio carries the true value for anything that needs it.
+		pct := int(v.Ratio * 100)
 		var line string
 		if v.Kind == "node" {
 			line = fmt.Sprintf("  ✗ node %s  disk %d%% full (%s/%s)", v.Name, pct, fmtBytes(v.UsedBytes), fmtBytes(v.CapacityBytes))

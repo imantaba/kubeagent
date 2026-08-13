@@ -240,10 +240,21 @@ state and records the OOM only in `lastState.terminated.Reason=StartError`, so
 [OOMKilled](#oomkilled) — which matches the reason `OOMKilled` — never sees it.
 
 The finding says the container did not start and does not claim to know why,
-which is why it is [medium confidence](#finding-confidence). The reason it
-quotes covers several unrelated causes: a lifecycle hook exiting non-zero, an
-entrypoint that is not executable, a read-only root filesystem, an unhealthy
-container runtime on the node.
+which is why it is [medium confidence](#finding-confidence).
+
+**In practice this catches a narrower set of failures than the five reasons
+suggest**, and the difference is worth knowing before you go looking for it.
+A container that is created and *then* fails — a lifecycle hook exiting
+non-zero, an entrypoint that runs and dies — is restarted by the kubelet, and
+within a second or two its waiting reason is `CrashLoopBackOff`, not one of the
+five. Those land in [CrashLoopBackOff](#crashloopbackoff) instead, which is the
+right answer for a container that keeps crashing and which carries the start
+reason in its evidence — `last exit 128 (StartError)`. What reaches
+`ContainerStartError` is a container the kubelet could not *create*, on input it
+cannot satisfy however many times it retries: a `Localhost` seccomp profile
+naming a file that is not on the node, a mount point that cannot be made, an
+unhealthy container runtime. Those hold one of the five reasons indefinitely, at
+`restartCount=0`, which is why a scan sees them.
 
 Two deliberate limits. **Image-family reasons are not in the set** —
 `InvalidImageName`, `ErrImageNeverPull`, `RegistryUnavailable` and

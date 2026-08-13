@@ -18,7 +18,7 @@ func (d PendingDetector) Detect(facts PodFacts) *Finding {
 			return &Finding{
 				Pod:      facts.Pod.Namespace + "/" + facts.Pod.Name,
 				Issue:    "Unschedulable",
-				Reason:   "No node can schedule this pod (resources, taints, or affinity)",
+				Reason:   "No node can schedule this pod",
 				Evidence: safetext.Line(c.Message),
 			}
 		}

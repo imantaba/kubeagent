@@ -254,7 +254,7 @@ func goldenWorkloads() []inventory.Workload {
 		{Namespace: "shop", Name: "report-cron", Kind: "Deployment", Desired: 1, Ready: 0, Status: "Pending",
 			Image:    "busybox:1.36",
 			Pods:     []inventory.PodRow{{Name: "report-cron-767-xghsp", Phase: "Pending", State: "Pending", Ready: "0/1", Restarts: 0, Node: "", IP: "", Age: "20d", Image: "busybox:1.36"}},
-			Findings: []diagnose.Finding{{Pod: "shop/report-cron", Issue: "Unschedulable", Reason: "No node can schedule this pod (resources, taints, or affinity)", Evidence: "0/4 nodes are available: 1 node(s) had untolerated taint, 3 Insufficient cpu"}}},
+			Findings: []diagnose.Finding{{Pod: "shop/report-cron", Issue: "Unschedulable", Reason: "No node can schedule this pod", Evidence: "0/4 nodes are available: 1 node(s) had untolerated taint, 3 Insufficient cpu"}}},
 		{Namespace: "shop", Name: "cache", Kind: "Deployment", Desired: 1, Ready: 1, Status: "Running",
 			Restarts: 5, LastRestart: r, Image: "redis:7-alpine",
 			Pods:     []inventory.PodRow{{Name: "cache-6d9-abcde", Phase: "Running", State: "Running", Ready: "1/1", Restarts: 5, LastRestart: r, Node: "worker-3", IP: "10.244.3.7", Age: "12d", Image: "redis:7-alpine"}},

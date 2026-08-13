@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The `Unschedulable` reason no longer guesses at a cause.** `PendingDetector`
+  fires on `PodScheduled=False`/`Unschedulable` and reads nothing about *why* the
+  scheduler refused the pod, but its reason offered three anyway: `No node can
+  schedule this pod (resources, taints, or affinity)`. The scheduler's own
+  message is already carried as evidence on the next line and names the real
+  cause — including causes outside that list, such as an unbound
+  PersistentVolumeClaim, where the parenthetical pointed away from the answer
+  printed directly beneath it. The reason is now `No node can schedule this
+  pod`. The issue kind, the evidence, the confidence and the guard are unchanged,
+  so no `schemaVersion` moves, and `kubeagent known-issues Unschedulable` still
+  enumerates the causes at length — which is where an enumeration belongs.
+
+### Fixed
+
+- **Four documentation claims narrowed to what the code does.** The root-cause
+  section said a PVC-blocked pod has "no pod-level finding of its own"; it has
+  one — `Unschedulable`, at high confidence — and the attribution contributes the
+  storage *cause*, not the first finding. The attention-line rollup was shown
+  only in its single-cause form (`3 ⇐ node worker-2`); the multi-cause form
+  (`29 ⇐ 4 root causes`) is now documented beside it. The stale-`Lease` half of
+  hard-down attribution was stated unconditionally; it follows
+  `--node-heartbeat-threshold`, and `0` removes the check and every attribution
+  depending on it, while the `NotReady` half is unaffected. And "Finding
+  confidence" listed findings and hints together without saying that a root-cause
+  attribution is not a finding, carries no `confidence` field in JSON, and gets
+  its text-report `[medium]` from the kind of cause.
+
 ## [1.16.0] - 2026-08-12
 
 ### Added

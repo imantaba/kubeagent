@@ -128,6 +128,47 @@ func TestMetrics_RenderReflectsResult(t *testing.T) {
 	}
 }
 
+// TestMetrics_ControlPlaneCheckedGauge pins kubeagent_control_plane_checked,
+// the companion gauge for kubeagent_control_plane_unhealthy. Before this
+// gauge existed, kubeagent_control_plane_unhealthy read 0 both when the
+// check ran and passed and when --control-plane-health was never asked for
+// (or the endpoint was forbidden/unreachable) — those cases are
+// indistinguishable from that gauge alone. "flag off" and "ok" are the rows
+// that prove the ambiguity is resolved: both read
+// kubeagent_control_plane_unhealthy=0, but only "ok" reads
+// kubeagent_control_plane_checked=1.
+func TestMetrics_ControlPlaneCheckedGauge(t *testing.T) {
+	cases := []struct {
+		name          string
+		status        string
+		wantChecked   string
+		wantUnhealthy string
+	}{
+		{"flag off (empty status)", "", "0", "0"},
+		{"ok", "ok", "1", "0"},
+		{"unhealthy", "unhealthy", "1", "1"},
+		{"forbidden", "forbidden", "0", "0"},
+		{"unreachable", "unreachable", "0", "0"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res := sampleResult()
+			res.ControlPlane = controlplane.Probe{Status: tc.status}
+			m := newMetrics([]string{"local"})
+			m.update("local", res, time.Millisecond, time.Unix(1000, 0), nil)
+			out := m.render()
+			wantChecked := `kubeagent_control_plane_checked{cluster="local"} ` + tc.wantChecked
+			if !strings.Contains(out, wantChecked) {
+				t.Errorf("missing %q in:\n%s", wantChecked, out)
+			}
+			wantUnhealthy := `kubeagent_control_plane_unhealthy{cluster="local"} ` + tc.wantUnhealthy
+			if !strings.Contains(out, wantUnhealthy) {
+				t.Errorf("missing %q in:\n%s", wantUnhealthy, out)
+			}
+		})
+	}
+}
+
 func TestMetrics_UpdateErrorKeepsLastGoodAndCountsError(t *testing.T) {
 	m := newMetrics([]string{"local"})
 	m.update("local", sampleResult(), time.Millisecond, time.Unix(1000, 0), nil)

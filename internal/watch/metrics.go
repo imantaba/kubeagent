@@ -88,6 +88,7 @@ type clusterSnapshot struct {
 	nodesStaleHeartbeat   int
 	nodesExpectedAbsent   int
 	kubeletUnhealthy      int
+	controlPlaneChecked   int
 	controlPlaneUnhealthy int
 	dnsServfailRatio      float64
 	pvcsReclaimDelete     int
@@ -203,6 +204,10 @@ func (m *metrics) update(cluster string, res *scan.Result, dur time.Duration, no
 	c.nodesStaleHeartbeat = res.Health.NodesStaleHeartbeat
 	c.nodesExpectedAbsent = res.Health.NodesExpectedAbsent
 	c.kubeletUnhealthy = len(res.KubeletHealth.Unhealthy)
+	c.controlPlaneChecked = 0
+	if res.ControlPlane.Status == "ok" || res.ControlPlane.Status == "unhealthy" {
+		c.controlPlaneChecked = 1
+	}
 	c.controlPlaneUnhealthy = 0
 	if res.ControlPlane.Status == "unhealthy" {
 		c.controlPlaneUnhealthy = 1
@@ -346,6 +351,7 @@ func (m *metrics) render() string {
 	gauge("kubeagent_nodes_stale_heartbeat", "Ready nodes whose kubelet lease is stale (kubelet not heartbeating)", func(c *clusterSnapshot) float64 { return float64(c.nodesStaleHeartbeat) })
 	gauge("kubeagent_nodes_expected_absent", "Declared expected nodes that are absent from the cluster", func(c *clusterSnapshot) float64 { return float64(c.nodesExpectedAbsent) })
 	gauge("kubeagent_kubelet_unhealthy", "Nodes whose kubelet /healthz reported unhealthy", func(c *clusterSnapshot) float64 { return float64(c.kubeletUnhealthy) })
+	gauge("kubeagent_control_plane_checked", "Apiserver /readyz returned a health verdict this cycle", func(c *clusterSnapshot) float64 { return float64(c.controlPlaneChecked) })
 	gauge("kubeagent_control_plane_unhealthy", "Apiserver /readyz reported the control plane not ready", func(c *clusterSnapshot) float64 { return float64(c.controlPlaneUnhealthy) })
 	gauge("kubeagent_dns_servfail_ratio", "CoreDNS SERVFAIL+REFUSED response ratio (0 when healthy or not probed)", func(c *clusterSnapshot) float64 { return c.dnsServfailRatio })
 	gauge("kubeagent_pvcs_reclaim_delete", "PVCs whose bound PV has reclaimPolicy Delete", func(c *clusterSnapshot) float64 { return float64(c.pvcsReclaimDelete) })

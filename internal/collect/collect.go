@@ -460,7 +460,27 @@ func TLSSecrets(ctx context.Context, client kubernetes.Interface, namespace stri
 	if err != nil {
 		return nil, fmt.Errorf("listing TLS secrets: %w", err)
 	}
-	return secrets.Items, nil
+	// list has no server-side field projection for Secrets, so the API
+	// server already returned tls.key in the response body. Zero it here, on
+	// a copy of the Data map — never on the object List returned — so the
+	// private key's residency inside kubeagent ends at this line rather than
+	// lasting for the whole scan. certhealth.Assess only ever reads tls.crt,
+	// so this changes nothing it can observe.
+	out := make([]corev1.Secret, len(secrets.Items))
+	for i, s := range secrets.Items {
+		if _, ok := s.Data["tls.key"]; ok {
+			cp := make(map[string][]byte, len(s.Data))
+			for k, v := range s.Data {
+				if k == "tls.key" {
+					continue
+				}
+				cp[k] = v
+			}
+			s.Data = cp
+		}
+		out[i] = s
+	}
+	return out, nil
 }
 
 // ConfigMaps lists ConfigMaps in the namespace (empty = all), read-only.

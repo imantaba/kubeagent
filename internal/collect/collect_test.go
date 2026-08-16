@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -29,6 +30,8 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
 	ktesting "k8s.io/client-go/testing"
+
+	"github.com/imantaba/kubeagent/internal/certhealth"
 )
 
 // The seven list functions the scan's phase-1 pool calls. Each wraps its error
@@ -652,6 +655,55 @@ func TestTLSSecrets(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].Name != "shop-tls" {
 		t.Fatalf("want the seeded TLS secret, got %+v", got)
+	}
+}
+
+// TestTLSSecretsZeroesPrivateKeyOnACopy pins R105(B): TLSSecrets zeroes
+// tls.key on the Secrets it returns, immediately after the List call and
+// before returning, shortening the private key's residency in kubeagent
+// from the whole scan down to nothing — kubeagent's own code never holds
+// it. tls.crt is unchanged, the tracker's own stored object is unaffected
+// (proven by a direct Get that bypasses TLSSecrets), and certhealth.Assess
+// over the result is unaffected, since it only ever reads tls.crt.
+func TestTLSSecretsZeroesPrivateKeyOnACopy(t *testing.T) {
+	crt := []byte("not-a-real-cert-tls.crt-bytes")
+	seed := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "shop-tls"},
+		Type:       corev1.SecretTypeTLS,
+		Data:       map[string][]byte{"tls.crt": crt, "tls.key": []byte("private-key-bytes-must-not-survive")},
+	}
+	client := fake.NewSimpleClientset(seed)
+
+	got, err := TLSSecrets(context.Background(), client, "shop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 secret, got %d", len(got))
+	}
+	if len(got[0].Data["tls.key"]) != 0 {
+		t.Errorf("tls.key = %q, want zeroed", got[0].Data["tls.key"])
+	}
+	if !bytes.Equal(got[0].Data["tls.crt"], crt) {
+		t.Errorf("tls.crt = %q, want unchanged (%q)", got[0].Data["tls.crt"], crt)
+	}
+
+	// The tracker's own stored object must be untouched: fetch it directly,
+	// bypassing TLSSecrets, and confirm tls.key is still intact there.
+	stored, err := client.CoreV1().Secrets("shop").Get(context.Background(), "shop-tls", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored.Data["tls.key"]) == 0 {
+		t.Fatalf("the tracker's own copy had tls.key zeroed too — TLSSecrets must operate on a copy, not the tracker's object")
+	}
+
+	// Assess only ever reads tls.crt, so its output must be identical whether
+	// tls.key is present or zeroed.
+	before := certhealth.Assess([]corev1.Secret{*seed}, nil, 30, time.Time{})
+	after := certhealth.Assess(got, nil, 30, time.Time{})
+	if !reflect.DeepEqual(before, after) {
+		t.Errorf("Assess differs after tls.key was zeroed: before=%+v after=%+v", before, after)
 	}
 }
 

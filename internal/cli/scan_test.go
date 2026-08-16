@@ -62,7 +62,7 @@ func TestRunScanRejectsDiskThresholdOutsideZeroToOne(t *testing.T) {
 // validation runs before any cluster work, at the same point as R49 and R65's
 // validations.
 func TestRunScanRejectsAnInvalidExpectedNodeName(t *testing.T) {
-	o := scanOptions{output: "text", diskThreshold: 0.80, expectedNodes: "NODE-UPPER", kubeconfig: "/nonexistent-for-this-test"}
+	o := scanOptions{output: "text", diskThreshold: 0.80, expectedNodes: []string{"NODE-UPPER"}, kubeconfig: "/nonexistent-for-this-test"}
 	err := runScan(o)
 	if err == nil {
 		t.Fatal("want an error for an invalid --expected-nodes value, got nil")
@@ -70,6 +70,45 @@ func TestRunScanRejectsAnInvalidExpectedNodeName(t *testing.T) {
 	if !strings.Contains(err.Error(), "--expected-nodes") {
 		t.Errorf("error %q does not name --expected-nodes", err)
 	}
+}
+
+// TestExpectedNodesAccumulatesAcrossOccurrences proves --expected-nodes
+// resolves to the same set of names whether given as one comma-separated
+// value, split across repeated occurrences, or split with an overlapping
+// duplicate across occurrences — the duplicate case is what proves a later
+// dedup still runs across occurrences, not just within one.
+func TestExpectedNodesAccumulatesAcrossOccurrences(t *testing.T) {
+	cases := [][]string{
+		{"--expected-nodes", "node-a,node-b"},
+		{"--expected-nodes", "node-a", "--expected-nodes", "node-b"},
+		{"--expected-nodes", "node-a,node-b", "--expected-nodes", "node-b"},
+	}
+	var sets [][]string
+	for _, args := range cases {
+		o, err := parseScanFlags(args)
+		if err != nil {
+			t.Fatalf("parseScanFlags(%v): %v", args, err)
+		}
+		sets = append(sets, dedupSorted(o.expectedNodes))
+	}
+	for i := 1; i < len(sets); i++ {
+		if !slices.Equal(sets[0], sets[i]) {
+			t.Errorf("case %v = %v, want %v (same set as case 0)", cases[i], sets[i], sets[0])
+		}
+	}
+}
+
+func dedupSorted(in []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, s := range in {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // TestRunScanRejectsNegativeNodeHeartbeatThreshold proves the boundary sits at

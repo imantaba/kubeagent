@@ -62,7 +62,7 @@ type scanOptions struct {
 	baselineFloor          float64
 	logs                   bool
 	nodeHeartbeatThreshold time.Duration
-	expectedNodes          string
+	expectedNodes          []string
 	security               bool
 	securityVerbose        bool
 	suggest                bool
@@ -115,7 +115,7 @@ func bindScanFlags(cmd *cobra.Command, o *scanOptions) {
 		"with --baseline: also require this absolute rise in restarts/hour (KUBEAGENT_BASELINE_FLOOR)")
 	f.BoolVar(&o.logs, "logs", false, "read each crashing container's previous logs and classify the failure (needs the pods/log grant)")
 	f.DurationVar(&o.nodeHeartbeatThreshold, "node-heartbeat-threshold", 40*time.Second, "flag a Ready node whose kubelet lease is stale beyond this (0 disables)")
-	f.StringVar(&o.expectedNodes, "expected-nodes", "", "names of nodes expected in the cluster; a declared name with no Node object is flagged Degraded (comma-separated)")
+	f.StringSliceVar(&o.expectedNodes, "expected-nodes", nil, "names of nodes expected in the cluster; a declared name with no Node object is flagged Degraded (comma-separated)")
 	f.BoolVar(&o.security, "security", false, "flag insecure workloads and exposed Services (read-only, advisory)")
 	f.BoolVar(&o.securityVerbose, "security-verbose", false, "with --security: list every finding per workload (default: dangerous findings in full, restricted gaps aggregated)")
 	f.BoolVar(&o.suggest, "suggest", false, "print a deterministic next-step suggestion (and a read-only kubectl command) under each finding")
@@ -165,8 +165,9 @@ func runScan(o scanOptions) error {
 	// Every declared expected-node name must be a real node-name shape: a
 	// name that could never match a Node object describes nothing real.
 	// cleanExpected's trim/dedup/sort runs after this, not instead of it.
-	expectedNodes := splitCSV(o.expectedNodes)
-	if err := validateExpectedNodes(expectedNodes, "--expected-nodes"); err != nil {
+	// pflag's StringSliceVar has already comma-split and accumulated every
+	// --expected-nodes occurrence into o.expectedNodes.
+	if err := validateExpectedNodes(o.expectedNodes, "--expected-nodes"); err != nil {
 		return err
 	}
 	// --explain needs Anthropic, or a local OpenAI-compatible endpoint; check before scanning.
@@ -216,7 +217,7 @@ func runScan(o scanOptions) error {
 		DiskThreshold:           o.diskThreshold,
 		Security:                o.security,
 		NodeHeartbeatThreshold:  o.nodeHeartbeatThreshold,
-		ExpectedNodes:           expectedNodes,
+		ExpectedNodes:           o.expectedNodes,
 		KubeletHealth:           o.kubeletHealth,
 		ControlPlaneHealth:      o.controlPlaneHealth,
 		DNSHealth:               o.dnsHealth,

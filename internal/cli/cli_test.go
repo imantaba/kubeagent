@@ -2619,7 +2619,7 @@ func TestParseScanFlagsCarriesEveryValue(t *testing.T) {
 	if opts.nodeHeartbeatThreshold != 90*time.Second {
 		t.Errorf("nodeHeartbeatThreshold = %v, want 90s", opts.nodeHeartbeatThreshold)
 	}
-	if got := strings.Join(splitCSV(opts.expectedNodes), "|"); got != "node-a|node-b" {
+	if got := strings.Join(opts.expectedNodes, "|"); got != "node-a|node-b" {
 		t.Errorf("expectedNodes = %q, want node-a|node-b", got)
 	}
 }

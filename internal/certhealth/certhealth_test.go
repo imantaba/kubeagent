@@ -269,6 +269,42 @@ func TestAssess_WarnDaysBoundaryUnchanged(t *testing.T) {
 	}
 }
 
+// TestAssess_ZeroWarnDaysMeansExpiredOnly pins R96: warnDays: 0 is a real
+// window meaning "expired only", not "disabled" and not "use the 30-day
+// default" — a certificate with Days == 0 (not yet expired, but expiring
+// within hours) must be classified as neither Expired nor Expiring when
+// warnDays is 0. An actually-expired certificate still lands in Expired
+// regardless of warnDays, and a positive warnDays still flags a Days == 0
+// certificate as Expiring, unaffected by this change.
+func TestAssess_ZeroWarnDaysMeansExpiredOnly(t *testing.T) {
+	notYetExpired := tlsSecret("shop", "soon", certPEM(t, "soon.example.com", nil, now.Add(2*time.Hour)))
+	alreadyExpired := tlsSecret("shop", "gone", certPEM(t, "gone.example.com", nil, now.Add(-2*time.Hour)))
+
+	t.Run("warnDays 0: Days==0 not-yet-expired cert is neither", func(t *testing.T) {
+		rep := Assess([]corev1.Secret{notYetExpired}, nil, 0, now)
+		if len(rep.Expired) != 0 || len(rep.Expiring) != 0 {
+			t.Errorf("want neither expired nor expiring, got expired=%+v expiring=%+v", rep.Expired, rep.Expiring)
+		}
+	})
+
+	t.Run("warnDays 0: an actually-expired cert still lands in Expired", func(t *testing.T) {
+		rep := Assess([]corev1.Secret{alreadyExpired}, nil, 0, now)
+		if len(rep.Expired) != 1 || rep.Expired[0].Name != "gone" {
+			t.Errorf("want gone in Expired regardless of warnDays, got expired=%+v", rep.Expired)
+		}
+		if len(rep.Expiring) != 0 {
+			t.Errorf("want nothing in Expiring, got %+v", rep.Expiring)
+		}
+	})
+
+	t.Run("warnDays 30 (unaffected): Days==0 not-yet-expired cert is Expiring", func(t *testing.T) {
+		rep := Assess([]corev1.Secret{notYetExpired}, nil, 30, now)
+		if len(rep.Expiring) != 1 || rep.Expiring[0].Name != "soon" {
+			t.Errorf("want soon in Expiring at a positive warnDays, got expiring=%+v expired=%+v", rep.Expiring, rep.Expired)
+		}
+	})
+}
+
 // pemBundle concatenates already-PEM-encoded blocks into a single tls.crt
 // value, the way a real CA bundle interleaves a leaf certificate with one or
 // more intermediates.

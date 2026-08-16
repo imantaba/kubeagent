@@ -158,6 +158,48 @@ func TestRunScanSecurityVerboseRequiresSecurity(t *testing.T) {
 	}
 }
 
+// TestRunScanRejectsNegativeCertWarnDays proves --cert-warn-days refuses a
+// negative value with kubeagent's own message, while 0 passes through
+// unchanged (it means "expired only", not "use the 30-day default") and every
+// positive value behaves as documented.
+func TestRunScanRejectsNegativeCertWarnDays(t *testing.T) {
+	tests := []struct {
+		days    int
+		wantErr bool
+	}{
+		{-5, true},
+		{-1, true},
+		{0, false},
+		{1, false},
+		{30, false},
+	}
+	for _, tt := range tests {
+		o := scanOptions{output: "text", diskThreshold: 0.80, certWarnDays: tt.days, kubeconfig: "/nonexistent-for-this-test"}
+		err := runScan(o)
+		rejected := err != nil && strings.Contains(err.Error(), "--cert-warn-days")
+		if rejected != tt.wantErr {
+			t.Errorf("certWarnDays=%d: err=%v, want rejected=%v", tt.days, err, tt.wantErr)
+		}
+	}
+}
+
+// TestRunScanRejectsNegativeCertWarnDaysMessage pins the exact refusal text:
+// the paren form (matching scan.go's nearest neighbour,
+// --node-heartbeat-threshold), not the comma form --disk-threshold uses --
+// R96 refuses a negative, not a range, so the two messages cannot match word
+// for word regardless.
+func TestRunScanRejectsNegativeCertWarnDaysMessage(t *testing.T) {
+	o := scanOptions{output: "text", diskThreshold: 0.80, certWarnDays: -5, kubeconfig: "/nonexistent-for-this-test"}
+	err := runScan(o)
+	if err == nil {
+		t.Fatal("want an error for --cert-warn-days=-5, got nil")
+	}
+	want := "--cert-warn-days must not be negative (got -5)"
+	if err.Error() != want {
+		t.Errorf("error = %q, want %q", err.Error(), want)
+	}
+}
+
 // TestRunScanRejectsNegativeNodeHeartbeatThreshold proves the boundary sits at
 // zero, not merely that some negative value is refused: 0 keeps meaning
 // "disabled" and every positive value keeps behaving as documented.

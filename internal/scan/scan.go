@@ -571,7 +571,12 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	var certReport *certhealth.Report // 8
 	if opts.Certs {
 		warn := opts.CertWarnDays
-		if warn <= 0 {
+		if warn < 0 {
+			// Defence-in-depth only: internal/cli/scan.go refuses a negative
+			// --cert-warn-days before Evaluate is ever called, so the CLI can
+			// no longer reach this branch. 0 is a real window meaning
+			// "expired only" and is passed through unchanged, not clamped to
+			// the 30-day default.
 			warn = 30
 		}
 		rep := certhealth.Assess(tlsSecrets, ings, warn, now)

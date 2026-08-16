@@ -102,7 +102,12 @@ func Assess(secrets []corev1.Secret, ingresses []networkingv1.Ingress, warnDays 
 			// today" (already past NotAfter), and NotAfter.After is false both
 			// when NotAfter is in the past and when it equals now exactly.
 			rep.Expired = append(rep.Expired, c)
-		case c.Days <= warnDays:
+		case warnDays > 0 && c.Days <= warnDays:
+			// warnDays == 0 is a real window, "expired only" — not "the check
+			// is disabled" and not "fall back to some default". Without the
+			// warnDays > 0 guard, a certificate expiring within hours (Days
+			// == 0, not yet past NotAfter) would satisfy 0 <= 0 and land in
+			// Expiring even though the operator asked for a zero-day window.
 			rep.Expiring = append(rep.Expiring, c)
 		}
 	}

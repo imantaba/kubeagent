@@ -162,6 +162,12 @@ func runScan(o scanOptions) error {
 	if o.nodeHeartbeatThreshold < 0 {
 		return fmt.Errorf("--node-heartbeat-threshold cannot be negative (got %s; use 0 to disable the check)", o.nodeHeartbeatThreshold)
 	}
+	// 0 keeps meaning "expired only" — a real, deliberately narrow warn
+	// window, not "disabled" and not "use the 30-day default" — so only a
+	// negative value is refused here.
+	if o.certWarnDays < 0 {
+		return fmt.Errorf("--cert-warn-days must not be negative (got %d)", o.certWarnDays)
+	}
 	// Every declared expected-node name must be a real node-name shape: a
 	// name that could never match a Node object describes nothing real.
 	// cleanExpected's trim/dedup/sort runs after this, not instead of it.

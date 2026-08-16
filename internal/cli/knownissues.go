@@ -30,6 +30,7 @@ func runKnownIssues(args []string, w io.Writer) error {
 			fmt.Fprintf(w, "  %-28s %s\n", e.Kind, e.Summary)
 		}
 		fmt.Fprintf(w, "\nPrint one:\n  %s known-issues <kind>\n", invokedAs)
+		fmt.Fprintf(w, "\nThe %s watch daemon additionally reports cluster-level and certificate\nissue kinds that this reference does not document.\n", invokedAs)
 		return nil
 	}
 	if len(args) > 1 {

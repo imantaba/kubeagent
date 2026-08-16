@@ -26,6 +26,22 @@ func TestRunKnownIssuesListsEveryKind(t *testing.T) {
 	if !strings.Contains(out, "known-issues <kind>") {
 		t.Error("list output does not tell the reader how to print one")
 	}
+	// The watch daemon reports issue kinds of its own — cluster-level and
+	// certificate — that this reference does not document at all. The
+	// footer discloses that gap in general terms rather than naming a
+	// single kind, since the daemon's out-of-closure kinds span more than
+	// one feature.
+	for _, want := range []string{"watch", "cluster-level", "certificate", "does not document"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("list output does not disclose the watch daemon's out-of-closure kinds: missing %q", want)
+		}
+	}
+	if strings.Contains(out, "DNSDegraded") {
+		t.Error("footer names a single kind rather than describing the daemon's kinds generally")
+	}
+	if strings.Contains(out, "--explain") {
+		t.Error("footer must not suggest a relationship to --explain")
+	}
 }
 
 // The list names what it covers before listing it, so a reader learns the

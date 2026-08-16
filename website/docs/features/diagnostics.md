@@ -445,7 +445,11 @@ ephemeral-storage lines). A node that reserves no
 **memory** or no **ephemeral-storage** is flagged with a **WARNING** in `NOTES` —
 both let OS/kubelet memory or disk pressure destabilise the node. CPU reservation
 is shown but not warned, since it is compressible and many clusters intentionally
-leave it unset; a resource a node does not report is shown as `not reported`. The
+leave it unset. `not reported` is a whole-row state: it is shown only when **no**
+node in the cluster reports `ephemeral-storage`. On a mixed cluster, where some
+nodes report it and some do not, the line instead prints the ratio over the
+reporting nodes, with the excluded count named beside it — `N of M nodes reserve
+none  (K nodes do not report it)`. The
 check reads only the Node objects already listed during a scan, so it needs no
 extra permissions, and it is advisory: it never changes the cluster verdict.
 

@@ -597,7 +597,11 @@ func printContext(in Input, w io.Writer) error {
 		if n.EphemeralReporting == 0 {
 			fmt.Fprintf(&b, "  %-17s %s\n", "ephemeral-storage", "not reported")
 		} else {
-			fmt.Fprintln(&b, reserveLine("ephemeral-storage", n.EphemeralNone, n.EphemeralReporting, true))
+			line := reserveLine("ephemeral-storage", n.EphemeralNone, n.EphemeralReporting, true)
+			if missing := total - n.EphemeralReporting; missing > 0 {
+				line += fmt.Sprintf("  (%d %s do not report it)", missing, plural(missing, "node", "nodes"))
+			}
+			fmt.Fprintln(&b, line)
 		}
 	}
 	if err := printResources(in.Resources, &b); err != nil {

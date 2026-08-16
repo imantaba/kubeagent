@@ -1545,6 +1545,26 @@ func TestPrintInventory_ReservationsNotReportedEphemeral(t *testing.T) {
 	}
 }
 
+func TestPrintInventory_ReservationsEphemeralMixedReportingNamesExcluded(t *testing.T) {
+	var buf bytes.Buffer
+	rep := &nodereserve.Report{
+		WarnCount: 0, EphemeralNone: 1, EphemeralReporting: 2,
+		Nodes: []nodereserve.NodeReservation{
+			{Name: "e1", CPUReserved: "200m", MemReserved: "1Gi", EphemeralReserved: "0", NoEphemeral: true},
+			{Name: "e2", CPUReserved: "200m", MemReserved: "1Gi", EphemeralReserved: "5Gi"},
+			{Name: "e3", CPUReserved: "200m", MemReserved: "1Gi", EphemeralReserved: "—"},
+		},
+	}
+	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 3, NodesTotal: 3}, NodeReserve: rep}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "ephemeral-storage 1 of 2 nodes reserve none  ⚠  (1 node do not report it)") {
+		t.Errorf("expected mixed-reporting ephemeral-storage ratio with excluded-count suffix in:\n%s", out)
+	}
+}
+
 func TestPrintInventory_ShowsLogRootCause(t *testing.T) {
 	var buf bytes.Buffer
 	in := Input{

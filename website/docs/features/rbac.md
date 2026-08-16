@@ -153,6 +153,16 @@ never reads these custom resources, so neither is wired into the Helm chart —
 adding a chart toggle for a grant the daemon never uses would be the opposite
 of least privilege.
 
+`certs`'s grant is worth naming precisely: `secrets: list` is a whole-object
+read, and there is no server-side field projection for Secrets, so the API
+server returns `tls.key` in the response body alongside `tls.crt` for every
+`kubernetes.io/tls` Secret in scope. kubeagent's own code never reads,
+prints, or stores that field — see [Certificate expiry
+(opt-in)](diagnostics.md#certificate-expiry-opt-in) — but that is a property
+of kubeagent's code, not of the grant. Whoever holds `certs` receives every
+private key in scope regardless of what kubeagent goes on to do with the
+response.
+
 ## Blind spots
 
 A missing grant never fails a scan. It degrades it, and it says so. Five

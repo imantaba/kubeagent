@@ -646,12 +646,18 @@ DNS  (opt-in)
 `scan --certs` reads the cluster's `kubernetes.io/tls` Secrets and flags
 certificates that are **expired** or expiring within the warn window
 (`--cert-warn-days`, default 30) in an advisory `CERTIFICATES` section, with the
-Ingress routes each certificate fronts. Privacy by construction: only the
-**public** certificate (`tls.crt`) is parsed — the private key is never read —
-and only metadata (names and dates) is reported. Off by default: without the
-flag kubeagent makes no Secrets API calls at all. The in-cluster daemon needs
-the secrets add-on grant (`deploy/rbac-certs.yaml` or Helm
-`certs.enabled=true`) and enables the check with `KUBEAGENT_CERTS=true`.
+Ingress routes each certificate fronts. kubeagent's own code never reads,
+prints, or stores the private key: only the **public** certificate
+(`tls.crt`) is parsed, and only metadata (names and dates) is reported. That
+is a property of kubeagent's code, not of what crosses the network —
+`list secrets` is a whole-object read, so the API server returns `tls.key` in
+the response body alongside `tls.crt`, and the grant this feature needs is
+therefore the ability to receive private keys, not merely to receive
+certificates (see [least-privilege RBAC](rbac.md#the-feature-table) for what
+that costs). Off by default: without the flag kubeagent makes no Secrets API
+calls at all. The in-cluster daemon needs the secrets add-on grant
+(`deploy/rbac-certs.yaml` or Helm `certs.enabled=true`) and enables the check
+with `KUBEAGENT_CERTS=true`.
 
 ### Next-step suggestions (opt-in)
 

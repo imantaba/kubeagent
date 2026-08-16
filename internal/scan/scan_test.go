@@ -1792,6 +1792,70 @@ coredns_dns_responses_total{server="dns://:53",zone=".",view="",rcode="SERVFAIL"
 	}
 }
 
+// perPodDNSMetricsServer starts an httptest server that answers a request
+// differently depending on which CoreDNS pod it is for, unlike
+// dnsMetricsServer, which answers every request identically and so cannot
+// produce podsAnswered != podsProbed. collect.CoreDNSMetrics's AbsPath embeds
+// the pod name literally ("/api/v1/namespaces/<ns>/pods/<pod>:9153/proxy/
+// metrics"), so a handler can tell pods apart by substring-matching the
+// request path: any pod named in forbiddenPods gets a genuine Forbidden
+// Status object, every other pod gets 200 with okBody.
+func perPodDNSMetricsServer(t *testing.T, forbiddenPods map[string]bool, okBody string) rest.Interface {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		for name := range forbiddenPods {
+			if strings.Contains(r.URL.Path, "/pods/"+name+":9153/") {
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = w.Write([]byte(`{"kind":"Status","apiVersion":"v1","status":"Failure","reason":"Forbidden","code":403,"message":"forbidden"}`))
+				return
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(okBody))
+	}))
+	t.Cleanup(server.Close)
+	real, err := kubernetes.NewForConfig(&rest.Config{Host: server.URL})
+	if err != nil {
+		t.Fatalf("building a client for the fake per-pod DNS metrics server: %v", err)
+	}
+	return real.CoreV1().RESTClient()
+}
+
+// TestEvaluate_DNSPodsAnsweredWiring pins scan.go's wiring of the per-pod
+// answered/forbidden counters into the dnshealth.Assess call: three CoreDNS
+// pods, two answering with a parseable body and one refused, must produce
+// PodsProbed == 3 and PodsAnswered == 2 end to end through Evaluate. This is
+// the one place in the suite that exercises the real values scan.go counts
+// and passes to Assess — dnshealth's and report's own tests call Assess and
+// printDNSHealth directly with hand-built Reports, so neither can catch a
+// wiring mistake at the scan.go call site itself (e.g. passing podsProbed's
+// own value for podsAnswered, or swapping the answered and forbidden
+// arguments).
+func TestEvaluate_DNSPodsAnsweredWiring(t *testing.T) {
+	okBody := `coredns_dns_responses_total{server="dns://:53",zone=".",view="",rcode="NOERROR"} 50
+`
+	client := nodeStatsFailingClient{
+		Interface: fake.NewSimpleClientset(
+			coreDNSPod("coredns-1"), coreDNSPod("coredns-2"), coreDNSPod("coredns-3"),
+		),
+		rest: perPodDNSMetricsServer(t, map[string]bool{"coredns-3": true}, okBody),
+	}
+	res, err := Evaluate(context.Background(), client, Options{DNSHealth: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.DNS.PodsProbed != 3 {
+		t.Fatalf("PodsProbed = %d, want 3 (all three CoreDNS pods were selected)", res.DNS.PodsProbed)
+	}
+	if res.DNS.PodsAnswered != 2 {
+		t.Errorf("PodsAnswered = %d, want 2 (coredns-1 and coredns-2 answered 200; coredns-3 was forbidden)", res.DNS.PodsAnswered)
+	}
+	if res.DNS.Status != "ok" {
+		t.Errorf("Status = %q, want ok (100 total NOERROR responses at the 100-response floor, 0%% errors)", res.DNS.Status)
+	}
+}
+
 // podLogsFailingClient wraps a kubernetes.Interface so CoreV1().Pods(ns).GetLogs
 // resolves to a real, working REST client instead of the fake clientset's own
 // GetLogs, which always succeeds and never lets a test drive a real HTTP error

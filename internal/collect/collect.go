@@ -16,6 +16,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	storagev1 "k8s.io/api/storage/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -585,12 +586,32 @@ func CoreDNSMetrics(ctx context.Context, client kubernetes.Interface, namespace,
 // ControlPlaneReadyz probes the apiserver /readyz?verbose endpoint and classifies
 // the result. Never returns an error (non-fatal, like KubeletHealthz). Needs the
 // nonResourceURLs /readyz get grant; a 401/403 yields Status "forbidden".
+//
+// A real apiserver's /readyz failure body is text/plain; client-go's serializer
+// negotiator has no decoder for that content type on a non-2xx response, and that
+// negotiation failure returns from StatusCode(&code) without ever setting code, so
+// the caller reads back 0 ("unreachable") no matter what status was actually
+// written. statusCodeFrom recovers it from the error the same negotiation failure
+// carries when code is left at 0.
 func ControlPlaneReadyz(ctx context.Context, client kubernetes.Interface) controlplane.Probe {
 	var code int
-	body, _ := client.CoreV1().RESTClient().Get().
+	body, err := client.CoreV1().RESTClient().Get().
 		AbsPath("/readyz").Param("verbose", "true").
 		Do(ctx).StatusCode(&code).Raw()
+	if code == 0 {
+		code = statusCodeFrom(err)
+	}
 	return controlplane.ParseReadyz(code, capBody(body))
+}
+
+// statusCodeFrom recovers the HTTP status code an error carries when it
+// satisfies apierrors.APIStatus, and 0 otherwise (including a nil err).
+func statusCodeFrom(err error) int {
+	status, ok := err.(apierrors.APIStatus)
+	if !ok {
+		return 0
+	}
+	return int(status.Status().Code)
 }
 
 // classify maps a /healthz probe result to a Probe. 200 is ok; 401/403 is

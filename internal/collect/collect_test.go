@@ -618,6 +618,30 @@ func TestHealthzDetail_Sanitizes(t *testing.T) {
 	}
 }
 
+// TestStatusCodeFrom pins R79(A): the fallback that recovers a /readyz
+// probe's HTTP status code from the error client-go's StatusCode(&code)
+// leaves at 0 when its serializer negotiator has no decoder for the
+// response's content type.
+func TestStatusCodeFrom(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"APIStatus error, code 500", &apierrors.StatusError{ErrStatus: metav1.Status{Code: 500}}, 500},
+		{"APIStatus error, code 403", &apierrors.StatusError{ErrStatus: metav1.Status{Code: 403}}, 403},
+		{"nil error", nil, 0},
+		{"plain error, not APIStatus", errors.New("boom"), 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := statusCodeFrom(c.err); got != c.want {
+				t.Errorf("statusCodeFrom(%v) = %d, want %d", c.err, got, c.want)
+			}
+		})
+	}
+}
+
 func TestTLSSecrets(t *testing.T) {
 	tls := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "shop-tls"},
 		Type: corev1.SecretTypeTLS, Data: map[string][]byte{"tls.crt": []byte("PEM")}}

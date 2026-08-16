@@ -2391,6 +2391,68 @@ func TestPrintControlPlane_TrailingBlankLine(t *testing.T) {
 	}
 }
 
+// TestPrintControlPlane_ChecksFailingWording pins the "checks failing" line's
+// singular/plural wording and the truncation marker that appears once the
+// list exceeds controlplane.MaxFailedChecks. At or below the cap every byte
+// is unchanged from before R83/R84; a body with more failing checks than the
+// cap is worded as "more than <cap> checks failing" and lists only the first
+// <cap> names, joined with a trailing ", …" rather than a false exact count.
+func TestPrintControlPlane_ChecksFailingWording(t *testing.T) {
+	names := func(n int) []string {
+		out := make([]string, n)
+		for i := range out {
+			out[i] = fmt.Sprintf("check-%02d", i)
+		}
+		return out
+	}
+
+	cases := []struct {
+		name       string
+		failed     []string
+		wantSubstr string
+		notSubstr  string
+	}{
+		{
+			name:       "singular",
+			failed:     []string{"etcd"},
+			wantSubstr: "1 check failing: etcd",
+		},
+		{
+			name:       "plural",
+			failed:     []string{"etcd", "informer-sync"},
+			wantSubstr: "2 checks failing: etcd, informer-sync",
+		},
+		{
+			name:       "exactly at cap",
+			failed:     names(controlplane.MaxFailedChecks),
+			wantSubstr: fmt.Sprintf("%d checks failing: %s", controlplane.MaxFailedChecks, strings.Join(names(controlplane.MaxFailedChecks), ", ")),
+			notSubstr:  "…",
+		},
+		{
+			name:       "one past cap",
+			failed:     names(controlplane.MaxFailedChecks + 1),
+			wantSubstr: fmt.Sprintf("more than %d checks failing: %s, …", controlplane.MaxFailedChecks, strings.Join(names(controlplane.MaxFailedChecks), ", ")),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var b bytes.Buffer
+			p := &controlplane.Probe{Status: "unhealthy", Failed: tc.failed}
+			if err := printControlPlane(p, &b); err != nil {
+				t.Fatal(err)
+			}
+			out := b.String()
+			if !strings.Contains(out, tc.wantSubstr) {
+				t.Errorf("output missing %q, got:\n%s", tc.wantSubstr, out)
+			}
+			if tc.notSubstr != "" && strings.Contains(out, tc.notSubstr) {
+				t.Errorf("output should not contain %q, got:\n%s", tc.notSubstr, out)
+			}
+		})
+	}
+}
+
 // TestPrintDNSHealth_TrailingBlankLine mirrors
 // TestPrintControlPlane_TrailingBlankLine for the DNS section's two rendering
 // paths.

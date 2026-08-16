@@ -10,10 +10,13 @@ import (
 	"github.com/imantaba/kubeagent/internal/safetext"
 )
 
-// maxFailedChecks bounds the reported failing-check list. A real apiserver has
+// MaxFailedChecks bounds the reported failing-check list. A real apiserver has
 // on the order of a dozen readyz checks; a body claiming hundreds is not one,
 // and a report is for reading, not for archiving whatever answered the port.
-const maxFailedChecks = 20
+// Exported so internal/report.printControlPlane can render a truthful count
+// against the same cap failedChecks enforces, rather than a second, hard-coded
+// 20 that could drift from this one.
+const MaxFailedChecks = 20
 
 // Probe is the apiserver /readyz classification.
 type Probe struct {
@@ -39,8 +42,10 @@ func ParseReadyz(code int, body []byte) Probe {
 }
 
 // failedChecks extracts the check name from each "[-]<name> …" line of a verbose
-// /readyz body, in order, sanitized and capped at maxFailedChecks. Returns nil
-// when there are none (a generic not-ready).
+// /readyz body, in order, sanitized and capped at MaxFailedChecks+1 entries —
+// one past the cap, so a caller can tell "exactly at the cap" from "more than
+// the cap" without the count growing without bound. Returns nil when there
+// are none (a generic not-ready).
 //
 // These names are tokens from an HTTP response body that no schema constrains,
 // and they are printed. Sanitizing them here rather than at each renderer keeps
@@ -48,7 +53,7 @@ func ParseReadyz(code int, body []byte) Probe {
 func failedChecks(body []byte) []string {
 	var failed []string
 	for _, ln := range strings.Split(string(body), "\n") {
-		if len(failed) == maxFailedChecks {
+		if len(failed) == MaxFailedChecks+1 {
 			break
 		}
 		ln = strings.TrimSpace(ln)

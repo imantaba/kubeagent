@@ -1322,8 +1322,17 @@ func printControlPlane(p *controlplane.Probe, w io.Writer) error {
 			return err
 		}
 		if len(p.Failed) > 0 {
-			if _, err := fmt.Fprintf(w, "      ⚠ %d checks failing: %s\n", len(p.Failed), strings.Join(p.Failed, ", ")); err != nil {
-				return err
+			switch {
+			case len(p.Failed) > controlplane.MaxFailedChecks:
+				if _, err := fmt.Fprintf(w, "      ⚠ more than %d checks failing: %s, …\n",
+					controlplane.MaxFailedChecks, strings.Join(p.Failed[:controlplane.MaxFailedChecks], ", ")); err != nil {
+					return err
+				}
+			default:
+				if _, err := fmt.Fprintf(w, "      ⚠ %d %s failing: %s\n",
+					len(p.Failed), plural(len(p.Failed), "check", "checks"), strings.Join(p.Failed, ", ")); err != nil {
+					return err
+				}
 			}
 		} else {
 			if _, err := fmt.Fprintln(w, "      ⚠ apiserver /readyz reported not ready"); err != nil {

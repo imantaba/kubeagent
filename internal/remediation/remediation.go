@@ -43,7 +43,7 @@ func For(f diagnose.Finding) Suggestion {
 	case "FailedCreate":
 		return Suggestion{"the controller can't create pods — check for quota, LimitRange, or a rejecting admission webhook", eventsCmd(ns, "FailedCreate")}
 	case "JobFailed":
-		return Suggestion{"the Job exhausted its retries — inspect the failed pod's logs", logsCmd(ns, pod, "")}
+		return Suggestion{"the Job exhausted its retries — inspect the failed pod's logs", jobLogsCmd(ns, pod)}
 	case "RolloutStuck":
 		return Suggestion{"the rollout is wedged — inspect the workload's pods and its events", objectEventsCmd(ns, pod)}
 	default:
@@ -64,6 +64,15 @@ func logsCmd(ns, pod, container string) string {
 		c = " -c " + container
 	}
 	return fmt.Sprintf("kubectl -n %s logs %s%s --previous", ns, pod, c)
+}
+
+// jobLogsCmd builds the log-fetch command for a failed Job, addressed to the
+// Job itself rather than to one of its pods. kubectl resolves a Job reference
+// to one of its pods on its own, and a Job pod's restartPolicy is Never, so it
+// never has a previous container — a --previous flag here would always find
+// nothing.
+func jobLogsCmd(ns, name string) string {
+	return fmt.Sprintf("kubectl -n %s logs job/%s", ns, name)
 }
 
 func describeCmd(ns, pod string) string {

@@ -102,7 +102,7 @@ indented one field per line.
     { "name": "core", "summary": "the inventory every command reads: pods, nodes, workloads, events, services, PVCs and the rest", "allowed": true },
     { "name": "certs", "flag": "--certs", "summary": "TLS certificate expiry, read from the public tls.crt of kubernetes.io/tls Secrets", "allowed": false, "missing": ["list secrets"] },
     { "name": "logs", "flag": "--logs", "summary": "the last lines of a crashed container's previous log, to name the cause", "allowed": false, "missing": ["get pods/log"] },
-    { "name": "diskusage", "flag": "--disk-usage", "summary": "node filesystem and inode pressure, read from the kubelet summary API", "allowed": false, "missing": ["get nodes/proxy"] }
+    { "name": "diskusage", "flag": "--disk-usage", "summary": "node root filesystem and PersistentVolumeClaim usage, read from the kubelet summary API", "allowed": false, "missing": ["get nodes/proxy"] }
   ]
 }
 ```
@@ -146,6 +146,7 @@ walking the table directly instead.)
 | `credlint` | `--lint-secrets` | nothing beyond core |
 | `cronjobs` | `--include-cron` | nothing beyond core |
 | `restarts` | `--include-restarts` | nothing beyond core |
+| `investigate` | `--investigate` | nothing beyond core |
 
 `operators` and `gitops` are `list`-only and scan-only: the watch daemon
 never reads these custom resources, so neither is wired into the Helm chart —

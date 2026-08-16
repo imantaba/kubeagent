@@ -63,7 +63,7 @@ func FuzzCertAssess(f *testing.F) {
 		}
 		for _, inv := range rep.Invalid {
 			switch inv.Detail {
-			case "missing tls.crt", "invalid certificate data":
+			case "empty tls.crt", "invalid certificate data":
 			default:
 				t.Errorf("Invalid.Detail = %q, outside the documented set", inv.Detail)
 			}

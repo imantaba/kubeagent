@@ -33,7 +33,7 @@ type Cert struct {
 type Invalid struct {
 	Namespace string `json:"namespace"`
 	Name      string `json:"name"`
-	Detail    string `json:"detail"` // "missing tls.crt" | "invalid certificate data"
+	Detail    string `json:"detail"` // "empty tls.crt" | "invalid certificate data"
 }
 
 // Report is the result of Assess — a summary of all TLS-Secret certificate states.
@@ -59,7 +59,7 @@ func Assess(secrets []corev1.Secret, ingresses []networkingv1.Ingress, warnDays 
 		rep.Checked++
 		crt := s.Data["tls.crt"]
 		if len(crt) == 0 {
-			rep.Invalid = append(rep.Invalid, Invalid{Namespace: s.Namespace, Name: s.Name, Detail: "missing tls.crt"})
+			rep.Invalid = append(rep.Invalid, Invalid{Namespace: s.Namespace, Name: s.Name, Detail: "empty tls.crt"})
 			continue
 		}
 		block, _ := pem.Decode(crt)

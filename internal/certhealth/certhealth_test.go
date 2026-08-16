@@ -88,17 +88,20 @@ func TestAssess_SANUsedWhenCNEmpty(t *testing.T) {
 	}
 }
 
-func TestAssess_InvalidAndMissingCrt(t *testing.T) {
+func TestAssess_InvalidAndEmptyCrt(t *testing.T) {
 	garbage := corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "bad-tls"},
 		Type: corev1.SecretTypeTLS, Data: map[string][]byte{"tls.crt": []byte("not a certificate")}}
-	missing := corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "empty-tls"},
-		Type: corev1.SecretTypeTLS, Data: map[string][]byte{}}
-	rep := Assess([]corev1.Secret{garbage, missing}, nil, 30, now)
+	// The tls.crt key is present but empty — the only state a kubernetes.io/tls
+	// Secret can actually reach through the API server; it always requires both
+	// data keys to exist, so a genuinely absent key cannot occur in practice.
+	empty := corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "empty-tls"},
+		Type: corev1.SecretTypeTLS, Data: map[string][]byte{"tls.crt": []byte("")}}
+	rep := Assess([]corev1.Secret{garbage, empty}, nil, 30, now)
 	if rep.Checked != 2 || len(rep.Invalid) != 2 {
 		t.Fatalf("want 2 checked / 2 invalid, got %+v", rep)
 	}
 	// sorted by ns/name: bad-tls before empty-tls
-	if rep.Invalid[0].Detail != "invalid certificate data" || rep.Invalid[1].Detail != "missing tls.crt" {
+	if rep.Invalid[0].Detail != "invalid certificate data" || rep.Invalid[1].Detail != "empty tls.crt" {
 		t.Errorf("Invalid = %+v", rep.Invalid)
 	}
 }

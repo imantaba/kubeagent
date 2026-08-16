@@ -1,9 +1,10 @@
 // Package certhealth flags expired and soon-expiring TLS certificates from
-// kubernetes.io/tls Secrets. It parses ONLY the public certificate (the leaf =
-// first PEM block of tls.crt) — the private key (tls.key) is never read — and
-// reports metadata only: names, expiry dates, and the Ingress routes each cert
-// fronts. Pure: the caller supplies the secrets, ingresses, warn window, and
-// clock. Opt-in (--certs); advisory (never affects the cluster verdict).
+// kubernetes.io/tls Secrets. It parses ONLY the public certificate — every
+// CERTIFICATE PEM block in tls.crt, reporting whichever one expires soonest —
+// the private key (tls.key) is never read — and reports metadata only: names,
+// expiry dates, and the Ingress routes each cert fronts. Pure: the caller
+// supplies the secrets, ingresses, warn window, and clock. Opt-in (--certs);
+// advisory (never affects the cluster verdict).
 package certhealth
 
 import (
@@ -46,9 +47,10 @@ type Report struct {
 	Forbidden bool      `json:"forbidden,omitempty"`
 }
 
-// Assess parses the leaf certificate of each kubernetes.io/tls Secret and
-// classifies it against now + warnDays. Deterministic: injected clock; Expired
-// and Expiring sorted by (Days asc, namespace, name); Invalid by (namespace, name).
+// Assess parses the earliest-expiring certificate of each kubernetes.io/tls
+// Secret and classifies it against now + warnDays. Deterministic: injected
+// clock; Expired and Expiring sorted by (Days asc, namespace, name); Invalid
+// by (namespace, name).
 func Assess(secrets []corev1.Secret, ingresses []networkingv1.Ingress, warnDays int, now time.Time) Report {
 	rep := Report{WarnDays: warnDays}
 	fronts := ingressFronts(ingresses)
@@ -62,13 +64,8 @@ func Assess(secrets []corev1.Secret, ingresses []networkingv1.Ingress, warnDays 
 			rep.Invalid = append(rep.Invalid, Invalid{Namespace: s.Namespace, Name: s.Name, Detail: "empty tls.crt"})
 			continue
 		}
-		block, _ := pem.Decode(crt)
-		if block == nil {
-			rep.Invalid = append(rep.Invalid, Invalid{Namespace: s.Namespace, Name: s.Name, Detail: "invalid certificate data"})
-			continue
-		}
-		cert, err := x509.ParseCertificate(block.Bytes)
-		if err != nil {
+		cert := earliestCertificate(crt)
+		if cert == nil {
 			rep.Invalid = append(rep.Invalid, Invalid{Namespace: s.Namespace, Name: s.Name, Detail: "invalid certificate data"})
 			continue
 		}
@@ -116,6 +113,42 @@ func Assess(secrets []corev1.Secret, ingresses []networkingv1.Ingress, warnDays 
 		return rep.Invalid[i].Name < rep.Invalid[j].Name
 	})
 	return rep
+}
+
+// maxCertBlocks bounds how many PEM blocks earliestCertificate parses from a
+// single tls.crt. A real bundle is a handful of certificates — a leaf plus a
+// few intermediates — so the bound is generous headroom, and it exists so a
+// pathological tls.crt with thousands of blocks reports from the blocks read
+// rather than spending unbounded CPU decoding and parsing X.509.
+const maxCertBlocks = 32
+
+// earliestCertificate decodes up to maxCertBlocks PEM blocks from crt, parses
+// every block whose Type is CERTIFICATE, and returns the one with the
+// earliest NotAfter — the certificate soonest to expire, whichever block it
+// came from and whether or not it is a CA. A block that fails to decode or
+// parse is skipped rather than treated as fatal, as long as some other block
+// in the bound yields a certificate. Returns nil when none does.
+func earliestCertificate(crt []byte) *x509.Certificate {
+	var earliest *x509.Certificate
+	rest := crt
+	for i := 0; i < maxCertBlocks; i++ {
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			break
+		}
+		if block.Type != "CERTIFICATE" {
+			continue
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			continue
+		}
+		if earliest == nil || cert.NotAfter.Before(earliest.NotAfter) {
+			earliest = cert
+		}
+	}
+	return earliest
 }
 
 // sortCerts orders worst-first: fewest days left, then namespace/name.

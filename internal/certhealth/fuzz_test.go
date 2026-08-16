@@ -1,6 +1,7 @@
 package certhealth
 
 import (
+	"bytes"
 	"reflect"
 	"strings"
 	"testing"
@@ -50,6 +51,10 @@ func FuzzCertAssess(f *testing.F) {
 	f.Add([]byte("-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n"), []byte{2})
 	f.Add([]byte("\x1b[2J\x1b[H"), []byte{3})
 	f.Add([]byte("\xff\xfe\xfd"), []byte{4})
+	// A tls.crt with far more PEM blocks than earliestCertificate's bound (32):
+	// exercises the bounded multi-block loop added by R98, proving it returns
+	// promptly from a pathological bundle instead of parsing every block.
+	f.Add(bytes.Repeat([]byte(seedCertPEM), 40), []byte{5})
 
 	f.Fuzz(func(t *testing.T, crt, params []byte) {
 		c := fuzzgen.New(params)

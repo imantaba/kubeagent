@@ -248,3 +248,99 @@ func TestAssess_WarnDaysBoundaryUnchanged(t *testing.T) {
 		t.Errorf("Days==warnDays+1 must be neither expired nor expiring, got expired=%+v expiring=%+v", rep.Expired, rep.Expiring)
 	}
 }
+
+// pemBundle concatenates already-PEM-encoded blocks into a single tls.crt
+// value, the way a real CA bundle interleaves a leaf certificate with one or
+// more intermediates.
+func pemBundle(blocks ...[]byte) []byte {
+	var out []byte
+	for _, b := range blocks {
+		out = append(out, b...)
+	}
+	return out
+}
+
+// TestAssess_MultiBlockSelectsEarliestExpiring pins R98: Assess parses every
+// CERTIFICATE block in tls.crt, not just the first, and reports whichever one
+// expires soonest -- regardless of block order or which block is a CA.
+func TestAssess_MultiBlockSelectsEarliestExpiring(t *testing.T) {
+	leaf := certPEM(t, "leaf.example.com", nil, now.Add(5*24*time.Hour))
+	ca := certPEM(t, "ca.example.com", nil, now.Add(400*24*time.Hour))
+
+	t.Run("leaf-first: answer unchanged", func(t *testing.T) {
+		secrets := []corev1.Secret{tlsSecret("shop", "bundle", pemBundle(leaf, ca))}
+		rep := Assess(secrets, nil, 30, now)
+		if len(rep.Expiring) != 1 || rep.Expiring[0].CommonName != "leaf.example.com" || rep.Expiring[0].Days != 5 {
+			t.Errorf("want leaf selected, got expiring=%+v expired=%+v", rep.Expiring, rep.Expired)
+		}
+	})
+
+	t.Run("CA-first: still reports the leaf's CN and date", func(t *testing.T) {
+		secrets := []corev1.Secret{tlsSecret("shop", "bundle", pemBundle(ca, leaf))}
+		rep := Assess(secrets, nil, 30, now)
+		if len(rep.Expiring) != 1 || rep.Expiring[0].CommonName != "leaf.example.com" || rep.Expiring[0].Days != 5 {
+			t.Errorf("want leaf selected regardless of block order, got expiring=%+v expired=%+v", rep.Expiring, rep.Expired)
+		}
+	})
+
+	t.Run("single block: unchanged", func(t *testing.T) {
+		secrets := []corev1.Secret{tlsSecret("shop", "single", leaf)}
+		rep := Assess(secrets, nil, 30, now)
+		if len(rep.Expiring) != 1 || rep.Expiring[0].CommonName != "leaf.example.com" {
+			t.Errorf("single-block secret must behave as before, got expiring=%+v", rep.Expiring)
+		}
+	})
+
+	t.Run("CA expires before its leaf: reports the CA", func(t *testing.T) {
+		earlyCA := certPEM(t, "early-ca.example.com", nil, now.Add(2*24*time.Hour))
+		laterLeaf := certPEM(t, "later-leaf.example.com", nil, now.Add(20*24*time.Hour))
+		secrets := []corev1.Secret{tlsSecret("shop", "bundle", pemBundle(laterLeaf, earlyCA))}
+		rep := Assess(secrets, nil, 30, now)
+		if len(rep.Expiring) != 1 || rep.Expiring[0].CommonName != "early-ca.example.com" || rep.Expiring[0].Days != 2 {
+			t.Errorf("want the earlier-expiring block reported even though it is not first, got expiring=%+v", rep.Expiring)
+		}
+	})
+
+	t.Run("bundle of only CA blocks: earliest of the CAs wins", func(t *testing.T) {
+		ca1 := certPEM(t, "ca1.example.com", nil, now.Add(10*24*time.Hour))
+		ca2 := certPEM(t, "ca2.example.com", nil, now.Add(3*24*time.Hour))
+		secrets := []corev1.Secret{tlsSecret("shop", "cas", pemBundle(ca1, ca2))}
+		rep := Assess(secrets, nil, 30, now)
+		if len(rep.Expiring) != 1 || rep.Expiring[0].CommonName != "ca2.example.com" || rep.Expiring[0].Days != 3 {
+			t.Errorf("want the earlier CA reported, got expiring=%+v", rep.Expiring)
+		}
+	})
+
+	t.Run("garbage second block: reports the first, not Invalid", func(t *testing.T) {
+		garbageBlock := []byte("-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n")
+		secrets := []corev1.Secret{tlsSecret("shop", "mixed", pemBundle(leaf, garbageBlock))}
+		rep := Assess(secrets, nil, 30, now)
+		if len(rep.Invalid) != 0 {
+			t.Fatalf("a valid first block must not become Invalid because a later block is garbage, got %+v", rep.Invalid)
+		}
+		if len(rep.Expiring) != 1 || rep.Expiring[0].CommonName != "leaf.example.com" {
+			t.Errorf("want the first (valid) block reported, got expiring=%+v", rep.Expiring)
+		}
+	})
+}
+
+// TestAssess_MultiBlockBounded pins the bound on how many PEM blocks Assess
+// parses from one tls.crt: the loop must stop at the bound (32) rather than
+// spin over a pathological bundle. A within-bound block with a near-term date
+// must be reported even though a beyond-bound block has a sooner date still.
+func TestAssess_MultiBlockBounded(t *testing.T) {
+	const bound = 32 // must match certhealth.go's maxCertBlocks
+	filler := certPEM(t, "filler.example.com", nil, now.Add(200*24*time.Hour))
+	blocks := make([][]byte, bound+5)
+	for i := range blocks {
+		blocks[i] = filler
+	}
+	blocks[bound-1] = certPEM(t, "within-bound.example.com", nil, now.Add(10*24*time.Hour))
+	blocks[bound+3] = certPEM(t, "beyond-bound.example.com", nil, now.Add(1*24*time.Hour))
+
+	secrets := []corev1.Secret{tlsSecret("shop", "huge-bundle", pemBundle(blocks...))}
+	rep := Assess(secrets, nil, 30, now)
+	if len(rep.Expiring) != 1 || rep.Expiring[0].CommonName != "within-bound.example.com" {
+		t.Errorf("want the within-bound block reported -- the loop must stop at the bound and never reach the beyond-bound block, got expiring=%+v", rep.Expiring)
+	}
+}

@@ -162,6 +162,13 @@ func runScan(o scanOptions) error {
 	if o.nodeHeartbeatThreshold < 0 {
 		return fmt.Errorf("--node-heartbeat-threshold cannot be negative (got %s; use 0 to disable the check)", o.nodeHeartbeatThreshold)
 	}
+	// Every declared expected-node name must be a real node-name shape: a
+	// name that could never match a Node object describes nothing real.
+	// cleanExpected's trim/dedup/sort runs after this, not instead of it.
+	expectedNodes := splitCSV(o.expectedNodes)
+	if err := validateExpectedNodes(expectedNodes, "--expected-nodes"); err != nil {
+		return err
+	}
 	// --explain needs Anthropic, or a local OpenAI-compatible endpoint; check before scanning.
 	explainEndpoint := os.Getenv("KUBEAGENT_EXPLAIN_ENDPOINT")
 	if o.explain && explainEndpoint == "" && os.Getenv("ANTHROPIC_API_KEY") == "" {
@@ -209,7 +216,7 @@ func runScan(o scanOptions) error {
 		DiskThreshold:           o.diskThreshold,
 		Security:                o.security,
 		NodeHeartbeatThreshold:  o.nodeHeartbeatThreshold,
-		ExpectedNodes:           splitCSV(o.expectedNodes),
+		ExpectedNodes:           expectedNodes,
 		KubeletHealth:           o.kubeletHealth,
 		ControlPlaneHealth:      o.controlPlaneHealth,
 		DNSHealth:               o.dnsHealth,

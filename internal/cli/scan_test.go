@@ -58,6 +58,20 @@ func TestRunScanRejectsDiskThresholdOutsideZeroToOne(t *testing.T) {
 	}
 }
 
+// TestRunScanRejectsAnInvalidExpectedNodeName proves runScan's --expected-nodes
+// validation runs before any cluster work, at the same point as R49 and R65's
+// validations.
+func TestRunScanRejectsAnInvalidExpectedNodeName(t *testing.T) {
+	o := scanOptions{output: "text", diskThreshold: 0.80, expectedNodes: "NODE-UPPER", kubeconfig: "/nonexistent-for-this-test"}
+	err := runScan(o)
+	if err == nil {
+		t.Fatal("want an error for an invalid --expected-nodes value, got nil")
+	}
+	if !strings.Contains(err.Error(), "--expected-nodes") {
+		t.Errorf("error %q does not name --expected-nodes", err)
+	}
+}
+
 // TestRunScanRejectsNegativeNodeHeartbeatThreshold proves the boundary sits at
 // zero, not merely that some negative value is refused: 0 keeps meaning
 // "disabled" and every positive value keeps behaving as documented.

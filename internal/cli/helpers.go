@@ -1,12 +1,16 @@
 package cli
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"k8s.io/apimachinery/pkg/util/validation"
+
+	"github.com/imantaba/kubeagent/internal/safetext"
 	"github.com/imantaba/kubeagent/internal/scan"
 )
 
@@ -105,4 +109,20 @@ func envDuration(key string, def time.Duration) time.Duration {
 		}
 	}
 	return def
+}
+
+// validateExpectedNodes rejects any declared expected-node name that is not
+// a valid DNS-1123 subdomain (lowercase letters, digits, '-' and '.') — the
+// only shape a real Kubernetes node name can have. src names where the value
+// came from (a flag or an env var) so the error tells the operator which one
+// to fix. The offending value is sanitized through safetext.Line before it
+// is quoted into the message: an untrusted declared name must never carry a
+// control character into the operator's terminal.
+func validateExpectedNodes(names []string, src string) error {
+	for _, n := range names {
+		if len(validation.IsDNS1123Subdomain(n)) > 0 {
+			return fmt.Errorf("%s: %q is not a valid node name (a node name is a DNS-1123 subdomain: lowercase letters, digits, '-' and '.')", src, safetext.Line(n))
+		}
+	}
+	return nil
 }

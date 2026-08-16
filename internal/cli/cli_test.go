@@ -123,6 +123,61 @@ func TestEnvInt_WebhookTimeoutDefault(t *testing.T) {
 	}
 }
 
+// TestValidateExpectedNodes drives the shared validator both call sites use:
+// scan's --expected-nodes flag and watch's KUBEAGENT_EXPECTED_NODES env var.
+// Six synthetic node names accept; every rejection names the source (src) so
+// the operator knows which one to fix.
+func TestValidateExpectedNodes(t *testing.T) {
+	valid := []string{"node-a", "node-b", "node-c", "node-d", "node-e", "node-f"}
+	if err := validateExpectedNodes(valid, "--expected-nodes"); err != nil {
+		t.Errorf("six valid node names rejected: %v", err)
+	}
+
+	invalid := []struct {
+		name  string
+		value string
+	}{
+		{"uppercase", "NODE-UPPER"},
+		{"interior newline", "node-a\nnode-b"},
+		{"space", "node a"},
+		{"slash", "node/a"},
+		{"254 bytes", strings.Repeat("a", 254)},
+		{"only a dash", "-"},
+	}
+	for _, tt := range invalid {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateExpectedNodes([]string{tt.value}, "--expected-nodes")
+			if err == nil {
+				t.Fatalf("value %q: want a validation error, got nil", tt.value)
+			}
+			if !strings.Contains(err.Error(), "--expected-nodes") {
+				t.Errorf("error %q does not name the source flag", err)
+			}
+			if !strings.Contains(err.Error(), "DNS-1123 subdomain") {
+				t.Errorf("error %q does not explain the required shape", err)
+			}
+		})
+	}
+
+	// The half of the fix a naive implementation drops: the sanitized echo.
+	// A control character in the declared name must not survive into the
+	// message printed to the operator's terminal.
+	err := validateExpectedNodes([]string{"node-a\nnode-b"}, "--expected-nodes")
+	if err == nil {
+		t.Fatal("want an error for a name containing a newline")
+	}
+	if strings.Contains(err.Error(), "\n") {
+		t.Errorf("error %q must not carry the newline through — safetext.Line should have folded it to a space", err)
+	}
+
+	// The source is echoed too, so the watch daemon's env-var call site names
+	// KUBEAGENT_EXPECTED_NODES, not the flag it does not have.
+	err = validateExpectedNodes([]string{"NODE-UPPER"}, "KUBEAGENT_EXPECTED_NODES")
+	if err == nil || !strings.Contains(err.Error(), "KUBEAGENT_EXPECTED_NODES") {
+		t.Errorf("error %v does not name KUBEAGENT_EXPECTED_NODES", err)
+	}
+}
+
 func TestRun_NoArgsReturnsUsage(t *testing.T) {
 	if err := Run(nil); err == nil {
 		t.Fatal("expected a usage error with no args")
@@ -1040,6 +1095,22 @@ func TestRunWatch_TinyNegativeSLOTargetIsNotLaunderedToOff(t *testing.T) {
 	}
 	if err.Error() != want {
 		t.Fatalf("error = %q, want exactly %q", err.Error(), want)
+	}
+}
+
+// TestRunWatch_RejectsAnInvalidExpectedNodeName proves runWatchOpts refuses a
+// KUBEAGENT_EXPECTED_NODES value that is not a DNS-1123 subdomain, before
+// buildTargets does any kubeconfig work — the same fail-fast point the
+// --slo-target tests above exercise through the real, unstubbed watch.Run.
+func TestRunWatch_RejectsAnInvalidExpectedNodeName(t *testing.T) {
+	t.Setenv("KUBEAGENT_EXPECTED_NODES", "NODE-UPPER")
+	kc := deadKubeconfigPath(t)
+	err := runWatchBounded(t, []string{"--kubeconfig", kc, "--metrics-addr", "127.0.0.1:0"}, 3*time.Second)
+	if err == nil {
+		t.Fatal("expected a validation error for an invalid KUBEAGENT_EXPECTED_NODES value")
+	}
+	if !strings.Contains(err.Error(), "KUBEAGENT_EXPECTED_NODES") {
+		t.Errorf("error %q does not name KUBEAGENT_EXPECTED_NODES", err)
 	}
 }
 

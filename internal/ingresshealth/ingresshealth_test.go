@@ -87,6 +87,7 @@ func TestAssess_PortNotExposed(t *testing.T) {
 
 func TestAssess_HealthyRouteNoIssue(t *testing.T) {
 	svcs := []corev1.Service{svc("shop", "api", 80)}
+	svcs[0].Spec.Selector = map[string]string{"app": "api"} // selector-based: R53 silences selectorless Services
 	slices := []discoveryv1.EndpointSlice{sliceFor("shop", "api", 2)}
 	got := Assess([]networkingv1.Ingress{ing("shop", "web", "x.io", "/api", "api", 80)}, svcs, slices, nil, nil, nil)
 	if len(got) != 0 {
@@ -95,7 +96,8 @@ func TestAssess_HealthyRouteNoIssue(t *testing.T) {
 }
 
 func TestAssess_NamedPortMatch(t *testing.T) {
-	s := corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "api"}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Name: "http", Port: 80}}}}
+	// selector-based: R53 silences selectorless Services
+	s := corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "api"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "api"}, Ports: []corev1.ServicePort{{Name: "http", Port: 80}}}}
 	slices := []discoveryv1.EndpointSlice{sliceFor("shop", "api", 1)}
 	in := networkingv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web"},
@@ -143,6 +145,7 @@ func TestAssess_ResourceBackendSkipped(t *testing.T) {
 // the Service is otherwise healthy. ing(...,0) yields a zero-value backend port.
 func TestAssess_NoPortBackend_NotPortNotExposed(t *testing.T) {
 	svcs := []corev1.Service{svc("shop", "api", 80)}
+	svcs[0].Spec.Selector = map[string]string{"app": "api"} // selector-based: R53 silences selectorless Services
 	slices := []discoveryv1.EndpointSlice{sliceFor("shop", "api", 1)}
 	got := Assess([]networkingv1.Ingress{ing("shop", "web", "x.io", "/", "api", 0)}, svcs, slices, nil, nil, nil)
 	if len(got) != 0 {

@@ -150,7 +150,10 @@ func modeList(c corev1.PersistentVolumeClaim) string {
 }
 
 // newestFailureEvent returns the most recent ProvisioningFailed/FailedBinding event
-// (by LastTimestamp) for the named PVC, or nil.
+// (by LastTimestamp) for the named PVC, or nil. A failure event the controller has
+// since spoken past — any strictly newer event on the same PVC, regardless of
+// reason — is history rather than a live diagnosis, so it is not returned either.
+// A tie (equal LastTimestamp) does not supersede: only a strictly newer event does.
 func newestFailureEvent(events []corev1.Event, namespace, name string) *corev1.Event {
 	var best *corev1.Event
 	for i := range events {
@@ -164,6 +167,19 @@ func newestFailureEvent(events []corev1.Event, namespace, name string) *corev1.E
 		}
 		if best == nil || e.LastTimestamp.After(best.LastTimestamp.Time) {
 			best = e
+		}
+	}
+	if best == nil {
+		return nil
+	}
+	for i := range events {
+		e := &events[i]
+		if e.InvolvedObject.Kind != "PersistentVolumeClaim" ||
+			e.InvolvedObject.Namespace != namespace || e.InvolvedObject.Name != name {
+			continue
+		}
+		if e.LastTimestamp.After(best.LastTimestamp.Time) {
+			return nil
 		}
 	}
 	return best

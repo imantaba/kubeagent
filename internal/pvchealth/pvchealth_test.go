@@ -129,6 +129,67 @@ func TestAssess_NewestEventWins(t *testing.T) {
 	}
 }
 
+// R57: a failure event the controller has since spoken past — any strictly
+// newer event on the same PVC, regardless of reason — is history, not a
+// diagnosis, and must not be reported.
+func TestNewestFailureEvent_SupersededByLaterEventOfAnyReason(t *testing.T) {
+	failure := pvcEvent("shop", "nodefault-pvc", "FailedBinding", "no persistent volumes available for this claim and no storage class is set")
+	failure.LastTimestamp = metav1.NewTime(time.Unix(1000, 0))
+	later := pvcEvent("shop", "nodefault-pvc", "WaitForFirstConsumer", "waiting for first consumer to be created before binding")
+	later.LastTimestamp = metav1.NewTime(time.Unix(2000, 0))
+	got := newestFailureEvent([]corev1.Event{failure, later}, "shop", "nodefault-pvc")
+	if got != nil {
+		t.Fatalf("a failure event superseded by a strictly newer event of any reason must not be returned, got %+v", got)
+	}
+}
+
+func TestNewestFailureEvent_AloneStillFlagged(t *testing.T) {
+	failure := pvcEvent("shop", "data-pvc", "FailedBinding", "no persistent volumes available for this claim and no storage class is set")
+	got := newestFailureEvent([]corev1.Event{failure}, "shop", "data-pvc")
+	if got == nil || got.Reason != "FailedBinding" {
+		t.Fatalf("a lone failure event must still be flagged, got %+v", got)
+	}
+}
+
+func TestNewestFailureEvent_FailureNewerThanNonFailureStillFlagged(t *testing.T) {
+	earlier := pvcEvent("shop", "data-pvc", "WaitForFirstConsumer", "waiting for first consumer to be created before binding")
+	earlier.LastTimestamp = metav1.NewTime(time.Unix(1000, 0))
+	failure := pvcEvent("shop", "data-pvc", "FailedBinding", "no persistent volumes available for this claim and no storage class is set")
+	failure.LastTimestamp = metav1.NewTime(time.Unix(2000, 0))
+	got := newestFailureEvent([]corev1.Event{earlier, failure}, "shop", "data-pvc")
+	if got == nil || got.Reason != "FailedBinding" {
+		t.Fatalf("a failure event strictly newer than a non-failure event must still be flagged, got %+v", got)
+	}
+}
+
+func TestNewestFailureEvent_SameTimestampTieStillFlagged(t *testing.T) {
+	ts := metav1.NewTime(time.Unix(1000, 0))
+	failure := pvcEvent("shop", "data-pvc", "FailedBinding", "no persistent volumes available for this claim and no storage class is set")
+	failure.LastTimestamp = ts
+	normal := pvcEvent("shop", "data-pvc", "WaitForFirstConsumer", "waiting for first consumer to be created before binding")
+	normal.LastTimestamp = ts
+	got := newestFailureEvent([]corev1.Event{failure, normal}, "shop", "data-pvc")
+	if got == nil || got.Reason != "FailedBinding" {
+		t.Fatalf("a failure and a non-failure sharing one LastTimestamp must not silence the failure (strictly newer, not newer-or-equal), got %+v", got)
+	}
+}
+
+// TestAssess_FailureEventSupersededByLaterEvent_NoIssue exercises R57 through
+// the public Assess entry point, mirroring this scenario's nodefault-pvc: a
+// named StorageClass that exists (bypassing structuralCause) whose newest
+// admitted failure event has been superseded by a later event of any reason.
+func TestAssess_FailureEventSupersededByLaterEvent_NoIssue(t *testing.T) {
+	pvc := pendingPVC("shop", "nodefault-pvc", "fast")
+	failure := pvcEvent("shop", "nodefault-pvc", "FailedBinding", "no persistent volumes available for this claim and no storage class is set")
+	failure.LastTimestamp = metav1.NewTime(time.Unix(1000, 0))
+	later := pvcEvent("shop", "nodefault-pvc", "WaitForFirstConsumer", "waiting for first consumer to be created before binding")
+	later.LastTimestamp = metav1.NewTime(time.Unix(2000, 0))
+	scs := []storagev1.StorageClass{scClass("fast")}
+	if got := Assess([]corev1.PersistentVolumeClaim{pvc}, []corev1.Event{failure, later}, scs, nil); len(got) != 0 {
+		t.Fatalf("a failure event the controller has spoken past must not be reported, got %+v", got)
+	}
+}
+
 func scClass(name string) storagev1.StorageClass {
 	return storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: name}}
 }

@@ -620,9 +620,10 @@ CoreDNS-pod health check misses entirely.
 
 The check fires when the ratio of SERVFAIL + REFUSED responses to total responses
 is at or above **5%** (the default; set `KUBEAGENT_DNS_SERVFAIL_RATIO` to tune)
-over a minimum floor of **100 responses**. Below the floor the ratio is too
-noisy to be actionable and is skipped. Findings are aggregated across all CoreDNS
-pods so a single ratio and count appear in the output.
+over a minimum floor of **100 responses**. `KUBEAGENT_DNS_SERVFAIL_RATIO` takes
+a fraction in `(0, 1]`, so the default `0.05` is 5%. Below the floor the ratio is
+too noisy to be actionable and is skipped. Findings are aggregated across all
+CoreDNS pods so a single ratio and count appear in the output.
 
 It is **opt-in**: off by default because it requires the `pods/proxy` subresource
 — a broader grant than kubeagent's usual `get`/`list`/`watch`. Enable the add-on

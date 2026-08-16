@@ -7,7 +7,9 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 
@@ -49,14 +51,32 @@ func tlsSecret(ns, name string, crt []byte) corev1.Secret {
 	}
 }
 
+// ingTLS builds an Ingress where the rule's host and the TLS entry's host
+// match, the common real-world shape (cert-manager and most operators set
+// both to the same value).
 func ingTLS(ns, name, host, secretName string) networkingv1.Ingress {
 	return networkingv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name},
 		Spec: networkingv1.IngressSpec{
-			TLS:   []networkingv1.IngressTLS{{SecretName: secretName}},
+			TLS:   []networkingv1.IngressTLS{{SecretName: secretName, Hosts: []string{host}}},
 			Rules: []networkingv1.IngressRule{{Host: host}},
 		},
 	}
+}
+
+// ingressTLS builds an Ingress with independent control over the TLS entry's
+// hosts and the rule's host, for tests that need them to disagree.
+func ingressTLS(ns, name, secretName string, tlsHosts []string, ruleHost string) networkingv1.Ingress {
+	ing := networkingv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name},
+		Spec: networkingv1.IngressSpec{
+			TLS: []networkingv1.IngressTLS{{SecretName: secretName, Hosts: tlsHosts}},
+		},
+	}
+	if ruleHost != "" {
+		ing.Spec.Rules = []networkingv1.IngressRule{{Host: ruleHost}}
+	}
+	return ing
 }
 
 func TestAssess_ExpiredAndExpiringAndHealthy(t *testing.T) {
@@ -342,5 +362,115 @@ func TestAssess_MultiBlockBounded(t *testing.T) {
 	rep := Assess(secrets, nil, 30, now)
 	if len(rep.Expiring) != 1 || rep.Expiring[0].CommonName != "within-bound.example.com" {
 		t.Errorf("want the within-bound block reported -- the loop must stop at the bound and never reach the beyond-bound block, got expiring=%+v", rep.Expiring)
+	}
+}
+
+// TestIngressFronts_TwoHostEntry pins R99: the label is built from the
+// IngressTLS entry's own Hosts, not spec.rules[0].host.
+func TestIngressFronts_TwoHostEntry(t *testing.T) {
+	out := ingressFronts([]networkingv1.Ingress{
+		ingressTLS("shop", "storefront", "shop-tls", []string{"a.example.com", "b.example.com"}, ""),
+	})
+	got := out["shop/shop-tls"]
+	want := "shop/storefront (a.example.com, b.example.com)"
+	if len(got) != 1 || got[0] != want {
+		t.Errorf("got %v, want %q", got, want)
+	}
+}
+
+func TestIngressFronts_ZeroHostEntryRendersBare(t *testing.T) {
+	out := ingressFronts([]networkingv1.Ingress{
+		ingressTLS("shop", "storefront", "shop-tls", nil, ""),
+	})
+	got := out["shop/shop-tls"]
+	want := "shop/storefront"
+	if len(got) != 1 || got[0] != want {
+		t.Errorf("got %v, want %q (bare, no parens)", got, want)
+	}
+}
+
+func TestIngressFronts_TwoIngressesFrontOneSecret(t *testing.T) {
+	out := ingressFronts([]networkingv1.Ingress{
+		ingressTLS("shop", "storefront", "shop-tls", []string{"a.example.com"}, ""),
+		ingressTLS("shop", "admin", "shop-tls", []string{"admin.example.com"}, ""),
+	})
+	got := out["shop/shop-tls"]
+	if len(got) != 2 {
+		t.Fatalf("want both Ingresses listed, got %v", got)
+	}
+}
+
+func TestIngressFronts_SameNamedSecretInAnotherNamespaceAbsent(t *testing.T) {
+	out := ingressFronts([]networkingv1.Ingress{
+		ingressTLS("other", "elsewhere", "shop-tls", []string{"x.example.com"}, ""),
+	})
+	if got := out["shop/shop-tls"]; len(got) != 0 {
+		t.Errorf("a same-named secret in another namespace must not match, got %v", got)
+	}
+}
+
+// TestIngressFronts_HostControlCharacterSanitized pins that spec.tls[].hosts
+// -- a field the API server does not deeply validate -- passes through
+// safetext.Line at this ingress point, not at the renderer.
+func TestIngressFronts_HostControlCharacterSanitized(t *testing.T) {
+	out := ingressFronts([]networkingv1.Ingress{
+		ingressTLS("shop", "storefront", "shop-tls", []string{"a\x1b[2Jexample.com"}, ""),
+	})
+	got := out["shop/shop-tls"]
+	if len(got) != 1 || strings.ContainsRune(got[0], 0x1b) {
+		t.Errorf("host must be sanitized, got %q", got)
+	}
+}
+
+// TestIngressFronts_HostSourceIsTheTLSEntryNotTheRule pins the two
+// direction changes R99 accepts: an Ingress can now gain hosts it never had
+// before (no spec.rules, but spec.tls[].hosts set), and can now render bare
+// where it used to borrow a rule's host that the certificate may not cover
+// (spec.rules present, spec.tls[].hosts empty).
+func TestIngressFronts_HostSourceIsTheTLSEntryNotTheRule(t *testing.T) {
+	t.Run("no rules but tls hosts set: gains its hosts", func(t *testing.T) {
+		out := ingressFronts([]networkingv1.Ingress{
+			ingressTLS("shop", "storefront", "shop-tls", []string{"a.example.com"}, ""),
+		})
+		got := out["shop/shop-tls"]
+		want := "shop/storefront (a.example.com)"
+		if len(got) != 1 || got[0] != want {
+			t.Errorf("got %v, want %q", got, want)
+		}
+	})
+
+	t.Run("rules present but tls hosts empty: renders bare", func(t *testing.T) {
+		out := ingressFronts([]networkingv1.Ingress{
+			ingressTLS("shop", "storefront", "shop-tls", nil, "rule-only.example.com"),
+		})
+		got := out["shop/shop-tls"]
+		want := "shop/storefront"
+		if len(got) != 1 || got[0] != want {
+			t.Errorf("got %v, want %q (bare, ignoring the rule's host)", got, want)
+		}
+	})
+}
+
+// TestIngressFronts_HostListBounded pins the length bound on the joined host
+// list: a many-host IngressTLS entry cannot produce an unbounded line.
+func TestIngressFronts_HostListBounded(t *testing.T) {
+	hosts := make([]string, 8) // exceeds the bound (5)
+	for i := range hosts {
+		hosts[i] = fmt.Sprintf("h%d.example.com", i)
+	}
+	out := ingressFronts([]networkingv1.Ingress{
+		ingressTLS("shop", "storefront", "shop-tls", hosts, ""),
+	})
+	got := out["shop/shop-tls"]
+	if len(got) != 1 {
+		t.Fatalf("got %v", got)
+	}
+	if !strings.Contains(got[0], "+3 more") {
+		t.Errorf("want overflow marked '+3 more' for 8 hosts over a bound of 5, got %q", got[0])
+	}
+	for i := 5; i < 8; i++ {
+		if strings.Contains(got[0], hosts[i]) {
+			t.Errorf("host %d must not appear individually beyond the bound, got %q", i, got[0])
+		}
 	}
 }

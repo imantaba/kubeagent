@@ -10,8 +10,10 @@ package certhealth
 import (
 	"crypto/x509"
 	"encoding/pem"
+	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -164,18 +166,51 @@ func sortCerts(cs []Cert) {
 	})
 }
 
-// ingressFronts maps "ns/secretName" to the sorted "ns/ingName (host)" routes
-// referencing it via spec.tls (same-namespace by definition of Ingress TLS).
+// maxIngressHosts bounds how many hosts ingressFronts joins into one label.
+// A real Ingress fronts a handful of hostnames; the bound exists so a
+// spec.tls[].hosts list of many entries cannot produce an unbounded report
+// line.
+const maxIngressHosts = 5
+
+// boundedHosts sanitizes and joins up to maxIngressHosts of hosts, appending
+// an overflow marker for the remainder. Returns "" for an empty list.
+// spec.tls[].hosts is a field the API server does not deeply validate, so
+// each host is sanitized here, at the point it enters a kubeagent value —
+// not later, at the renderer.
+func boundedHosts(hosts []string) string {
+	if len(hosts) == 0 {
+		return ""
+	}
+	n := len(hosts)
+	if n > maxIngressHosts {
+		n = maxIngressHosts
+	}
+	parts := make([]string, 0, n+1)
+	for _, h := range hosts[:n] {
+		parts = append(parts, safetext.Line(h))
+	}
+	if len(hosts) > maxIngressHosts {
+		parts = append(parts, fmt.Sprintf("+%d more", len(hosts)-maxIngressHosts))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// ingressFronts maps "ns/secretName" to the sorted "ns/ingName (host1, host2,
+// …)" routes referencing it via spec.tls (same-namespace by definition of
+// Ingress TLS). The host list comes from the IngressTLS entry itself
+// (spec.tls[].hosts) rather than spec.rules[0] -- the entry may cover hosts
+// no rule names, or none at all, and spec.rules[0].host may name a host the
+// certificate does not cover.
 func ingressFronts(ings []networkingv1.Ingress) map[string][]string {
 	out := map[string][]string{}
 	for _, ing := range ings {
-		label := ing.Namespace + "/" + ing.Name
-		if len(ing.Spec.Rules) > 0 && ing.Spec.Rules[0].Host != "" {
-			label += " (" + ing.Spec.Rules[0].Host + ")"
-		}
 		for _, t := range ing.Spec.TLS {
 			if t.SecretName == "" {
 				continue
+			}
+			label := ing.Namespace + "/" + ing.Name
+			if hosts := boundedHosts(t.Hosts); hosts != "" {
+				label += " (" + hosts + ")"
 			}
 			key := ing.Namespace + "/" + t.SecretName
 			out[key] = append(out[key], label)

@@ -86,7 +86,10 @@ func describeCmd(ns, pod string) string {
 // A RolloutStuck finding names a Deployment, a StatefulSet or a DaemonSet, and a
 // Finding carries no kind — so `describe <kind> <name>` cannot be built without
 // guessing one, and the guess would be wrong two times in three. An event is
-// addressable by name alone, so this command is correct whichever kind fired.
+// addressable by name alone, so this command resolves whichever kind fired.
+// It is addressable, not explanatory: a controller records few events of its
+// own, and a stall is usually visible on its ReplicaSet's or its pods' events
+// instead. The suggestion text says "pods and its events" for that reason.
 func objectEventsCmd(ns, name string) string {
 	return fmt.Sprintf("kubectl -n %s get events --field-selector involvedObject.name=%s", ns, name)
 }

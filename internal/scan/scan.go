@@ -607,6 +607,10 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	var kubeletHealth nodehealth.Report // 22
 	if opts.KubeletHealth {
 		kubeletHealth = nodehealth.Assess(probes)
+		// NOTE: the blind spot fires on any refusal while report.printKubeletHealth
+		// prints its grant hint only when every probe was refused. nodes/proxy is
+		// cluster-scoped, so a partial refusal has not been observed; if one ever is,
+		// gate both on Forbidden > 0 and say how many nodes were refused.
 		if kubeletHealth.Forbidden > 0 {
 			blind("nodes/proxy", "get nodes/proxy")
 		}

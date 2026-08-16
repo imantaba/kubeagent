@@ -170,6 +170,12 @@ func runScan(o scanOptions) error {
 	if err := validateExpectedNodes(o.expectedNodes, "--expected-nodes"); err != nil {
 		return err
 	}
+	// --security-verbose only changes how a security finding is rendered; with
+	// no --security there is no security section for it to change, so the flag
+	// on its own is a mistake worth naming rather than a silent no-op.
+	if o.securityVerbose && !o.security {
+		return fmt.Errorf("--security-verbose requires --security")
+	}
 	// --explain needs Anthropic, or a local OpenAI-compatible endpoint; check before scanning.
 	explainEndpoint := os.Getenv("KUBEAGENT_EXPLAIN_ENDPOINT")
 	if o.explain && explainEndpoint == "" && os.Getenv("ANTHROPIC_API_KEY") == "" {

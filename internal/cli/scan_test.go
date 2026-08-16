@@ -130,6 +130,34 @@ func dedupSorted(in []string) []string {
 	return out
 }
 
+// TestRunScanSecurityVerboseRequiresSecurity proves --security-verbose
+// without --security is refused before any cluster work, at the same point
+// as the other flag-shape validations. The three other combinations must
+// clear this check and instead surface cluster.NewClient's dead-kubeconfig
+// error, proving the check does not fire when the flags are used as
+// documented.
+func TestRunScanSecurityVerboseRequiresSecurity(t *testing.T) {
+	tests := []struct {
+		name            string
+		security        bool
+		securityVerbose bool
+		wantErr         bool
+	}{
+		{"verbose alone", false, true, true},
+		{"security alone", true, false, false},
+		{"both", true, true, false},
+		{"neither", false, false, false},
+	}
+	for _, tt := range tests {
+		o := scanOptions{output: "text", diskThreshold: 0.80, security: tt.security, securityVerbose: tt.securityVerbose, kubeconfig: "/nonexistent-for-this-test"}
+		err := runScan(o)
+		rejected := err != nil && err.Error() == "--security-verbose requires --security"
+		if rejected != tt.wantErr {
+			t.Errorf("%s: err=%v, want rejected=%v", tt.name, err, tt.wantErr)
+		}
+	}
+}
+
 // TestRunScanRejectsNegativeNodeHeartbeatThreshold proves the boundary sits at
 // zero, not merely that some negative value is refused: 0 keeps meaning
 // "disabled" and every positive value keeps behaving as documented.

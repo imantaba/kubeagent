@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 
 	admissionv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
@@ -584,6 +585,7 @@ func TestHealthzDetail(t *testing.T) {
 		{"no failed line, json status body", `{"status":"failure","reason":"kubelet stopped"}`, 120, ""},
 		{"empty body", "", 120, ""},
 		{"failed line longer than max is truncated", "[-]" + strings.Repeat("x", 130), 120, "[-]" + strings.Repeat("x", 117) + "…"},
+		{"forged [-] prefix split by a control character is not matched", "[\x00-]syncloop failed", 120, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -592,6 +594,27 @@ func TestHealthzDetail(t *testing.T) {
 				t.Errorf("healthzDetail(%q, %d) = %q, want %q", c.body, c.max, got, c.want)
 			}
 		})
+	}
+}
+
+// TestHealthzDetail_Sanitizes pins R75: the "[-]" prefix match runs on the
+// raw kubelet body — the forged-prefix case above proves that half — and the
+// value healthzDetail returns is sanitized clean of control characters and
+// escape bytes before it ever reaches the operator's terminal.
+func TestHealthzDetail_Sanitizes(t *testing.T) {
+	body := "[-]pleg failed\r\x1b[2K[-]forged different message"
+	got := healthzDetail([]byte(body), 120)
+	want := "[-]pleg failed [2K[-]forged different message"
+	if got != want {
+		t.Fatalf("healthzDetail(%q, 120) = %q, want %q", body, got, want)
+	}
+	for _, r := range got {
+		if unicode.IsControl(r) {
+			t.Errorf("healthzDetail(%q, 120) = %q contains control rune %U", body, got, r)
+		}
+	}
+	if strings.ContainsRune(got, '\x1b') {
+		t.Errorf("healthzDetail(%q, 120) = %q contains an ANSI escape byte", body, got)
 	}
 }
 

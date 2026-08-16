@@ -25,6 +25,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/diskusage"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/nodehealth"
+	"github.com/imantaba/kubeagent/internal/safetext"
 )
 
 // Pods lists pods in the given namespace (or all namespaces when empty).
@@ -611,15 +612,18 @@ func classify(node string, code int, body []byte) nodehealth.Probe {
 }
 
 // healthzDetail returns the first failed-check line ("[-]…") from a kubelet
-// /healthz body, trimmed and truncated to max runes, or "" when the body
-// carries no such line — an unparsed body is not a diagnosis, and the row
-// still degrades gracefully: printKubeletHealth omits the detail suffix
-// entirely when Detail is empty.
+// /healthz body, trimmed, truncated to max runes and sanitized through
+// safetext.Line, or "" when the body carries no such line — an unparsed body
+// is not a diagnosis, and the row still degrades gracefully:
+// printKubeletHealth omits the detail suffix entirely when Detail is empty.
+// The "[-]" prefix test runs on the raw, unsanitized line: only the returned
+// value passes through safetext.Line, so a control character spliced into a
+// forged prefix cannot be sanitized away and then match.
 func healthzDetail(body []byte, max int) string {
 	for _, ln := range strings.Split(string(body), "\n") {
 		ln = strings.TrimSpace(ln)
 		if strings.HasPrefix(ln, "[-]") {
-			return truncateRunes(ln, max)
+			return safetext.Line(truncateRunes(ln, max))
 		}
 	}
 	return ""

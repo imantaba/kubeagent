@@ -35,6 +35,15 @@ func TestAnnotate_StaleHeartbeatReason(t *testing.T) {
 	}
 }
 
+func TestAnnotate_NoKubeletLeaseReason(t *testing.T) {
+	ws := []inventory.Workload{wl("shop", "web", 0, 1, "worker-1")}
+	down := []clusterhealth.DownNode{{Name: "worker-1", Reason: "no kubelet lease"}}
+	Annotate(ws, down)
+	if ws[0].RootCause != "node worker-1 (no kubelet lease)" {
+		t.Errorf("RootCause = %q", ws[0].RootCause)
+	}
+}
+
 func TestAnnotate_HealthyNodeNoAttribution(t *testing.T) {
 	ws := []inventory.Workload{wl("shop", "api", 0, 2, "worker-9")} // not in down
 	Annotate(ws, []clusterhealth.DownNode{{Name: "worker-2", Reason: "NotReady"}})

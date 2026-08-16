@@ -549,10 +549,14 @@ control plane only marks a node `NotReady` after ~40 seconds of missed renewals.
 `scan` reads those Leases and flags a node that still reads **Ready** but whose
 lease has gone stale — `✗ node worker-2 kubelet not heartbeating (lease 48s
 stale)` — so a crashed, hung, or partitioned kubelet shows up *before* the node
-flips to `NotReady`. It degrades the cluster verdict, and the threshold is
-tunable with `--node-heartbeat-threshold` (default `40s`; `0` disables it).
-Compares against the scanner's clock, so run it in-cluster (the watch daemon) or
-on a clock-synced host. The count of flagged nodes is also exposed in JSON as `nodesStaleHeartbeat`.
+flips to `NotReady`. A node with no Lease at all (or one whose lease has never
+been renewed) is flagged the same way, rendered `✗ node worker-2 no kubelet
+lease` — that rendering does not consult the threshold, since there is no
+renewal timestamp to measure staleness against. It degrades the cluster verdict, and
+the threshold is tunable with `--node-heartbeat-threshold` (default `40s`;
+`0` disables it). Compares against the scanner's clock, so run it in-cluster
+(the watch daemon) or on a clock-synced host. The count of flagged nodes is
+also exposed in JSON as `nodesStaleHeartbeat`.
 
 ### Expected-node list
 

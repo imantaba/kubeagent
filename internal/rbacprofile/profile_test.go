@@ -92,6 +92,23 @@ func TestSecuritySummaryNamesCategories(t *testing.T) {
 	}
 }
 
+// --investigate makes a model call but reads nothing beyond what core
+// already grants. The row exists so an operator can see that cost is zero
+// before enabling a model path against production, not because the feature
+// needs a grant.
+func TestInvestigateFeatureNeedsNoGrant(t *testing.T) {
+	f, ok := Lookup("investigate")
+	if !ok {
+		t.Fatal("no investigate feature in the table")
+	}
+	if f.Flag != "--investigate" {
+		t.Errorf("investigate Flag = %q, want --investigate", f.Flag)
+	}
+	if len(f.Rules) != 0 {
+		t.Errorf("investigate declares %d rules; it needs no grant beyond core", len(f.Rules))
+	}
+}
+
 // Where a feature's grant lives is not a comment, it is data: either the feature
 // ships its own manifest, or another feature's manifest already covers it.
 func TestEveryGrantHasExactlyOneHome(t *testing.T) {

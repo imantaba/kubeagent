@@ -635,7 +635,7 @@ func TestPrintInventory_TextShowsNodeReservations(t *testing.T) {
 	out := buf.String()
 	// Warning node named in NOTES zone.
 	notes := strings.Index(out, "NOTES")
-	if notes < 0 || !strings.Contains(out, "reserve no memory") || !strings.Contains(out, "w1") {
+	if notes < 0 || !strings.Contains(out, "reserves no memory") || !strings.Contains(out, "w1") {
 		t.Errorf("expected NOTES warning naming w1 in:\n%s", out)
 	}
 	// CONTEXT shows the per-resource reservation block.
@@ -802,11 +802,41 @@ func TestPrintInventory_NodeReservationsWarningIsNote(t *testing.T) {
 	}
 	out := buf.String()
 	notes := strings.Index(out, "NOTES")
-	if notes < 0 || !strings.Contains(out, "reserve no memory") || !strings.Contains(out, "bad") {
+	if notes < 0 || !strings.Contains(out, "reserves no memory") || !strings.Contains(out, "bad") {
 		t.Errorf("expected a NOTES warning naming the bad node:\n%s", out)
 	}
 	if !strings.Contains(out, "memory pressure can destabilize the node") {
 		t.Errorf("expected the memory consequence line in:\n%s", out)
+	}
+}
+
+func TestPrintInventory_ReservationsSingularMemoryBulletAgreesInNumber(t *testing.T) {
+	var buf bytes.Buffer
+	rep := &nodereserve.Report{WarnCount: 1, Nodes: []nodereserve.NodeReservation{
+		{Name: "solo", CPUReserved: "0", MemReserved: "0", Warning: true},
+	}}
+	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1}, NodeReserve: rep}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "1 node reserves no memory") {
+		t.Errorf("expected singular verb agreement 'reserves' in:\n%s", out)
+	}
+}
+
+func TestPrintInventory_ReservationsSingularEphemeralBulletAgreesInNumber(t *testing.T) {
+	var buf bytes.Buffer
+	rep := &nodereserve.Report{EphemeralNone: 1, EphemeralReporting: 1, Nodes: []nodereserve.NodeReservation{
+		{Name: "solo", CPUReserved: "200m", MemReserved: "1Gi", EphemeralReserved: "0", NoEphemeral: true},
+	}}
+	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1}, NodeReserve: rep}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "1 node reserves no ephemeral-storage") {
+		t.Errorf("expected singular verb agreement 'reserves' in:\n%s", out)
 	}
 }
 
@@ -1514,7 +1544,7 @@ func TestPrintInventory_NoEphemeralWarnsAndContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "reserve no ephemeral-storage: diskless") || !strings.Contains(out, "disk pressure can destabilize the node") {
+	if !strings.Contains(out, "reserves no ephemeral-storage: diskless") || !strings.Contains(out, "disk pressure can destabilize the node") {
 		t.Errorf("expected ephemeral NOTES warning naming diskless in:\n%s", out)
 	}
 	// WarnCount==0 here, so memory reads "all ... reserve some"; the

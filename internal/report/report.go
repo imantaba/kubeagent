@@ -547,7 +547,7 @@ func printNotes(in Input, expected []svchealth.Issue, expectedIng []ingresshealt
 					names = append(names, r.Name)
 				}
 			}
-			fmt.Fprintf(&b, "  • %d %s reserve no memory: %s\n", n.WarnCount, plural(n.WarnCount, "node", "nodes"), strings.Join(names, ", "))
+			fmt.Fprintf(&b, "  • %d %s no memory: %s\n", n.WarnCount, plural(n.WarnCount, "node reserves", "nodes reserve"), strings.Join(names, ", "))
 			fmt.Fprintln(&b, "      — OS/kubelet memory pressure can destabilize the node")
 		}
 		if n.EphemeralNone > 0 {
@@ -557,7 +557,7 @@ func printNotes(in Input, expected []svchealth.Issue, expectedIng []ingresshealt
 					names = append(names, r.Name)
 				}
 			}
-			fmt.Fprintf(&b, "  • %d %s reserve no ephemeral-storage: %s\n", n.EphemeralNone, plural(n.EphemeralNone, "node", "nodes"), strings.Join(names, ", "))
+			fmt.Fprintf(&b, "  • %d %s no ephemeral-storage: %s\n", n.EphemeralNone, plural(n.EphemeralNone, "node reserves", "nodes reserve"), strings.Join(names, ", "))
 			fmt.Fprintln(&b, "      — disk pressure can destabilize the node")
 		}
 	}

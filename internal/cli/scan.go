@@ -235,7 +235,7 @@ func runScan(o scanOptions) error {
 		KubeletHealth:           o.kubeletHealth,
 		ControlPlaneHealth:      o.controlPlaneHealth,
 		DNSHealth:               o.dnsHealth,
-		DNSServfailRatio:        envFloat("KUBEAGENT_DNS_SERVFAIL_RATIO", 0.05),
+		DNSServfailRatio:        dnsRatioFromEnv(os.Stderr),
 		Certs:                   o.certs,
 		CertWarnDays:            o.certWarnDays,
 		Logs:                    o.logs,

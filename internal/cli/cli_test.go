@@ -3109,3 +3109,76 @@ func TestQuotaThresholdFromEnv(t *testing.T) {
 		})
 	}
 }
+
+// An operator who writes KUBEAGENT_DNS_SERVFAIL_RATIO=50 means "warn me at
+// 50%". The value is not a fraction, so the check runs at the 0.05 default —
+// and used to say nothing at all, so the operator believed they had changed
+// the ratio. A parsed value of exactly 1 is different: it is a legitimate
+// threshold — the check then fires only when every response failed — so it
+// is honored rather than clamped, but it is also what an operator who meant
+// "100%" and an operator who meant "1%" would both type, so it still warns.
+func TestDNSRatioFromEnv(t *testing.T) {
+	const def = 0.05
+	cases := []struct {
+		name    string
+		set     bool
+		value   string
+		want    float64
+		wantMsg bool
+	}{
+		{name: "unset", want: def},
+		{name: "set but empty", set: true, value: "", want: def},
+		{name: "valid fraction", set: true, value: "0.24", want: 0.24},
+		{name: "another valid fraction", set: true, value: "0.25", want: 0.25},
+		{name: "exactly one is honored but warns", set: true, value: "1", want: 1.0, wantMsg: true},
+		{name: "percentage", set: true, value: "50", want: def, wantMsg: true},
+		{name: "unparseable", set: true, value: "abc", want: def, wantMsg: true},
+		{name: "zero", set: true, value: "0", want: def, wantMsg: true},
+		{name: "negative", set: true, value: "-0.1", want: def, wantMsg: true},
+		{name: "above one", set: true, value: "1.5", want: def, wantMsg: true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if c.set {
+				t.Setenv("KUBEAGENT_DNS_SERVFAIL_RATIO", c.value)
+			} else {
+				os.Unsetenv("KUBEAGENT_DNS_SERVFAIL_RATIO")
+			}
+			var buf bytes.Buffer
+			got := dnsRatioFromEnv(&buf)
+			if got != c.want {
+				t.Errorf("ratio = %v, want %v", got, c.want)
+			}
+			msg := buf.String()
+			switch {
+			case c.wantMsg && strings.Count(msg, "\n") != 1:
+				t.Fatalf("want exactly one warning line, got %q", msg)
+			case c.wantMsg && c.want == def:
+				// A rejected value falls back to the default; the warning
+				// names both the rejected value and what is used instead.
+				for _, want := range []string{"KUBEAGENT_DNS_SERVFAIL_RATIO", strconv.Quote(c.value), "0.05"} {
+					if !strings.Contains(msg, want) {
+						t.Errorf("warning %q does not name %s", msg, want)
+					}
+				}
+			case c.wantMsg:
+				// The "exactly one" row: honored, not rejected, so the
+				// warning must not use the rejection wording — an
+				// implementation that clamps this value silently and warns
+				// with the generic rejection message would still make this
+				// row's got == c.want check pass, which is why the value
+				// and the warning are both asserted here.
+				for _, want := range []string{"KUBEAGENT_DNS_SERVFAIL_RATIO", strconv.Quote(c.value)} {
+					if !strings.Contains(msg, want) {
+						t.Errorf("warning %q does not name %s", msg, want)
+					}
+				}
+				if strings.Contains(msg, "not a fraction") {
+					t.Errorf("warning %q uses the rejection wording for a value that was honored", msg)
+				}
+			case msg != "":
+				t.Errorf("want no warning, got %q", msg)
+			}
+		})
+	}
+}

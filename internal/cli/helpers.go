@@ -91,6 +91,40 @@ func quotaThresholdFromEnv(w io.Writer) float64 {
 	return scan.DefaultQuotaThreshold
 }
 
+// dnsRatioFromEnv reads KUBEAGENT_DNS_SERVFAIL_RATIO as a fraction in (0, 1],
+// falling back to 0.05.
+//
+// Unlike envFloat, it does not fall back silently. "50" is a plausible thing
+// to write for "warn me at 50%", parses as a float, and is not a fraction —
+// so the check ran at the default while the operator believed they had
+// changed the ratio. One line on w says what was ignored and what is being
+// used instead. A set-but-empty value is left alone: os.Getenv cannot tell it
+// from unset, and warning on it would fire for an ordinary trailing
+// "KUBEAGENT_DNS_SERVFAIL_RATIO=" in a shell profile.
+//
+// A parsed value of exactly 1 is a legitimate threshold — the check then
+// fires only when every response failed — so it is honored rather than
+// clamped like an out-of-range value. It still gets one advisory line: 1 is
+// also what an operator who meant "100%" would type, and, by mistake, what an
+// operator who meant "1%" would type too, so this advises rather than
+// silently accepting a value that is easy to type without meaning it.
+func dnsRatioFromEnv(w io.Writer) float64 {
+	const def = 0.05
+	v := os.Getenv("KUBEAGENT_DNS_SERVFAIL_RATIO")
+	if v == "" {
+		return def
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err == nil && f > 0 && f <= 1 {
+		if f == 1 {
+			warnf(w, "KUBEAGENT_DNS_SERVFAIL_RATIO=%q is 1; the check will now only fire when every response failed", v)
+		}
+		return f
+	}
+	warnf(w, "KUBEAGENT_DNS_SERVFAIL_RATIO=%q is not a fraction in (0, 1]; using %.2f", v, def)
+	return def
+}
+
 // envInt returns the env var parsed as an int, else def.
 func envInt(key string, def int) int {
 	if v := os.Getenv(key); v != "" {

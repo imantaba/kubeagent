@@ -252,7 +252,7 @@ func runWatchOpts(o watchOptions) error {
 		KubeletHealth:           envBool("KUBEAGENT_KUBELET_HEALTH", false),
 		ControlPlaneHealth:      envBool("KUBEAGENT_CONTROL_PLANE_HEALTH", false),
 		DNSHealth:               envBool("KUBEAGENT_DNS_HEALTH", false),
-		DNSServfailRatio:        envFloat("KUBEAGENT_DNS_SERVFAIL_RATIO", 0.05),
+		DNSServfailRatio:        dnsRatioFromEnv(os.Stderr),
 		Certs:                   envBool("KUBEAGENT_CERTS", false),
 		CertWarnDays:            envInt("KUBEAGENT_CERT_WARN_DAYS", 30),
 		WebhookTimeoutThreshold: int32(webhookTimeout),

@@ -24,7 +24,7 @@ type Issue struct {
 	Namespace    string `json:"namespace"`
 	Name         string `json:"name"`
 	Phase        string `json:"phase"`  // "Pending"
-	Reason       string `json:"reason"` // "ProvisioningFailed" | "FailedBinding" | "MissingStorageClass" | "NoMatchingPV" | "PVSelectorMismatch"
+	Reason       string `json:"reason"` // "ProvisioningFailed" | "FailedBinding" | "MissingStorageClass" | "NoMatchingPV" | "PVSelectorMismatch" | "ProvisionerNotResponding"
 	Detail       string `json:"detail"` // the cause
 	StorageClass string `json:"storageClass,omitempty"`
 }

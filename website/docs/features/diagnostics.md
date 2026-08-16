@@ -779,6 +779,11 @@ The threshold defaults to 15 and is tunable via the environment variable
 `webhookLatency.timeoutThreshold`. Webhooks with `failurePolicy: Ignore` and
 those with a `nil` (unset) `timeoutSeconds` are never flagged.
 
+Valid values are 1–30. The API server refuses a webhook `timeoutSeconds` above
+30 ("the timeout value must be between 1 and 30 seconds"), so a threshold above
+30 could only ever match nothing; kubeagent refuses it rather than reporting a
+clean posture.
+
 The check is **always-on**, **cluster-wide only** (skipped under
 `--namespace`), and **advisory** — it does not change the cluster verdict. The
 daemon exposes `kubeagent_admission_webhook_latency_risks`. No new RBAC is

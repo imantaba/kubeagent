@@ -123,6 +123,93 @@ func TestEnvInt_WebhookTimeoutDefault(t *testing.T) {
 	}
 }
 
+// TestEnvIntRange drives the bounded helper the four
+// KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS call sites switch to. The API server
+// itself refuses a webhook timeoutSeconds above 30, so 1-30 is the bound
+// used throughout.
+func TestEnvIntRange(t *testing.T) {
+	const key = "KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS"
+
+	t.Run("unset defaults", func(t *testing.T) {
+		t.Setenv(key, "")
+		got, err := envIntRange(key, 15, 1, 30)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != 15 {
+			t.Errorf("got %d, want default 15", got)
+		}
+	})
+
+	accepted := []string{"1", "15", "30"}
+	for _, v := range accepted {
+		t.Run("accept_"+v, func(t *testing.T) {
+			t.Setenv(key, v)
+			got, err := envIntRange(key, 15, 1, 30)
+			if err != nil {
+				t.Fatalf("value %q: unexpected error: %v", v, err)
+			}
+			want, convErr := strconv.Atoi(v)
+			if convErr != nil {
+				t.Fatalf("test bug: %v", convErr)
+			}
+			if got != want {
+				t.Errorf("value %q: got %d, want %d", v, got, want)
+			}
+		})
+	}
+
+	// Refused cases, named per R163/R164/R165: above the cap, non-positive,
+	// unparseable, and R165's five wraparound values — each measured today
+	// (before this fix) to produce the finding count noted in its comment
+	// after int32(...) silently wraps it.
+	refused := []string{
+		"31",         // above the API server's own 30s cap
+		"100",        // well above the cap
+		"0",          // non-positive
+		"-5",         // non-positive
+		"abc",        // unparseable
+		"1e3",        // unparseable: strconv.Atoi rejects scientific notation
+		" ",          // unparseable: whitespace
+		"2147483648", // wraps to int32 -2147483648; silently produced 5 findings today
+		"4294967306", // wraps to int32 10; silently produced 7 findings today
+		"4294967311", // wraps to int32 15; silently produced 5 findings today
+		"4294967326", // wraps to int32 30; silently produced 3 findings today
+		"8589934607", // wraps to int32 15; silently produced 5 findings today
+	}
+	for _, v := range refused {
+		t.Run("refuse_"+v, func(t *testing.T) {
+			t.Setenv(key, v)
+			_, err := envIntRange(key, 15, 1, 30)
+			if err == nil {
+				t.Fatalf("value %q: want an error, got nil", v)
+			}
+			if !strings.Contains(err.Error(), key) {
+				t.Errorf("error %q does not name %s", err, key)
+			}
+		})
+	}
+
+	// The error message distinguishes an unparseable value from one that
+	// parsed fine but falls outside the range.
+	t.Run("unparseable message", func(t *testing.T) {
+		t.Setenv(key, "1e3")
+		_, err := envIntRange(key, 15, 1, 30)
+		want := key + `: must be an integer between 1 and 30 (got "1e3")`
+		if err == nil || err.Error() != want {
+			t.Errorf("error = %v, want %q", err, want)
+		}
+	})
+	t.Run("out-of-range message", func(t *testing.T) {
+		t.Setenv(key, "60")
+		_, err := envIntRange(key, 15, 1, 30)
+		want := key + ": must be between 1 and 30 (got 60)"
+		if err == nil || err.Error() != want {
+			t.Errorf("error = %v, want %q", err, want)
+		}
+	})
+}
+
 // TestValidateExpectedNodes drives the shared validator both call sites use:
 // scan's --expected-nodes flag and watch's KUBEAGENT_EXPECTED_NODES env var.
 // Six synthetic node names accept; every rejection names the source (src) so
@@ -2179,7 +2266,10 @@ func TestGateScanOptionsIncludeTheEnvTunableThresholds(t *testing.T) {
 	t.Setenv("KUBEAGENT_QUOTA_THRESHOLD", "0.75")
 	t.Setenv("KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS", "30")
 
-	opts := gateScanOptions("prod", io.Discard)
+	opts, err := gateScanOptions("prod", io.Discard)
+	if err != nil {
+		t.Fatalf("gateScanOptions: %v", err)
+	}
 
 	if opts.Namespace != "prod" {
 		t.Errorf("Namespace = %q, want %q", opts.Namespace, "prod")
@@ -2371,8 +2461,14 @@ func TestRunTUI_RejectsExplainAndInvestigate(t *testing.T) {
 // which makes the struct non-comparable with the operator the brief specifies.
 // DeepEqual still compares the whole value, not a field or two.
 func TestTUIScanOptions_MatchesGateDefaults(t *testing.T) {
-	got := tuiScanOptions("shop", io.Discard)
-	want := gateScanOptions("shop", io.Discard)
+	got, err := tuiScanOptions("shop", io.Discard)
+	if err != nil {
+		t.Fatalf("tuiScanOptions: %v", err)
+	}
+	want, err := gateScanOptions("shop", io.Discard)
+	if err != nil {
+		t.Fatalf("gateScanOptions: %v", err)
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("tuiScanOptions = %+v, want %+v", got, want)
 	}

@@ -204,6 +204,14 @@ func runScan(o scanOptions) error {
 		return err
 	}
 
+	// The API server itself refuses a webhook timeoutSeconds above 30, so a
+	// threshold above 30 could only ever match nothing; refuse it here
+	// rather than report a clean posture that was never actually checked.
+	webhookTimeout, err := envIntRange("KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS", 15, 1, 30)
+	if err != nil {
+		return err
+	}
+
 	client, err := cluster.NewClient(o.kubeconfig, o.contextName)
 	if err != nil {
 		return err
@@ -226,7 +234,7 @@ func runScan(o scanOptions) error {
 		CertWarnDays:            o.certWarnDays,
 		Logs:                    o.logs,
 		QuotaThreshold:          quotaThresholdFromEnv(os.Stderr),
-		WebhookTimeoutThreshold: int32(envInt("KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS", 15)),
+		WebhookTimeoutThreshold: int32(webhookTimeout),
 	})
 	if err != nil {
 		if diag, ok := connectivity.Diagnose(err); ok {

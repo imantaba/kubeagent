@@ -72,6 +72,25 @@ func TestRunScanRejectsAnInvalidExpectedNodeName(t *testing.T) {
 	}
 }
 
+// TestRunScanRejectsAnOutOfRangeWebhookTimeout proves the
+// KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS bound (R163/R164/R165) is wired into
+// runScan's RunE, not merely into the envIntRange helper itself. Asserting
+// only "err != nil" would pass today for the wrong reason: the dead
+// kubeconfig in cluster.NewClient already errors before the webhook value is
+// ever read. Naming the variable in the error is what proves the bound
+// actually fired.
+func TestRunScanRejectsAnOutOfRangeWebhookTimeout(t *testing.T) {
+	t.Setenv("KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS", "60")
+	o := scanOptions{output: "text", diskThreshold: 0.80, kubeconfig: "/nonexistent-for-this-test"}
+	err := runScan(o)
+	if err == nil {
+		t.Fatal("want an error for KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS=60, got nil")
+	}
+	if !strings.Contains(err.Error(), "KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS") {
+		t.Errorf("error %q does not name KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS — did the check actually run before cluster.NewClient?", err)
+	}
+}
+
 // TestExpectedNodesAccumulatesAcrossOccurrences proves --expected-nodes
 // resolves to the same set of names whether given as one comma-separated
 // value, split across repeated occurrences, or split with an overlapping

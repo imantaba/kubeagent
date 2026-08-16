@@ -101,6 +101,29 @@ func envInt(key string, def int) int {
 	return def
 }
 
+// envIntRange returns the env var parsed as an int in [lo, hi], or def if
+// unset. Unlike envInt, it does not fall back silently on a bad value: an
+// unparseable or out-of-range value is a defect the caller must refuse
+// rather than launder into a threshold nobody asked for, so it is returned
+// as an error naming the variable, the offending value and the valid range
+// rather than swallowed. envInt itself is unchanged — it has callers that
+// legitimately want an unbounded value — this is a separate, stricter
+// helper for the callers that do not.
+func envIntRange(key string, def, lo, hi int) (int, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return def, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return 0, fmt.Errorf("%s: must be an integer between %d and %d (got %q)", key, lo, hi, v)
+	}
+	if n < lo || n > hi {
+		return 0, fmt.Errorf("%s: must be between %d and %d (got %d)", key, lo, hi, n)
+	}
+	return n, nil
+}
+
 // envDuration returns the env var parsed as a Go duration ("30m", "2h"), else def.
 func envDuration(key string, def time.Duration) time.Duration {
 	if v := os.Getenv(key); v != "" {

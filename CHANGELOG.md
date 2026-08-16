@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS` is now validated instead of silently
+  clamped.** An unparseable or out-of-range value used to fall back to the
+  default of 15 without warning; kubeagent now refuses to run, naming the
+  variable, the offending value and the valid range. Valid values are 1–30,
+  matching the API server's own cap on a webhook's `timeoutSeconds`.
+
 ## [1.16.1] - 2026-08-13
 
 ### Changed

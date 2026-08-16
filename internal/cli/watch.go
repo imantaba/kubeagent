@@ -221,6 +221,15 @@ func runWatchOpts(o watchOptions) error {
 		return err
 	}
 
+	// The API server itself refuses a webhook timeoutSeconds above 30, so a
+	// threshold above 30 could only ever match nothing; refuse it here
+	// rather than start a daemon reporting a clean posture that was never
+	// actually checked.
+	webhookTimeout, err := envIntRange("KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS", 15, 1, 30)
+	if err != nil {
+		return err
+	}
+
 	targets, err := buildTargets(o.kubeconfig, o.clusterName, o.contexts, o.includeLocal)
 	if err != nil {
 		return err
@@ -246,7 +255,7 @@ func runWatchOpts(o watchOptions) error {
 		DNSServfailRatio:        envFloat("KUBEAGENT_DNS_SERVFAIL_RATIO", 0.05),
 		Certs:                   envBool("KUBEAGENT_CERTS", false),
 		CertWarnDays:            envInt("KUBEAGENT_CERT_WARN_DAYS", 30),
-		WebhookTimeoutThreshold: int32(envInt("KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS", 15)),
+		WebhookTimeoutThreshold: int32(webhookTimeout),
 		AlertURL:                alertURL,
 		AlertFormat:             o.alertFormat,
 		AlertRoutingKey:         routingKey,

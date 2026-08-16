@@ -169,6 +169,52 @@ func TestMetrics_ControlPlaneCheckedGauge(t *testing.T) {
 	}
 }
 
+// TestMetrics_DNSServfailRatioClampsBelowFloor pins R94: a below-floor
+// dnshealth.Report (Status "") since R88 carries a real ServfailRatio for the
+// scan JSON to surface, but the gauge that feeds alert rules must not publish
+// it — a ratio computed from too few responses is noise an alert tuned for a
+// real degradation would fire on. Every other status publishes what it
+// measured, including an above-floor "ok" report with a nonzero
+// sub-threshold ratio: the clamp is on the empty status, not on "not
+// degraded".
+func TestMetrics_DNSServfailRatioClampsBelowFloor(t *testing.T) {
+	cases := []struct {
+		name string
+		dns  dnshealth.Report
+		want string
+	}{
+		{"below floor abstains, gauge clamps to 0", dnshealth.Report{Status: "", ServfailRatio: 1}, "0"},
+		{"degraded publishes the real ratio", dnshealth.Report{Status: "degraded", ServfailRatio: 0.12}, "0.12"},
+		{"above-floor ok publishes a nonzero sub-threshold ratio", dnshealth.Report{Status: "ok", ServfailRatio: 0.02}, "0.02"},
+		{"forbidden carries no ratio", dnshealth.Report{Status: "forbidden"}, "0"},
+		{"unreachable carries no ratio", dnshealth.Report{Status: "unreachable"}, "0"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res := sampleResult()
+			res.DNS = tc.dns
+			m := newMetrics([]string{"local"})
+			m.update("local", res, time.Millisecond, time.Unix(1000, 0), nil)
+			out := m.render()
+			want := `kubeagent_dns_servfail_ratio{cluster="local"} ` + tc.want
+			if !strings.Contains(out, want) {
+				t.Errorf("missing %q in:\n%s", want, out)
+			}
+		})
+	}
+}
+
+// TestMetrics_DNSServfailRatioHelpNamesTheFloor pins R94's reworded help
+// string, which names the below-floor case alongside the two the gauge
+// already covered.
+func TestMetrics_DNSServfailRatioHelpNamesTheFloor(t *testing.T) {
+	out := newMetrics([]string{"local"}).render()
+	want := "# HELP kubeagent_dns_servfail_ratio CoreDNS SERVFAIL+REFUSED response ratio (0 when healthy, not probed, or below the 100-response floor)\n"
+	if !strings.Contains(out, want) {
+		t.Errorf("missing help text %q in:\n%s", want, out)
+	}
+}
+
 func TestMetrics_UpdateErrorKeepsLastGoodAndCountsError(t *testing.T) {
 	m := newMetrics([]string{"local"})
 	m.update("local", sampleResult(), time.Millisecond, time.Unix(1000, 0), nil)

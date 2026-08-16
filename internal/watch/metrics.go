@@ -212,7 +212,16 @@ func (m *metrics) update(cluster string, res *scan.Result, dur time.Duration, no
 	if res.ControlPlane.Status == "unhealthy" {
 		c.controlPlaneUnhealthy = 1
 	}
+	// A below-floor sample carries a real ratio (dnshealth.Assess returns
+	// Status "" with the measurement rather than a false "ok"), but the gauge
+	// must not publish it: a ratio computed from fewer than the floor's worth
+	// of responses is noise an alert rule would fire on. Every other path is
+	// unaffected — "ok" and "degraded" publish what they measured, and the two
+	// no-data paths already carry a zero ratio.
 	c.dnsServfailRatio = res.DNS.ServfailRatio
+	if res.DNS.Status == "" {
+		c.dnsServfailRatio = 0
+	}
 	c.pvcsReclaimDelete = res.PVCReclaim.Count
 	c.serviceIssues = realServiceIssues(res.ServiceIssues)
 	c.ingressIssues = realIngressIssues(res.IngressIssues)
@@ -353,7 +362,7 @@ func (m *metrics) render() string {
 	gauge("kubeagent_kubelet_unhealthy", "Nodes whose kubelet /healthz reported unhealthy", func(c *clusterSnapshot) float64 { return float64(c.kubeletUnhealthy) })
 	gauge("kubeagent_control_plane_checked", "Apiserver /readyz returned a health verdict this cycle", func(c *clusterSnapshot) float64 { return float64(c.controlPlaneChecked) })
 	gauge("kubeagent_control_plane_unhealthy", "Apiserver /readyz reported the control plane not ready", func(c *clusterSnapshot) float64 { return float64(c.controlPlaneUnhealthy) })
-	gauge("kubeagent_dns_servfail_ratio", "CoreDNS SERVFAIL+REFUSED response ratio (0 when healthy or not probed)", func(c *clusterSnapshot) float64 { return c.dnsServfailRatio })
+	gauge("kubeagent_dns_servfail_ratio", "CoreDNS SERVFAIL+REFUSED response ratio (0 when healthy, not probed, or below the 100-response floor)", func(c *clusterSnapshot) float64 { return c.dnsServfailRatio })
 	gauge("kubeagent_pvcs_reclaim_delete", "PVCs whose bound PV has reclaimPolicy Delete", func(c *clusterSnapshot) float64 { return float64(c.pvcsReclaimDelete) })
 	gauge("kubeagent_workloads_flagged", "Number of workloads currently flagged", func(c *clusterSnapshot) float64 { return float64(c.flagged) })
 	gauge("kubeagent_service_issues", "Number of Service issues", func(c *clusterSnapshot) float64 { return float64(c.serviceIssues) })

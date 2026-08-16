@@ -331,17 +331,39 @@ func TestAssess_SelectorlessBackend_Silent(t *testing.T) {
 	}
 }
 
-// TestAssess_SelectorlessBackend_WithEndpoints_NotSilenced is R53's negative
-// control: a selectorless Service WITH a ready EndpointSlice still yields no
-// RouteIssue (it was already a healthy route before this change), proving the
-// new guard did not silence the whole selectorless class by accident — only
-// the no-endpoints case the guard actually short-circuits.
-func TestAssess_SelectorlessBackend_WithEndpoints_NotSilenced(t *testing.T) {
+// TestAssess_SelectorlessBackend_WithEndpoints_StaysHealthy is R53's negative
+// control: a selectorless Service WITH a ready EndpointSlice yields no
+// RouteIssue, exactly as it did before this change — a healthy route stays
+// healthy rather than becoming a new finding.
+//
+// It does not show the guard is narrow, and the guard is not narrow: it
+// returns above the port test as well, so a selectorless Service whose ports
+// do not match the Ingress backend no longer reports PortNotExposed either.
+// That whole-Service silence is what svchealth.Assess already accepts, and
+// making the two agree is what R53 is for — but R53's own "still checked for
+// the port" sentence describes a narrower guard than the placement it
+// specifies. The placement governs; the sentence is corrected on the record.
+func TestAssess_SelectorlessBackend_WithEndpoints_StaysHealthy(t *testing.T) {
 	s := svc("shop", "manual-api", 80) // no Selector set
 	slices := []discoveryv1.EndpointSlice{sliceFor("shop", "manual-api", 1)}
 	got := Assess([]networkingv1.Ingress{ing("shop", "web", "x.io", "/api", "manual-api", 80)}, []corev1.Service{s}, slices, nil, nil, nil)
 	if len(got) != 0 {
 		t.Fatalf("selectorless backend with ready endpoints must not be flagged, got %+v", got)
+	}
+}
+
+// TestAssess_SelectorlessBackend_PortNotExposed_AlsoSilent pins the cost R53
+// actually accepts, as opposed to the narrower one its text described: a
+// selectorless Service with ready endpoints that does NOT expose the port the
+// Ingress asks for used to report PortNotExposed and no longer does, because
+// the guard returns above the port test. Reverting the guard makes this fail,
+// which is the point — the cost is checkable rather than merely written down.
+func TestAssess_SelectorlessBackend_PortNotExposed_AlsoSilent(t *testing.T) {
+	s := svc("shop", "manual-api", 80) // no Selector set; exposes 80 only
+	slices := []discoveryv1.EndpointSlice{sliceFor("shop", "manual-api", 1)}
+	got := Assess([]networkingv1.Ingress{ing("shop", "web", "x.io", "/api", "manual-api", 9999)}, []corev1.Service{s}, slices, nil, nil, nil)
+	if len(got) != 0 {
+		t.Fatalf("selectorless backend must be silent even on an unexposed port, got %+v", got)
 	}
 }
 

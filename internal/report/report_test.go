@@ -1594,6 +1594,25 @@ func TestPrintInventory_KubeletHealthJSON(t *testing.T) {
 	}
 }
 
+// TestPrintKubeletHealth_TrailingBlankLine pins the separator convention on
+// both of printKubeletHealth's exit paths: the unhealthy-node loop and the
+// wholly-forbidden grant hint.
+func TestPrintKubeletHealth_TrailingBlankLine(t *testing.T) {
+	cases := []*nodehealth.Report{
+		{Probed: 2, Unhealthy: []nodehealth.Issue{{Node: "worker-2", Detail: "[-]pleg failed"}}},
+		{Probed: 3, Forbidden: 3},
+	}
+	for _, rep := range cases {
+		var b bytes.Buffer
+		if err := printKubeletHealth(rep, &b); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasSuffix(b.String(), "\n\n") {
+			t.Errorf("printKubeletHealth(%+v) missing trailing blank line, got %q", rep, b.String())
+		}
+	}
+}
+
 func TestPrintInventory_NoEphemeralWarnsAndContext(t *testing.T) {
 	var buf bytes.Buffer
 	rep := &nodereserve.Report{
@@ -1895,6 +1914,27 @@ func TestPrintInventory_CertificatesForbiddenHint(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "secrets access denied — apply deploy/rbac-certs.yaml (or Helm certs.enabled=true)") {
 		t.Errorf("missing forbidden hint:\n%s", buf.String())
+	}
+}
+
+// TestPrintCertificates_TrailingBlankLine pins the separator convention on
+// both of printCertificates' exit paths: the forbidden early return and the
+// footer after the certificate rows.
+func TestPrintCertificates_TrailingBlankLine(t *testing.T) {
+	cases := []*certhealth.Report{
+		{WarnDays: 30, Forbidden: true},
+		{Checked: 1, WarnDays: 30, Expiring: []certhealth.Cert{
+			{Namespace: "shop", Name: "shop-tls", CommonName: "shop.example.com", Days: 5},
+		}},
+	}
+	for _, rep := range cases {
+		var b bytes.Buffer
+		if err := printCertificates(rep, &b); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasSuffix(b.String(), "\n\n") {
+			t.Errorf("printCertificates(%+v) missing trailing blank line, got %q", rep, b.String())
+		}
 	}
 }
 
@@ -2329,6 +2369,42 @@ func TestPrintDNSHealth(t *testing.T) {
 		}
 		if strings.Contains(bo.String(), "cluster DNS") {
 			t.Errorf("probe %+v should render no DNS finding:\n%s", p, bo.String())
+		}
+	}
+}
+
+// TestPrintControlPlane_TrailingBlankLine pins the separator convention every
+// sibling optional-section printer follows: the section is followed by
+// exactly one blank line, on both the unhealthy and the forbidden path.
+func TestPrintControlPlane_TrailingBlankLine(t *testing.T) {
+	for _, p := range []*controlplane.Probe{
+		{Status: "unhealthy", Failed: []string{"etcd"}},
+		{Status: "forbidden"},
+	} {
+		var b bytes.Buffer
+		if err := printControlPlane(p, &b); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasSuffix(b.String(), "\n\n") {
+			t.Errorf("printControlPlane(%+v) missing trailing blank line, got %q", p, b.String())
+		}
+	}
+}
+
+// TestPrintDNSHealth_TrailingBlankLine mirrors
+// TestPrintControlPlane_TrailingBlankLine for the DNS section's two rendering
+// paths.
+func TestPrintDNSHealth_TrailingBlankLine(t *testing.T) {
+	for _, p := range []*dnshealth.Report{
+		{Status: "degraded", PodsProbed: 1},
+		{Status: "forbidden"},
+	} {
+		var b bytes.Buffer
+		if err := printDNSHealth(p, &b); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasSuffix(b.String(), "\n\n") {
+			t.Errorf("printDNSHealth(%+v) missing trailing blank line, got %q", p, b.String())
 		}
 	}
 }

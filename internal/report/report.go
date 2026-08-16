@@ -1335,7 +1335,8 @@ func printControlPlane(p *controlplane.Probe, w io.Writer) error {
 			return err
 		}
 	}
-	return nil
+	_, err := fmt.Fprintln(w)
+	return err
 }
 
 // dnsRenders reports whether the DNS section would print.
@@ -1367,7 +1368,8 @@ func printDNSHealth(p *dnshealth.Report, w io.Writer) error {
 			return err
 		}
 	}
-	return nil
+	_, err := fmt.Fprintln(w)
+	return err
 }
 
 // certificatesRender reports whether the CERTIFICATES section would print
@@ -1388,7 +1390,10 @@ func printCertificates(rep *certhealth.Report, w io.Writer) error {
 		return err
 	}
 	if rep.Forbidden {
-		_, err := fmt.Fprintln(w, "  certificates: secrets access denied — apply deploy/rbac-certs.yaml (or Helm certs.enabled=true)")
+		if _, err := fmt.Fprintln(w, "  certificates: secrets access denied — apply deploy/rbac-certs.yaml (or Helm certs.enabled=true)"); err != nil {
+			return err
+		}
+		_, err := fmt.Fprintln(w)
 		return err
 	}
 	for _, c := range rep.Expired {
@@ -1416,7 +1421,10 @@ func printCertificates(rep *certhealth.Report, w io.Writer) error {
 			return err
 		}
 	}
-	_, err := fmt.Fprintf(w, "  · %d certificates checked (warn window %dd)\n", rep.Checked, rep.WarnDays)
+	if _, err := fmt.Fprintf(w, "  · %d certificates checked (warn window %dd)\n", rep.Checked, rep.WarnDays); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintln(w)
 	return err
 }
 
@@ -1629,7 +1637,8 @@ func printKubeletHealth(rep *nodehealth.Report, w io.Writer) error {
 		if _, err := fmt.Fprintln(w, "  kubelet-health needs the nodes/proxy add-on (deploy/rbac-diskusage.yaml or Helm kubeletHealth.enabled=true)"); err != nil {
 			return err
 		}
-		return nil
+		_, err := fmt.Fprintln(w)
+		return err
 	}
 	for _, iss := range rep.Unhealthy {
 		line := fmt.Sprintf("  ✗ node %s kubelet /healthz unhealthy", iss.Node)
@@ -1640,7 +1649,8 @@ func printKubeletHealth(rep *nodehealth.Report, w io.Writer) error {
 			return err
 		}
 	}
-	return nil
+	_, err := fmt.Fprintln(w)
+	return err
 }
 
 // printCapacity renders the advisory CAPACITY section (opt-in --capacity): the

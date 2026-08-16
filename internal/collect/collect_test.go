@@ -555,7 +555,7 @@ func TestClassifyKubeletHealthz(t *testing.T) {
 	}{
 		{200, "ok", "ok", ""},
 		{500, "[+]ping ok\n[-]pleg failed\nhealthz check failed", "unhealthy", "[-]pleg failed"},
-		{500, "healthz check failed", "unhealthy", "healthz check failed"},
+		{500, "healthz check failed", "unhealthy", ""},
 		{403, "forbidden", "forbidden", ""},
 		{401, "unauthorized", "forbidden", ""},
 		{0, "", "unreachable", ""},
@@ -568,6 +568,30 @@ func TestClassifyKubeletHealthz(t *testing.T) {
 		if p.Node != "n" || p.Status != c.wantStatus || p.Detail != c.wantDetail {
 			t.Errorf("classify(%d, %q) = {%s, %q}, want {%s, %q}", c.code, c.body, p.Status, p.Detail, c.wantStatus, c.wantDetail)
 		}
+	}
+}
+
+func TestHealthzDetail(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		max  int
+		want string
+	}{
+		{"only failed line", "[-]pleg failed", 120, "[-]pleg failed"},
+		{"failed line after others", "[+]ping ok\nhealthz check failed\n[-]pleg failed", 120, "[-]pleg failed"},
+		{"no failed line, plain text", "healthz check failed", 120, ""},
+		{"no failed line, json status body", `{"status":"failure","reason":"kubelet stopped"}`, 120, ""},
+		{"empty body", "", 120, ""},
+		{"failed line longer than max is truncated", "[-]" + strings.Repeat("x", 130), 120, "[-]" + strings.Repeat("x", 117) + "…"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := healthzDetail([]byte(c.body), c.max)
+			if got != c.want {
+				t.Errorf("healthzDetail(%q, %d) = %q, want %q", c.body, c.max, got, c.want)
+			}
+		})
 	}
 }
 

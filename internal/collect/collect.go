@@ -611,22 +611,18 @@ func classify(node string, code int, body []byte) nodehealth.Probe {
 }
 
 // healthzDetail returns the first failed-check line ("[-]…") from a kubelet
-// /healthz body, else the first non-empty line, trimmed and truncated to max runes.
+// /healthz body, trimmed and truncated to max runes, or "" when the body
+// carries no such line — an unparsed body is not a diagnosis, and the row
+// still degrades gracefully: printKubeletHealth omits the detail suffix
+// entirely when Detail is empty.
 func healthzDetail(body []byte, max int) string {
-	var first string
 	for _, ln := range strings.Split(string(body), "\n") {
 		ln = strings.TrimSpace(ln)
-		if ln == "" {
-			continue
-		}
-		if first == "" {
-			first = ln
-		}
 		if strings.HasPrefix(ln, "[-]") {
 			return truncateRunes(ln, max)
 		}
 	}
-	return truncateRunes(first, max)
+	return ""
 }
 
 func truncateRunes(s string, max int) string {

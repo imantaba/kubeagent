@@ -284,6 +284,39 @@ func TestEvaluate_StaleHeartbeatDegrades(t *testing.T) {
 	}
 }
 
+// A refused Lease read must surface as a named blind spot and must not make
+// kubeagent claim every Ready node's kubelet has stopped heartbeating — that
+// would be reading a failed read as a fact about the cluster. Without the
+// guard, a Ready node with no lease entry (because the whole list failed)
+// would be misreported as "no kubelet lease" in Health.DownNodes, which is
+// exactly the assertion internal/rootcause depends on staying empty here.
+func TestEvaluate_LeasesForbiddenNoHeartbeatClaim(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "w1"},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}}
+	client := fake.NewSimpleClientset(node)
+	client.Fake.PrependReactor("list", "leases", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewForbidden(schema.GroupResource{Group: "coordination.k8s.io", Resource: "leases"}, "", nil)
+	})
+
+	res, err := Evaluate(context.Background(), client, Options{NodeHeartbeatThreshold: 40 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var found *ReadFailure
+	for i := range res.PartialReads {
+		if res.PartialReads[i].Resource == "leases" {
+			found = &res.PartialReads[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("PartialReads = %v, want an entry for leases", res.PartialReads)
+	}
+	if len(res.Health.DownNodes) != 0 {
+		t.Errorf("Health.DownNodes = %+v, want none — a refused Lease read must not be read as every kubelet down", res.Health.DownNodes)
+	}
+}
+
 func TestEvaluate_ExpectedNodeAbsentDegrades(t *testing.T) {
 	client := fake.NewSimpleClientset(
 		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "a"}, Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}},

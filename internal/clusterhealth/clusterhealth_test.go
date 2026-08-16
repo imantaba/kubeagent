@@ -279,6 +279,42 @@ func TestAssess_HeartbeatThresholdDisabled(t *testing.T) {
 	}
 }
 
+// A refused or failed Lease read must silence the heartbeat check entirely —
+// kubeagent did not look, so it must claim nothing about any kubelet's
+// heartbeat, rather than reading the empty Leases slice as every node having
+// no lease. Paired with the inverted case (Unavailable: false) on the same
+// three nodes, which must still flag all three as "no kubelet lease": the
+// only difference between the two cases is the new field, so it alone
+// decides the outcome.
+func TestAssess_HeartbeatUnavailableDisablesCheck(t *testing.T) {
+	now := time.Now()
+	nodes := []corev1.Node{hbReadyNode("w1"), hbReadyNode("w2"), hbReadyNode("w3")}
+
+	unavailable := Assess(nodes, Heartbeat{Leases: nil, Now: now, Threshold: 40 * time.Second, Unavailable: true}, nil, nil)
+	if unavailable.Verdict != "Healthy" {
+		t.Errorf("verdict = %q, want Healthy when the Lease read was unavailable", unavailable.Verdict)
+	}
+	if len(unavailable.NodeIssues) != 0 {
+		t.Errorf("NodeIssues = %v, want none when the Lease read was unavailable", unavailable.NodeIssues)
+	}
+	if len(unavailable.DownNodes) != 0 {
+		t.Errorf("DownNodes = %+v, want none when the Lease read was unavailable", unavailable.DownNodes)
+	}
+	if unavailable.NodesStaleHeartbeat != 0 {
+		t.Errorf("NodesStaleHeartbeat = %d, want 0 when the Lease read was unavailable", unavailable.NodesStaleHeartbeat)
+	}
+
+	available := Assess(nodes, Heartbeat{Leases: nil, Now: now, Threshold: 40 * time.Second, Unavailable: false}, nil, nil)
+	if available.NodesStaleHeartbeat != 3 {
+		t.Errorf("NodesStaleHeartbeat = %d, want 3 when the Lease read succeeded but returned no leases", available.NodesStaleHeartbeat)
+	}
+	for _, iss := range available.NodeIssues {
+		if !strings.Contains(iss, "no kubelet lease") {
+			t.Errorf("NodeIssues = %v, want every issue to be \"no kubelet lease\"", available.NodeIssues)
+		}
+	}
+}
+
 func TestAssess_ExpectedNodeAbsentDegrades(t *testing.T) {
 	nodes := []corev1.Node{hbReadyNode("nova-worker-1")}
 	ch := Assess(nodes, Heartbeat{}, []string{"nova-worker-1", "nova-worker-2"}, nil)

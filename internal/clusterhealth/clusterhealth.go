@@ -44,6 +44,12 @@ type Heartbeat struct {
 	Leases    []coordinationv1.Lease
 	Now       time.Time
 	Threshold time.Duration
+
+	// Unavailable reports that the Lease list could not be read at all (a
+	// refused or failed read), as distinct from a node having no Lease. When
+	// set, the heartbeat check does not run: kubeagent did not look, so it
+	// knows nothing about any kubelet's heartbeat and must claim nothing.
+	Unavailable bool
 }
 
 // Assess computes the verdict from nodes and the assembled workloads. A node is
@@ -66,7 +72,7 @@ func Assess(nodes []corev1.Node, hb Heartbeat, expected []string, workloads []in
 		}
 		if ready {
 			ch.NodesReady++
-			if hb.Threshold > 0 {
+			if hb.Threshold > 0 && !hb.Unavailable {
 				if iss, stale := staleHeartbeat(leaseByNode, n.Name, hb.Now, hb.Threshold); stale {
 					issues = append(issues, iss)
 					ch.NodesStaleHeartbeat++

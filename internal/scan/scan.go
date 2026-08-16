@@ -646,7 +646,7 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	workloads := inventory.Assemble(inputs, findings)
 	batchhealth.Annotate(workloads, inputs.Jobs)
 
-	health := clusterhealth.Assess(nodes, clusterhealth.Heartbeat{Leases: leases, Now: now, Threshold: opts.NodeHeartbeatThreshold}, opts.ExpectedNodes, workloads)
+	health := clusterhealth.Assess(nodes, clusterhealth.Heartbeat{Leases: leases, Now: now, Threshold: opts.NodeHeartbeatThreshold, Unavailable: errs[iLeases] != nil}, opts.ExpectedNodes, workloads)
 	health.ScopeNote = clusterhealth.NamespaceScopeNote(opts.Namespace)
 
 	backends := svchealth.BackendsFrom(inputs.Deployments, inputs.StatefulSets, inputs.DaemonSets, inputs.Jobs, inputs.CronJobs)

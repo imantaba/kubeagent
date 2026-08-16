@@ -1613,6 +1613,26 @@ func TestPrintKubeletHealth_TrailingBlankLine(t *testing.T) {
 	}
 }
 
+// TestPrintKubeletHealth_EmptyDetailNoTrailingColon pins R74(B)'s
+// brief-mandated regression fixture: an Issue whose Detail is empty must
+// render the bare unhealthy line, with no trailing ":" and no trailing
+// ": " — printKubeletHealth's `if iss.Detail != ""` guard must not fire on
+// an empty Detail.
+func TestPrintKubeletHealth_EmptyDetailNoTrailingColon(t *testing.T) {
+	rep := &nodehealth.Report{Probed: 1, Unhealthy: []nodehealth.Issue{{Node: "n", Detail: ""}}}
+	var b bytes.Buffer
+	if err := printKubeletHealth(rep, &b); err != nil {
+		t.Fatal(err)
+	}
+	const want = "  ✗ node n kubelet /healthz unhealthy\n"
+	if !strings.Contains(b.String(), want) {
+		t.Fatalf("printKubeletHealth(%+v) = %q, want it to contain %q", rep, b.String(), want)
+	}
+	if strings.Contains(b.String(), want[:len(want)-1]+":") {
+		t.Errorf("printKubeletHealth(%+v) unhealthy line has a trailing colon: %q", rep, b.String())
+	}
+}
+
 func TestPrintInventory_NoEphemeralWarnsAndContext(t *testing.T) {
 	var buf bytes.Buffer
 	rep := &nodereserve.Report{

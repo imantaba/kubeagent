@@ -12,6 +12,7 @@ kubeagent known-issues OOMKilled  # one kind in full
 
 ```text
 $ kubeagent known-issues
+Failure kinds kubeagent's pod and workload detectors report:
   ContainerStartError          the container was created but could not be started
   CrashLoopBackOff             a container starts, exits, and is restarted on a widening backoff
   CreateContainerConfigError   the kubelet cannot build the container from its spec

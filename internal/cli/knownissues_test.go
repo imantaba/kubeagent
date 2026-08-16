@@ -28,6 +28,30 @@ func TestRunKnownIssuesListsEveryKind(t *testing.T) {
 	}
 }
 
+// The list names what it covers before listing it, so a reader learns the
+// reference's scope is pod and workload detectors, not every check kubeagent
+// runs, before reading the rows.
+func TestRunKnownIssuesListingNamesItsScope(t *testing.T) {
+	var buf bytes.Buffer
+	if err := runKnownIssues(nil, &buf); err != nil {
+		t.Fatalf("runKnownIssues() error = %v", err)
+	}
+	out := buf.String()
+	const header = "pod and workload detectors"
+	headerIdx := strings.Index(out, header)
+	if headerIdx == -1 {
+		t.Fatalf("list output does not name its scope: %q", out)
+	}
+	first := knownissues.All()[0]
+	firstRowIdx := strings.Index(out, first.Kind)
+	if firstRowIdx == -1 {
+		t.Fatalf("list output is missing the first kind %q", first.Kind)
+	}
+	if headerIdx > firstRowIdx {
+		t.Errorf("scope header (at byte %d) comes after the first kind row (at byte %d)", headerIdx, firstRowIdx)
+	}
+}
+
 // The list is sorted, so a reader can find a kind by scanning.
 func TestRunKnownIssuesListIsSorted(t *testing.T) {
 	var buf bytes.Buffer

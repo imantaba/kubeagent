@@ -1,6 +1,10 @@
 // Package knownissues is kubeagent's offline reference for the failure kinds
-// its deterministic detectors report: what each one means, what usually causes
-// it, and what to look at next.
+// its pod and workload detectors report: what each one means, what usually
+// causes it, and what to look at next. It does not cover kubeagent's other
+// cluster-level checks: HorizontalPodAutoscaler, PodDisruptionBudget,
+// Ingress, Service, PersistentVolumeClaim, ResourceQuota, admission webhooks
+// and the rollout checks each report their own findings, outside this
+// reference's closure.
 //
 // The content is curated prose compiled into the binary, so `kubeagent
 // known-issues` answers with no cluster, no kubeconfig and no network. It holds

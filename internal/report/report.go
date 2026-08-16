@@ -600,7 +600,7 @@ func printContext(in Input, w io.Writer) error {
 		} else {
 			line := reserveLine("ephemeral-storage", n.EphemeralNone, n.EphemeralReporting, true)
 			if missing := total - n.EphemeralReporting; missing > 0 {
-				line += fmt.Sprintf("  (%d %s do not report it)", missing, plural(missing, "node", "nodes"))
+				line += fmt.Sprintf("  (%d %s not report it)", missing, plural(missing, "node does", "nodes do"))
 			}
 			fmt.Fprintln(&b, line)
 		}

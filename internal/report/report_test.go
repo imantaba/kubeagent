@@ -1654,8 +1654,29 @@ func TestPrintInventory_ReservationsEphemeralMixedReportingNamesExcluded(t *test
 		t.Fatal(err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "ephemeral-storage 1 of 2 nodes reserve none  ⚠  (1 node do not report it)") {
+	if !strings.Contains(out, "ephemeral-storage 1 of 2 nodes reserve none  ⚠  (1 node does not report it)") {
 		t.Errorf("expected mixed-reporting ephemeral-storage ratio with excluded-count suffix in:\n%s", out)
+	}
+}
+
+func TestPrintInventory_ReservationsEphemeralMixedReportingPluralNamesExcluded(t *testing.T) {
+	var buf bytes.Buffer
+	rep := &nodereserve.Report{
+		WarnCount: 0, EphemeralNone: 1, EphemeralReporting: 2,
+		Nodes: []nodereserve.NodeReservation{
+			{Name: "e1", CPUReserved: "200m", MemReserved: "1Gi", EphemeralReserved: "0", NoEphemeral: true},
+			{Name: "e2", CPUReserved: "200m", MemReserved: "1Gi", EphemeralReserved: "5Gi"},
+			{Name: "e3", CPUReserved: "200m", MemReserved: "1Gi", EphemeralReserved: "—"},
+			{Name: "e4", CPUReserved: "200m", MemReserved: "1Gi", EphemeralReserved: "—"},
+		},
+	}
+	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 4, NodesTotal: 4}, NodeReserve: rep}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "ephemeral-storage 1 of 2 nodes reserve none  ⚠  (2 nodes do not report it)") {
+		t.Errorf("expected mixed-reporting ephemeral-storage ratio with plural excluded-count suffix in:\n%s", out)
 	}
 }
 

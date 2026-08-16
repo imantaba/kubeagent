@@ -54,7 +54,7 @@ func RenderText(w io.Writer, v Verdict) error {
 	}
 
 	if len(v.Reported) > 0 {
-		if _, err := fmt.Fprintf(w, "\nnot counted (outside scope): %s\n",
+		if _, err := fmt.Fprintf(w, "\nnot counted (below --fail-on): %s\n",
 			plural(len(v.Reported), "finding", "findings")); err != nil {
 			return err
 		}

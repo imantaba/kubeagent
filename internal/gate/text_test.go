@@ -59,7 +59,7 @@ func TestRenderTextPluralizesFindings(t *testing.T) {
 	}
 }
 
-func TestRenderTextNamesOutOfScopeFindingsAsNotCounted(t *testing.T) {
+func TestRenderTextNamesBelowThresholdFindingsAsNotCounted(t *testing.T) {
 	got := render(t, Verdict{
 		Verdict: "pass", Code: CodePass, FailOn: findings.Critical, Scope: "Deployment/api in prod",
 		Failing: []findings.Finding{},
@@ -69,8 +69,32 @@ func TestRenderTextNamesOutOfScopeFindingsAsNotCounted(t *testing.T) {
 		},
 		Inconclusive: []Blindspot{},
 	})
-	if !strings.Contains(got, "not counted (outside scope): 2 findings") {
+	if !strings.Contains(got, "not counted (below --fail-on): 2 findings") {
 		t.Errorf("want an explicit not-counted line; got:\n%s", got)
+	}
+}
+
+// TestRenderTextNotCountedLineIsIndependentOfTheHeaderScope pins that the
+// "not counted (below --fail-on)" line and the header's "(scope: …)" carry two
+// different meanings — the former about --fail-on, the latter about the
+// namespace/workload scope — and each renders on its own regardless of the
+// other's value.
+func TestRenderTextNotCountedLineIsIndependentOfTheHeaderScope(t *testing.T) {
+	got := render(t, Verdict{
+		Verdict: "pass", Code: CodePass, FailOn: findings.Critical, Scope: "cluster",
+		Failing: []findings.Finding{},
+		Reported: []findings.Finding{
+			{Level: findings.Warning, Kind: "Pod", Namespace: "staging", Name: "w-1", Issue: "OOMKilled"},
+		},
+		Inconclusive: []Blindspot{},
+	})
+	for _, want := range []string{
+		"(scope: cluster)",
+		"not counted (below --fail-on): 1 finding",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("RenderText output missing %q; got:\n%s", want, got)
+		}
 	}
 }
 

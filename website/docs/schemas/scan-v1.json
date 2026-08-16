@@ -545,6 +545,9 @@
         },
         "resources": {
           "$ref": "#/$defs/diagnose.ContainerResources"
+        },
+        "suggestion": {
+          "$ref": "#/$defs/diagnose.Suggestion"
         }
       },
       "required": [
@@ -552,6 +555,21 @@
         "issue",
         "pod",
         "reason"
+      ],
+      "type": "object"
+    },
+    "diagnose.Suggestion": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "command": {
+          "type": "string"
+        },
+        "nextStep": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "nextStep"
       ],
       "type": "object"
     },

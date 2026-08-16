@@ -35,16 +35,19 @@ const (
 	// `dnshealth.Report`, the count of the probed CoreDNS pods that actually
 	// returned a 200 from /metrics, tracked separately from `podsProbed` (the
 	// count selected) so a partial read is visible in the JSON the same way it
-	// already is in the text report. All five are additive: every added
-	// property is omitempty and absent from `required`, so a document produced
-	// without them still validates against the older schema. `state`,
-	// `unreachable` and `podsAnswered` are omitempty for that reason and no
-	// other — `state` is set on every row of every real scan, `podsAnswered`
-	// is set anywhere `podsProbed` is on a real scan, a run with no
-	// unreachable kubelet legitimately encodes no `unreachable` key, but a
+	// already is in the text report; 1.6 added `suggestion` on a finding, the
+	// deterministic next step `scan --suggest` already prints in the text
+	// report, populated only when the flag is set. All six are additive: every
+	// added property is omitempty and absent from `required`, so a document
+	// produced without them still validates against the older schema. `state`,
+	// `unreachable`, `podsAnswered` and `suggestion` are omitempty for that
+	// reason and no other — `state` is set on every row of every real scan,
+	// `podsAnswered` is set anywhere `podsProbed` is on a real scan, a run
+	// with no unreachable kubelet legitimately encodes no `unreachable` key, a
+	// scan without `--suggest` legitimately encodes no `suggestion` key, but a
 	// property in `required` is a MAJOR change however new or however often
 	// it is set.
-	ScanVersion     = "1.5"
+	ScanVersion     = "1.6"
 	GateVersion     = "1.1"
 	RBACVersion     = "1.0"
 	WatchVersion    = "1.0"

@@ -30,6 +30,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/pvcreclaim"
 	"github.com/imantaba/kubeagent/internal/quotahealth"
 	"github.com/imantaba/kubeagent/internal/remediate"
+	"github.com/imantaba/kubeagent/internal/remediation"
 	"github.com/imantaba/kubeagent/internal/resources"
 	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/secscan"
@@ -2265,6 +2266,73 @@ func TestPrintInventory_SuggestLines(t *testing.T) {
 	off := build(false)
 	if strings.Contains(off, "next step:") || strings.Contains(off, "↳ try:") {
 		t.Errorf("no suggest lines expected by default:\n%s", off)
+	}
+}
+
+func TestPrintInventory_JSONOmitsSuggestionWhenFlagOff(t *testing.T) {
+	in := Input{
+		Result: inventory.Result{Workloads: []inventory.Workload{{
+			Namespace: "shop", Name: "web", Kind: "Deployment", Desired: 2, Ready: 0, Status: "Degraded",
+			Findings: []diagnose.Finding{{Pod: "shop/web-abc", Issue: "CrashLoopBackOff", Reason: "keeps crashing", Container: "web"}},
+		}}},
+		// Suggest left false.
+	}
+	var buf bytes.Buffer
+	if err := PrintInventory(in, "json", &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(buf.String(), `"suggestion"`) {
+		t.Errorf("no suggestion key expected when --suggest is off:\n%s", buf.String())
+	}
+}
+
+func TestPrintInventory_JSONIncludesSuggestionWhenFlagOn(t *testing.T) {
+	f := diagnose.Finding{Pod: "shop/web-abc", Issue: "CrashLoopBackOff", Reason: "keeps crashing", Container: "web"}
+	in := Input{
+		Result: inventory.Result{Workloads: []inventory.Workload{{
+			Namespace: "shop", Name: "web", Kind: "Deployment", Desired: 2, Ready: 0, Status: "Degraded",
+			Findings: []diagnose.Finding{f},
+		}}},
+		Suggest: true,
+	}
+	var buf bytes.Buffer
+	if err := PrintInventory(in, "json", &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var got struct {
+		Workloads []inventory.Workload `json:"workloads"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("not the workloads object: %v", err)
+	}
+	if len(got.Workloads) != 1 || len(got.Workloads[0].Findings) != 1 {
+		t.Fatalf("unexpected shape: %+v", got)
+	}
+	s := got.Workloads[0].Findings[0].Suggestion
+	want := remediation.For(f)
+	if s == nil {
+		t.Fatalf("expected a suggestion, got none")
+	}
+	if s.NextStep != want.NextStep || s.Command != want.Command {
+		t.Errorf("suggestion = %+v, want NextStep %q Command %q", s, want.NextStep, want.Command)
+	}
+}
+
+func TestPrintInventory_JSONSuggestDoesNotMutateInput(t *testing.T) {
+	in := Input{
+		Result: inventory.Result{Workloads: []inventory.Workload{{
+			Namespace: "shop", Name: "web", Kind: "Deployment", Desired: 2, Ready: 0, Status: "Degraded",
+			Findings: []diagnose.Finding{{Pod: "shop/web-abc", Issue: "CrashLoopBackOff", Reason: "keeps crashing", Container: "web"}},
+		}}},
+		Suggest: true,
+	}
+	var buf bytes.Buffer
+	if err := PrintInventory(in, "json", &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if in.Result.Workloads[0].Findings[0].Suggestion != nil {
+		t.Errorf("PrintInventory must not mutate the caller's Workloads in place, got Suggestion = %+v",
+			in.Result.Workloads[0].Findings[0].Suggestion)
 	}
 }
 

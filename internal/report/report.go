@@ -135,6 +135,38 @@ func remediationPlanOf(in Input) []RemediationActionView {
 	return out
 }
 
+// suggestFindings returns a copy of findings with each entry's Suggestion set
+// from remediation.For, when that suggestion carries a next step. The input
+// slice is never mutated in place: PrintInventory passes in.Result.Workloads
+// into the encoded document by reference, and a print function that mutates
+// its caller's data is a defect on its own terms, regardless of who else
+// might read that data afterward.
+func suggestFindings(findings []diagnose.Finding) []diagnose.Finding {
+	if len(findings) == 0 {
+		return findings
+	}
+	out := make([]diagnose.Finding, len(findings))
+	for i, f := range findings {
+		if s := remediation.For(f); s.NextStep != "" {
+			f.Suggestion = &diagnose.Suggestion{NextStep: s.NextStep, Command: s.Command}
+		}
+		out[i] = f
+	}
+	return out
+}
+
+// suggestWorkloads returns a copy of workloads with each workload's findings
+// annotated by suggestFindings. Used only for the JSON output path when
+// --suggest is set; in.Result.Workloads itself is never touched.
+func suggestWorkloads(workloads []inventory.Workload) []inventory.Workload {
+	out := make([]inventory.Workload, len(workloads))
+	for i, wl := range workloads {
+		wl.Findings = suggestFindings(wl.Findings)
+		out[i] = wl
+	}
+	return out
+}
+
 // Input carries everything the report renders. Bundled into a struct because the
 // positional parameter list had grown unwieldy.
 type Input struct {
@@ -193,12 +225,16 @@ type Input struct {
 func PrintInventory(in Input, format string, w io.Writer) error {
 	switch format {
 	case "json":
+		workloads := in.Result.Workloads
+		if in.Suggest {
+			workloads = suggestWorkloads(workloads)
+		}
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
 		return enc.Encode(ScanReport{
 			SchemaVersion:      jsonschema.ScanVersion,
 			Cluster:            in.Cluster,
-			Workloads:          in.Result.Workloads,
+			Workloads:          workloads,
 			Resources:          in.Resources,
 			Platform:           in.Platform,
 			ServiceIssues:      in.ServiceIssues,

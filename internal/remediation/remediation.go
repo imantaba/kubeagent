@@ -29,13 +29,15 @@ func For(f diagnose.Finding) Suggestion {
 		return Suggestion{"the container exceeded its memory limit — raise the limit or fix the leak", describeCmd(ns, pod)}
 	case "Unschedulable":
 		return Suggestion{"no node can place the pod — check resource requests, taints, and affinity", describeCmd(ns, pod)}
-	case "CreateContainerConfigError":
+	case "CreateContainerConfigError", "Init:CreateContainerConfigError":
 		return Suggestion{"a referenced ConfigMap or Secret is missing — create it or fix the reference", describeCmd(ns, pod)}
 	case "ProbeFailure":
 		return Suggestion{"the probe keeps failing — check the probe config and the app's health endpoint", describeCmd(ns, pod)}
 	case "VolumeAttachError":
 		return Suggestion{"the volume can't attach — check the PVC/PV binding and the CSI driver", describeCmd(ns, pod)}
-	case "Init:ImagePullBackOff":
+	case "VolumeMountError":
+		return Suggestion{"a mounted ConfigMap or Secret is missing — create it or fix the volume", describeCmd(ns, pod)}
+	case "Init:ImagePullBackOff", "Init:ErrImagePull":
 		// The image never pulled, so there are no logs — describe shows the pull event.
 		return Suggestion{"an init container's image can't be pulled — the pod cannot start; verify the tag and registry credentials", describeCmd(ns, pod)}
 	case "Init:CrashLoopBackOff", "Init:OOMKilled":

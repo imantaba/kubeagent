@@ -151,13 +151,100 @@ func TestAssess_HealthyOnlyNothingListed(t *testing.T) {
 }
 
 func TestAssess_JustExpiredIsExpiredNotExpiring(t *testing.T) {
-	// Expired 6h ago: int() truncation would give Days=0 (EXPIRING); floor gives -1 (EXPIRED).
+	// Expired 6h ago: elapsed time rounds toward zero (R97), so Days=0 — the
+	// classifier no longer keys on Days to decide Expired vs Expiring, it
+	// compares the certificate against the clock directly, so a Days=0 cert
+	// that has actually expired still lands in Expired, not Expiring.
 	secrets := []corev1.Secret{tlsSecret("shop", "fresh-dead", certPEM(t, "fd.example.com", nil, now.Add(-6*time.Hour)))}
 	rep := Assess(secrets, nil, 30, now)
-	if len(rep.Expired) != 1 || rep.Expired[0].Days != -1 {
-		t.Fatalf("a cert expired <24h ago must be EXPIRED with Days=-1, got expired=%+v expiring=%+v", rep.Expired, rep.Expiring)
+	if len(rep.Expired) != 1 || rep.Expired[0].Days != 0 {
+		t.Fatalf("a cert expired <24h ago must be EXPIRED with Days=0, got expired=%+v expiring=%+v", rep.Expired, rep.Expiring)
 	}
 	if len(rep.Expiring) != 0 {
 		t.Errorf("must not be classified expiring, got %+v", rep.Expiring)
+	}
+}
+
+// TestAssess_DaysRoundTowardZero pins R97: elapsed time rounds toward zero —
+// math.Floor on the positive side (already correct, unchanged), math.Ceil on
+// the negative side, so an expired certificate's Days magnitude is one smaller
+// than plain truncation-toward-negative-infinity would give. Because Days=0 no
+// longer distinguishes "expires today" from "expired today", classification is
+// asserted directly alongside Days: the classifier must compare the
+// certificate's NotAfter against the clock, not merely read Days' sign.
+func TestAssess_DaysRoundTowardZero(t *testing.T) {
+	tests := []struct {
+		name         string
+		notAfter     time.Time
+		wantDays     int
+		wantExpired  bool
+		wantExpiring bool
+	}{
+		{
+			name:         "expiring in 5.49 days rounds down",
+			notAfter:     now.Add(time.Duration(5.49 * float64(24*time.Hour))),
+			wantDays:     5,
+			wantExpiring: true,
+		},
+		{
+			name:        "expired 78 minutes ago rounds toward zero to 0, still Expired",
+			notAfter:    now.Add(-78 * time.Minute),
+			wantDays:    0,
+			wantExpired: true,
+		},
+		{
+			name:        "expired 10.003 days ago rounds toward zero to -10",
+			notAfter:    now.Add(-time.Duration(10.003 * float64(24*time.Hour))),
+			wantDays:    -10,
+			wantExpired: true,
+		},
+		{
+			name:        "NotAfter equal to now exactly is Expired",
+			notAfter:    now,
+			wantDays:    0,
+			wantExpired: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			secrets := []corev1.Secret{tlsSecret("shop", "cert", certPEM(t, "cert.example.com", nil, tt.notAfter))}
+			rep := Assess(secrets, nil, 30, now)
+			var got *Cert
+			var gotExpired, gotExpiring bool
+			if len(rep.Expired) == 1 {
+				got = &rep.Expired[0]
+				gotExpired = true
+			}
+			if len(rep.Expiring) == 1 {
+				got = &rep.Expiring[0]
+				gotExpiring = true
+			}
+			if gotExpired != tt.wantExpired || gotExpiring != tt.wantExpiring {
+				t.Fatalf("expired=%v expiring=%v, want expired=%v expiring=%v (rep=%+v)",
+					gotExpired, gotExpiring, tt.wantExpired, tt.wantExpiring, rep)
+			}
+			if got == nil || got.Days != tt.wantDays {
+				t.Errorf("Days = %v, want %d", got, tt.wantDays)
+			}
+		})
+	}
+}
+
+// TestAssess_WarnDaysBoundaryUnchanged pins the 30/31 boundary the R97
+// classifier must preserve exactly: a certificate expiring in precisely
+// warnDays days is Expiring (inclusive), one day later it is neither
+// (exclusive) — unaffected by the change in rounding direction or the
+// classifier now comparing the clock directly.
+func TestAssess_WarnDaysBoundaryUnchanged(t *testing.T) {
+	secrets := []corev1.Secret{
+		tlsSecret("shop", "at-boundary", certPEM(t, "at.example.com", nil, now.Add(30*24*time.Hour))),
+		tlsSecret("shop", "past-boundary", certPEM(t, "past.example.com", nil, now.Add(31*24*time.Hour))),
+	}
+	rep := Assess(secrets, nil, 30, now)
+	if len(rep.Expiring) != 1 || rep.Expiring[0].Name != "at-boundary" || rep.Expiring[0].Days != 30 {
+		t.Errorf("Days==warnDays must be Expiring (inclusive), got expiring=%+v", rep.Expiring)
+	}
+	if len(rep.Expired)+len(rep.Expiring) != 1 {
+		t.Errorf("Days==warnDays+1 must be neither expired nor expiring, got expired=%+v expiring=%+v", rep.Expired, rep.Expiring)
 	}
 }

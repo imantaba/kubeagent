@@ -80,16 +80,28 @@ func Assess(secrets []corev1.Secret, ingresses []networkingv1.Ingress, warnDays 
 		if name == "" && len(cert.DNSNames) > 0 {
 			name = safetext.Line(cert.DNSNames[0])
 		}
+		elapsedDays := cert.NotAfter.Sub(now).Hours() / 24
+		days := math.Floor(elapsedDays)
+		if elapsedDays < 0 {
+			// Elapsed time rounds toward zero, not toward negative infinity: a
+			// certificate that expired 78 minutes ago is one day old, not two.
+			days = math.Ceil(elapsedDays)
+		}
 		c := Cert{
 			Namespace:  s.Namespace,
 			Name:       s.Name,
 			CommonName: name,
 			NotAfter:   cert.NotAfter.UTC().Format(time.RFC3339),
-			Days:       int(math.Floor(cert.NotAfter.Sub(now).Hours() / 24)),
+			Days:       int(days),
 			Ingresses:  fronts[s.Namespace+"/"+s.Name],
 		}
 		switch {
-		case c.Days < 0:
+		case !cert.NotAfter.After(now):
+			// Compare the certificate against the clock directly rather than
+			// keying on Days: rounding toward zero means Days==0 no longer
+			// distinguishes "expires today" (not yet expired) from "expired
+			// today" (already past NotAfter), and NotAfter.After is false both
+			// when NotAfter is in the past and when it equals now exactly.
 			rep.Expired = append(rep.Expired, c)
 		case c.Days <= warnDays:
 			rep.Expiring = append(rep.Expiring, c)

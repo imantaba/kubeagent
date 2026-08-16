@@ -331,6 +331,84 @@ func TestAssess_NoMatchingPV_DynamicPVNotCandidate(t *testing.T) {
 	}
 }
 
+// R58: anyMatchingPV honours the claim's selector and volume mode, and
+// distinguishes "no storage" (NoMatchingPV) from "your selector is wrong"
+// (PVSelectorMismatch).
+
+func TestAssess_PVSelectorMismatch_ExcludesOtherwiseSuitablePV(t *testing.T) {
+	pvc := staticPVC("shop", "selector-pvc", "10Gi", corev1.ReadWriteOnce)
+	pvc.Spec.Selector = &metav1.LabelSelector{MatchLabels: map[string]string{"tier": "fast"}}
+	// pv-1 satisfies size, mode, and class, but carries no labels — it fails
+	// only the selector.
+	pvs := []corev1.PersistentVolume{availPV("pv-1", "20Gi", "", corev1.ReadWriteOnce)}
+	got := onlyIssue(t, Assess([]corev1.PersistentVolumeClaim{pvc}, nil, nil, pvs))
+	if got.Reason != "PVSelectorMismatch" {
+		t.Fatalf("reason = %q, want PVSelectorMismatch", got.Reason)
+	}
+	if got.Detail != "no available PersistentVolume matches its selector (1 otherwise-suitable volume(s) excluded)" {
+		t.Fatalf("detail = %q", got.Detail)
+	}
+}
+
+func TestAssess_PVSelectorMismatch_LabelledPVMatchesNotFlagged(t *testing.T) {
+	pvc := staticPVC("shop", "selector-pvc", "10Gi", corev1.ReadWriteOnce)
+	pvc.Spec.Selector = &metav1.LabelSelector{MatchLabels: map[string]string{"tier": "fast"}}
+	pv := availPV("pv-1", "20Gi", "", corev1.ReadWriteOnce)
+	pv.Labels = map[string]string{"tier": "fast"}
+	if got := Assess([]corev1.PersistentVolumeClaim{pvc}, nil, nil, []corev1.PersistentVolume{pv}); len(got) != 0 {
+		t.Fatalf("a PV matching the selector must satisfy the claim, got %+v", got)
+	}
+}
+
+func TestAssess_VolumeModeMismatch_NoMatchingPV(t *testing.T) {
+	pvc := staticPVC("shop", "data", "10Gi", corev1.ReadWriteOnce)
+	block := corev1.PersistentVolumeBlock
+	pvc.Spec.VolumeMode = &block
+	pv := availPV("pv-1", "20Gi", "", corev1.ReadWriteOnce) // defaults to Filesystem
+	got := onlyIssue(t, Assess([]corev1.PersistentVolumeClaim{pvc}, nil, nil, []corev1.PersistentVolume{pv}))
+	if got.Reason != "NoMatchingPV" {
+		t.Fatalf("reason = %q, want the existing NoMatchingPV wording", got.Reason)
+	}
+	if got.Detail != "no available PersistentVolume matches its request (10Gi, ReadWriteOnce)" {
+		t.Fatalf("detail = %q must stay byte-identical to the existing wording", got.Detail)
+	}
+}
+
+func TestAssess_NoSelector_NothingMatches_ExistingWordingByteIdentical(t *testing.T) {
+	pvc := staticPVC("shop", "data", "10Gi", corev1.ReadWriteOnce)
+	got := onlyIssue(t, Assess([]corev1.PersistentVolumeClaim{pvc}, nil, nil, nil))
+	if got.Reason != "NoMatchingPV" {
+		t.Fatalf("reason = %q", got.Reason)
+	}
+	if got.Detail != "no available PersistentVolume matches its request (10Gi, ReadWriteOnce)" {
+		t.Fatalf("detail = %q must stay byte-identical", got.Detail)
+	}
+}
+
+func TestAssess_NoSelector_PVMatches_NotFlagged(t *testing.T) {
+	pvc := staticPVC("shop", "data", "10Gi", corev1.ReadWriteOnce)
+	pvs := []corev1.PersistentVolume{availPV("pv-1", "20Gi", "", corev1.ReadWriteOnce)}
+	if got := Assess([]corev1.PersistentVolumeClaim{pvc}, nil, nil, pvs); len(got) != 0 {
+		t.Fatalf("a matching PV with no selector on the claim must satisfy it, got %+v", got)
+	}
+}
+
+func TestAssess_PVSelectorMismatch_CountsAllExcluded(t *testing.T) {
+	pvc := staticPVC("shop", "selector-pvc", "10Gi", corev1.ReadWriteOnce)
+	pvc.Spec.Selector = &metav1.LabelSelector{MatchLabels: map[string]string{"tier": "fast"}}
+	pvs := []corev1.PersistentVolume{
+		availPV("pv-1", "20Gi", "", corev1.ReadWriteOnce),
+		availPV("pv-2", "20Gi", "", corev1.ReadWriteOnce),
+	}
+	got := onlyIssue(t, Assess([]corev1.PersistentVolumeClaim{pvc}, nil, nil, pvs))
+	if got.Reason != "PVSelectorMismatch" {
+		t.Fatalf("reason = %q, want PVSelectorMismatch", got.Reason)
+	}
+	if got.Detail != "no available PersistentVolume matches its selector (2 otherwise-suitable volume(s) excluded)" {
+		t.Fatalf("detail = %q", got.Detail)
+	}
+}
+
 // hostileText is what a provisioner's event message carries when the
 // provisioner is not the one you think: invalid UTF-8, a screen-clearing ANSI
 // escape, a right-to-left override and a NUL.

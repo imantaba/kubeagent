@@ -12,6 +12,8 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 
 	"github.com/imantaba/kubeagent/internal/safetext"
 )
@@ -21,7 +23,7 @@ type Issue struct {
 	Namespace    string `json:"namespace"`
 	Name         string `json:"name"`
 	Phase        string `json:"phase"`  // "Pending"
-	Reason       string `json:"reason"` // "ProvisioningFailed" | "FailedBinding" | "MissingStorageClass" | "NoMatchingPV"
+	Reason       string `json:"reason"` // "ProvisioningFailed" | "FailedBinding" | "MissingStorageClass" | "NoMatchingPV" | "PVSelectorMismatch"
 	Detail       string `json:"detail"` // the cause
 	StorageClass string `json:"storageClass,omitempty"`
 }
@@ -77,7 +79,11 @@ func structuralCause(c corev1.PersistentVolumeClaim, storageClasses []storagev1.
 		}
 		return "", "", false
 	case sc != nil && *sc == "":
-		if !anyMatchingPV(c, pvs) {
+		ok, excludedBySelector := anyMatchingPV(c, pvs)
+		if !ok {
+			if excludedBySelector > 0 {
+				return "PVSelectorMismatch", fmt.Sprintf("no available PersistentVolume matches its selector (%d otherwise-suitable volume(s) excluded)", excludedBySelector), true
+			}
 			return "NoMatchingPV", fmt.Sprintf("no available PersistentVolume matches its request (%s, %s)", requestSize(c), modeList(c)), true
 		}
 		return "", "", false
@@ -96,9 +102,25 @@ func classExists(name string, scs []storagev1.StorageClass) bool {
 }
 
 // anyMatchingPV reports whether some Available, unbound, static PV can satisfy the
-// claim's size and access modes.
-func anyMatchingPV(c corev1.PersistentVolumeClaim, pvs []corev1.PersistentVolume) bool {
+// claim's size, access modes, volume mode, and label selector. When none does, ok is
+// false and excludedBySelector counts the PVs that satisfied every other criterion and
+// were excluded by the selector alone — the signal that distinguishes "no storage"
+// from "your selector is wrong".
+func anyMatchingPV(c corev1.PersistentVolumeClaim, pvs []corev1.PersistentVolume) (ok bool, excludedBySelector int) {
 	req := c.Spec.Resources.Requests[corev1.ResourceStorage]
+	// A nil selector means the claim named no selector at all — every PV is a
+	// candidate. metav1.LabelSelectorAsSelector(nil) returns labels.Nothing()
+	// instead, since callers with a NetworkPolicy-style non-pointer selector
+	// mean the opposite by nil; a PVC's *LabelSelector has no such convention,
+	// so that default must be overridden here.
+	sel := labels.Everything()
+	if c.Spec.Selector != nil {
+		var err error
+		sel, err = metav1.LabelSelectorAsSelector(c.Spec.Selector)
+		if err != nil {
+			sel = labels.Nothing()
+		}
+	}
 	for _, pv := range pvs {
 		if pv.Status.Phase != corev1.VolumeAvailable || pv.Spec.ClaimRef != nil {
 			continue
@@ -113,9 +135,31 @@ func anyMatchingPV(c corev1.PersistentVolumeClaim, pvs []corev1.PersistentVolume
 		if !modesSatisfied(c.Spec.AccessModes, pv.Spec.AccessModes) {
 			continue
 		}
-		return true
+		if !volumeModeSatisfied(c.Spec.VolumeMode, pv.Spec.VolumeMode) {
+			continue
+		}
+		if !sel.Matches(labels.Set(pv.Labels)) {
+			excludedBySelector++
+			continue
+		}
+		return true, 0
 	}
-	return false
+	return false, excludedBySelector
+}
+
+// volumeModeSatisfied reports whether the PV's volume mode satisfies the claim's.
+// A nil VolumeMode on either side defaults to Filesystem, matching the API server's
+// own defaulting.
+func volumeModeSatisfied(want, have *corev1.PersistentVolumeMode) bool {
+	w := corev1.PersistentVolumeFilesystem
+	if want != nil {
+		w = *want
+	}
+	h := corev1.PersistentVolumeFilesystem
+	if have != nil {
+		h = *have
+	}
+	return w == h
 }
 
 func modesSatisfied(want, have []corev1.PersistentVolumeAccessMode) bool {

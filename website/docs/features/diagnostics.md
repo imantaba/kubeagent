@@ -480,13 +480,19 @@ cluster verdict.
 ### Ingress route health
 
 `scan` walks every Ingress rule (and default backend) and follows the route to
-its backend Service. It flags a route when the Service is missing, has no ready
-endpoints (the usual cause of a 502/503), or does not expose the referenced
-port — so a broken public route reads as, e.g., `ingress shop/web
-example.com/api backend Service api-svc:8080 has no ready endpoints (likely
-502/503)`. Only Service backends are checked (Resource backends are skipped), and
-routes resolve within the Ingress's own namespace. It is read-only and advisory:
-it appears in **NEEDS ATTENTION** and JSON `ingressIssues` but does not change
+its backend Service, in one of three forms:
+
+- **missing Service** — `backend Service api-svc not found`
+- **no ready endpoints** (the usual cause of a 502/503) — `backend Service
+  api-svc:8080 has no ready endpoints (likely 502/503)`. The `:8080` appears
+  only when the Ingress's requested port actually resolves on the Service;
+  when it does not, the Detail names the Service alone rather than
+  misattributing a port the Service never exposed.
+- **port not exposed** — `backend Service api-svc does not expose port 8080`
+
+Only Service backends are checked (Resource backends are skipped), and routes
+resolve within the Ingress's own namespace. It is read-only and advisory: it
+appears in **NEEDS ATTENTION** and JSON `ingressIssues` but does not change
 the cluster verdict.
 
 When a broken route's backend Service has no ready endpoints, the Detail also

@@ -106,9 +106,12 @@ func fuzzPVCs(c *fuzzgen.Cursor) ([]corev1.PersistentVolumeClaim, []corev1.Event
 }
 
 // FuzzPVCAssess feeds hostile ProvisioningFailed/FailedBinding event text to a
-// PVC issue's detail. The reason is asserted against the four literals this
-// package writes, because it is deliberately not sanitized: two of them come
-// from an event, and the filter that admits them is what bounds the field.
+// PVC issue's detail. The reason is asserted against the five literals this
+// package writes reachable from this generator, because it is deliberately not
+// sanitized: two of them come from an event, and the filter that admits them is
+// what bounds the field. PVSelectorMismatch is a sixth literal the package can
+// return, but fuzzPVCs never sets a claim's selector or a PV's labels, so it is
+// unreachable here.
 func FuzzPVCAssess(f *testing.F) {
 	f.Add([]byte("seed"))
 	f.Add([]byte{})
@@ -120,18 +123,19 @@ func FuzzPVCAssess(f *testing.F) {
 	reasons := map[string]bool{
 		"ProvisioningFailed": true, "FailedBinding": true,
 		"MissingStorageClass": true, "NoMatchingPV": true,
+		"ProvisionerNotResponding": true,
 	}
 
 	f.Fuzz(func(t *testing.T, params []byte) {
 		pvcs, evs, scs, pvs := fuzzPVCs(fuzzgen.New(params))
-		got := Assess(pvcs, evs, scs, pvs)
+		got := Assess(pvcs, evs, scs, pvs, 10*time.Minute, fuzzBase)
 
 		for _, iss := range got {
 			fuzzgen.AssertSafe(t, "issue.detail", iss.Detail)
 			fuzzgen.AssertSafe(t, "issue.reason", iss.Reason)
 			fuzzgen.AssertSafe(t, "issue.storageClass", iss.StorageClass)
 			if !reasons[iss.Reason] {
-				t.Errorf("Reason = %q, want one of this package's four literals", iss.Reason)
+				t.Errorf("Reason = %q, want one of this package's reachable literals", iss.Reason)
 			}
 			// The detail on the event path is exactly one sanitized value, and
 			// on the structural path a phrase composed from bounded parts —
@@ -139,7 +143,7 @@ func FuzzPVCAssess(f *testing.F) {
 			fuzzgen.AssertBounded(t, "issue.detail", iss.Detail, safetext.MaxLine)
 		}
 
-		again := Assess(pvcs, evs, scs, pvs)
+		again := Assess(pvcs, evs, scs, pvs, 10*time.Minute, fuzzBase)
 		if !reflect.DeepEqual(got, again) {
 			t.Errorf("Assess is not deterministic")
 		}

@@ -678,7 +678,7 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	}
 
 	pvcReclaim := pvcreclaim.Assess(pvcs, pvs)
-	pvcIssues := pvchealth.Assess(pvcs, pvcEvents, storageClasses, pvs)
+	pvcIssues := pvchealth.Assess(pvcs, pvcEvents, storageClasses, pvs, 10*time.Minute, now)
 
 	// The CLI already refuses an out-of-range KUBEAGENT_QUOTA_THRESHOLD and
 	// says so. This clamp is for every other caller: Evaluate must stay safe

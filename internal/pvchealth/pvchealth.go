@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
@@ -30,8 +31,11 @@ type Issue struct {
 
 // Assess flags each Pending PVC that cannot provision or bind, naming the cause:
 // a missing StorageClass or no matching PV (structural, event-independent), else
-// the newest ProvisioningFailed/FailedBinding event's message. Pure and read-only.
-func Assess(pvcs []corev1.PersistentVolumeClaim, events []corev1.Event, storageClasses []storagev1.StorageClass, pvs []corev1.PersistentVolume) []Issue {
+// the newest ProvisioningFailed/FailedBinding event's message, else — as a last
+// resort, only when neither of those found anything — a StorageClass whose
+// provisioner has not answered within threshold of the claim's age. Pure and
+// read-only.
+func Assess(pvcs []corev1.PersistentVolumeClaim, events []corev1.Event, storageClasses []storagev1.StorageClass, pvs []corev1.PersistentVolume, threshold time.Duration, now time.Time) []Issue {
 	issues := make([]Issue, 0)
 	for _, c := range pvcs {
 		if c.Status.Phase != corev1.ClaimPending {
@@ -44,19 +48,28 @@ func Assess(pvcs []corev1.PersistentVolumeClaim, events []corev1.Event, storageC
 			})
 			continue
 		}
-		ev := newestFailureEvent(events, c.Namespace, c.Name)
-		if ev == nil {
+		if ev := newestFailureEvent(events, c.Namespace, c.Name); ev != nil {
+			// The message is free text the API server does not validate, and this is
+			// where it becomes a kubeagent value. The reason is not sanitized, and
+			// deliberately: newestFailureEvent admits only "ProvisioningFailed" and
+			// "FailedBinding", so what reaches an issue is one of two literals this
+			// package already knows, not text from the cluster.
+			issues = append(issues, Issue{
+				Namespace: c.Namespace, Name: c.Name, Phase: "Pending",
+				Reason: ev.Reason, Detail: safetext.Line(ev.Message), StorageClass: storageClass(c),
+			})
 			continue
 		}
-		// The message is free text the API server does not validate, and this is
-		// where it becomes a kubeagent value. The reason is not sanitized, and
-		// deliberately: newestFailureEvent admits only "ProvisioningFailed" and
-		// "FailedBinding", so what reaches an issue is one of two literals this
-		// package already knows, not text from the cluster.
-		issues = append(issues, Issue{
-			Namespace: c.Namespace, Name: c.Name, Phase: "Pending",
-			Reason: ev.Reason, Detail: safetext.Line(ev.Message), StorageClass: storageClass(c),
-		})
+		// Last resort: nothing structural and no failure event explains why this
+		// claim is still Pending. Only now is a stalled provisioner considered, so a
+		// claim with a real, specific event message never has it replaced by this
+		// vaguer, kubeagent-authored one.
+		if reason, detail, ok := provisionerStalled(c, storageClasses, threshold, now); ok {
+			issues = append(issues, Issue{
+				Namespace: c.Namespace, Name: c.Name, Phase: "Pending",
+				Reason: reason, Detail: detail, StorageClass: storageClass(c),
+			})
+		}
 	}
 	sort.Slice(issues, func(i, j int) bool {
 		if issues[i].Namespace != issues[j].Namespace {
@@ -109,6 +122,44 @@ func classExists(name string, scs []storagev1.StorageClass) bool {
 		}
 	}
 	return false
+}
+
+func findStorageClass(name string, scs []storagev1.StorageClass) *storagev1.StorageClass {
+	for i := range scs {
+		if scs[i].Name == name {
+			return &scs[i]
+		}
+	}
+	return nil
+}
+
+// provisionerStalled is the last-resort check: a Pending claim naming an existing
+// StorageClass whose VolumeBindingMode is nil or Immediate (never
+// WaitForFirstConsumer — nothing is stuck there, it is waiting on a consumer by
+// design) has aged past threshold with no structural cause and no failure event to
+// explain it. Reported only from Assess, after newestFailureEvent has returned nil,
+// so a claim with a real event message never has it replaced by this vaguer,
+// kubeagent-authored one.
+func provisionerStalled(c corev1.PersistentVolumeClaim, storageClasses []storagev1.StorageClass, threshold time.Duration, now time.Time) (reason, detail string, ok bool) {
+	scName := storageClass(c)
+	if scName == "" {
+		return "", "", false
+	}
+	sc := findStorageClass(scName, storageClasses)
+	if sc == nil {
+		return "", "", false
+	}
+	if sc.VolumeBindingMode != nil && *sc.VolumeBindingMode == storagev1.VolumeBindingWaitForFirstConsumer {
+		return "", "", false
+	}
+	if now.Sub(c.CreationTimestamp.Time) < threshold {
+		return "", "", false
+	}
+	// The provisioner name is a free-form string the API server does not validate,
+	// so it is sanitized at the point it enters this Issue's Detail.
+	return "ProvisionerNotResponding",
+		fmt.Sprintf("provisioner %q on StorageClass %q has not responded in over %s", safetext.Line(sc.Provisioner), scName, threshold),
+		true
 }
 
 // isDefaultClassAnnotation is the well-known annotation the API server's admission

@@ -557,7 +557,11 @@ func TestClassifyKubeletHealthz(t *testing.T) {
 		{500, "[+]ping ok\n[-]pleg failed\nhealthz check failed", "unhealthy", "[-]pleg failed"},
 		{500, "healthz check failed", "unhealthy", "healthz check failed"},
 		{403, "forbidden", "forbidden", ""},
+		{401, "unauthorized", "forbidden", ""},
 		{0, "", "unreachable", ""},
+		{502, "bad gateway", "unreachable", ""},
+		{503, "service unavailable", "unreachable", ""},
+		{504, "gateway timeout", "unreachable", ""},
 	}
 	for _, c := range cases {
 		p := classify("n", c.code, []byte(c.body))

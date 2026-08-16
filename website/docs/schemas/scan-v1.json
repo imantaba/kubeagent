@@ -1022,6 +1022,9 @@
             "$ref": "#/$defs/nodehealth.Issue"
           },
           "type": "array"
+        },
+        "unreachable": {
+          "type": "integer"
         }
       },
       "required": [

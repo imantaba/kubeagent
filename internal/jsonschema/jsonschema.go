@@ -27,13 +27,18 @@ type Schema = map[string]any
 const (
 	// ScanVersion is `kubeagent scan --output json`. 1.1 added `policy`; 1.2
 	// added `baseline`; 1.3 added `state` on a pod row, the kubectl-style
-	// display value computed beside the raw `phase`, which is unchanged. All
-	// three are additive: every added property is omitempty and absent from
-	// `required`, so a document produced without them still validates against
-	// the older schema. `state` is omitempty for that reason and no other — it
-	// is set on every row of every real scan, but a property in `required` is a
-	// MAJOR change however new it is.
-	ScanVersion     = "1.3"
+	// display value computed beside the raw `phase`, which is unchanged; 1.4
+	// added `unreachable` on `nodehealth.Report`, the count of probed kubelets
+	// whose /healthz never answered (transport failure or a 502/503/504 from
+	// the proxy), tracked separately from `forbidden` so a permission problem
+	// and a dead kubelet are not conflated. All four are additive: every added
+	// property is omitempty and absent from `required`, so a document produced
+	// without them still validates against the older schema. `state` and
+	// `unreachable` are omitempty for that reason and no other — `state` is set
+	// on every row of every real scan, and a run with no unreachable kubelet
+	// legitimately encodes no `unreachable` key, but a property in `required`
+	// is a MAJOR change however new or however often it is set.
+	ScanVersion     = "1.4"
 	GateVersion     = "1.1"
 	RBACVersion     = "1.0"
 	WatchVersion    = "1.0"

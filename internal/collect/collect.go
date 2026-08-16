@@ -593,15 +593,17 @@ func ControlPlaneReadyz(ctx context.Context, client kubernetes.Interface) contro
 }
 
 // classify maps a /healthz probe result to a Probe. 200 is ok; 401/403 is
-// forbidden (grant missing); code 0 (no HTTP status — transport error) is
-// unreachable; any other status the kubelet returned is unhealthy.
+// forbidden (grant missing); code 0 (no HTTP status — transport error) or a
+// 502/503/504 gateway error is unreachable — the kubelet itself never
+// answered, whether the proxy could not reach it or gave up waiting; any
+// other status the kubelet returned is unhealthy.
 func classify(node string, code int, body []byte) nodehealth.Probe {
 	switch {
 	case code == 200:
 		return nodehealth.Probe{Node: node, Status: "ok"}
 	case code == 401 || code == 403:
 		return nodehealth.Probe{Node: node, Status: "forbidden"}
-	case code == 0:
+	case code == 0 || code == 502 || code == 503 || code == 504:
 		return nodehealth.Probe{Node: node, Status: "unreachable"}
 	default:
 		return nodehealth.Probe{Node: node, Status: "unhealthy", Detail: healthzDetail(body, 120)}

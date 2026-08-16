@@ -49,14 +49,16 @@ func TestAssess_ProvisioningFailed(t *testing.T) {
 }
 
 func TestAssess_FailedBinding(t *testing.T) {
-	// nil StorageClassName falls through to the event path (ambiguous default-SC case).
+	// nil StorageClassName with a default StorageClass present falls through to the
+	// event path — the ambiguous case is only "no default exists" (R59).
 	pvc := corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "legacy"},
 		Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: nil},
 		Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimPending},
 	}
 	events := []corev1.Event{pvcEvent("shop", "legacy", "FailedBinding", "no persistent volumes available for this claim and no storage class is set")}
-	got := Assess([]corev1.PersistentVolumeClaim{pvc}, events, nil, nil)
+	scs := []storagev1.StorageClass{defaultSC("standard", "true")}
+	got := Assess([]corev1.PersistentVolumeClaim{pvc}, events, scs, nil)
 	if len(got) != 1 || got[0].Reason != "FailedBinding" {
 		t.Fatalf("want 1 FailedBinding issue, got %+v", got)
 	}
@@ -192,6 +194,32 @@ func TestAssess_FailureEventSupersededByLaterEvent_NoIssue(t *testing.T) {
 
 func scClass(name string) storagev1.StorageClass {
 	return storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: name}}
+}
+
+// defaultSC is a StorageClass carrying the well-known
+// "storageclass.kubernetes.io/is-default-class" annotation set to isDefaultValue,
+// e.g. defaultSC("standard", "true") for a genuine default.
+func defaultSC(name, isDefaultValue string) storagev1.StorageClass {
+	return storagev1.StorageClass{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        name,
+			Annotations: map[string]string{"storageclass.kubernetes.io/is-default-class": isDefaultValue},
+		},
+	}
+}
+
+// nilClassPVC is a Pending PVC with a nil StorageClassName (the ambiguous
+// "no class named" case) + a size + modes.
+func nilClassPVC(ns, name, size string, modes ...corev1.PersistentVolumeAccessMode) corev1.PersistentVolumeClaim {
+	return corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			StorageClassName: nil,
+			AccessModes:      modes,
+			Resources:        corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse(size)}},
+		},
+		Status: corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimPending},
+	}
 }
 
 // staticPVC is a Pending PVC with storageClassName "" (explicit static) + a size + modes.
@@ -406,6 +434,57 @@ func TestAssess_PVSelectorMismatch_CountsAllExcluded(t *testing.T) {
 	}
 	if got.Detail != "no available PersistentVolume matches its selector (2 otherwise-suitable volume(s) excluded)" {
 		t.Fatalf("detail = %q", got.Detail)
+	}
+}
+
+// R59: a nil StorageClassName is ambiguous only when the cluster truly has no
+// default StorageClass; when one exists, the claim still defers to the event
+// path (TestAssess_FailedBinding pins that case).
+
+func TestAssess_NilClass_NoDefaultSC_NoMatchingPV(t *testing.T) {
+	pvc := nilClassPVC("shop", "nilsc2-pvc", "10Gi", corev1.ReadWriteOnce)
+	got := onlyIssue(t, Assess([]corev1.PersistentVolumeClaim{pvc}, nil, nil, nil))
+	if got.Reason != "NoMatchingPV" {
+		t.Fatalf("reason = %q, want NoMatchingPV", got.Reason)
+	}
+	if got.Detail != "no available PersistentVolume matches its request (10Gi, ReadWriteOnce)" {
+		t.Fatalf("detail = %q must stay byte-identical", got.Detail)
+	}
+}
+
+func TestAssess_NilClass_NoDefaultSC_MatchingPV_NotFlagged(t *testing.T) {
+	pvc := nilClassPVC("shop", "nilsc2-pvc", "10Gi", corev1.ReadWriteOnce)
+	pvs := []corev1.PersistentVolume{availPV("pv-1", "20Gi", "", corev1.ReadWriteOnce)}
+	if got := Assess([]corev1.PersistentVolumeClaim{pvc}, nil, nil, pvs); len(got) != 0 {
+		t.Fatalf("a nil-class claim with a matching PV and no default SC must not be flagged, got %+v", got)
+	}
+}
+
+func TestAssess_NilClass_DefaultAnnotatedFalse_CountsAsNoDefault(t *testing.T) {
+	pvc := nilClassPVC("shop", "nilsc2-pvc", "10Gi", corev1.ReadWriteOnce)
+	scs := []storagev1.StorageClass{defaultSC("standard", "false")}
+	got := onlyIssue(t, Assess([]corev1.PersistentVolumeClaim{pvc}, nil, scs, nil))
+	if got.Reason != "NoMatchingPV" {
+		t.Fatalf("reason = %q, want NoMatchingPV (an SC annotated \"false\" is not default)", got.Reason)
+	}
+}
+
+func TestAssess_NilClass_DefaultAnnotatedOtherValue_CountsAsNoDefault(t *testing.T) {
+	pvc := nilClassPVC("shop", "nilsc2-pvc", "10Gi", corev1.ReadWriteOnce)
+	scs := []storagev1.StorageClass{defaultSC("standard", "yes")}
+	got := onlyIssue(t, Assess([]corev1.PersistentVolumeClaim{pvc}, nil, scs, nil))
+	if got.Reason != "NoMatchingPV" {
+		t.Fatalf("reason = %q, want NoMatchingPV (only the literal \"true\" counts as default)", got.Reason)
+	}
+}
+
+func TestAssess_NilClass_DefaultPresent_FallsToEventPath(t *testing.T) {
+	pvc := nilClassPVC("shop", "nilsc2-pvc", "10Gi", corev1.ReadWriteOnce)
+	scs := []storagev1.StorageClass{defaultSC("standard", "true")}
+	// No matching PV and no event: with a default SC present the claim must not
+	// be flagged structurally — it defers to the (here absent) event.
+	if got := Assess([]corev1.PersistentVolumeClaim{pvc}, nil, scs, nil); len(got) != 0 {
+		t.Fatalf("a nil-class claim with a default SC present must defer to the event path, got %+v", got)
 	}
 }
 

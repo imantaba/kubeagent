@@ -79,22 +79,48 @@ func structuralCause(c corev1.PersistentVolumeClaim, storageClasses []storagev1.
 		}
 		return "", "", false
 	case sc != nil && *sc == "":
-		ok, excludedBySelector := anyMatchingPV(c, pvs)
-		if !ok {
-			if excludedBySelector > 0 {
-				return "PVSelectorMismatch", fmt.Sprintf("no available PersistentVolume matches its selector (%d otherwise-suitable volume(s) excluded)", excludedBySelector), true
-			}
-			return "NoMatchingPV", fmt.Sprintf("no available PersistentVolume matches its request (%s, %s)", requestSize(c), modeList(c)), true
+		return matchOutcome(c, pvs)
+	default: // sc == nil: ambiguous only when no default StorageClass exists
+		if hasDefaultStorageClass(storageClasses) {
+			return "", "", false // a default SC exists — leave to the event path
 		}
-		return "", "", false
-	default: // sc == nil (default SC / ambiguous) — leave to the event path
+		return matchOutcome(c, pvs)
+	}
+}
+
+// matchOutcome is the anyMatchingPV-derived outcome shared by a claim naming an
+// explicit static class ("") and a claim naming no class at all when the cluster
+// has no default StorageClass to fall back on.
+func matchOutcome(c corev1.PersistentVolumeClaim, pvs []corev1.PersistentVolume) (reason, detail string, ok bool) {
+	matched, excludedBySelector := anyMatchingPV(c, pvs)
+	if matched {
 		return "", "", false
 	}
+	if excludedBySelector > 0 {
+		return "PVSelectorMismatch", fmt.Sprintf("no available PersistentVolume matches its selector (%d otherwise-suitable volume(s) excluded)", excludedBySelector), true
+	}
+	return "NoMatchingPV", fmt.Sprintf("no available PersistentVolume matches its request (%s, %s)", requestSize(c), modeList(c)), true
 }
 
 func classExists(name string, scs []storagev1.StorageClass) bool {
 	for _, s := range scs {
 		if s.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// isDefaultClassAnnotation is the well-known annotation the API server's admission
+// plugin sets to "true" on exactly one StorageClass to mark it the cluster default.
+const isDefaultClassAnnotation = "storageclass.kubernetes.io/is-default-class"
+
+// hasDefaultStorageClass reports whether any StorageClass carries the default
+// annotation with the exact value "true". Any other value, including "false" and
+// the empty string, does not count as default.
+func hasDefaultStorageClass(scs []storagev1.StorageClass) bool {
+	for _, s := range scs {
+		if s.Annotations[isDefaultClassAnnotation] == "true" {
 			return true
 		}
 	}

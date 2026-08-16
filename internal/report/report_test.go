@@ -1972,6 +1972,65 @@ func TestPrintInventory_CertificatesAbsentWhenNilOrClean(t *testing.T) {
 	}
 }
 
+// TestPrintInventory_CertificatesNotesBullet covers R106's three-case table:
+// --certs with no findings gets a NOTES confirmation bullet and no
+// CERTIFICATES section; --certs with findings gets the section and no
+// bullet; no --certs at all (Certificates == nil) gets neither. The middle
+// case is the one internal/report/testdata/golden-scan.txt already embodies,
+// but the golden proves it only incidentally — this test asserts it directly.
+func TestPrintInventory_CertificatesNotesBullet(t *testing.T) {
+	cluster := clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1}
+
+	t.Run("certs ran, nothing to flag: note, no section", func(t *testing.T) {
+		var buf bytes.Buffer
+		if err := PrintInventory(Input{Cluster: cluster,
+			Certificates: &certhealth.Report{Checked: 5, WarnDays: 30}}, "text", &buf); err != nil {
+			t.Fatal(err)
+		}
+		out := buf.String()
+		if !strings.Contains(out, "NOTES") {
+			t.Errorf("want a NOTES section, got:\n%s", out)
+		}
+		if !strings.Contains(out, "5 certificates checked, none expired or expiring within 30d") {
+			t.Errorf("missing the certificates confirmation bullet, got:\n%s", out)
+		}
+		if strings.Contains(out, "CERTIFICATES") {
+			t.Errorf("must not render a CERTIFICATES section when nothing was flagged, got:\n%s", out)
+		}
+	})
+
+	t.Run("certs ran, something to flag: section, no note", func(t *testing.T) {
+		var buf bytes.Buffer
+		rep := &certhealth.Report{Checked: 3, WarnDays: 30,
+			Expiring: []certhealth.Cert{{Namespace: "infra", Name: "api-tls", CommonName: "api.example.com", Days: 12}},
+		}
+		if err := PrintInventory(Input{Cluster: cluster, Certificates: rep}, "text", &buf); err != nil {
+			t.Fatal(err)
+		}
+		out := buf.String()
+		if !strings.Contains(out, "CERTIFICATES") {
+			t.Errorf("want a CERTIFICATES section, got:\n%s", out)
+		}
+		if strings.Contains(out, "certificates checked, none expired or expiring") {
+			t.Errorf("must not duplicate the confirmation bullet when the section already rendered, got:\n%s", out)
+		}
+	})
+
+	t.Run("no --certs at all: neither", func(t *testing.T) {
+		var buf bytes.Buffer
+		if err := PrintInventory(Input{Cluster: cluster}, "text", &buf); err != nil {
+			t.Fatal(err)
+		}
+		out := buf.String()
+		if strings.Contains(out, "CERTIFICATES") {
+			t.Errorf("must not render a CERTIFICATES section when --certs was not given, got:\n%s", out)
+		}
+		if strings.Contains(out, "certificates checked") {
+			t.Errorf("must not render the confirmation bullet when --certs was not given, got:\n%s", out)
+		}
+	})
+}
+
 func TestPrintInventory_ConfidenceTags(t *testing.T) {
 	ws := []inventory.Workload{
 		{Namespace: "shop", Name: "cache", Kind: "Deployment", Desired: 1, Ready: 0, Status: "Degraded",

@@ -192,6 +192,18 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 		partialReads = append(partialReads, ReadFailure{Resource: resource, Reason: blindReason(action)})
 	}
 
+	// blindWith records a blind spot whose cause is not a permission refusal —
+	// an endpoint that did not answer. It shares blindSeen with blind so a
+	// resource is still named once, and it deliberately does not go through
+	// blindReason, whose "forbidden" prefix would be a false claim here.
+	blindWith := func(resource, reason string) {
+		if blindSeen[resource] {
+			return
+		}
+		blindSeen[resource] = true
+		partialReads = append(partialReads, ReadFailure{Resource: resource, Reason: reason})
+	}
+
 	// A refusal is reported in kubeagent's own words. The API server's message
 	// interpolates the authorizer's error, which names the requesting identity — a
 	// ServiceAccount, an IAM ARN, an OIDC email — and under webhook authorization
@@ -618,6 +630,9 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 
 	if opts.ControlPlaneHealth && readyz.Status == "forbidden" { // 23
 		blind("/readyz", "get /readyz")
+	}
+	if opts.ControlPlaneHealth && readyz.Status == "unreachable" {
+		blindWith("/readyz", "kubeagent could not reach the apiserver /readyz endpoint")
 	}
 
 	var dnsReport dnshealth.Report // 24

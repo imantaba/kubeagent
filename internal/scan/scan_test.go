@@ -1555,6 +1555,119 @@ func TestForbiddenDiskUsageRecordsOneBlindSpot(t *testing.T) {
 	}
 }
 
+// readyzServer starts an httptest server that answers every request with the
+// given status code and body, for driving controlplane.ParseReadyz's "ok" and
+// "unhealthy" branches through a real HTTP round trip via ControlPlaneReadyz.
+// Content-Type must be set explicitly: net/http sniffs a plain-text body and
+// stamps "text/plain", and client-go's serializer negotiator has no decoder
+// for that media type — on a non-2xx status that negotiation failure hits a
+// client-go response path that returns without ever setting Result.statusCode,
+// so the caller reads back code 0 ("unreachable") no matter what status this
+// handler wrote.
+func readyzServer(t *testing.T, code int, body string) rest.Interface {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(code)
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(server.Close)
+	real, err := kubernetes.NewForConfig(&rest.Config{Host: server.URL})
+	if err != nil {
+		t.Fatalf("building a client for the fake readyz server: %v", err)
+	}
+	return real.CoreV1().RESTClient()
+}
+
+// unreachableServer returns a REST client pointed at a server that has already
+// been closed, so a request against it fails at the transport layer with no
+// HTTP response at all — the same shape ControlPlaneReadyz's code == 0 path
+// (and nodehealth's identical kubelet /healthz path) classifies as
+// "unreachable": the endpoint never answered, rather than refused the request.
+func unreachableServer(t *testing.T) rest.Interface {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	url := server.URL
+	server.Close()
+	real, err := kubernetes.NewForConfig(&rest.Config{Host: url})
+	if err != nil {
+		t.Fatalf("building a client for the closed server: %v", err)
+	}
+	return real.CoreV1().RESTClient()
+}
+
+// TestEvaluate_ReadyzBlindSpotsByStatus is R81's regression fixture: a probe
+// of each of the four /readyz statuses produces exactly the expected
+// blind-spot set — ok and unhealthy record none, forbidden and unreachable
+// each record exactly one entry with distinct reasons, and the forbidden
+// reason is unchanged from before R81.
+func TestEvaluate_ReadyzBlindSpotsByStatus(t *testing.T) {
+	cases := []struct {
+		name       string
+		rest       func(t *testing.T) rest.Interface
+		wantBlind  bool
+		wantReason string
+	}{
+		{"ok", func(t *testing.T) rest.Interface { return readyzServer(t, 200, "ok") }, false, ""},
+		{"unhealthy", func(t *testing.T) rest.Interface { return readyzServer(t, 500, "[-]etcd failed\n") }, false, ""},
+		{"forbidden", forbiddenNodeProxyServer, true, blindReason("get /readyz")},
+		{"unreachable", unreachableServer, true, "kubeagent could not reach the apiserver /readyz endpoint"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			client := nodeStatsFailingClient{Interface: fake.NewSimpleClientset(), rest: c.rest(t)}
+			res, err := Evaluate(context.Background(), client, Options{ControlPlaneHealth: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var found *ReadFailure
+			for i := range res.PartialReads {
+				if res.PartialReads[i].Resource == "/readyz" {
+					found = &res.PartialReads[i]
+				}
+			}
+			if c.wantBlind && found == nil {
+				t.Fatalf("PartialReads = %+v, want a /readyz entry", res.PartialReads)
+			}
+			if !c.wantBlind && found != nil {
+				t.Fatalf("PartialReads = %+v, want no /readyz entry", res.PartialReads)
+			}
+			if c.wantBlind && found.Reason != c.wantReason {
+				t.Errorf("Reason = %q, want %q", found.Reason, c.wantReason)
+			}
+		})
+	}
+}
+
+// TestEvaluate_ReadyzBlindSpotFlagOff proves the /readyz blind spot never
+// fires when --health is off, regardless of what the endpoint would have
+// answered — the probe never runs, so none of the four statuses is reachable.
+func TestEvaluate_ReadyzBlindSpotFlagOff(t *testing.T) {
+	cases := []struct {
+		name string
+		rest func(t *testing.T) rest.Interface
+	}{
+		{"ok", func(t *testing.T) rest.Interface { return readyzServer(t, 200, "ok") }},
+		{"unhealthy", func(t *testing.T) rest.Interface { return readyzServer(t, 500, "[-]etcd failed\n") }},
+		{"forbidden", forbiddenNodeProxyServer},
+		{"unreachable", unreachableServer},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			client := nodeStatsFailingClient{Interface: fake.NewSimpleClientset(), rest: c.rest(t)}
+			res, err := Evaluate(context.Background(), client, Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, p := range res.PartialReads {
+				if p.Resource == "/readyz" {
+					t.Fatalf("PartialReads = %+v, want no /readyz entry with the flag off", res.PartialReads)
+				}
+			}
+		})
+	}
+}
+
 // podLogsFailingClient wraps a kubernetes.Interface so CoreV1().Pods(ns).GetLogs
 // resolves to a real, working REST client instead of the fake clientset's own
 // GetLogs, which always succeeds and never lets a test drive a real HTTP error

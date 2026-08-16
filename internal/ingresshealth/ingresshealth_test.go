@@ -65,6 +65,7 @@ func TestAssess_NoService(t *testing.T) {
 
 func TestAssess_NoEndpoints(t *testing.T) {
 	svcs := []corev1.Service{svc("shop", "api", 80)}
+	svcs[0].Spec.Selector = map[string]string{"app": "api"}                                                        // selector-based: R53 silences selectorless Services
 	got := Assess([]networkingv1.Ingress{ing("shop", "web", "x.io", "/api", "api", 80)}, svcs, nil, nil, nil, nil) // no slices -> 0 ready
 	if len(got) != 1 || got[0].Problem != "NoEndpoints" {
 		t.Fatalf("want one NoEndpoints, got %+v", got)
@@ -76,6 +77,7 @@ func TestAssess_NoEndpoints(t *testing.T) {
 
 func TestAssess_PortNotExposed(t *testing.T) {
 	svcs := []corev1.Service{svc("shop", "api", 80)}
+	svcs[0].Spec.Selector = map[string]string{"app": "api"} // selector-based: R53 silences selectorless Services
 	slices := []discoveryv1.EndpointSlice{sliceFor("shop", "api", 1)}
 	got := Assess([]networkingv1.Ingress{ing("shop", "web", "x.io", "/api", "api", 8080)}, svcs, slices, nil, nil, nil) // ready, but 8080 not exposed
 	if len(got) != 1 || got[0].Problem != "PortNotExposed" {
@@ -305,5 +307,56 @@ func TestAssess_ParkedRoute_NotEnrichedEvenWithPods(t *testing.T) {
 	}
 	if strings.Contains(detail, "0 ready") {
 		t.Errorf("parked route must not be enriched with pod cause, got %q", detail)
+	}
+}
+
+// R53: check gains the two guards svchealth.Assess already has, so a route to
+// an ExternalName or selectorless Service is silent — exactly as the bare
+// Service is silent today in svchealth.Assess.
+
+func TestAssess_ExternalNameBackend_Silent(t *testing.T) {
+	s := svc("shop", "ext-api", 80)
+	s.Spec.Type = corev1.ServiceTypeExternalName
+	got := Assess([]networkingv1.Ingress{ing("shop", "web", "x.io", "/api", "ext-api", 80)}, []corev1.Service{s}, nil, nil, nil, nil) // no slices -> 0 ready
+	if len(got) != 0 {
+		t.Fatalf("ExternalName backend must be silent, got %+v", got)
+	}
+}
+
+func TestAssess_SelectorlessBackend_Silent(t *testing.T) {
+	s := svc("shop", "manual-api", 80)                                                                                                   // no Selector set
+	got := Assess([]networkingv1.Ingress{ing("shop", "web", "x.io", "/api", "manual-api", 80)}, []corev1.Service{s}, nil, nil, nil, nil) // no slices -> 0 ready
+	if len(got) != 0 {
+		t.Fatalf("selectorless backend must be silent, got %+v", got)
+	}
+}
+
+// TestAssess_SelectorlessBackend_WithEndpoints_NotSilenced is R53's negative
+// control: a selectorless Service WITH a ready EndpointSlice still yields no
+// RouteIssue (it was already a healthy route before this change), proving the
+// new guard did not silence the whole selectorless class by accident — only
+// the no-endpoints case the guard actually short-circuits.
+func TestAssess_SelectorlessBackend_WithEndpoints_NotSilenced(t *testing.T) {
+	s := svc("shop", "manual-api", 80) // no Selector set
+	slices := []discoveryv1.EndpointSlice{sliceFor("shop", "manual-api", 1)}
+	got := Assess([]networkingv1.Ingress{ing("shop", "web", "x.io", "/api", "manual-api", 80)}, []corev1.Service{s}, slices, nil, nil, nil)
+	if len(got) != 0 {
+		t.Fatalf("selectorless backend with ready endpoints must not be flagged, got %+v", got)
+	}
+}
+
+// TestAssess_SelectorBasedNoEndpoints_StillReported is R53's true-positive
+// control: a selector-based Service (neither ExternalName nor selectorless)
+// with no ready endpoints still yields NoEndpoints with its cause, so the new
+// guards silence only the two kinds they target.
+func TestAssess_SelectorBasedNoEndpoints_StillReported(t *testing.T) {
+	in := ingressTo("shop", "api-ing", "api.example.com", "api", 80)
+	services := []corev1.Service{svcSel("shop", "api", map[string]string{"app": "api"}, 80)}
+	got := Assess([]networkingv1.Ingress{in}, services, nil, nil, nil, nil)
+	if len(got) != 1 || got[0].Problem != "NoEndpoints" {
+		t.Fatalf("selector-based Service with no endpoints must still be reported, got %+v", got)
+	}
+	if !strings.Contains(got[0].Detail, "the selector matches no pods") {
+		t.Errorf("expected cause 'the selector matches no pods' in detail, got %q", got[0].Detail)
 	}
 }

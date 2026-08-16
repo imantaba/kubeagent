@@ -984,8 +984,12 @@ func printPVCReclaim(rep *pvcreclaim.Report, full bool, w io.Writer) error {
 		return nil
 	}
 	if full {
+		if _, err := fmt.Fprintf(w, "  • %d %s on Delete reclaim policy — deleting the claim destroys the volume\n",
+			len(rep.PVCs), plural(len(rep.PVCs), "PVC", "PVCs")); err != nil {
+			return err
+		}
 		for _, p := range rep.PVCs {
-			line := fmt.Sprintf("  • %s/%s  pv %s", p.Namespace, p.Name, p.PV)
+			line := fmt.Sprintf("      %s/%s  pv %s", p.Namespace, p.Name, p.PV)
 			if p.StorageClass != "" {
 				line += "  class " + p.StorageClass
 			}

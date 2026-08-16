@@ -878,6 +878,34 @@ func TestPrintInventory_PVCReclaimFullWhenFlagged(t *testing.T) {
 	}
 }
 
+func TestPrintInventory_PVCReclaimFullHasLabelledParentBullet(t *testing.T) {
+	var buf bytes.Buffer
+	rep := &pvcreclaim.Report{Count: 2, PVCs: []pvcreclaim.PVCReclaim{
+		{Namespace: "storage-ns", Name: "vol-a", PV: "pv-vol-a", StorageClass: "delete-static", Capacity: "3Gi"},
+		{Namespace: "storage-ns", Name: "vol-b", PV: "pv-vol-b", Capacity: "4Gi"},
+	}}
+	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1}, PVCReclaim: rep, PVCReclaimFull: true}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "  • 2 PVCs on Delete reclaim policy —") {
+		t.Errorf("expected a labelled parent bullet naming the count:\n%s", out)
+	}
+	if !strings.Contains(out, "      storage-ns/vol-a  pv pv-vol-a  class delete-static  3Gi") {
+		t.Errorf("expected the first row at the six-space continuation indent:\n%s", out)
+	}
+	if !strings.Contains(out, "      storage-ns/vol-b  pv pv-vol-b  4Gi") {
+		t.Errorf("expected the second row at the six-space continuation indent:\n%s", out)
+	}
+	if strings.Contains(out, "  • storage-ns/vol-a") || strings.Contains(out, "  • storage-ns/vol-b") {
+		t.Errorf("rows must not render as their own bullets:\n%s", out)
+	}
+	if strings.Contains(out, "[--pvc-reclaim]") {
+		t.Errorf("the expanded rendering must not carry the --pvc-reclaim hint:\n%s", out)
+	}
+}
+
 func TestPrintInventory_JSONIncludesPVCReclaim(t *testing.T) {
 	var buf bytes.Buffer
 	rep := &pvcreclaim.Report{Count: 1, PVCs: []pvcreclaim.PVCReclaim{

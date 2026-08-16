@@ -148,6 +148,13 @@ func runScan(o scanOptions) error {
 	if o.output != "text" && o.output != "json" && o.output != "html" {
 		return fmt.Errorf("unknown output format %q (want text, json or html)", o.output)
 	}
+	// diskThreshold gates diskusage.Assess's r >= threshold test, a ratio in
+	// (0, 1]. 1.0 is valid ("warn only at full"); 0 is not — "warn on
+	// everything" is not a threshold — and this is also the check that
+	// catches "80" typed as a percent instead of a fraction.
+	if o.diskThreshold <= 0 || o.diskThreshold > 1 {
+		return fmt.Errorf("--disk-threshold must be a fraction in (0, 1], got %v", o.diskThreshold)
+	}
 	// --explain needs Anthropic, or a local OpenAI-compatible endpoint; check before scanning.
 	explainEndpoint := os.Getenv("KUBEAGENT_EXPLAIN_ENDPOINT")
 	if o.explain && explainEndpoint == "" && os.Getenv("ANTHROPIC_API_KEY") == "" {

@@ -360,3 +360,32 @@ func TestAssess_SelectorBasedNoEndpoints_StillReported(t *testing.T) {
 		t.Errorf("expected cause 'the selector matches no pods' in detail, got %q", got[0].Detail)
 	}
 }
+
+// R52: the NoEndpoints Detail uses the "name:port" form only when the
+// Ingress-requested port actually resolves on the Service (portMatches);
+// otherwise it names the Service alone rather than claiming a port that was
+// never exposed in the first place.
+
+// TestAssess_NoEndpoints_PortNotResolved_NoPortForm is the fix: the Ingress
+// names port 9999, which the Service (port 80 only) does not expose, so the
+// Detail must not claim ":9999" — that port was never the Service's.
+func TestAssess_NoEndpoints_PortNotResolved_NoPortForm(t *testing.T) {
+	svcs := []corev1.Service{svcSel("shop", "api", map[string]string{"app": "api"}, 80)}
+	got := Assess([]networkingv1.Ingress{ing("shop", "web", "x.io", "/api", "api", 9999)}, svcs, nil, nil, nil, nil) // no slices -> 0 ready; 9999 not on the Service
+	want := "backend Service api has no ready endpoints (likely 502/503) — the selector matches no pods"
+	if got := firstDetail(t, got); got != want {
+		t.Fatalf("Detail = %q, want %q", got, want)
+	}
+}
+
+// TestAssess_NoEndpoints_PortResolved_UsesPortForm pins that the fix does not
+// simply drop the port form altogether: when the requested port does resolve
+// on the Service, the Detail still uses "name:port".
+func TestAssess_NoEndpoints_PortResolved_UsesPortForm(t *testing.T) {
+	svcs := []corev1.Service{svcSel("shop", "api", map[string]string{"app": "api"}, 80)}
+	got := Assess([]networkingv1.Ingress{ing("shop", "web", "x.io", "/api", "api", 80)}, svcs, nil, nil, nil, nil) // no slices -> 0 ready; 80 IS on the Service
+	want := "backend Service api:80 has no ready endpoints (likely 502/503) — the selector matches no pods"
+	if got := firstDetail(t, got); got != want {
+		t.Fatalf("Detail = %q, want %q", got, want)
+	}
+}

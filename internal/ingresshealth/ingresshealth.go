@@ -90,7 +90,7 @@ func check(ns, ingName, host, path string, be networkingv1.IngressServiceBackend
 			return r, true
 		}
 		base := fmt.Sprintf("backend Service %s has no ready endpoints (likely 502/503)", be.Name)
-		if port != "" {
+		if port != "" && portMatches(be.Port, svc) {
 			base = fmt.Sprintf("backend Service %s:%s has no ready endpoints (likely 502/503)", be.Name, port)
 		}
 		if cause := svchealth.EndpointCause(svc, pods, downNodes); cause != "" {

@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestScanRegistersPolicyAsARepeatableFlag(t *testing.T) {
@@ -53,6 +54,35 @@ func TestRunScanRejectsDiskThresholdOutsideZeroToOne(t *testing.T) {
 		rejected := err != nil && strings.Contains(err.Error(), "--disk-threshold")
 		if rejected != tt.wantErr {
 			t.Errorf("diskThreshold=%v: err=%v, want rejected=%v", tt.threshold, err, tt.wantErr)
+		}
+	}
+}
+
+// TestRunScanRejectsNegativeNodeHeartbeatThreshold proves the boundary sits at
+// zero, not merely that some negative value is refused: 0 keeps meaning
+// "disabled" and every positive value keeps behaving as documented.
+func TestRunScanRejectsNegativeNodeHeartbeatThreshold(t *testing.T) {
+	tests := []struct {
+		duration string
+		wantErr  bool
+	}{
+		{"-1s", true},
+		{"-5s", true},
+		{"-1h", true},
+		{"0", false},
+		{"40s", false},
+		{"1h", false},
+	}
+	for _, tt := range tests {
+		d, err := time.ParseDuration(tt.duration)
+		if err != nil {
+			t.Fatalf("time.ParseDuration(%q): %v", tt.duration, err)
+		}
+		o := scanOptions{output: "text", diskThreshold: 0.80, nodeHeartbeatThreshold: d, kubeconfig: "/nonexistent-for-this-test"}
+		err = runScan(o)
+		rejected := err != nil && strings.Contains(err.Error(), "--node-heartbeat-threshold")
+		if rejected != tt.wantErr {
+			t.Errorf("nodeHeartbeatThreshold=%s: err=%v, want rejected=%v", tt.duration, err, tt.wantErr)
 		}
 	}
 }

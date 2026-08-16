@@ -155,6 +155,13 @@ func runScan(o scanOptions) error {
 	if o.diskThreshold <= 0 || o.diskThreshold > 1 {
 		return fmt.Errorf("--disk-threshold must be a fraction in (0, 1], got %v", o.diskThreshold)
 	}
+	// 0 keeps meaning "disabled" — internal/clusterhealth's own Threshold <= 0
+	// guard is what stays correct at the package boundary. A negative value is
+	// never intentional, and left unchecked it silently disables the check the
+	// same way 0 does, only without saying so.
+	if o.nodeHeartbeatThreshold < 0 {
+		return fmt.Errorf("--node-heartbeat-threshold cannot be negative (got %s; use 0 to disable the check)", o.nodeHeartbeatThreshold)
+	}
 	// --explain needs Anthropic, or a local OpenAI-compatible endpoint; check before scanning.
 	explainEndpoint := os.Getenv("KUBEAGENT_EXPLAIN_ENDPOINT")
 	if o.explain && explainEndpoint == "" && os.Getenv("ANTHROPIC_API_KEY") == "" {

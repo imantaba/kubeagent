@@ -44,7 +44,7 @@ func goldenInput(now time.Time) Input {
 	return Input{
 		Now: now,
 		Cluster: clusterhealth.ClusterHealth{
-			Verdict: "Degraded", NodesTotal: 3, NodesReady: 2,
+			Verdict: "Degraded", NodesTotal: 4, NodesReady: 2,
 			NodesStaleHeartbeat: 1, NodesExpectedAbsent: 1,
 			NodeIssues: []string{
 				"worker-2 NotReady: KubeletNotReady — container runtime is down",

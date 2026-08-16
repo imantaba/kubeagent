@@ -1,4 +1,4 @@
-Cluster: Degraded — 2/4 nodes Ready
+Cluster: Degraded — 2/5 nodes Ready
   ✗ node worker-2 NotReady: KubeletNotReady — container runtime is down
   ✗ node worker-3 SchedulingDisabled
   ✗ node worker-1 kubelet not heartbeating (lease 95s stale)

@@ -1668,6 +1668,130 @@ func TestEvaluate_ReadyzBlindSpotFlagOff(t *testing.T) {
 	}
 }
 
+// dnsMetricsServer starts an httptest server that answers every request with
+// the given status code and body, for driving CoreDNSMetrics's "ok",
+// "degraded" and "forbidden" branches through a real HTTP round trip. Content-
+// Type must be set explicitly — see readyzServer's comment for why a bare
+// status write would misreport a non-2xx code as 0 ("unreachable").
+func dnsMetricsServer(t *testing.T, code int, body string) rest.Interface {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(code)
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(server.Close)
+	real, err := kubernetes.NewForConfig(&rest.Config{Host: server.URL})
+	if err != nil {
+		t.Fatalf("building a client for the fake DNS metrics server: %v", err)
+	}
+	return real.CoreV1().RESTClient()
+}
+
+// coreDNSPod returns a Running CoreDNS pod fixture in kube-system, the shape
+// coreDNSPods selects.
+func coreDNSPod(name string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "kube-system", Name: name, Labels: map[string]string{"k8s-app": "kube-dns"}},
+		Status:     corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+}
+
+// TestEvaluate_DNSBlindSpotsByStatus is R92's regression fixture: a probe of
+// each of the five dnshealth.Report statuses produces exactly the expected
+// pods/proxy blind-spot set — "" (no CoreDNS pods present), ok and degraded
+// record none, forbidden and unreachable each record exactly one entry with
+// distinct reasons, mirroring R81's identical shape for /readyz.
+func TestEvaluate_DNSBlindSpotsByStatus(t *testing.T) {
+	okBody := `coredns_dns_responses_total{server="dns://:53",zone=".",view="",rcode="NOERROR"} 50
+`
+	degradedBody := `coredns_dns_responses_total{server="dns://:53",zone=".",view="",rcode="NOERROR"} 50
+coredns_dns_responses_total{server="dns://:53",zone=".",view="",rcode="SERVFAIL"} 50
+`
+	cases := []struct {
+		name       string
+		pod        bool
+		rest       func(t *testing.T) rest.Interface
+		wantBlind  bool
+		wantReason string
+	}{
+		{"empty", false, nil, false, ""},
+		{"ok", true, func(t *testing.T) rest.Interface { return dnsMetricsServer(t, 200, okBody) }, false, ""},
+		{"degraded", true, func(t *testing.T) rest.Interface { return dnsMetricsServer(t, 200, degradedBody) }, false, ""},
+		{"forbidden", true, forbiddenNodeProxyServer, true, blindReason("get pods/proxy")},
+		{"unreachable", true, unreachableServer, true, "kubeagent could not reach the CoreDNS :9153/metrics endpoint"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var objs []runtime.Object
+			if c.pod {
+				objs = append(objs, coreDNSPod("coredns-1"))
+			}
+			var client kubernetes.Interface = fake.NewSimpleClientset(objs...)
+			if c.rest != nil {
+				client = nodeStatsFailingClient{Interface: fake.NewSimpleClientset(objs...), rest: c.rest(t)}
+			}
+			res, err := Evaluate(context.Background(), client, Options{DNSHealth: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var found *ReadFailure
+			for i := range res.PartialReads {
+				if res.PartialReads[i].Resource == "pods/proxy" {
+					found = &res.PartialReads[i]
+				}
+			}
+			if c.wantBlind && found == nil {
+				t.Fatalf("PartialReads = %+v, want a pods/proxy entry", res.PartialReads)
+			}
+			if !c.wantBlind && found != nil {
+				t.Fatalf("PartialReads = %+v, want no pods/proxy entry", res.PartialReads)
+			}
+			if c.wantBlind && found.Reason != c.wantReason {
+				t.Errorf("Reason = %q, want %q", found.Reason, c.wantReason)
+			}
+		})
+	}
+}
+
+// TestEvaluate_DNSBlindSpotFlagOff proves the pods/proxy DNS blind spot never
+// fires when --dns-health is off, regardless of what CoreDNS's metrics
+// endpoint would have answered — the probe never runs, so none of the four
+// non-empty statuses is reachable.
+func TestEvaluate_DNSBlindSpotFlagOff(t *testing.T) {
+	okBody := `coredns_dns_responses_total{server="dns://:53",zone=".",view="",rcode="NOERROR"} 50
+`
+	degradedBody := `coredns_dns_responses_total{server="dns://:53",zone=".",view="",rcode="NOERROR"} 50
+coredns_dns_responses_total{server="dns://:53",zone=".",view="",rcode="SERVFAIL"} 50
+`
+	cases := []struct {
+		name string
+		rest func(t *testing.T) rest.Interface
+	}{
+		{"ok", func(t *testing.T) rest.Interface { return dnsMetricsServer(t, 200, okBody) }},
+		{"degraded", func(t *testing.T) rest.Interface { return dnsMetricsServer(t, 200, degradedBody) }},
+		{"forbidden", forbiddenNodeProxyServer},
+		{"unreachable", unreachableServer},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			client := nodeStatsFailingClient{
+				Interface: fake.NewSimpleClientset(coreDNSPod("coredns-1")),
+				rest:      c.rest(t),
+			}
+			res, err := Evaluate(context.Background(), client, Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, p := range res.PartialReads {
+				if p.Resource == "pods/proxy" {
+					t.Fatalf("PartialReads = %+v, want no pods/proxy entry with the flag off", res.PartialReads)
+				}
+			}
+		})
+	}
+}
+
 // podLogsFailingClient wraps a kubernetes.Interface so CoreV1().Pods(ns).GetLogs
 // resolves to a real, working REST client instead of the fake clientset's own
 // GetLogs, which always succeeds and never lets a test drive a real HTTP error

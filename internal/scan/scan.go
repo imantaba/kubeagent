@@ -659,6 +659,9 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 			blind("pods/proxy", "get pods/proxy")
 		}
 		dnsReport = dnshealth.Assess(agg, len(cdns), forbidden, unreachable, ratio, 100)
+		if dnsReport.Status == "unreachable" {
+			blindWith("pods/proxy", "kubeagent could not reach the CoreDNS :9153/metrics endpoint")
+		}
 	}
 
 	// ------------------------------------------------ pure: no reads past here

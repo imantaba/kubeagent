@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/imantaba/kubeagent/internal/certhealth"
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/findings"
 	"github.com/imantaba/kubeagent/internal/inventory"
@@ -559,6 +560,78 @@ func TestPolicySectionCarriesNoPath(t *testing.T) {
 	for _, needle := range []string{"/etc/", "/home/", "kubeconfig"} {
 		if strings.Contains(buf.String(), needle) {
 			t.Errorf("the document rendered %q", needle)
+		}
+	}
+}
+
+// certsInput builds an Input carrying one Expired, one Expiring, and one
+// Invalid certificate — the three categories printCertificates (the text
+// renderer) mirrors.
+func certsInput() Input {
+	in := Input{Version: "test", Namespace: "shop"}
+	in.Report.Now = time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
+	in.Report.Certificates = &certhealth.Report{
+		Checked: 4, WarnDays: 30,
+		Expired: []certhealth.Cert{
+			{Namespace: "shop", Name: "shop-tls", CommonName: "shop.example.com", Days: -3,
+				Ingresses: []string{"shop/storefront (shop.example.com)"}},
+		},
+		Expiring: []certhealth.Cert{
+			{Namespace: "infra", Name: "api-tls", CommonName: "api.example.com", Days: 12},
+		},
+		Invalid: []certhealth.Invalid{
+			{Namespace: "batch", Name: "worker-tls", Detail: "empty tls.crt"},
+		},
+	}
+	return in
+}
+
+// TestCertificatesSectionRendersExpiredExpiringAndInvalid pins R103: the
+// HTML report mirrors printCertificates's three categories, the ingress
+// route line, and the footer count.
+func TestCertificatesSectionRendersExpiredExpiringAndInvalid(t *testing.T) {
+	doc := render(t, certsInput())
+	for _, want := range []string{
+		"Certificates", "shop-tls", "shop.example.com", "EXPIRED", "3d ago",
+		"shop/storefront (shop.example.com)",
+		"api-tls", "api.example.com", "expires in", "12d",
+		"worker-tls", "empty tls.crt",
+		"4 certificates checked", "warn window 30d",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("the certificates section is missing %q", want)
+		}
+	}
+}
+
+// TestCertificatesForbiddenRendersDenialAndNoRows pins the Forbidden branch:
+// a denial line and nothing else — no footer count, no category headings.
+func TestCertificatesForbiddenRendersDenialAndNoRows(t *testing.T) {
+	in := Input{Version: "test", Namespace: "shop"}
+	in.Report.Certificates = &certhealth.Report{Forbidden: true}
+
+	doc := render(t, in)
+	if !strings.Contains(doc, "secrets access denied") {
+		t.Error("a forbidden certificates report did not render the denial line")
+	}
+	for _, absent := range []string{"certificates checked", "EXPIRED", "expires in"} {
+		if strings.Contains(doc, absent) {
+			t.Errorf("a forbidden certificates report rendered %q, want no rows or footer", absent)
+		}
+	}
+}
+
+// TestNilCertificatesRendersNoSection pins the opt-out default: a scan run
+// without --certs must render a document byte-for-byte as it did before this
+// section existed.
+func TestNilCertificatesRendersNoSection(t *testing.T) {
+	in := certsInput()
+	in.Report.Certificates = nil
+
+	doc := render(t, in)
+	for _, absent := range []string{`<section class="certs">`, "<h2>Certificates</h2>", ".certs {"} {
+		if strings.Contains(doc, absent) {
+			t.Errorf("a scan with no certificates data rendered %q", absent)
 		}
 	}
 }

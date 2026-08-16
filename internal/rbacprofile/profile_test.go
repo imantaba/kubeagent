@@ -78,6 +78,20 @@ func TestPvcReclaimAndDiskUsageSummariesAreAccurate(t *testing.T) {
 	}
 }
 
+// security's summary once listed individual checks (privileged, hostPath,
+// hostNetwork), so a tenth check made it stale again. It now names
+// categories, which a new check within an existing category does not.
+func TestSecuritySummaryNamesCategories(t *testing.T) {
+	f, ok := Lookup("security")
+	if !ok {
+		t.Fatal("no security feature in the table")
+	}
+	want := "workload and Service security posture (privileged and host access, restricted-profile gaps, externally exposed Services) — no grant beyond core"
+	if f.Summary != want {
+		t.Errorf("security Summary = %q, want %q", f.Summary, want)
+	}
+}
+
 // Where a feature's grant lives is not a comment, it is data: either the feature
 // ships its own manifest, or another feature's manifest already covers it.
 func TestEveryGrantHasExactlyOneHome(t *testing.T) {

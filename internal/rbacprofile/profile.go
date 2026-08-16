@@ -245,7 +245,7 @@ into the Helm chart. list only — kubeagent never writes to a CRD.`,
 	// `kubeagent rbac` should answer "what does --capacity cost me?" with
 	// "nothing", not with silence.
 	{Name: "capacity", Flag: "--capacity", Summary: "node headroom and scheduling capacity — no grant beyond core"},
-	{Name: "security", Flag: "--security", Summary: "workload security posture (privileged, hostPath, hostNetwork) — no grant beyond core"},
+	{Name: "security", Flag: "--security", Summary: "workload and Service security posture (privileged and host access, restricted-profile gaps, externally exposed Services) — no grant beyond core"},
 	{Name: "pvcreclaim", Flag: "--pvc-reclaim", Summary: "PersistentVolumeClaims whose bound volume is destroyed when the claim is deleted — no grant beyond core"},
 	{Name: "credlint", Flag: "--lint-secrets", Summary: "credentials visible in workload env vars — no grant beyond core"},
 	{Name: "cronjobs", Flag: "--include-cron", Summary: "CronJob and Job history in the inventory — no grant beyond core"},

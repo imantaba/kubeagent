@@ -70,10 +70,52 @@ func TestAssess_UnderThreshold(t *testing.T) {
 	}
 }
 
+// TestAssess_BelowFloorNotFlagged pins that a below-floor sample never
+// reports "degraded" — even a stark 40% error rate is too small a sample (50
+// responses against a 100 floor) to call unhealthy. Since R88 it abstains
+// (Status "") rather than claiming "ok" outright; see
+// TestAssess_BelowFloorAbstains for the full measurement fixture.
 func TestAssess_BelowFloorNotFlagged(t *testing.T) {
 	agg := map[string]int64{"NOERROR": 30, "SERVFAIL": 20} // 40% but only 50 total
-	if got := Assess(agg, 1, 0, 0, 0.05, 100); got.Status != "ok" {
-		t.Errorf("Status = %q, want ok (below floor)", got.Status)
+	got := Assess(agg, 1, 0, 0, 0.05, 100)
+	if got.Status == "degraded" {
+		t.Errorf("Status = %q, must not flag degraded below the floor", got.Status)
+	}
+	if got.Status != "" {
+		t.Errorf("Status = %q, want empty (below floor abstains rather than claiming ok)", got.Status)
+	}
+}
+
+// TestAssess_BelowFloorAbstains is R88's regression fixture: a below-floor
+// sample abstains (Status "") rather than claiming "ok", but it still carries
+// the measurement it computed — a caller that wants to see it anyway (or
+// filter on ErrorResponses/ServfailRatio itself) can.
+func TestAssess_BelowFloorAbstains(t *testing.T) {
+	agg := map[string]int64{"SERVFAIL": 32}
+	got := Assess(agg, 1, 0, 0, 0.05, 100)
+	if got.Status != "" {
+		t.Fatalf("Status = %q, want empty (below floor abstains)", got.Status)
+	}
+	if got.ErrorResponses != 32 {
+		t.Errorf("ErrorResponses = %d, want 32", got.ErrorResponses)
+	}
+	if got.TotalResponses != 32 {
+		t.Errorf("TotalResponses = %d, want 32", got.TotalResponses)
+	}
+	if got.ServfailRatio != 1 {
+		t.Errorf("ServfailRatio = %v, want 1", got.ServfailRatio)
+	}
+}
+
+// TestAssess_FloorIsInclusive is R88's companion fixture: total == floor is
+// judged normally rather than treated as below-floor, on both sides of the
+// threshold.
+func TestAssess_FloorIsInclusive(t *testing.T) {
+	if got := Assess(map[string]int64{"NOERROR": 100}, 1, 0, 0, 0.05, 100); got.Status != "ok" {
+		t.Errorf("Status = %q, want ok (floor is inclusive)", got.Status)
+	}
+	if got := Assess(map[string]int64{"SERVFAIL": 100}, 1, 0, 0, 0.05, 100); got.Status != "degraded" {
+		t.Errorf("Status = %q, want degraded (floor is inclusive)", got.Status)
 	}
 }
 

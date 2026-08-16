@@ -135,7 +135,11 @@ func Assess(agg map[string]int64, podsProbed, forbidden, unreachable int, thresh
 	}
 	ratio := float64(errors) / float64(total)
 	if total < floor {
-		return Report{Status: "ok", TotalResponses: total, PodsProbed: podsProbed}
+		// Fewer than floor's worth of responses is too small a sample to call
+		// "ok": abstain rather than claim health, but keep the measurement so
+		// a caller that wants to see it anyway can — a JSON consumer, or an
+		// operator reading the raw numbers themselves.
+		return Report{Status: "", ServfailRatio: ratio, ErrorResponses: errors, TotalResponses: total, PodsProbed: podsProbed}
 	}
 	if ratio >= threshold {
 		return Report{Status: "degraded", ServfailRatio: ratio, ErrorResponses: errors, TotalResponses: total, PodsProbed: podsProbed}

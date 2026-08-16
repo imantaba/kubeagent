@@ -626,6 +626,9 @@
         "errorResponses": {
           "type": "integer"
         },
+        "podsAnswered": {
+          "type": "integer"
+        },
         "podsProbed": {
           "type": "integer"
         },

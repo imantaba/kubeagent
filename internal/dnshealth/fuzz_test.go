@@ -49,7 +49,7 @@ func FuzzParseResponses(f *testing.F) {
 		}
 
 		c := fuzzgen.New(params)
-		rep := Assess(agg, c.IntN(8), c.IntN(4), c.IntN(4), float64(c.IntN(101))/100, int64(c.IntN(1000)))
+		rep := Assess(agg, c.IntN(8), c.IntN(8), c.IntN(4), c.IntN(4), float64(c.IntN(101))/100, int64(c.IntN(1000)))
 
 		switch rep.Status {
 		case "ok", "degraded", "forbidden", "unreachable", "":

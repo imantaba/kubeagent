@@ -1368,8 +1368,12 @@ func printDNSHealth(p *dnshealth.Report, w io.Writer) error {
 			return err
 		}
 		pct := float64(int64(p.ServfailRatio*1000+0.5)) / 10
-		if _, err := fmt.Fprintf(w, "      ⚠ CoreDNS SERVFAIL+REFUSED ratio %.1f%% (%d/%d responses across %d pods)\n",
-			pct, p.ErrorResponses, p.TotalResponses, p.PodsProbed); err != nil {
+		podsText := fmt.Sprintf("%d pods", p.PodsProbed)
+		if p.PodsAnswered != p.PodsProbed {
+			podsText = fmt.Sprintf("%d of %d pods", p.PodsAnswered, p.PodsProbed)
+		}
+		if _, err := fmt.Fprintf(w, "      ⚠ CoreDNS SERVFAIL+REFUSED ratio %.1f%% (%d/%d responses across %s)\n",
+			pct, p.ErrorResponses, p.TotalResponses, podsText); err != nil {
 			return err
 		}
 	case "forbidden":

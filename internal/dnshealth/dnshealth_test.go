@@ -48,7 +48,7 @@ not a metric line
 
 func TestAssess_Degraded(t *testing.T) {
 	agg := map[string]int64{"NOERROR": 9000, "SERVFAIL": 800, "REFUSED": 200}
-	got := Assess(agg, 2, 0, 0, 0.05, 100)
+	got := Assess(agg, 2, 2, 0, 0, 0.05, 100)
 	if got.Status != "degraded" {
 		t.Fatalf("Status = %q, want degraded", got.Status)
 	}
@@ -65,7 +65,7 @@ func TestAssess_Degraded(t *testing.T) {
 
 func TestAssess_UnderThreshold(t *testing.T) {
 	agg := map[string]int64{"NOERROR": 9800, "SERVFAIL": 200} // 2%
-	if got := Assess(agg, 1, 0, 0, 0.05, 100); got.Status != "ok" {
+	if got := Assess(agg, 1, 1, 0, 0, 0.05, 100); got.Status != "ok" {
 		t.Errorf("Status = %q, want ok", got.Status)
 	}
 }
@@ -77,7 +77,7 @@ func TestAssess_UnderThreshold(t *testing.T) {
 // TestAssess_BelowFloorAbstains for the full measurement fixture.
 func TestAssess_BelowFloorNotFlagged(t *testing.T) {
 	agg := map[string]int64{"NOERROR": 30, "SERVFAIL": 20} // 40% but only 50 total
-	got := Assess(agg, 1, 0, 0, 0.05, 100)
+	got := Assess(agg, 1, 1, 0, 0, 0.05, 100)
 	if got.Status == "degraded" {
 		t.Errorf("Status = %q, must not flag degraded below the floor", got.Status)
 	}
@@ -92,7 +92,7 @@ func TestAssess_BelowFloorNotFlagged(t *testing.T) {
 // filter on ErrorResponses/ServfailRatio itself) can.
 func TestAssess_BelowFloorAbstains(t *testing.T) {
 	agg := map[string]int64{"SERVFAIL": 32}
-	got := Assess(agg, 1, 0, 0, 0.05, 100)
+	got := Assess(agg, 1, 1, 0, 0, 0.05, 100)
 	if got.Status != "" {
 		t.Fatalf("Status = %q, want empty (below floor abstains)", got.Status)
 	}
@@ -111,28 +111,28 @@ func TestAssess_BelowFloorAbstains(t *testing.T) {
 // judged normally rather than treated as below-floor, on both sides of the
 // threshold.
 func TestAssess_FloorIsInclusive(t *testing.T) {
-	if got := Assess(map[string]int64{"NOERROR": 100}, 1, 0, 0, 0.05, 100); got.Status != "ok" {
+	if got := Assess(map[string]int64{"NOERROR": 100}, 1, 1, 0, 0, 0.05, 100); got.Status != "ok" {
 		t.Errorf("Status = %q, want ok (floor is inclusive)", got.Status)
 	}
-	if got := Assess(map[string]int64{"SERVFAIL": 100}, 1, 0, 0, 0.05, 100); got.Status != "degraded" {
+	if got := Assess(map[string]int64{"SERVFAIL": 100}, 1, 1, 0, 0, 0.05, 100); got.Status != "degraded" {
 		t.Errorf("Status = %q, want degraded (floor is inclusive)", got.Status)
 	}
 }
 
 func TestAssess_NoPods(t *testing.T) {
-	if got := Assess(nil, 0, 0, 0, 0.05, 100); got.Status != "" {
+	if got := Assess(nil, 0, 0, 0, 0, 0.05, 100); got.Status != "" {
 		t.Errorf("Status = %q, want empty (no CoreDNS pods)", got.Status)
 	}
 }
 
 func TestAssess_AllForbidden(t *testing.T) {
-	if got := Assess(nil, 2, 2, 0, 0.05, 100); got.Status != "forbidden" {
+	if got := Assess(nil, 2, 0, 2, 0, 0.05, 100); got.Status != "forbidden" {
 		t.Errorf("Status = %q, want forbidden", got.Status)
 	}
 }
 
 func TestAssess_AllUnreachable(t *testing.T) {
-	if got := Assess(nil, 2, 0, 2, 0.05, 100); got.Status != "unreachable" {
+	if got := Assess(nil, 2, 0, 0, 2, 0.05, 100); got.Status != "unreachable" {
 		t.Errorf("Status = %q, want unreachable", got.Status)
 	}
 }
@@ -141,7 +141,7 @@ func TestAssess_AllUnreachable(t *testing.T) {
 // concrete "forbidden" reason takes priority over "unreachable" so the operator
 // sees the actionable grant hint rather than a misleading "ok".
 func TestAssess_MixedForbiddenAndUnreachable(t *testing.T) {
-	if got := Assess(nil, 2, 1, 1, 0.05, 100); got.Status != "forbidden" {
+	if got := Assess(nil, 2, 0, 1, 1, 0.05, 100); got.Status != "forbidden" {
 		t.Errorf("Status = %q, want forbidden (mixed failure, forbidden priority)", got.Status)
 	}
 }
@@ -181,7 +181,7 @@ func TestAssess_HostileMaps(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			rep := Assess(tc.agg, 1, 0, 0, 0.05, 0)
+			rep := Assess(tc.agg, 1, 1, 0, 0, 0.05, 0)
 
 			switch rep.Status {
 			case "ok", "degraded", "forbidden", "unreachable", "":
@@ -201,5 +201,19 @@ func TestAssess_HostileMaps(t *testing.T) {
 				t.Errorf("ServfailRatio = %v, outside [0,1]", rep.ServfailRatio)
 			}
 		})
+	}
+}
+
+// TestAssess_PodsAnswered is R89's regression fixture: PodsAnswered carries
+// the count of pods that returned a 200 from /metrics, independent of
+// PodsProbed (the count selected). A caller reading PodsAnswered < PodsProbed
+// knows some selected CoreDNS pods never contributed a response.
+func TestAssess_PodsAnswered(t *testing.T) {
+	agg := map[string]int64{"NOERROR": 9000, "SERVFAIL": 1000}
+	if got := Assess(agg, 2, 1, 0, 0, 0.05, 100); got.PodsAnswered != 1 {
+		t.Errorf("PodsAnswered = %d, want 1 (only a subset of the 2 probed pods answered)", got.PodsAnswered)
+	}
+	if got := Assess(agg, 2, 2, 0, 0, 0.05, 100); got.PodsAnswered != 2 {
+		t.Errorf("PodsAnswered = %d, want 2 (every probed pod answered)", got.PodsAnswered)
 	}
 }

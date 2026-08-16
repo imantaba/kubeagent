@@ -642,12 +642,13 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 			ratio = 0.05
 		}
 		agg := map[string]int64{}
-		forbidden, unreachable := 0, 0
+		answered, forbidden, unreachable := 0, 0, 0
 		for k := range cdns {
 			switch {
 			case dnsCode[k] == 401 || dnsCode[k] == 403:
 				forbidden++
 			case dnsCode[k] == 200:
+				answered++
 				for rc, n := range dnshealth.ParseResponses(dnsBody[k]) {
 					agg[rc] += n
 				}
@@ -658,7 +659,7 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 		if forbidden > 0 {
 			blind("pods/proxy", "get pods/proxy")
 		}
-		dnsReport = dnshealth.Assess(agg, len(cdns), forbidden, unreachable, ratio, 100)
+		dnsReport = dnshealth.Assess(agg, len(cdns), answered, forbidden, unreachable, ratio, 100)
 		if dnsReport.Status == "unreachable" {
 			blindWith("pods/proxy", "kubeagent could not reach the CoreDNS :9153/metrics endpoint")
 		}

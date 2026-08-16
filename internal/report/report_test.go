@@ -2359,7 +2359,7 @@ func TestPrintControlPlane(t *testing.T) {
 }
 
 func TestPrintDNSHealth(t *testing.T) {
-	degraded := &dnshealth.Report{Status: "degraded", ServfailRatio: 0.123, ErrorResponses: 1234, TotalResponses: 10000, PodsProbed: 2}
+	degraded := &dnshealth.Report{Status: "degraded", ServfailRatio: 0.123, ErrorResponses: 1234, TotalResponses: 10000, PodsProbed: 2, PodsAnswered: 2}
 	var b bytes.Buffer
 	if err := PrintInventory(Input{Result: inventory.Result{}, DNS: degraded}, "text", &b); err != nil {
 		t.Fatal(err)
@@ -2390,6 +2390,40 @@ func TestPrintDNSHealth(t *testing.T) {
 		if strings.Contains(bo.String(), "cluster DNS") {
 			t.Errorf("probe %+v should render no DNS finding:\n%s", p, bo.String())
 		}
+	}
+}
+
+// TestPrintDNSHealth_PodsAnsweredWording pins R89's two pod-count renderings:
+// "across N pods" when every probed pod answered, and "across N of M pods"
+// when only a subset did — regression coverage against a future refactor
+// collapsing the equal case to "across N of N pods".
+func TestPrintDNSHealth_PodsAnsweredWording(t *testing.T) {
+	cases := []struct {
+		name string
+		rep  *dnshealth.Report
+		want string
+	}{
+		{
+			name: "every probed pod answered",
+			rep:  &dnshealth.Report{Status: "degraded", ServfailRatio: 0.1, ErrorResponses: 100, TotalResponses: 1000, PodsProbed: 2, PodsAnswered: 2},
+			want: "responses across 2 pods",
+		},
+		{
+			name: "only a subset answered",
+			rep:  &dnshealth.Report{Status: "degraded", ServfailRatio: 0.1, ErrorResponses: 100, TotalResponses: 1000, PodsProbed: 2, PodsAnswered: 1},
+			want: "responses across 1 of 2 pods",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var b bytes.Buffer
+			if err := printDNSHealth(tc.rep, &b); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(b.String(), tc.want) {
+				t.Errorf("missing %q, got:\n%s", tc.want, b.String())
+			}
+		})
 	}
 }
 

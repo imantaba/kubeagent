@@ -155,6 +155,42 @@ func TestPrintInventory_TextHealthyClusterSingleLine(t *testing.T) {
 	}
 }
 
+// TestPrintInventory_HeaderDenominatorCountsExpectedAbsentNodes pins the header
+// denominator to NodesTotal + NodesExpectedAbsent, so a node that dropped out of
+// the cluster (and is declared expected) no longer shrinks the number it is
+// measured against. The zero-absentee case is the one that matters most: it
+// proves every run that declares no expected nodes renders identical bytes to
+// before this fix.
+func TestPrintInventory_HeaderDenominatorCountsExpectedAbsentNodes(t *testing.T) {
+	cases := []struct {
+		name   string
+		ready  int
+		total  int
+		absent int
+		want   string
+	}{
+		{"noExpectedAbsentees", 6, 6, 0, "6/6"},
+		{"oneExpectedAbsentee", 5, 5, 1, "5/6"},
+		{"twoExpectedAbsentees", 5, 5, 2, "5/7"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			ch := clusterhealth.ClusterHealth{
+				Verdict: "Healthy", NodesReady: tc.ready, NodesTotal: tc.total, NodesExpectedAbsent: tc.absent,
+			}
+			if err := PrintInventory(Input{Cluster: ch}, "text", &buf); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			out := buf.String()
+			want := fmt.Sprintf("Cluster: Healthy — %s nodes Ready", tc.want)
+			if !strings.Contains(out, want) {
+				t.Errorf("expected header %q in:\n%s", want, out)
+			}
+		})
+	}
+}
+
 func TestPrintInventory_TextShowsScopeNote(t *testing.T) {
 	var buf bytes.Buffer
 	ch := clusterhealth.ClusterHealth{Verdict: "Healthy", NodesTotal: 3, NodesReady: 3, ScopeNote: "node health only — re-run without -n"}

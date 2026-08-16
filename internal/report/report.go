@@ -415,7 +415,8 @@ func printHeader(in Input, real []svchealth.Issue, realIng []ingresshealth.Route
 	if c.Verdict == "" {
 		return nil
 	}
-	if _, err := fmt.Fprintf(w, "Cluster: %s — %d/%d nodes Ready\n", c.Verdict, c.NodesReady, c.NodesTotal); err != nil {
+	if _, err := fmt.Fprintf(w, "Cluster: %s — %d/%d nodes Ready\n",
+		c.Verdict, c.NodesReady, c.NodesTotal+c.NodesExpectedAbsent); err != nil {
 		return err
 	}
 	for _, iss := range c.NodeIssues {

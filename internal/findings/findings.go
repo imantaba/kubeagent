@@ -89,8 +89,12 @@ func splitNamespacedName(s string) (namespace, name string) {
 	return "", s
 }
 
-// fromDiagnose maps a detector match. Every diagnose.Finding is Critical: a
-// detector fires only on a concrete, named failure mode, never on a heuristic.
+// fromDiagnose maps a detector match. Every diagnose.Finding is Critical,
+// including the heuristics (RestartLoop, ProbeFailure, and the RolloutStuck
+// counter arms): a heuristic here still names a failure that was observed,
+// not one that was predicted, so it fails a gate like any other. What
+// separates them is confidence, which internal/confidence carries and this
+// record does not — see R192.
 func fromDiagnose(f diagnose.Finding, owner string) Finding {
 	ns, name := splitNamespacedName(f.Pod)
 	reason := f.Reason

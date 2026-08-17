@@ -51,6 +51,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   threshold. No `Issue` is added or removed; row count and both gauges are
   unchanged.
 
+- **A pod sharing all three host namespaces was reported as sharing "the host
+  network/PID/IPC namespace" — singular.** `internal/secscan`'s
+  `HostNamespaces` finding now pluralizes the trailing noun on the count of
+  shared namespaces: `"pod shares the host PID namespace"` for one,
+  `"pod shares the host network/PID/IPC namespaces"` for more than one. The
+  join order, the one-finding-per-pod shape, and the `HostNamespaces` check
+  name are unchanged; `detail` carries no `enum` in the published scan
+  schema, so this is a content change, not a shape change.
+
 ### Changed
 
 - **`KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS` is now validated instead of silently

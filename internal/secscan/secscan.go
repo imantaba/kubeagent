@@ -288,7 +288,10 @@ func hostNamespaces(pod corev1.Pod) string {
 	if len(s) == 0 {
 		return ""
 	}
-	return strings.Join(s, "/") + " namespace"
+	if len(s) == 1 {
+		return s[0] + " namespace"
+	}
+	return strings.Join(s, "/") + " namespaces"
 }
 
 // sortFindings orders most-dangerous first, then namespace/workload/container/check.

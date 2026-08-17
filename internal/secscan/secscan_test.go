@@ -82,6 +82,37 @@ func TestAssess_HostNamespaces(t *testing.T) {
 	}
 }
 
+func TestAssess_HostNamespaces_SingularSuffix(t *testing.T) {
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "infra", Name: "agent"},
+		Spec:       corev1.PodSpec{HostPID: true, Containers: []corev1.Container{{Name: "c"}}},
+	}
+	got := Assess([]corev1.Pod{pod}, nil, nil)
+	if count(got, "HostNamespaces") != 1 {
+		t.Fatalf("want one HostNamespaces finding, got %+v", got)
+	}
+	if got[0].Detail != "pod shares the host PID namespace" {
+		t.Errorf("want singular suffix for one shared namespace, got %q", got[0].Detail)
+	}
+}
+
+func TestAssess_HostNamespaces_PluralSuffix(t *testing.T) {
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "infra", Name: "agent"},
+		Spec: corev1.PodSpec{
+			HostNetwork: true, HostPID: true, HostIPC: true,
+			Containers: []corev1.Container{{Name: "c"}},
+		},
+	}
+	got := Assess([]corev1.Pod{pod}, nil, nil)
+	if count(got, "HostNamespaces") != 1 {
+		t.Fatalf("want one HostNamespaces finding, got %+v", got)
+	}
+	if got[0].Detail != "pod shares the host network/PID/IPC namespaces" {
+		t.Errorf("want plural suffix for three shared namespaces, got %q", got[0].Detail)
+	}
+}
+
 func TestAssess_DedupsReplicas(t *testing.T) {
 	c := corev1.Container{Name: "app", SecurityContext: &corev1.SecurityContext{Privileged: boolp(true)}}
 	pods := []corev1.Pod{

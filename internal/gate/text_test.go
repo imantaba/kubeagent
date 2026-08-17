@@ -138,6 +138,45 @@ func TestRenderTextTimeoutShowsTheLastObservedState(t *testing.T) {
 	}
 }
 
+// TestRenderTextIdentityLineDropsLeadingSlashForClusterScoped pins R158: the
+// identity column reads "Kind Namespace/Name" for a namespaced finding, and
+// "Kind Name" — no leading slash — for a cluster-scoped one (a
+// ValidatingWebhookConfiguration finding has no namespace by design; see
+// findings.go). The two cases must render as exact lines, not merely absent a
+// slash, since a stray extra space would pass a substring check for "no slash"
+// just as wrongly.
+func TestRenderTextIdentityLineDropsLeadingSlashForClusterScoped(t *testing.T) {
+	cases := []struct {
+		name string
+		f    findings.Finding
+		want string
+	}{
+		{
+			name: "namespaced finding keeps Namespace/Name",
+			f: findings.Finding{Level: findings.Critical, Kind: "Deployment", Namespace: "shop",
+				Name: "api", Issue: "CrashLoopBackOff"},
+			want: "\n  critical  Deployment shop/api  CrashLoopBackOff\n",
+		},
+		{
+			name: "cluster-scoped finding has no leading slash",
+			f: findings.Finding{Level: findings.Warning, Kind: "ValidatingWebhookConfiguration", Namespace: "",
+				Name: "vwc-missing", Issue: "MissingService"},
+			want: "\n  warning  ValidatingWebhookConfiguration vwc-missing  MissingService\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := render(t, Verdict{
+				Verdict: "fail", Code: CodeFail, FailOn: findings.Critical, Scope: "cluster",
+				Failing: []findings.Finding{tc.f}, Reported: []findings.Finding{}, Inconclusive: []Blindspot{},
+			})
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("RenderText output missing exact line %q; got:\n%s", tc.want, got)
+			}
+		})
+	}
+}
+
 func TestRenderTextTimeoutWithoutDetailOmitsTheLine(t *testing.T) {
 	got := render(t, Verdict{
 		Verdict: "timeout", Code: CodeTimeout, FailOn: findings.Critical, Scope: "cluster",

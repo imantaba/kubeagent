@@ -3,6 +3,8 @@ package gate
 import (
 	"fmt"
 	"io"
+
+	"github.com/imantaba/kubeagent/internal/findings"
 )
 
 // RenderText writes the human-readable verdict a CI log shows. It is the
@@ -33,7 +35,7 @@ func RenderText(w io.Writer, v Verdict) error {
 	}
 
 	for _, f := range v.Failing {
-		if _, err := fmt.Fprintf(w, "\n  %s  %s %s/%s  %s\n", f.Level, f.Kind, f.Namespace, f.Name, f.Issue); err != nil {
+		if _, err := fmt.Fprintf(w, "\n  %s  %s %s  %s\n", f.Level, f.Kind, findingIdentity(f), f.Issue); err != nil {
 			return err
 		}
 		if f.Reason != "" {
@@ -60,6 +62,20 @@ func RenderText(w io.Writer, v Verdict) error {
 		}
 	}
 	return nil
+}
+
+// findingIdentity renders a finding's Namespace/Name pair as the identity
+// column: "namespace/name" for a namespaced finding, "name" alone for a
+// cluster-scoped one (empty Namespace). A cluster-scoped finding — a
+// ValidatingWebhookConfiguration, for example — genuinely has no namespace;
+// printing an empty Namespace with the unconditional "%s/%s" form left a
+// stray leading slash on that identity. One helper so any future text
+// renderer makes the same decision in one place.
+func findingIdentity(f findings.Finding) string {
+	if f.Namespace == "" {
+		return f.Name
+	}
+	return f.Namespace + "/" + f.Name
 }
 
 func plural(n int, one, many string) string {

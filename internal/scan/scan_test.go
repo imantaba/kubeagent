@@ -339,7 +339,8 @@ func TestEvaluate_LogsEnrichCrashFindings(t *testing.T) {
 	crashPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "web-1", Namespace: "shop", Labels: map[string]string{"app": "web"}},
 		Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
-			Name: "web", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+			Name: "web", RestartCount: 6,
+			State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
 		}}},
 	}
 	client := fake.NewSimpleClientset(crashPod)
@@ -404,6 +405,90 @@ func countLogCause(r Result, pod string) int {
 		}
 	}
 	return n
+}
+
+// countPodsLogReads counts the fake clientset's GetLogs actions. client-go's
+// fake GetLogs records a "get" on resource "pods" with subresource "log" — its
+// resource string is never the literal "pods/log" (that string is kubeagent's
+// own blind-spot vocabulary, a different axis entirely) — so a check against
+// that literal would never match and any negative assertion built on it would
+// pass vacuously whether or not a filter actually ran.
+func countPodsLogReads(client kubernetes.Interface) int {
+	n := 0
+	for _, a := range client.(interface {
+		Actions() []k8stesting.Action
+	}).Actions() {
+		if a.GetVerb() == "get" && a.GetResource().Resource == "pods" && a.GetSubresource() == "log" {
+			n++
+		}
+	}
+	return n
+}
+
+// TestEvaluate_LogsFiltersToContainersWithAPreviousInstance pins R181: only a
+// finding whose container has actually exited once already is worth a
+// --previous log read. The pod carries three findings on three distinct
+// containers so a filter that merely allowlists a finding *kind* — or that
+// reads only Status.ContainerStatuses — cannot pass by accident: web has
+// restarted and is probed, sidecar has never restarted and is not, and migrate
+// is an init container. internal/diagnose/initcontainer.go names its Container
+// from Status.InitContainerStatuses, a slice no other detector reads, so a
+// lookup that misses it would silently drop this finding's probe too — the
+// same loss a container-kind allowlist would have produced.
+func TestEvaluate_LogsFiltersToContainersWithAPreviousInstance(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "web-1", Namespace: "shop", Labels: map[string]string{"app": "web"}},
+		Spec: corev1.PodSpec{
+			InitContainers: []corev1.Container{{Name: "migrate"}},
+			Containers:     []corev1.Container{{Name: "web"}, {Name: "sidecar"}},
+		},
+		Status: corev1.PodStatus{
+			InitContainerStatuses: []corev1.ContainerStatus{{
+				Name: "migrate", RestartCount: 6,
+				State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+			}},
+			ContainerStatuses: []corev1.ContainerStatus{
+				{
+					Name: "web", RestartCount: 6,
+					State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+				},
+				{
+					Name:  "sidecar",
+					State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+				},
+			},
+		},
+	}
+	event := &corev1.Event{
+		ObjectMeta:     metav1.ObjectMeta{Name: "web-1.unhealthy", Namespace: "shop"},
+		InvolvedObject: corev1.ObjectReference{Kind: "Pod", Namespace: "shop", Name: "web-1", FieldPath: "spec.containers{sidecar}"},
+		Reason:         "Unhealthy",
+		Message:        "Readiness probe failed: dial tcp 10.0.0.5:8080: connect: connection refused",
+		LastTimestamp:  metav1.Now(),
+	}
+	client := fake.NewSimpleClientset(pod, event)
+	res, err := Evaluate(context.Background(), client, Options{Logs: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	seen := map[string]bool{}
+	for _, w := range res.Inventory.Workloads {
+		for _, f := range w.Findings {
+			if f.Pod == "shop/web-1" {
+				seen[f.Issue] = true
+			}
+		}
+	}
+	for _, want := range []string{"CrashLoopBackOff", "Init:CrashLoopBackOff", "ProbeFailure"} {
+		if !seen[want] {
+			t.Fatalf("fixture did not produce the expected %q finding (findings seen: %v) — the test setup is broken, not the filter under test", want, seen)
+		}
+	}
+
+	if n := countPodsLogReads(client); n != 2 {
+		t.Errorf("pods/log reads = %d, want 2 (web and migrate, both restarted; not sidecar, which never has)", n)
+	}
 }
 
 func p32(i int32) *int32 { return &i }
@@ -1928,13 +2013,21 @@ func previousLogNotFoundServer(t *testing.T) rest.Interface {
 }
 
 // TestEvaluate_LogsPreviousContainerAbsentIsNotABlindSpot proves that --logs
-// against a container that has never terminated — a routine 400, not a
-// permission denial — records no pods/log blind spot.
+// against a container whose previous instance is not there to fetch — the
+// kubelet had already garbage-collected it by the time the read landed, a
+// routine 400 — records no pods/log blind spot. The container still has to
+// clear scan.go's own "has a previous instance" filter (a restart, or a
+// LastTerminationState still visible) to reach this server at all — a
+// container that has never restarted is filtered before any read is issued,
+// which is a different guarantee (TestEvaluate_LogsFiltersToContainersWithAPreviousInstance)
+// and would make this fixture's own read never happen.
 func TestEvaluate_LogsPreviousContainerAbsentIsNotABlindSpot(t *testing.T) {
 	crashPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "web-1", Namespace: "shop", Labels: map[string]string{"app": "web"}},
 		Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
-			Name: "web", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+			Name: "web", RestartCount: 1,
+			State:                corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+			LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 1, Reason: "Error"}},
 		}}},
 	}
 	client := podLogsFailingClient{

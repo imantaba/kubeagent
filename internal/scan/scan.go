@@ -146,6 +146,27 @@ func splitNamespacedName(s string) (ns, name string, ok bool) {
 	return "", "", false
 }
 
+// hasPreviousInstance reports whether the named container has exited at least
+// once — a restart, or a still-visible last termination — which is what makes
+// a --previous log read meaningful rather than a guaranteed 400. It searches
+// both Status.ContainerStatuses and Status.InitContainerStatuses:
+// internal/diagnose/initcontainer.go names its Container from the init slice,
+// which no other detector reads, so a lookup that skipped it would silently
+// stop probing every init-container finding.
+func hasPreviousInstance(pod *corev1.Pod, container string) bool {
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.Name == container {
+			return cs.RestartCount > 0 || cs.LastTerminationState.Terminated != nil
+		}
+	}
+	for _, cs := range pod.Status.InitContainerStatuses {
+		if cs.Name == container {
+			return cs.RestartCount > 0 || cs.LastTerminationState.Terminated != nil
+		}
+	}
+	return false
+}
+
 // coreDNSPods returns the Running CoreDNS pods (kube-system, k8s-app=kube-dns).
 func coreDNSPods(pods []corev1.Pod) []corev1.Pod {
 	var out []corev1.Pod
@@ -455,10 +476,21 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	}
 	var logTargets []logTarget
 	if opts.Logs {
+		// inputs.Pods is already in scope (built above, and diagnose.Run just
+		// consumed it) so this costs a map build and a lookup, not a new
+		// cluster read.
+		podByKey := make(map[string]*corev1.Pod, len(inputs.Pods))
+		for i := range inputs.Pods {
+			p := &inputs.Pods[i]
+			podByKey[p.Namespace+"/"+p.Name] = p
+		}
 		enriched := map[string]bool{} // one log fetch + one enriched finding per pod/container
 		for i := range findings {
 			if findings[i].Container == "" {
 				continue
+			}
+			if pod := podByKey[findings[i].Pod]; pod == nil || !hasPreviousInstance(pod, findings[i].Container) {
+				continue // never restarted: there is no previous instance to fetch
 			}
 			key := findings[i].Pod + "/" + findings[i].Container
 			if enriched[key] {

@@ -986,7 +986,8 @@ they differ:
 This is a text-rendering decision only. `--output json` still carries one
 finding per pod, each naming its own pod, and no count appears in it.
 
-A `↳` signal is capped at 500 characters in the text output, ending in
+A `↳` signal is capped at 500 characters in the text output — the line itself
+measures 508, the extra eight being the indent and the `↳` marker — ending in
 `… (truncated)` when the cap bites. A container runtime repeats every layer of a
 failure — the back-off preamble, the rpc error, the unpack failure, the resolve
 failure, the bare image reference — and on a long registry path that line runs

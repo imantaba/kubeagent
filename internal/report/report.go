@@ -1193,8 +1193,9 @@ func hasLine(lines []string, s string) bool {
 }
 
 const (
-	// maxEvidence is the rune budget for one rendered evidence line, marker
-	// included, so the line is never longer than this.
+	// maxEvidence is the rune budget for the evidence string on one rendered
+	// evidence line. The line itself is eight runes longer — renderFinding
+	// prepends the indent and the "↳ " marker — so a cut line measures 508.
 	//
 	// A container runtime repeats every layer of a failure — the back-off
 	// preamble, the rpc error, the unpack failure, the resolve failure, the bare

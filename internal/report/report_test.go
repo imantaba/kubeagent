@@ -1323,6 +1323,34 @@ func TestPrintInventory_TextCapsALongEvidenceLine(t *testing.T) {
 	}
 }
 
+// maxEvidence bounds the evidence string, not the rendered line: renderFinding
+// prepends a six-space indent, the "↳" marker and a space -- eight runes --
+// so a cut line measures 508, not 500.
+func TestPrintInventory_TextCutLineMeasuresEightRunesMoreThanTheEvidenceCap(t *testing.T) {
+	out := renderFindings(t, false, crashFinding("web-abc", strings.Repeat("x", 600)))
+	const prefix = "      ↳ "
+	var raw string
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, prefix) {
+			raw = l
+			break
+		}
+	}
+	if raw == "" {
+		t.Fatalf("no evidence line in:\n%s", out)
+	}
+	if n := utf8.RuneCountInString(raw); n != 508 {
+		t.Errorf("want the rendered line at 508 runes, got %d", n)
+	}
+	ev := strings.TrimPrefix(raw, prefix)
+	if n := utf8.RuneCountInString(ev); n != maxEvidence {
+		t.Errorf("want the evidence portion at %d runes, got %d", maxEvidence, n)
+	}
+	if !strings.HasSuffix(ev, evidenceCut) {
+		t.Errorf("a cut line must say so; got the tail %q", ev[len(ev)-40:])
+	}
+}
+
 // The cap exists for pathological lines. Real pull errors run to a few hundred
 // characters and are the only place the true cause appears, so they must arrive
 // whole.

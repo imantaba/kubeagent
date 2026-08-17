@@ -24,6 +24,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   admission webhooks" — alongside the existing system-rollup caveat, joined
   by `\n` and rendered as its own line.
 
+- **`kubeagent mcp`'s tool results now carry the classified log cause of a
+  crashed container.** A finding that `scan --logs` enriched already carried
+  its plain-language cause into the text and JSON reports, but the MCP view
+  dropped it, so a client that flagged a `CrashLoopBackOff` could not see what
+  the previous container's own output said about the exit. `logCause` is now a
+  field on the finding the MCP server returns, `omitempty`, carrying the same
+  derived one-line label — never the raw log text, which stays out of the tool
+  result entirely. An MCP tool result is not one of kubeagent's versioned JSON
+  documents, so no `schemaVersion` moves.
+
 ### Fixed
 
 - **A webhook backed by an `ExternalName` Service was reported as having no
@@ -131,6 +141,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   site now passes `inputs.Jobs` alongside the already-unfiltered
   `inputs.ReplicaSets`. No `schemaVersion` moves: `kind` and `workload` are
   free-form strings.
+
+- **The `connection refused` log cause no longer repeats the address the
+  container dialed.** The cause is now a fixed sentence with no submatch
+  interpolated into it. A container that logged a failure to reach a URL
+  carrying an embedded credential had that credential copied verbatim into
+  `logCause`, a field every rendering of a finding carries — the text report,
+  the JSON document, and now an MCP tool result. The raw line still reaches the
+  log excerpt, sanitized and truncated, which is where an operator reads it. `logCause` is a free-form string in every published
+  schema, so no `schemaVersion` moves.
+
+- **A log body whose only content is the kubelet's own log-unavailable
+  placeholder is now refused instead of classified.** `unable to retrieve
+  container logs for <runtime>://<id>: …` is text the container runtime wrote,
+  never the crashed container's own output, so classifying it reported the
+  control plane's message as if it were the workload's behaviour — and a
+  placeholder whose tail reads `permission denied` matched the `perm-denied`
+  signature outright. Such a body now yields no cause and no excerpt at all. A
+  body that mixes the placeholder with genuine output still classifies
+  normally, on the genuine line, and an unanchored mid-line mention is left
+  alone.
+
+- **The fallback log cause now names the window it searched instead of claiming
+  no signature exists.** It reads `last output before exit (no signature in the
+  last 25 lines)`. kubeagent asks the API server for only the last 25 lines of
+  the previous container, so a signature earlier in that container's output is
+  invisible to the classifier rather than absent from the log — the old wording
+  asserted the stronger claim. The 25 is now named by a comment at each of the
+  two sites that depend on it, each pointing at the other, so the tail length
+  and the sentence describing it cannot drift apart silently. `logCause` is a
+  free-form string in every published schema, so no `schemaVersion` moves.
+
+- **`scan --logs` no longer issues a previous-container log read that cannot
+  succeed.** It probed any finding that named a container, including one still
+  on its first attempt, which has no previous instance — a guaranteed `400`
+  from the API server on every scan of a pod that had not yet restarted. The
+  probe is now gated on the container having exited at least once (a restart,
+  or a still-visible last termination), read from the pod objects the scan had
+  already collected, so the gate costs a map build rather than a new cluster
+  read. Both `ContainerStatuses` and `InitContainerStatuses` are searched,
+  because an init-container finding names its container from the init slice
+  that no other detector reads.
+
+- **When two findings name the same container, the log block now goes to the
+  finding that explains the exit.** A container that trips both
+  `CrashLoopBackOff` and `OOMKilled` produced two findings and one log fetch,
+  and the block landed on whichever finding reached the enrichment loop first.
+  If a later finding's issue matches the container's own last termination
+  reason, the block now moves to it. The fetch count is unchanged — still one
+  per container — and the reason is read from the same two status slices the
+  probe gate searches, for the same reason.
 
 ### Changed
 

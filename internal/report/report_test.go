@@ -2813,6 +2813,45 @@ func TestPrintInventory_TextShowsInvestigation(t *testing.T) {
 	}
 }
 
+// A silent "consulted:" line when no reads happened reads as "the model read
+// something and I'm not telling you what" rather than "the model read
+// nothing" — the one case where the omission is most misleading, since the
+// whole argument for --investigate over --explain is that the narrative is
+// grounded in reads that actually happened.
+func TestPrintInventory_TextShowsEmptyConsultedState(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster:                clusterhealth.ClusterHealth{Verdict: "Healthy"},
+		Investigation:          "web — ImagePullBackOff\n- Root cause: bad tag",
+		InvestigationConsulted: nil,
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "consulted: (no reads — the model answered from the scan alone)") {
+		t.Errorf("empty consulted trail must render its own line:\n%s", out)
+	}
+}
+
+// A non-empty trail still joins on " · ", the same separator the render used
+// before the empty-state line existed.
+func TestPrintInventory_TextShowsConsultedTrailJoined(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster:                clusterhealth.ClusterHealth{Verdict: "Healthy"},
+		Investigation:          "web — ImagePullBackOff\n- Root cause: bad tag",
+		InvestigationConsulted: []string{"describe pod shop/web-abc", "events shop/web-abc"},
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "consulted: describe pod shop/web-abc · events shop/web-abc") {
+		t.Errorf("non-empty consulted trail must join on \" · \":\n%s", out)
+	}
+}
+
 func TestPrintInventory_JSONIncludesInvestigation(t *testing.T) {
 	var buf bytes.Buffer
 	in := Input{

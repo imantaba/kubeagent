@@ -413,10 +413,12 @@ func printInventoryText(in Input, w io.Writer) error {
 		if _, err := fmt.Fprintf(w, "\n── Investigation ──\n"); err != nil {
 			return err
 		}
+		consulted := "(no reads — the model answered from the scan alone)"
 		if len(in.InvestigationConsulted) > 0 {
-			if _, err := fmt.Fprintf(w, "consulted: %s\n", strings.Join(in.InvestigationConsulted, " · ")); err != nil {
-				return err
-			}
+			consulted = strings.Join(in.InvestigationConsulted, " · ")
+		}
+		if _, err := fmt.Fprintf(w, "consulted: %s\n", consulted); err != nil {
+			return err
 		}
 		if _, err := fmt.Fprintf(w, "%s\n", in.Investigation); err != nil {
 			return err

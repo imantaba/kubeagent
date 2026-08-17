@@ -36,6 +36,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`scan --investigate`'s text report silently omitted the `consulted:` line
+  when the model made no reads.** A narrative with an empty read trail printed
+  no `consulted:` line at all, which reads as "the model read something and
+  isn't saying what" rather than "the model read nothing" — the case where the
+  omission is most misleading, since the whole argument for `--investigate`
+  over `--explain` is that the narrative is grounded in reads that actually
+  happened. The text report now always prints the line, with an explicit
+  empty state — `consulted: (no reads — the model answered from the scan
+  alone)` — when the trail is empty. This is text-report rendering only: the
+  JSON document's `consulted` field is unchanged, so nothing is added to or
+  removed from any published schema.
+
 - **A webhook backed by an `ExternalName` Service was reported as having no
   ready endpoints.** `ExternalName` is a DNS CNAME and never carries an
   `EndpointSlice`, the same reasoning `internal/svchealth` already applies to

@@ -1279,6 +1279,16 @@ func TestEvaluate_FlagsSlowWebhook(t *testing.T) {
 	if !found {
 		t.Errorf("expected a HighTimeout webhook issue, got %+v", res.WebhookIssues)
 	}
+	// Regression: this fixture's webhook is URL-backed, so webhookhealth.Assess
+	// also counts it as one in-scope, unchecked URL backend. Evaluate's Result{...}
+	// literal must carry that count through to res.WebhookURLBackends — a silent
+	// zero here (webhookURLBackends never assigned from Assess's second return)
+	// compiles cleanly and is exactly what
+	// TestResultInput_CarriesWebhookURLBackends guards one hop downstream, but
+	// nothing before this assertion guarded the hop here.
+	if res.WebhookURLBackends != 1 {
+		t.Errorf("res.WebhookURLBackends = %d, want 1", res.WebhookURLBackends)
+	}
 }
 
 func TestEvaluate_FlagsNearFullQuota(t *testing.T) {

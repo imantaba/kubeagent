@@ -46,7 +46,9 @@ type Input struct {
 	Blind []scan.ReadFailure
 	// Namespace is the -n value; "" means all namespaces. report.Input carries
 	// no namespace, and ClusterHealth.ScopeNote is not a substitute: it names no
-	// namespace and is empty for -n kube-system.
+	// namespace, and it is empty only for a cluster-wide scan — even -n
+	// kube-system carries a caveat (the admission-webhook check is skipped
+	// under any -n, unconditionally).
 	Namespace string
 	// Version is the kubeagent version stamped into the header.
 	Version string

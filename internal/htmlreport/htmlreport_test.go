@@ -452,6 +452,38 @@ func TestRenderDetailSections(t *testing.T) {
 	}
 }
 
+// TestRenderTwoSentenceScopeNoteRendersAsTwoLines guards R156's two-sentence
+// ScopeNote against collapsing into a run-on once it reaches HTML: the value
+// arrives as one string joined by "\n", html/template preserves that literal
+// newline as a text node, and HTML's default white-space: normal collapses a
+// literal newline to a single space — so without the .empty rule declaring
+// white-space: pre-line, the two independent claims read as one sentence with
+// no separator. Either half of the fix alone leaves the bug, so both are
+// asserted: the raw two-line body text (neither sentence contains an
+// HTML-special character, so no escaping is involved), and the CSS rule that
+// makes a browser honor the embedded newline — asserted as the whole rule
+// text, not a bare substring, so a "pre-line" landing on an unrelated
+// selector would not pass this test.
+func TestRenderTwoSentenceScopeNoteRendersAsTwoLines(t *testing.T) {
+	note := clusterhealth.NamespaceScopeNote("shop")
+	got := render(t, Input{
+		Report: report.Input{
+			Now:     fixedNow,
+			Cluster: clusterhealth.ClusterHealth{ScopeNote: note},
+		},
+		Version:   "v0.66.0",
+		Namespace: "shop",
+	})
+	wantBody := `<p class="empty">` + note + `</p>`
+	if !strings.Contains(got, wantBody) {
+		t.Errorf("want the two-sentence ScopeNote rendered verbatim (with its embedded \\n) inside <p class=\"empty\">...</p>, did not find %q", wantBody)
+	}
+	wantRule := `.empty { color: var(--muted); white-space: pre-line; }`
+	if !strings.Contains(got, wantRule) {
+		t.Errorf("want the .empty rule to declare white-space: pre-line, did not find %q in the stylesheet", wantRule)
+	}
+}
+
 // TestRenderExplanationOnlyWhenPresent: --explain produces one plain-English
 // paragraph worth carrying into a shared document. Without the flag there is no
 // narrative, and an empty section would read as a failure.

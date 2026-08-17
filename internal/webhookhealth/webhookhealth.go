@@ -44,8 +44,11 @@ type hook struct {
 }
 
 // Assess flags Fail-policy webhooks whose backend Service is missing or has no
-// ready endpoints, or whose timeoutSeconds is >= timeoutThreshold, sorted by
-// (Kind, Config, Webhook).
+// ready endpoints, or — only when the same webhook has no backend problem —
+// whose timeoutSeconds is >= timeoutThreshold, sorted by (Kind, Config,
+// Webhook). A webhook with both problems still produces one Issue (the down
+// backend dominates a slow one), with the timeout condition named as a suffix
+// on that Issue's reason rather than dropped.
 func Assess(
 	validating []admissionv1.ValidatingWebhookConfiguration,
 	mutating []admissionv1.MutatingWebhookConfiguration,
@@ -88,7 +91,7 @@ func Assess(
 			switch {
 			case !found:
 				out = append(out, Issue{Kind: h.kind, Config: h.config, Webhook: h.name, Service: id, Problem: "MissingService",
-					Reason: fmt.Sprintf("backend Service %s does not exist — failurePolicy Fail rejects every intercepted create/update", id)})
+					Reason: fmt.Sprintf("backend Service %s does not exist — failurePolicy Fail rejects every intercepted create/update", id) + timeoutSuffix(h.timeout, timeoutThreshold)})
 				backendFlagged = true
 			case svc.Spec.Type == corev1.ServiceTypeExternalName:
 				// Mirrors svchealth.go:39-41: an ExternalName Service is a DNS CNAME, not
@@ -98,7 +101,7 @@ func Assess(
 				// into the !found case above and is still MissingService.
 			case svchealth.ReadyEndpoints(svc, slices) == 0:
 				out = append(out, Issue{Kind: h.kind, Config: h.config, Webhook: h.name, Service: id, Problem: "NoEndpoints",
-					Reason: fmt.Sprintf("backend Service %s has no ready endpoints — failurePolicy Fail rejects every intercepted create/update", id)})
+					Reason: fmt.Sprintf("backend Service %s has no ready endpoints — failurePolicy Fail rejects every intercepted create/update", id) + timeoutSuffix(h.timeout, timeoutThreshold)})
 				backendFlagged = true
 			}
 		}
@@ -128,6 +131,19 @@ func Assess(
 // failurePolicy defaults to Fail in admissionregistration.k8s.io/v1.
 func failsClosed(fp *admissionv1.FailurePolicyType) bool {
 	return fp == nil || *fp == admissionv1.Fail
+}
+
+// timeoutSuffix names a co-occurring high timeout on a backend Issue's reason.
+// The backendFlagged guard in Assess reports only one Issue for a webhook with
+// both problems — a down backend dominates a slow one — but a timeoutSeconds
+// that also clears threshold is worth disclosing rather than silently dropped.
+// Both backend arms (MissingService and NoEndpoints) call this one helper so
+// the two reason strings cannot drift apart.
+func timeoutSuffix(timeout *int32, threshold int32) string {
+	if timeout == nil || *timeout < threshold {
+		return ""
+	}
+	return fmt.Sprintf(" (and timeoutSeconds %d ≥ %ds)", *timeout, threshold)
 }
 
 // findService returns the collected Service matching ns/name, or ok=false.

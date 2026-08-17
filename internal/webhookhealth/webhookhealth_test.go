@@ -375,3 +375,86 @@ func TestAssess_EmptyRulesHighTimeoutNotFlagged(t *testing.T) {
 		t.Fatalf("the rules-empty skip must precede the timeout check, got %+v", got)
 	}
 }
+
+// TestAssess_MissingServiceHighTimeoutReasonSuffix: a webhook whose backend is
+// missing AND whose timeoutSeconds clears the threshold still produces exactly
+// one Issue (the backendFlagged guard is correct — a dead backend dominates a
+// slow one), but the co-occurring timeout is now named in the reason rather
+// than silently dropped.
+func TestAssess_MissingServiceHighTimeoutReasonSuffix(t *testing.T) {
+	v := vwc("down", vhookT("down.io", failP(), admissionv1.WebhookClientConfig{Service: svcRef("ns", "gone")}, 30))
+	got := Assess([]admissionv1.ValidatingWebhookConfiguration{v}, nil, nil, nil, 15)
+	if len(got) != 1 {
+		t.Fatalf("want exactly one issue (backend, not doubled), got %+v", got)
+	}
+	is := got[0]
+	if is.Problem != "MissingService" {
+		t.Fatalf("Problem = %q, want MissingService", is.Problem)
+	}
+	want := "backend Service ns/gone does not exist — failurePolicy Fail rejects every intercepted create/update (and timeoutSeconds 30 ≥ 15s)"
+	if is.Reason != want {
+		t.Errorf("Reason = %q, want %q", is.Reason, want)
+	}
+}
+
+// TestAssess_NoEndpointsHighTimeoutReasonSuffix proves the suffix reaches the
+// NoEndpoints arm too — both backend arms call the same helper so the two
+// sites cannot drift.
+func TestAssess_NoEndpointsHighTimeoutReasonSuffix(t *testing.T) {
+	v := vwc("noep-slow", vhookT("noepslow.io", failP(), admissionv1.WebhookClientConfig{Service: svcRef("ns", "svc")}, 30))
+	services := []corev1.Service{svc("ns", "svc")}
+	slices := []discoveryv1.EndpointSlice{sliceFor("ns", "svc", false)} // 0 ready
+	is, ok := find(Assess([]admissionv1.ValidatingWebhookConfiguration{v}, nil, services, slices, 15), "noepslow.io")
+	if !ok || is.Problem != "NoEndpoints" {
+		t.Fatalf("want NoEndpoints, got %+v", is)
+	}
+	want := "backend Service ns/svc has no ready endpoints — failurePolicy Fail rejects every intercepted create/update (and timeoutSeconds 30 ≥ 15s)"
+	if is.Reason != want {
+		t.Errorf("Reason = %q, want %q", is.Reason, want)
+	}
+}
+
+// TestAssess_MissingServiceLowTimeoutNoSuffix proves the suffix only appears
+// when the timeout condition is itself true — timeoutSeconds below the
+// threshold leaves the backend reason exactly as it was before this decision.
+func TestAssess_MissingServiceLowTimeoutNoSuffix(t *testing.T) {
+	v := vwc("down5", vhookT("down5.io", failP(), admissionv1.WebhookClientConfig{Service: svcRef("ns", "gone")}, 5))
+	is, ok := find(Assess([]admissionv1.ValidatingWebhookConfiguration{v}, nil, nil, nil, 15), "down5.io")
+	if !ok || is.Problem != "MissingService" {
+		t.Fatalf("want MissingService, got %+v", is)
+	}
+	want := "backend Service ns/gone does not exist — failurePolicy Fail rejects every intercepted create/update"
+	if is.Reason != want {
+		t.Errorf("Reason = %q, want %q (no suffix)", is.Reason, want)
+	}
+}
+
+// TestAssess_HealthyBackendHighTimeoutNoSuffix proves the suffix belongs to a
+// backend issue only — a standalone HighTimeout issue (no backend problem on
+// the same hook) keeps its own reason unchanged, no double-naming of the same
+// timeout.
+func TestAssess_HealthyBackendHighTimeoutNoSuffix(t *testing.T) {
+	v := vwc("slow-validator", vhookT("policy.example.com", failP(),
+		admissionv1.WebhookClientConfig{Service: svcRef("kube-system", "policy-svc")}, 30))
+	services := []corev1.Service{svc("kube-system", "policy-svc")}
+	slices := []discoveryv1.EndpointSlice{sliceFor("kube-system", "policy-svc", true)} // healthy backend
+	is, ok := find(Assess([]admissionv1.ValidatingWebhookConfiguration{v}, nil, services, slices, 15), "policy.example.com")
+	if !ok || is.Problem != "HighTimeout" {
+		t.Fatalf("want HighTimeout, got %+v", is)
+	}
+	if strings.Contains(is.Reason, "(and timeoutSeconds") {
+		t.Errorf("a standalone HighTimeout reason must not gain the co-occurrence suffix, got %q", is.Reason)
+	}
+}
+
+// TestAssess_IgnorePolicyMissingServiceHighTimeoutNoIssue proves an Ignore
+// policy suppresses both conditions together — not just the timeout check
+// alone, which TestAssess_IgnorePolicyHighTimeoutNotFlagged already covers on
+// a healthy backend.
+func TestAssess_IgnorePolicyMissingServiceHighTimeoutNoIssue(t *testing.T) {
+	v := vwc("laxdown", vhookT("laxdown.io", ignoreP(), admissionv1.WebhookClientConfig{Service: svcRef("ns", "gone")}, 30))
+	got := Assess([]admissionv1.ValidatingWebhookConfiguration{v}, nil, nil, nil, 15)
+	if len(got) != 0 {
+		t.Fatalf("Ignore policy with missing service and high timeout must produce no issue, got %+v", got)
+	}
+}

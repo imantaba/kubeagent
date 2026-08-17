@@ -891,7 +891,9 @@ func printBlindSpots(blind []scan.ReadFailure, w io.Writer) error {
 	return err
 }
 
-// printWebhookIssues lists admission webhooks that will reject every intercepted request.
+// printWebhookIssues lists admission webhooks that either already reject every
+// intercepted request (missing or endpoint-less backend) or would block one for
+// a long time if their backend were slow (high timeoutSeconds).
 func printWebhookIssues(issues []webhookhealth.Issue, w io.Writer) error {
 	for _, is := range issues {
 		if _, err := fmt.Fprintf(w, "  ✗ %s  %s  webhook %s\n", is.Config, is.Kind, is.Webhook); err != nil {

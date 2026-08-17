@@ -35,6 +35,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   used to synthesize; its `PDBBlocked:` and `HPAStuck:` lines were already the
   target spelling and are unchanged.
 
+- **`pdbhealth.Assess` now flags two PDB shapes that used to pass silently, and
+  reworks three reason strings.** A PDB with neither `minAvailable` nor
+  `maxUnavailable` set used to be skipped by the loop entirely; it is the
+  strictest rule a PDB can express — the API server allows no voluntary
+  eviction at all — and is now classified `unsatisfiable`. A PDB guarding a
+  single-replica workload with no disruption headroom used to be treated as
+  benign by falling outside every guard; it is now its own category,
+  `singleton`, with a reason that names the trade-off ("often deliberate, but
+  no voluntary eviction is possible"). This is separate from the CamelCase
+  rename above: that entry covers the finding-vocabulary string `singleton` →
+  `PDBSingleton` that the map already carried; this is `Assess` emitting the
+  `singleton` category at all, for an input it used to pass over without
+  flagging. Three existing reasons are reworded to say only what was measured:
+  the `unsatisfiable` reason now names the over-ask count separately from the
+  exact-cover count instead of using one string for both; the `blocking`
+  reason now quotes the PDB's own status counters ("PDB status reports N/M
+  guarded pods healthy") instead of asserting a fact about pod readiness
+  kubeagent never measured; the `stale` reason drops its hedged "(stale?)" for
+  "selector currently matches no pods", which is what the status actually
+  shows. Separately, `scan`'s text-format summary line for these PDBs now
+  reads "N PodDisruptionBudget issue(s)" instead of "N PodDisruptionBudget(s)
+  blocking drains" — "blocking" was never a property every category had, and
+  is less true now that there are two more categories that do not block
+  anything until their shape changes. A consumer parsing that summary line for
+  "blocking drains" breaks; the JSON `pdbIssues` array, its `category` values,
+  and the text report's `PDBBlocked:` row label are unaffected. No
+  `schemaVersion` moves: `pdbhealth.Issue`'s `category` and `reason` fields
+  carry no `enum` in the published scan schema, so a new category value and
+  reworded reason text are content changes, not shape changes.
+
 ## [1.16.1] - 2026-08-13
 
 ### Changed

@@ -17,7 +17,7 @@ import (
 type Issue struct {
 	Namespace string `json:"namespace"`
 	Name      string `json:"name"`
-	Rule      string `json:"rule"`     // "minAvailable: 3" | "maxUnavailable: 0"
+	Rule      string `json:"rule"`     // "minAvailable: 3" | "maxUnavailable: 0" | "(no rule set)"
 	Category  string `json:"category"` // "stale" | "unsatisfiable" | "blocking" | "singleton"
 	Reason    string `json:"reason"`
 }

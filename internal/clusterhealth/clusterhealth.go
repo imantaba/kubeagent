@@ -146,14 +146,24 @@ func staleHeartbeat(leaseByNode map[string]coordinationv1.Lease, node string, no
 	return "", "", false
 }
 
-// NamespaceScopeNote returns a caveat for the verdict when the scan is scoped to
-// a single namespace that excludes kube-system, so the system rollup could not
-// run. Returns "" when the rollup was in scope (all namespaces, or -n kube-system).
+// NamespaceScopeNote returns a caveat for the verdict when the scan is scoped
+// to a single namespace, naming what a -n scope causes to be skipped. Up to
+// two sentences, joined by "\n": the system-rollup sentence fires for any
+// namespace except kube-system (the system rollup ran there); the
+// admission-webhook sentence fires for every non-empty namespace, including
+// kube-system, because internal/scan's webhook check is skipped under any -n,
+// unconditionally. The two conditions differ and cannot share one guard.
+// Returns "" only for namespace == "" (cluster-wide, nothing skipped).
 func NamespaceScopeNote(namespace string) string {
-	if namespace != "" && namespace != systemNamespace {
-		return "node health only — re-run without -n (or with -n kube-system) for the system workload check"
+	if namespace == "" {
+		return ""
 	}
-	return ""
+	var sentences []string
+	if namespace != systemNamespace {
+		sentences = append(sentences, "node health only — re-run without -n (or with -n kube-system) for the system workload check")
+	}
+	sentences = append(sentences, "cluster-wide checks skipped under -n: admission webhooks")
+	return strings.Join(sentences, "\n")
 }
 
 // nodeHealth returns whether the node's Ready condition is true and a list of

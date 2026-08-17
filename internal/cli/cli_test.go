@@ -94,6 +94,17 @@ func TestResultInput_CarriesWebhookIssues(t *testing.T) {
 	}
 }
 
+func TestResultInput_CarriesWebhookURLBackends(t *testing.T) {
+	// Regression: the scan.Result → report.Input mapping must carry
+	// WebhookURLBackends, or the NOTES line never renders in the CLI even
+	// though webhookhealth.Assess computed a non-zero count.
+	res := scan.Result{WebhookURLBackends: 3}
+	in := resultInput(res)
+	if in.WebhookURLBackends != 3 {
+		t.Fatalf("resultInput must carry WebhookURLBackends into report.Input, got %d", in.WebhookURLBackends)
+	}
+}
+
 func TestResultInput_MapsQuotaIssues(t *testing.T) {
 	res := scan.Result{QuotaIssues: []quotahealth.Issue{
 		{Namespace: "shop", Quota: "compute", Resource: "pods", Used: "47", Hard: "50", Ratio: 0.94, Severity: "near"},

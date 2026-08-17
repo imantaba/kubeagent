@@ -208,7 +208,12 @@ type Input struct {
 	PDBIssues        []pdbhealth.Issue
 	HPAIssues        []hpahealth.Issue
 	WebhookIssues    []webhookhealth.Issue
-	QuotaIssues      []quotahealth.Issue
+	// WebhookURLBackends is scan.Result.WebhookURLBackends — the count of
+	// in-scope Fail-policy webhooks backed by a clientConfig.url rather than a
+	// Service, a backend kubeagent cannot check the reachability of. No json
+	// tag: Input is never marshalled — the encoded struct is ScanReport.
+	WebhookURLBackends int
+	QuotaIssues        []quotahealth.Issue
 	// Blind is scan.Result.PartialReads — the collector calls that failed, so a
 	// refused read is distinguishable from an empty one. Reasons are rendered
 	// verbatim here; see the safeReason comment in internal/htmlreport, which
@@ -466,8 +471,16 @@ func printHeader(in Input, real []svchealth.Issue, realIng []ingresshealth.Route
 		}
 	}
 	if c.ScopeNote != "" {
-		if _, err := fmt.Fprintf(w, "  · %s\n", c.ScopeNote); err != nil {
-			return err
+		// ScopeNote may carry up to two sentences joined by "\n" (R156): the
+		// system-rollup caveat and the admission-webhook caveat are about
+		// different things and either can appear without the other, so each
+		// renders on its own "  · " line rather than one line with an
+		// embedded newline. This is kubeagent's own text, not API text —
+		// line-wrapping, not parsing.
+		for _, sentence := range strings.Split(c.ScopeNote, "\n") {
+			if _, err := fmt.Fprintf(w, "  · %s\n", sentence); err != nil {
+				return err
+			}
 		}
 	}
 	if line := attentionLine(in, real, realIng); line != "" {
@@ -606,6 +619,10 @@ func printNotes(in Input, expected []svchealth.Issue, expectedIng []ingresshealt
 	}
 	if err := printIngressIssues(expectedIng, "  •", &b); err != nil {
 		return err
+	}
+	if in.WebhookURLBackends > 0 {
+		fmt.Fprintf(&b, "  • %d Fail-policy admission %s not checked: clientConfig.url backend\n",
+			in.WebhookURLBackends, plural(in.WebhookURLBackends, "webhook", "webhooks"))
 	}
 	if hint := footerHint(in.Result); hint != "" {
 		fmt.Fprintf(&b, "  • %s\n", hint)

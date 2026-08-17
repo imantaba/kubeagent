@@ -39,6 +39,7 @@ type hook struct {
 	name     string
 	fp       *admissionv1.FailurePolicyType
 	service  *admissionv1.ServiceReference
+	url      *string
 	timeout  *int32
 	hasRules bool
 }
@@ -49,19 +50,24 @@ type hook struct {
 // Webhook). A webhook with both problems still produces one Issue (the down
 // backend dominates a slow one), with the timeout condition named as a suffix
 // on that Issue's reason rather than dropped.
+//
+// The second return value counts the in-scope (failsClosed, non-empty Rules)
+// webhooks backed by a clientConfig.url instead of a Service — a backend this
+// package cannot check the reachability of, so it is disclosed as an unchecked
+// count rather than guessed at as an Issue.
 func Assess(
 	validating []admissionv1.ValidatingWebhookConfiguration,
 	mutating []admissionv1.MutatingWebhookConfiguration,
 	services []corev1.Service,
 	slices []discoveryv1.EndpointSlice,
 	timeoutThreshold int32,
-) []Issue {
+) ([]Issue, int) {
 	var hooks []hook
 	for _, c := range validating {
 		for _, w := range c.Webhooks {
 			hooks = append(hooks, hook{
 				kind: "ValidatingWebhookConfiguration", config: c.Name, name: w.Name,
-				fp: w.FailurePolicy, service: w.ClientConfig.Service, timeout: w.TimeoutSeconds,
+				fp: w.FailurePolicy, service: w.ClientConfig.Service, url: w.ClientConfig.URL, timeout: w.TimeoutSeconds,
 				hasRules: len(w.Rules) > 0,
 			})
 		}
@@ -70,19 +76,23 @@ func Assess(
 		for _, w := range c.Webhooks {
 			hooks = append(hooks, hook{
 				kind: "MutatingWebhookConfiguration", config: c.Name, name: w.Name,
-				fp: w.FailurePolicy, service: w.ClientConfig.Service, timeout: w.TimeoutSeconds,
+				fp: w.FailurePolicy, service: w.ClientConfig.Service, url: w.ClientConfig.URL, timeout: w.TimeoutSeconds,
 				hasRules: len(w.Rules) > 0,
 			})
 		}
 	}
 
 	var out []Issue
+	var urlBackends int
 	for _, h := range hooks {
 		if !failsClosed(h.fp) {
 			continue // Ignore policy
 		}
 		if !h.hasRules {
 			continue // a webhook that intercepts nothing cannot have rejected anything
+		}
+		if h.service == nil && h.url != nil {
+			urlBackends++
 		}
 		backendFlagged := false
 		if h.service != nil {
@@ -124,7 +134,7 @@ func Assess(
 		}
 		return out[i].Webhook < out[j].Webhook
 	})
-	return out
+	return out, urlBackends
 }
 
 // failsClosed reports whether a webhook blocks on backend failure. A nil

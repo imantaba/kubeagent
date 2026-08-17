@@ -203,6 +203,27 @@ func TestPrintInventory_TextShowsScopeNote(t *testing.T) {
 	}
 }
 
+// TestPrintInventory_TextShowsTwoLineScopeNote proves a two-sentence
+// ScopeNote (R156: system-rollup sentence + admission-webhook sentence,
+// joined by "\n") renders as two separate "  · " lines, not one line with an
+// embedded newline — the two sentences are about different things and either
+// can appear without the other.
+func TestPrintInventory_TextShowsTwoLineScopeNote(t *testing.T) {
+	var buf bytes.Buffer
+	ch := clusterhealth.ClusterHealth{Verdict: "Healthy", NodesTotal: 3, NodesReady: 3,
+		ScopeNote: "node health only — re-run without -n\ncluster-wide checks skipped under -n: admission webhooks"}
+	if err := PrintInventory(Input{Cluster: ch, Result: inventory.Result{Workloads: sampleWorkloads()}}, "text", &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "  · node health only — re-run without -n\n") {
+		t.Errorf("expected the first sentence on its own · line:\n%s", out)
+	}
+	if !strings.Contains(out, "  · cluster-wide checks skipped under -n: admission webhooks\n") {
+		t.Errorf("expected the second sentence on its own · line:\n%s", out)
+	}
+}
+
 func TestPrintInventory_TextJobOmitsCountShowsStatus(t *testing.T) {
 	ws := []inventory.Workload{{
 		Namespace: "batch", Name: "migrate", Kind: "Job", Status: "Complete",
@@ -1816,6 +1837,61 @@ func TestPrintInventory_ExpectedIngressGoesToNotes(t *testing.T) {
 	}
 	if strings.Contains(out, "✗ ingress shop/parked") {
 		t.Errorf("parked route must not appear under NEEDS ATTENTION:\n%s", out)
+	}
+}
+
+// TestPrintInventory_WebhookURLBackendsNote proves the NOTES line renders
+// exactly the count kubeagent could not check — never the URL itself, which
+// this Input never even carries.
+func TestPrintInventory_WebhookURLBackendsNote(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster:            clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		WebhookURLBackends: 1,
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "NOTES") {
+		t.Fatalf("expected a NOTES section, got:\n%s", out)
+	}
+	if !strings.Contains(out, "1 Fail-policy admission webhook not checked: clientConfig.url backend") {
+		t.Errorf("expected the URL-backend NOTES line, got:\n%s", out)
+	}
+}
+
+// TestPrintInventory_WebhookURLBackendsPlural proves the count pluralizes
+// "webhook" the same way every other NOTES bullet in this file does.
+func TestPrintInventory_WebhookURLBackendsPlural(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster:            clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		WebhookURLBackends: 3,
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "3 Fail-policy admission webhooks not checked: clientConfig.url backend") {
+		t.Errorf("expected the plural URL-backend NOTES line, got:\n%s", out)
+	}
+}
+
+// TestPrintInventory_WebhookURLBackendsAbsentAtZero proves a scan with no
+// URL-backed webhooks (the golden-scan fixture's shape, and every scan today)
+// renders no such line.
+func TestPrintInventory_WebhookURLBackendsAbsentAtZero(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "clientConfig.url") {
+		t.Errorf("count 0 must render no URL-backend note, got:\n%s", out)
 	}
 }
 

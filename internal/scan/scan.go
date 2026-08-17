@@ -112,7 +112,13 @@ type Result struct {
 	PDBIssues        []pdbhealth.Issue
 	HPAIssues        []hpahealth.Issue
 	WebhookIssues    []webhookhealth.Issue
-	QuotaIssues      []quotahealth.Issue
+	// WebhookURLBackends counts the in-scope Fail-policy webhooks backed by a
+	// clientConfig.url rather than a Service — a backend this scan cannot check
+	// the reachability of, disclosed as a count rather than guessed at as an
+	// Issue. Only ever non-zero cluster-wide: it is computed inside the same
+	// opts.Namespace == "" guard as WebhookIssues.
+	WebhookURLBackends int
+	QuotaIssues        []quotahealth.Issue
 
 	// PartialReads names the collector calls that failed. Empty means every
 	// list this scan attempted answered successfully.
@@ -697,12 +703,13 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	hpaIssues := hpahealth.Assess(hpas)
 
 	var webhookIssues []webhookhealth.Issue
+	var webhookURLBackends int
 	if opts.Namespace == "" {
 		webhookThreshold := opts.WebhookTimeoutThreshold
 		if webhookThreshold <= 0 {
 			webhookThreshold = 15
 		}
-		webhookIssues = webhookhealth.Assess(vwc, mwc, svcs, slices, webhookThreshold)
+		webhookIssues, webhookURLBackends = webhookhealth.Assess(vwc, mwc, svcs, slices, webhookThreshold)
 	}
 
 	pvcReclaim := pvcreclaim.Assess(pvcs, pvs)
@@ -744,5 +751,5 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	rootcause.AnnotateRegistry(result.Workloads)
 	confidence.Annotate(result.Workloads)
 
-	return Result{Inputs: inputs, Nodes: nodes, NodeReserve: nodereserve.Assess(nodes), PVCReclaim: pvcReclaim, DiskUsage: diskReport, Health: health, Inventory: result, ServiceIssues: serviceIssues, IngressIssues: ingressIssues, PVCIssues: pvcIssues, SecurityIssues: securityIssues, KubeletHealth: kubeletHealth, ControlPlane: readyz, DNS: dnsReport, Certificates: certReport, StuckTerminating: stuckTerminating, PDBIssues: pdbIssues, HPAIssues: hpaIssues, WebhookIssues: webhookIssues, QuotaIssues: quotaIssues, PartialReads: partialReads}, nil
+	return Result{Inputs: inputs, Nodes: nodes, NodeReserve: nodereserve.Assess(nodes), PVCReclaim: pvcReclaim, DiskUsage: diskReport, Health: health, Inventory: result, ServiceIssues: serviceIssues, IngressIssues: ingressIssues, PVCIssues: pvcIssues, SecurityIssues: securityIssues, KubeletHealth: kubeletHealth, ControlPlane: readyz, DNS: dnsReport, Certificates: certReport, StuckTerminating: stuckTerminating, PDBIssues: pdbIssues, HPAIssues: hpaIssues, WebhookIssues: webhookIssues, WebhookURLBackends: webhookURLBackends, QuotaIssues: quotaIssues, PartialReads: partialReads}, nil
 }

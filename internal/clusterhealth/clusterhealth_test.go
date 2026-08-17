@@ -85,15 +85,22 @@ func TestAssess_HealthyClusterAndSystem(t *testing.T) {
 	}
 }
 
+// TestNamespaceScopeNote covers R156's two-sentence shape: the system-rollup
+// sentence and the admission-webhook sentence have different conditions and
+// cannot share one guard. "" has neither (cluster-wide, nothing skipped).
+// "kube-system" has the webhook sentence only (the system rollup ran there).
+// Any other namespace has both, joined by "\n".
 func TestNamespaceScopeNote(t *testing.T) {
-	if NamespaceScopeNote("") != "" {
-		t.Error("all-namespaces should have no caveat")
+	if got := NamespaceScopeNote(""); got != "" {
+		t.Errorf("all-namespaces should have no caveat, got %q", got)
 	}
-	if NamespaceScopeNote("kube-system") != "" {
-		t.Error("-n kube-system should have no caveat")
+	const webhookSentence = "cluster-wide checks skipped under -n: admission webhooks"
+	if got := NamespaceScopeNote("kube-system"); got != webhookSentence {
+		t.Errorf("-n kube-system should produce the webhook-only caveat, got %q", got)
 	}
-	if NamespaceScopeNote("cattle-system") == "" {
-		t.Error("-n cattle-system should produce a caveat")
+	const rollupSentence = "node health only — re-run without -n (or with -n kube-system) for the system workload check"
+	if got := NamespaceScopeNote("cattle-system"); got != rollupSentence+"\n"+webhookSentence {
+		t.Errorf("-n cattle-system should produce both sentences joined by \\n, got %q", got)
 	}
 }
 

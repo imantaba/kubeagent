@@ -418,7 +418,7 @@ func TestAssess_ExposedService(t *testing.T) {
 func TestAssess_ExposedService_ExternalNameSkipsExternalIPs(t *testing.T) {
 	svcs := []corev1.Service{
 		{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "extname"},
-			Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeExternalName, ExternalIPs: []string{"1.2.3.4"}, ExternalName: "example.internal"}},
+			Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeExternalName, ExternalIPs: []string{"1.2.3.4"}, ExternalName: "db.internal.example"}},
 		{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "clusterip"},
 			Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeClusterIP, ExternalIPs: []string{"1.2.3.4"}, Ports: []corev1.ServicePort{{Port: 80}}}},
 	}
@@ -428,6 +428,23 @@ func TestAssess_ExposedService_ExternalNameSkipsExternalIPs(t *testing.T) {
 	}
 	if got[0].Workload != "clusterip" {
 		t.Errorf("want the ClusterIP service flagged, not the ExternalName one: %+v", got)
+	}
+}
+
+func TestAssess_ExposedService_HeadlessWithExternalIPsAndNoPorts(t *testing.T) {
+	// A headless Service is exempt from the API server's ports-required rule,
+	// so this object is valid and reaches servicePorts' empty-ports branch.
+	svcs := []corev1.Service{
+		{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "headless"},
+			Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeClusterIP, ClusterIP: corev1.ClusterIPNone,
+				ExternalIPs: []string{"203.0.113.10"}}},
+	}
+	got := Assess(nil, svcs, nil, nil)
+	if count(got, "ExposedService") != 1 {
+		t.Fatalf("a headless Service with externalIPs is still externally reachable: %+v", got)
+	}
+	if got[0].Detail != "externalIPs set exposes no ports externally" {
+		t.Errorf("want the no-ports detail, got %q", got[0].Detail)
 	}
 }
 

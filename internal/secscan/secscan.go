@@ -293,12 +293,15 @@ func servicePorts(svc corev1.Service) string {
 		ps = append(ps, strconv.Itoa(int(p.Port)))
 	}
 	if len(ps) == 0 {
-		// Against an API-server-validated cluster this is unreachable now
-		// that exposedService skips ExternalName: a portless NodePort and a
-		// portless ClusterIP (the only other paths that reach here) are both
-		// refused by the API server with "spec.ports: Required value". Kept
-		// as a guard for a future exposedService arm — and reachable from a
-		// fake clientset or a hand-built Service, so it stays exercised.
+		// Reachable in production, for one shape: a headless Service
+		// (clusterIP: None) is exempt from the API server's ports-required
+		// rule, so a portless headless ClusterIP with externalIPs set is a
+		// valid object, and exposedService's externalIPs arm brings it here.
+		// Every other path is refused before kubeagent could see it — a
+		// portless LoadBalancer, NodePort or non-headless ClusterIP all fail
+		// validation with "spec.ports: Required value". "no ports" is the
+		// honest answer for the headless case, not a placeholder for an
+		// unreachable one.
 		return "no ports"
 	}
 	return "port(s) " + strings.Join(ps, ",")

@@ -81,7 +81,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before the `externalIPs` arm. `LoadBalancer`, `NodePort` and
   `externalIPs`-on-a-`ClusterIP` keep firing exactly as before; the tier
   summary's workload and finding counts drop by one only on a fixture that
-  had an `ExternalName` false positive. No `schemaVersion` moves.
+  had an `ExternalName` false positive. No `schemaVersion` moves: `detail` is a
+  free-form string and no `Finding` field changes shape.
+
+- **A comment claimed `servicePorts`' empty-ports branch was unreachable
+  against an API-server-validated cluster.** It is reachable: a headless
+  Service (`clusterIP: None`) is exempt from the API server's ports-required
+  rule, so a portless headless `ClusterIP` with `externalIPs` set is a valid
+  object, and `exposedService`'s `externalIPs` arm brings it to
+  `servicePorts`. The comment now says which shape reaches the branch and
+  which shapes the API server refuses; `"no ports"` was always the honest
+  answer for that Service and its behaviour is unchanged. A new test pins the
+  case. No `schemaVersion` moves: no field changes shape and `detail` is a
+  free-form string.
 
 - **The four control-plane static pods in `kube-system` merged into one
   anonymous `Node` block in the SECURITY section.** A static (mirror) pod's

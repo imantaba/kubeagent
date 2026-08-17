@@ -38,7 +38,7 @@ type Finding struct {
 	Evidence   string              `json:"evidence"`             // the exact signal observed
 	Resources  *ContainerResources `json:"resources,omitempty"`  // set by OOMKilled
 	Container  string              `json:"container,omitempty"`  // crashing container, set by crash detectors
-	Confidence string              `json:"confidence,omitempty"` // "high" (direct k8s state) | "medium" (heuristic); set by confidence.Annotate
+	Confidence string              `json:"confidence,omitempty"` // "high" (direct k8s state) | "medium" (heuristic); set by the producer where it knows better, else filled by confidence.Annotate
 	LogCause   string              `json:"logCause,omitempty"`   // set by scan --logs enrichment
 	LogExcerpt string              `json:"logExcerpt,omitempty"` // set by scan --logs enrichment (text output only)
 	Suggestion *Suggestion         `json:"suggestion,omitempty"` // set by scan --suggest JSON output

@@ -192,6 +192,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per container — and the reason is read from the same two status slices the
   probe gate searches, for the same reason.
 
+- **A `RolloutStuck` finding no longer carries one confidence level for two
+  different kinds of evidence.** A Deployment's stuck rollout is read from a
+  controller-set condition — Kubernetes itself asserting the state — while a
+  StatefulSet's or DaemonSet's is inferred from comparing revision and ready
+  counters across a grace period. `internal/rollouthealth` now sets
+  `Confidence` on its own findings — `"high"` for the Deployment arm,
+  `"medium"` for the StatefulSet and DaemonSet arms — and
+  `confidence.Annotate` no longer stamps every finding unconditionally; it now
+  fills `Confidence` only where a producer left it empty, so a producer that
+  knows better than the issue string wins. A StatefulSet's or DaemonSet's
+  stuck-rollout line in the text report now carries a trailing `[medium]` tag;
+  the long-standing Deployment case is unchanged. A new `internal/diagnose`
+  table test pins the confidence level for every kind `internal/knownissues`
+  documents — all nineteen, the sixteen pod-detector kinds plus the three
+  workload-level kinds — so a future kind cannot arrive without someone
+  writing down which level it is and why. `confidence` carries no `enum` in
+  any published schema, so a producer setting its own value moves no
+  `schemaVersion`.
+
 ### Changed
 
 - **`KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS` is now validated instead of silently

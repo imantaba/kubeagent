@@ -39,7 +39,7 @@ func TestForRootCause(t *testing.T) {
 	}
 }
 
-func TestAnnotate_StampsEveryFinding(t *testing.T) {
+func TestAnnotate_FillsEveryEmptyFinding(t *testing.T) {
 	ws := []inventory.Workload{{Namespace: "shop", Name: "cache", Findings: []diagnose.Finding{
 		{Issue: "RestartLoop"}, {Issue: "CrashLoopBackOff"},
 	}}}
@@ -50,9 +50,28 @@ func TestAnnotate_StampsEveryFinding(t *testing.T) {
 	if ws[0].Findings[1].Confidence != "high" {
 		t.Errorf("CrashLoopBackOff confidence = %q, want high", ws[0].Findings[1].Confidence)
 	}
-	// idempotent
+	// idempotent: a second call fills nothing, because the first call already
+	// left no empty field behind.
 	Annotate(ws)
 	if ws[0].Findings[0].Confidence != "medium" || ws[0].Findings[1].Confidence != "high" {
 		t.Error("Annotate must be idempotent")
+	}
+}
+
+// TestAnnotate_PresetConfidenceSurvives is R189's regression fixture: a
+// producer (e.g. internal/rollouthealth, on a RolloutStuck finding) that has
+// already set Confidence knows better than the issue string, and Annotate
+// must leave it alone rather than overwrite it with ForIssue's answer.
+func TestAnnotate_PresetConfidenceSurvives(t *testing.T) {
+	ws := []inventory.Workload{{Namespace: "shop", Name: "api", Findings: []diagnose.Finding{
+		{Issue: "RolloutStuck", Confidence: "medium"}, // preset by a producer
+		{Issue: "OOMKilled"},                          // left empty: still filled from ForIssue
+	}}}
+	Annotate(ws)
+	if got := ws[0].Findings[0].Confidence; got != "medium" {
+		t.Errorf("preset Confidence = %q, want medium (unchanged)", got)
+	}
+	if got := ws[0].Findings[1].Confidence; got != "high" {
+		t.Errorf("empty Confidence = %q, want high (filled from ForIssue)", got)
 	}
 }

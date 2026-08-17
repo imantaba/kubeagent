@@ -482,6 +482,64 @@ func TestAnnotate_DaemonSetWantingNothingIsNotStuck(t *testing.T) {
 	}
 }
 
+// The Deployment arm reads a condition the controller sets — Kubernetes
+// itself asserting the state — so its finding carries "high". The StatefulSet
+// and DaemonSet arms instead compare counters and wait out a grace period —
+// an inference, not a direct read — so theirs carries "medium". A plain
+// kind->level table in internal/confidence cannot express this: RolloutStuck
+// gets two levels depending on which arm produced it, which is why the
+// producer sets Confidence itself rather than leaving it to
+// confidence.ForIssue.
+func TestAnnotate_ConfidenceByArm(t *testing.T) {
+	cases := []struct {
+		name string
+		ws   []inventory.Workload
+		deps []appsv1.Deployment
+		stss []appsv1.StatefulSet
+		dss  []appsv1.DaemonSet
+		pods []corev1.Pod
+		want string
+	}{
+		{
+			name: "Deployment",
+			ws:   []inventory.Workload{degraded("shop", "api")},
+			deps: []appsv1.Deployment{deploy("shop", "api",
+				cond(appsv1.DeploymentProgressing, corev1.ConditionFalse, "ProgressDeadlineExceeded", deadlineMsg))},
+			want: "high",
+		},
+		{
+			name: "StatefulSet",
+			ws:   []inventory.Workload{degradedKind("db", "pg", "StatefulSet")},
+			stss: []appsv1.StatefulSet{statefulSet("db", "pg", 3, appsv1.StatefulSetStatus{
+				Replicas: 3, ReadyReplicas: 2, UpdatedReplicas: 0,
+				CurrentRevision: "pg-6d4b", UpdateRevision: "pg-7f9c",
+			}, oldEnough)},
+			pods: []corev1.Pod{ownedPod("db", "pg-0", "StatefulSet", "pg", false, oldEnough)},
+			want: "medium",
+		},
+		{
+			name: "DaemonSet",
+			ws:   []inventory.Workload{degradedKind("sys", "agent", "DaemonSet")},
+			dss: []appsv1.DaemonSet{daemonSet("sys", "agent", appsv1.DaemonSetStatus{
+				DesiredNumberScheduled: 3, NumberReady: 1, UpdatedNumberScheduled: 1,
+			}, oldEnough)},
+			pods: []corev1.Pod{ownedPod("sys", "agent-aaa", "DaemonSet", "agent", false, oldEnough)},
+			want: "medium",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			Annotate(tc.ws, tc.deps, tc.stss, tc.dss, tc.pods, rhNow)
+			if len(tc.ws[0].Findings) != 1 {
+				t.Fatalf("want one finding, got %+v", tc.ws[0].Findings)
+			}
+			if got := tc.ws[0].Findings[0].Confidence; got != tc.want {
+				t.Errorf("Confidence = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // The report a fleet or gate run forwards must not carry cluster identity. The
 // two new arms read status counters only, so a pod, node or image name cannot
 // reach the evidence — pinned here rather than left to review.

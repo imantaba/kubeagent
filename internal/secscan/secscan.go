@@ -114,11 +114,36 @@ func baselinePodChecks(pod corev1.Pod, wl workloadRef) []Finding {
 	}
 	for _, v := range pod.Spec.Volumes {
 		if v.HostPath != nil {
+			wording := "writable host filesystem"
+			if hostPathIsReadOnly(pod, v.Name) {
+				wording = "read-only host filesystem"
+			}
 			out = append(out, finding(pod, wl, profileBaseline, "HostPath", "",
-				fmt.Sprintf("mounts hostPath %s (writable host filesystem)", v.HostPath.Path)))
+				fmt.Sprintf("mounts hostPath %s (%s)", v.HostPath.Path, wording)))
 		}
 	}
 	return out
+}
+
+// hostPathIsReadOnly reports whether every mount of the named volume, across
+// every container that mounts it, sets ReadOnly. A volume mounted read-only
+// by one container and writable by another is writable — the union is the
+// answer. A volume no container mounts is also writable: nothing constrains
+// it, so the safe (more alarming) default applies.
+func hostPathIsReadOnly(pod corev1.Pod, volumeName string) bool {
+	mounted := false
+	for _, c := range allContainers(pod) {
+		for _, m := range c.VolumeMounts {
+			if m.Name != volumeName {
+				continue
+			}
+			mounted = true
+			if !m.ReadOnly {
+				return false
+			}
+		}
+	}
+	return mounted
 }
 
 // containerChecks covers per-container baseline controls.

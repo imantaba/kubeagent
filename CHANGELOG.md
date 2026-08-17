@@ -60,6 +60,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   name are unchanged; `detail` carries no `enum` in the published scan
   schema, so this is a content change, not a shape change.
 
+- **A `hostPath` volume mounted read-only everywhere was still reported as
+  "writable host filesystem".** `internal/secscan`'s `HostPath` finding now
+  walks the mounting containers' `VolumeMounts` for that volume name: when
+  every mount sets `readOnly: true` the detail reads "(read-only host
+  filesystem)"; a volume mounted read-only by one container and writable by
+  another is writable — the union is the answer — and a `hostPath` volume no
+  container mounts also renders "writable", the safe default when nothing
+  constrains it. The finding still fires for every `hostPath` volume
+  regardless of `readOnly` — PSS `baseline` forbids the volume, not the
+  write — so this only changes the parenthetical, never whether the finding
+  fires. No `schemaVersion` moves: `detail` is a free-form string.
+
 ### Changed
 
 - **`KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS` is now validated instead of silently

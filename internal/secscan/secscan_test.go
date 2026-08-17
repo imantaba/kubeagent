@@ -140,6 +140,68 @@ func TestAssess_HostPath(t *testing.T) {
 	}
 }
 
+func TestAssess_HostPath_ReadOnlyMount(t *testing.T) {
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "infra", Name: "node-agent"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{
+				Name: "c",
+				VolumeMounts: []corev1.VolumeMount{
+					{Name: "sock", ReadOnly: true},
+				},
+			}},
+			Volumes: []corev1.Volume{{Name: "sock", VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{Path: "/var/run/docker.sock"}}}},
+		},
+	}
+	got := Assess([]corev1.Pod{pod}, nil, nil)
+	if count(got, "HostPath") != 1 {
+		t.Fatalf("want one HostPath finding, got %+v", got)
+	}
+	if got[0].Detail != "mounts hostPath /var/run/docker.sock (read-only host filesystem)" {
+		t.Errorf("want read-only wording when every mount is read-only, got %q", got[0].Detail)
+	}
+}
+
+func TestAssess_HostPath_MixedReadOnlyAndWritableMounts(t *testing.T) {
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "infra", Name: "node-agent"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: "reader", VolumeMounts: []corev1.VolumeMount{{Name: "sock", ReadOnly: true}}},
+				{Name: "writer", VolumeMounts: []corev1.VolumeMount{{Name: "sock", ReadOnly: false}}},
+			},
+			Volumes: []corev1.Volume{{Name: "sock", VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{Path: "/var/run/docker.sock"}}}},
+		},
+	}
+	got := Assess([]corev1.Pod{pod}, nil, nil)
+	if count(got, "HostPath") != 1 {
+		t.Fatalf("want one HostPath finding, got %+v", got)
+	}
+	if got[0].Detail != "mounts hostPath /var/run/docker.sock (writable host filesystem)" {
+		t.Errorf("want writable wording when any mount is writable, got %q", got[0].Detail)
+	}
+}
+
+func TestAssess_HostPath_NoContainerMountsIt(t *testing.T) {
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "infra", Name: "node-agent"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "c"}}, // no VolumeMounts at all
+			Volumes: []corev1.Volume{{Name: "sock", VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{Path: "/var/run/docker.sock"}}}},
+		},
+	}
+	got := Assess([]corev1.Pod{pod}, nil, nil)
+	if count(got, "HostPath") != 1 {
+		t.Fatalf("want one HostPath finding, got %+v", got)
+	}
+	if got[0].Detail != "mounts hostPath /var/run/docker.sock (writable host filesystem)" {
+		t.Errorf("want writable wording (safe default) when nothing mounts the volume, got %q", got[0].Detail)
+	}
+}
+
 func TestAssess_MultipleHostPaths(t *testing.T) {
 	pod := corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "infra", Name: "agent"},

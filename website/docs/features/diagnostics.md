@@ -998,9 +998,10 @@ the cap is set where it bites only on the pathological. The cut is on
 characters, not bytes, so a multi-byte character is never split, and it is
 marked because a silently shortened error reads as the whole error.
 `--output json` is not subject to the 500-character text cap: it carries the
-evidence as kubeagent stored it. That value is itself bounded — every
-untrusted value from the API server passes through a 512-character limit on
-the way in, ending in `…` when it bites — so an unusually long
+evidence as kubeagent stored it. That is still not the runtime's whole
+message: the untrusted text inside it passed through a 512-character limit on
+the way in, ending in `…` when it bites, and kubeagent's own framing — the
+container name, for instance — sits around that. So an unusually long
 container-runtime message is shortened in every kubeagent surface. When the
 JSON evidence ends in `…` and you need the rest, `kubectl -n <ns> describe pod
 <pod>` has the untruncated original.

@@ -77,6 +77,13 @@ func resolveWorkload(pod corev1.Pod, rsByKey map[string]appsv1.ReplicaSet) workl
 	if owner == nil {
 		return workloadRef{Kind: "Pod", Name: pod.Name}
 	}
+	if owner.Kind == "Node" {
+		// A static (mirror) pod's controller owner is the Node running it —
+		// there is no workload above it to attribute to. Kubernetes already
+		// qualifies its name per component and per node (etcd-<node>,
+		// kube-apiserver-<node>, ...), so the pod owns itself.
+		return workloadRef{Kind: "Pod", Name: pod.Name}
+	}
 	if owner.Kind == "ReplicaSet" {
 		if rs, ok := rsByKey[pod.Namespace+"/"+owner.Name]; ok {
 			if d := controllerOf(rs.OwnerReferences); d != nil && d.Kind == "Deployment" {

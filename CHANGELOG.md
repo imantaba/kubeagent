@@ -83,6 +83,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   summary's workload and finding counts drop by one only on a fixture that
   had an `ExternalName` false positive. No `schemaVersion` moves.
 
+- **The four control-plane static pods in `kube-system` merged into one
+  anonymous `Node` block in the SECURITY section.** A static (mirror) pod's
+  controller owner is its `Node`, and `resolveWorkload` fell through to that
+  owner's `Kind`/`Name` — so `etcd`, `kube-apiserver`, `kube-scheduler` and
+  `kube-controller-manager` all attributed to the same node-named row.
+  `resolveWorkload` now treats a `Node` controller owner the same as no
+  owner at all: the pod attributes to itself. Static pod names are already
+  qualified per component and per node by Kubernetes (`etcd-<node>`,
+  `kube-apiserver-<node>`, ...), so the four components now separate into
+  four attributable rows instead of one. No finding is added, removed or
+  reworded — only the `kind` and `workload` fields on mirror-pod findings,
+  and therefore the grouping. Every other owner kind is unaffected, and this
+  is visible only under `-n kube-system`: a cluster-wide scan already drops
+  system pods before `Assess` sees them. The workload column already named
+  the node — a static pod's own name usually ends in it — so this changes
+  which node-derived string is printed, not whether one is. No
+  `schemaVersion` moves: `kind` carries no `enum` in the published scan
+  schema.
+
 ### Changed
 
 - **`KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS` is now validated instead of silently

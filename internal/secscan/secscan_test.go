@@ -58,6 +58,43 @@ func TestAssess_PrivilegedFoldsToDeployment(t *testing.T) {
 	}
 }
 
+func TestResolveWorkload_NodeOwnerIsThePodItself(t *testing.T) {
+	ctrl := true
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "kube-system", Name: "etcd-worker-2",
+			OwnerReferences: []metav1.OwnerReference{{Kind: "Node", Name: "worker-2", Controller: &ctrl}},
+		},
+	}
+	wl := resolveWorkload(pod, nil)
+	if wl.Kind != "Pod" || wl.Name != "etcd-worker-2" {
+		t.Errorf("want a Node-owned pod to resolve to itself, got %+v", wl)
+	}
+}
+
+func TestResolveWorkload_NoOwnerIsThePodItself(t *testing.T) {
+	pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "infra", Name: "standalone"}}
+	wl := resolveWorkload(pod, nil)
+	if wl.Kind != "Pod" || wl.Name != "standalone" {
+		t.Errorf("want an unowned pod to resolve to itself, got %+v", wl)
+	}
+}
+
+func TestResolveWorkload_ReplicaSetStillFoldsToDeployment(t *testing.T) {
+	ctrl := true
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "shop", Name: "api-xyz",
+			OwnerReferences: []metav1.OwnerReference{{Kind: "ReplicaSet", Name: "api-rs", Controller: &ctrl}},
+		},
+	}
+	rsByKey := map[string]appsv1.ReplicaSet{"shop/api-rs": rsForDeploy("shop", "api-rs", "api")}
+	wl := resolveWorkload(pod, rsByKey)
+	if wl.Kind != "Deployment" || wl.Name != "api" {
+		t.Errorf("want a ReplicaSet-owned pod to still fold to its Deployment, got %+v", wl)
+	}
+}
+
 func TestAssess_NotPrivileged(t *testing.T) {
 	pod := rsOwned("shop", "web-xyz", "web-rs",
 		corev1.Container{Name: "web", SecurityContext: &corev1.SecurityContext{Privileged: boolp(false)}})

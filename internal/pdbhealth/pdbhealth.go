@@ -63,7 +63,7 @@ func classify(p policyv1.PodDisruptionBudget) (category, reason string, ok bool)
 	s := p.Status
 	switch {
 	case s.ExpectedPods == 0:
-		return "stale", "selector matches no pods (stale?)", true
+		return "stale", "selector currently matches no pods", true
 	case s.ExpectedPods > 1 && s.DesiredHealthy >= s.ExpectedPods:
 		if s.DesiredHealthy > s.ExpectedPods {
 			return "unsatisfiable", fmt.Sprintf("requires %d healthy pods but only %d exist — no voluntary eviction can ever proceed; every node drain will hang", s.DesiredHealthy, s.ExpectedPods), true

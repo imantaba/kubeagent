@@ -100,7 +100,20 @@ func TestAssess_Stale(t *testing.T) {
 	if !ok || is.Category != "stale" {
 		t.Fatalf("want stale, got %+v", got)
 	}
-	if is.Reason != "selector matches no pods (stale?)" {
+	if is.Reason != "selector currently matches no pods" {
+		t.Errorf("reason = %q", is.Reason)
+	}
+
+	// Scaled-to-zero-shaped status (a correct selector, no matching pods
+	// right now) produces the identical reason: kubeagent no longer claims
+	// to know which of "no workload selects these labels" and "the selected
+	// workload is scaled to zero" is true.
+	got = Assess([]policyv1.PodDisruptionBudget{pdb("a", "p", 1, 0, 1, 0, 0)})
+	is, ok = find(got, "p")
+	if !ok || is.Category != "stale" {
+		t.Fatalf("want stale, got %+v", got)
+	}
+	if is.Reason != "selector currently matches no pods" {
 		t.Errorf("reason = %q", is.Reason)
 	}
 }

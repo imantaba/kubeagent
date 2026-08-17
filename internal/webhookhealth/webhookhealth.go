@@ -76,6 +76,12 @@ func Assess(
 				out = append(out, Issue{Kind: h.kind, Config: h.config, Webhook: h.name, Service: id, Problem: "MissingService",
 					Reason: fmt.Sprintf("backend Service %s does not exist — failurePolicy Fail rejects every intercepted create/update", id)})
 				backendFlagged = true
+			case svc.Spec.Type == corev1.ServiceTypeExternalName:
+				// Mirrors svchealth.go:39-41: an ExternalName Service is a DNS CNAME, not
+				// endpoint-backed, so ReadyEndpoints reading 0 on it is not evidence of a
+				// down backend. Deliberately inside the found branch only — an
+				// ExternalName-intended Service that does not exist at all still falls
+				// into the !found case above and is still MissingService.
 			case svchealth.ReadyEndpoints(svc, slices) == 0:
 				out = append(out, Issue{Kind: h.kind, Config: h.config, Webhook: h.name, Service: id, Problem: "NoEndpoints",
 					Reason: fmt.Sprintf("backend Service %s has no ready endpoints — failurePolicy Fail rejects every intercepted create/update", id)})

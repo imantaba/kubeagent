@@ -43,6 +43,9 @@ func mhook(name string, fp *admissionv1.FailurePolicyType, cc admissionv1.Webhoo
 func svc(ns, name string) corev1.Service {
 	return corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name}}
 }
+func svcTyped(ns, name string, t corev1.ServiceType) corev1.Service {
+	return corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name}, Spec: corev1.ServiceSpec{Type: t}}
+}
 func sliceFor(ns, svcName string, ready bool) discoveryv1.EndpointSlice {
 	return discoveryv1.EndpointSlice{
 		ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: svcName + "-x", Labels: map[string]string{discoveryv1.LabelServiceName: svcName}},
@@ -260,5 +263,54 @@ func TestAssess_ProblemValuesAreCamelCase(t *testing.T) {
 		if !seen[want] {
 			t.Errorf("missing Problem value %q among %+v", want, got)
 		}
+	}
+}
+
+// TestAssess_ExternalNameNoEndpointsNotFlagged mirrors svchealth.go:39-41: an
+// ExternalName Service is a DNS CNAME, not endpoint-backed, so
+// svchealth.ReadyEndpoints reading 0 on it is not evidence of a down backend.
+func TestAssess_ExternalNameNoEndpointsNotFlagged(t *testing.T) {
+	v := vwc("ext-cfg", vhook("ext.io", failP(), admissionv1.WebhookClientConfig{Service: svcRef("ns", "ext-svc")}))
+	services := []corev1.Service{svcTyped("ns", "ext-svc", corev1.ServiceTypeExternalName)}
+	// No EndpointSlice for ext-svc at all — deliberately, since an ExternalName
+	// Service is never expected to have one.
+	got := Assess([]admissionv1.ValidatingWebhookConfiguration{v}, nil, services, nil, 15)
+	if len(got) != 0 {
+		t.Fatalf("an ExternalName backend must not be flagged as endpoint-less, got %+v", got)
+	}
+}
+
+// TestAssess_ClusterIPNoEndpointsStillFlagged proves the ExternalName guard is
+// not over-broad: a same-shaped ClusterIP Service with zero ready endpoints must
+// still produce NoEndpoints.
+func TestAssess_ClusterIPNoEndpointsStillFlagged(t *testing.T) {
+	v := vwc("clusterip-cfg", vhook("cip.io", failP(), admissionv1.WebhookClientConfig{Service: svcRef("ns", "cip-svc")}))
+	services := []corev1.Service{svcTyped("ns", "cip-svc", corev1.ServiceTypeClusterIP)}
+	slices := []discoveryv1.EndpointSlice{sliceFor("ns", "cip-svc", false)}
+	is, ok := find(Assess([]admissionv1.ValidatingWebhookConfiguration{v}, nil, services, slices, 15), "cip.io")
+	if !ok || is.Problem != "NoEndpoints" {
+		t.Fatalf("a ClusterIP backend with no ready endpoints must still be NoEndpoints, got %+v", is)
+	}
+}
+
+// TestAssess_ExternalNameMissingServiceStillFlagged proves the guard sits inside
+// the found branch only: an ExternalName-intended Service that does not exist at
+// all is still MissingService.
+func TestAssess_ExternalNameMissingServiceStillFlagged(t *testing.T) {
+	v := vwc("ext-missing-cfg", vhook("extmissing.io", failP(), admissionv1.WebhookClientConfig{Service: svcRef("ns", "gone-ext")}))
+	is, ok := find(Assess([]admissionv1.ValidatingWebhookConfiguration{v}, nil, nil, nil, 15), "extmissing.io")
+	if !ok || is.Problem != "MissingService" {
+		t.Fatalf("an absent backend must still be MissingService regardless of the intended Service type, got %+v", is)
+	}
+}
+
+// TestAssess_ExternalNameHighTimeoutStillFlagged proves backendFlagged stays
+// false for an ExternalName backend, so the timeout check still runs.
+func TestAssess_ExternalNameHighTimeoutStillFlagged(t *testing.T) {
+	v := vwc("ext-slow-cfg", vhookT("extslow.io", failP(), admissionv1.WebhookClientConfig{Service: svcRef("ns", "ext-svc")}, 30))
+	services := []corev1.Service{svcTyped("ns", "ext-svc", corev1.ServiceTypeExternalName)}
+	is, ok := find(Assess([]admissionv1.ValidatingWebhookConfiguration{v}, nil, services, nil, 15), "extslow.io")
+	if !ok || is.Problem != "HighTimeout" {
+		t.Fatalf("an ExternalName backend with a high timeout must still be flagged as HighTimeout, got %+v", is)
 	}
 }

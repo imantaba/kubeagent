@@ -1,6 +1,7 @@
 package logscan
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -16,7 +17,7 @@ func TestClassify(t *testing.T) {
 		{"addr-in-use", "listen tcp :8080: bind: address already in use", "addr-in-use", "port already in use"},
 		{"auth", `FATAL: password authentication failed for user "app"`, "auth", "authentication/authorization failure to a dependency"},
 		{"perm-denied", "open /data/config: permission denied", "perm-denied", "permission denied — check securityContext / file permissions"},
-		{"fallback", "just some log\nexited with code 3", "", "last output before exit (no known signature)"},
+		{"fallback", "just some log\nexited with code 3", "", "last output before exit (no signature in the last 25 lines)"},
 	}
 	for _, c := range cases {
 		got := Classify(c.log)
@@ -81,7 +82,33 @@ func TestClassify_RefusesContainerRuntimePlaceholder(t *testing.T) {
 	}
 
 	midline := "container runtime says: unable to retrieve container logs for containerd://xyz, retrying"
-	if got := Classify(midline); got.Signature != "" || got.Cause != "last output before exit (no known signature)" {
+	if got := Classify(midline); got.Signature != "" || got.Cause != "last output before exit (no signature in the last 25 lines)" {
 		t.Errorf("mid-line mention (unanchored): want normal fallback classification, got %+v", got)
+	}
+}
+
+// TestClassify_FallbackMissesASignatureOutsideTheTailWindow pins R186: kubeagent
+// asks the API server for only the last 25 lines (internal/collect.PreviousLogs's
+// TailLines), so a signature earlier than that window is never in the text
+// Classify sees. This fixture simulates that boundary: of 30 original lines,
+// only line 1 carries panic:, and the text Classify receives is just the last
+// 25 (lines 6-30) — the same window PreviousLogs requests — so the panic line
+// is already gone by the time Classify runs, and the fallback names the window
+// it actually searched instead of claiming no signature exists anywhere.
+func TestClassify_FallbackMissesASignatureOutsideTheTailWindow(t *testing.T) {
+	all := make([]string, 0, 30)
+	all = append(all, "panic: runtime error: invalid memory address")
+	for i := 2; i <= 30; i++ {
+		all = append(all, fmt.Sprintf("line %d: ordinary output", i))
+	}
+	tail := all[len(all)-25:] // the last 25 lines, matching PreviousLogs's TailLines
+	log := strings.Join(tail, "\n")
+
+	got := Classify(log)
+	if got.Signature != "" || got.Cause != "last output before exit (no signature in the last 25 lines)" {
+		t.Errorf("Classify() = %+v, want the fallback cause naming the 25-line window", got)
+	}
+	if want := "line 30: ordinary output"; got.Excerpt != want {
+		t.Errorf("Excerpt = %q, want %q", got.Excerpt, want)
 	}
 }

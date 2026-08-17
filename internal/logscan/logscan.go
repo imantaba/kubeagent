@@ -96,7 +96,11 @@ func Classify(log string) Clue {
 	}
 	for i := len(lines) - 1; i >= 0; i-- {
 		if ln := strings.TrimSpace(lines[i]); ln != "" {
-			return Clue{Excerpt: sanitize(ln), Cause: "last output before exit (no known signature)"}
+			// "25" names internal/collect.PreviousLogs's TailLines: that is the
+			// only window this function ever sees, so a signature earlier in the
+			// container's own output is invisible here, not absent. Keep the two
+			// in sync if either changes.
+			return Clue{Excerpt: sanitize(ln), Cause: "last output before exit (no signature in the last 25 lines)"}
 		}
 	}
 	return Clue{}

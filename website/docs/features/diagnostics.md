@@ -866,6 +866,10 @@ directly under the finding:
         → application panic (code bug)
 ```
 
+kubeagent reads the **last 25 lines** of the previous instance and shows one line,
+truncated at 200 characters. A signature older than those 25 lines is not seen, and
+the finding falls back to the last line instead.
+
 Recognised signatures include:
 
 - `application panic (code bug)` — a Go/Python/JVM panic or unhandled exception

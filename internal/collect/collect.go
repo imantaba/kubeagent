@@ -550,6 +550,9 @@ func parseNodeSummary(node string, data []byte) (diskusage.NodeSummary, bool, er
 // grant reports a blind spot instead of quietly finding no log cause. An empty
 // log is ("", false, nil): nothing was refused, there was simply nothing there.
 func PreviousLogs(ctx context.Context, client kubernetes.Interface, ns, pod, container string) (string, bool, error) {
+	// 25 names the window internal/logscan.Classify's fallback cause reports
+	// ("no signature in the last 25 lines"). Keep the two in sync if either
+	// changes.
 	tail := int64(25)
 	raw, err := client.CoreV1().Pods(ns).GetLogs(pod, &corev1.PodLogOptions{
 		Container: container, Previous: true, TailLines: &tail,

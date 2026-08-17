@@ -59,13 +59,26 @@ func TestAssess_UnsatisfiableOverAsk(t *testing.T) {
 }
 
 func TestAssess_Blocking(t *testing.T) {
-	// disruptionsAllowed 0 with only 1/2 guarded pods healthy.
+	// disruptionsAllowed 0 with only 1/2 guarded pods healthy. The reason
+	// quotes the PDB's own status counters rather than asserting a fact
+	// about pods kubeagent never looked at.
 	got := Assess([]policyv1.PodDisruptionBudget{pdb("shop", "cache", 2, 3, 2, 1, 0)})
 	is, ok := find(got, "cache")
 	if !ok || is.Category != "blocking" {
 		t.Fatalf("want blocking, got %+v", got)
 	}
-	if is.Reason != "blocking evictions with only 1/2 guarded pods healthy" {
+	if is.Reason != "PDB status reports 1/2 guarded pods healthy" {
+		t.Errorf("reason = %q", is.Reason)
+	}
+
+	// Measured overlap shape: expectedPods (3) exceeds desiredHealthy (1), so
+	// the reason must not claim anything beyond the guarded-pod counters.
+	got = Assess([]policyv1.PodDisruptionBudget{pdb("shop", "overlap", 1, 3, 1, 0, 0)})
+	is, ok = find(got, "overlap")
+	if !ok || is.Category != "blocking" {
+		t.Fatalf("want blocking, got %+v", got)
+	}
+	if is.Reason != "PDB status reports 0/1 guarded pods healthy" {
 		t.Errorf("reason = %q", is.Reason)
 	}
 }

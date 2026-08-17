@@ -70,7 +70,7 @@ func classify(p policyv1.PodDisruptionBudget) (category, reason string, ok bool)
 		}
 		return "unsatisfiable", fmt.Sprintf("covers all %d pods — no voluntary eviction can ever proceed; every node drain will hang", s.ExpectedPods), true
 	case s.DisruptionsAllowed == 0 && s.CurrentHealthy < s.DesiredHealthy:
-		return "blocking", fmt.Sprintf("blocking evictions with only %d/%d guarded pods healthy", s.CurrentHealthy, s.DesiredHealthy), true
+		return "blocking", fmt.Sprintf("PDB status reports %d/%d guarded pods healthy", s.CurrentHealthy, s.DesiredHealthy), true
 	default:
 		return "", "", false
 	}

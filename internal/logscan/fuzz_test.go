@@ -30,8 +30,9 @@ func FuzzClassify(f *testing.F) {
 
 		// maxExcerpt + 1: the ellipsis truncate appends when it cuts.
 		fuzzgen.AssertBounded(t, "clue.excerpt", clue.Excerpt, maxExcerpt+1)
-		// The cause is a fixed sentence plus, in the conn-refused case, one
-		// sanitized capture from the log.
+		// Every cause is a fixed sentence — no signature interpolates a
+		// submatch into Cause. The bound is a cheap belt-and-suspenders check
+		// that costs nothing to keep even so.
 		fuzzgen.AssertBounded(t, "clue.cause", clue.Cause, 1024)
 
 		if again := Classify(log); again != clue {

@@ -30,10 +30,13 @@ type signature struct {
 var signatures = []signature{
 	{"panic", regexp.MustCompile(`(?i)^panic:|goroutine \d+ \[running\]:`), func([]string) string { return "application panic (code bug)" }},
 	{"entrypoint", regexp.MustCompile(`(?i)exec:.*(?:executable file not found|no such file or directory|permission denied)`), func([]string) string { return "bad command or entrypoint" }},
-	// m[1] is a \S+ capture from the container's own log. \S excludes only
-	// whitespace, so it can carry ESC, NUL, or invalid UTF-8 — sanitize it.
-	{"conn-refused", regexp.MustCompile(`(?i)dial tcp (\S+): connect: connection refused`), func(m []string) string {
-		return "cannot reach a dependency (" + safetext.Line(m[1]) + ") — connection refused"
+	// No submatch reaches the returned cause. report.go renders LogCause
+	// unredacted, so interpolating the dialed address here would forward
+	// whatever the container printed — including a credential embedded in a
+	// URL — off the machine. The raw line still reaches Excerpt, sanitized and
+	// truncated, which is where an operator can see it.
+	{"conn-refused", regexp.MustCompile(`(?i)dial tcp \S+: connect: connection refused`), func([]string) string {
+		return "cannot reach a dependency — connection refused"
 	}},
 	{"dns", regexp.MustCompile(`(?i)no such host|server misbehaving`), func([]string) string { return "DNS resolution failed (name lookup)" }},
 	{"oom-inproc", regexp.MustCompile(`(?i)out of memory|cannot allocate memory|std::bad_alloc`), func([]string) string { return "ran out of memory in-process" }},

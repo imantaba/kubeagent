@@ -64,8 +64,12 @@ func TestError_PlainErrorPassesThrough(t *testing.T) {
 }
 
 func TestAddresses_RedactsWhatALogCanCarry(t *testing.T) {
-	// The inputs are the shapes internal/logscan's conn-refused signature can
-	// capture, because Go's dialer formats its error as "dial tcp <host:port>".
+	// These are address shapes a diagnostic string can carry — Go's dialer
+	// formats a dial error as "dial tcp <host:port>", and a cluster-internal
+	// DNS name reads the same way. internal/logscan's conn-refused signature
+	// no longer captures container text into a cause (it returns a fixed
+	// constant), so these inputs no longer arrive from that source; Addresses
+	// keeps redacting them for its other callers.
 	cases := []struct{ name, in, want string }{
 		{"ipv4 with port", "cannot reach a dependency (10.96.14.203:80) — connection refused",
 			"cannot reach a dependency (<redacted>) — connection refused"},
@@ -94,6 +98,7 @@ func TestAddresses_LeavesOrdinaryDiagnosticProseAlone(t *testing.T) {
 		"application panic (code bug)",
 		"DNS resolution failed (name lookup)",
 		"ran out of memory in-process",
+		"cannot reach a dependency — connection refused",
 		"0/2 ready, status CrashLoopBackOff, 5 restarts",
 		"permission denied — check securityContext / file permissions",
 		"back-off 5m0s restarting failed container",

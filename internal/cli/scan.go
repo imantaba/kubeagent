@@ -314,26 +314,33 @@ func runScan(o scanOptions) error {
 	gitopsRep := advRes.GitOps
 	capacityRep := advRes.Capacity
 
-	var explanation string
-	var investigationReport investigate.Report
-	switch {
-	case o.investigate:
-		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-		defer cancel()
-		investigationReport, err = investigate.New(explain.ResolveModel(o.model, os.Getenv("KUBEAGENT_MODEL"))).
-			Investigate(ctx, health, &summary, &facts, serviceIssues, result.Workloads, client)
-		if err != nil {
-			return err
-		}
-	case o.explain:
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		explanation, err = explain.NewFromConfig(explainModel, explainEndpoint, os.Getenv("KUBEAGENT_EXPLAIN_API_KEY")).
-			ExplainInventory(ctx, health, &summary, &facts, serviceIssues, result.Workloads)
-		if err != nil {
-			return err
-		}
+	// An --investigate or --explain failure is never fatal to the scan (R223):
+	// the deterministic report below still renders on stdout with exit 0, and
+	// runModelPath reduces the failure to one stderr notice naming which flag
+	// failed and why (via enrichmentFailure, R227) instead of returning an
+	// error. This also covers R220: a narrative-less investigation reaches
+	// runModelPath as just another error and gets the same notice-not-failure
+	// treatment, so the report renders with no Investigation section rather
+	// than nothing at all.
+	modelRes := runModelPath(o,
+		func() (investigate.Report, error) {
+			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+			defer cancel()
+			return investigate.New(explain.ResolveModel(o.model, os.Getenv("KUBEAGENT_MODEL"))).
+				Investigate(ctx, health, &summary, &facts, serviceIssues, result.Workloads, client)
+		},
+		func() (string, error) {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			return explain.NewFromConfig(explainModel, explainEndpoint, os.Getenv("KUBEAGENT_EXPLAIN_API_KEY")).
+				ExplainInventory(ctx, health, &summary, &facts, serviceIssues, result.Workloads)
+		},
+	)
+	if modelRes.notice != "" {
+		warnf(os.Stderr, "%s", modelRes.notice)
 	}
+	explanation := modelRes.explanation
+	investigationReport := modelRes.investigation
 
 	var credWarnings []credlint.Finding
 	if o.lintSecrets {

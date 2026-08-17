@@ -870,20 +870,31 @@ kubeagent reads the **last 25 lines** of the previous instance and shows one lin
 truncated at 200 characters. A signature older than those 25 lines is not seen, and
 the finding falls back to the last line instead.
 
-Recognised signatures include:
+Recognised signatures are:
 
 - `application panic (code bug)` — a Go/Python/JVM panic or unhandled exception
-- `cannot reach a dependency (…) — connection refused` — a dependency is not up yet, or the address is wrong
-- `bad command or entrypoint` — the container command / entrypoint does not exist in the image
+- `bad command or entrypoint` — the container's own output contains an `exec:` line, which is what a shell entrypoint prints when the command it wraps is missing or not executable. A container whose entrypoint is missing outright never starts and writes no log; that case is reported from the kubelet's message by the container-start detector, with no log block.
+- `cannot reach a dependency — connection refused` — a dependency is not up yet, or the address is wrong
+- `DNS resolution failed (name lookup)` — a name did not resolve
 - `ran out of memory in-process` — the process hit an allocation failure (distinct from a kernel OOM-kill, which the `OOMKilled` detector reports)
 - `configuration parse/validation error` — malformed YAML/JSON, a failed unmarshal, or an invalid config on startup
+- `port already in use` — the port the process binds is taken
+- `authentication/authorization failure to a dependency` — credentials rejected
+- `permission denied — check securityContext / file permissions` — a file or device the process needs is not readable/writable as the container's user
 
-Only the crash findings (**CrashLoopBackOff**, **RestartLoop**, **OOMKilled**) are
-probed — `--logs` is a no-op for ImagePullBackOff, Pending, and other non-crash
-detectors.
+When no signature matches, the last non-empty line is shown with the cause
+`last output before exit (no signature in the last 25 lines)` — kubeagent found
+the log but recognised nothing in it.
 
-It is **read-only**, **opt-in**, and **scan-only** (not available in the `watch`
-daemon). Running it in-cluster requires the `pods/log` RBAC add-on
+Every finding that names a container **and** whose container has a previous
+instance is probed — this includes **CrashLoopBackOff**, **RestartLoop**,
+**OOMKilled** and **Init:CrashLoopBackOff**. Findings that name no container
+(ImagePullBackOff, Pending, the cluster-level checks) are never probed, and
+neither is a container that has not yet restarted.
+
+It is **read-only** and **opt-in**. `--logs` is available on `scan` and on
+`kubeagent mcp`, and is not available in the `watch` daemon or in `gate`.
+Running it in-cluster requires the `pods/log` RBAC add-on
 (`deploy/rbac-logs.yaml`); most human kubeconfigs already allow `pods/log`. Without
 the grant, `--logs` reports no log cause and continues non-fatally.
 

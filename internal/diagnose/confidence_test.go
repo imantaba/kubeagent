@@ -24,7 +24,7 @@ const (
 )
 
 // confidenceTable pins the confidence level — or the fact that a producer
-// sets it — for every kind internal/knownissues documents: the sixteen
+// sets it — for every kind internal/knownissues knows: the sixteen
 // pod-detector kinds from Kinds() plus the three workload-level kinds from
 // WorkloadKinds() (deliberately absent from Kinds(); see that package's own
 // comment). TestConfidenceTableCoversEveryKnownIssueKind fails by name on any
@@ -105,7 +105,7 @@ func TestConfidenceTableHasNoStaleEntry(t *testing.T) {
 	}
 	for kind := range confidenceTable {
 		if !known[kind] {
-			t.Errorf("confidenceTable has an entry for %q, which internal/knownissues no longer documents — remove the stale row", kind)
+			t.Errorf("confidenceTable has an entry for %q, which internal/knownissues no longer knows — remove the stale row", kind)
 		}
 	}
 }

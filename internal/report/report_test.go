@@ -2138,12 +2138,13 @@ func TestPrintInventory_ConfidenceTags(t *testing.T) {
 	// rollouthealth's Deployment arm sets "high" (a controller-set condition —
 	// a direct read) and its StatefulSet/DaemonSet arm sets "medium" (counters
 	// and a grace period — an inference). confidence.ForIssue does not know
-	// RolloutStuck and must not learn it (ADDENDUM A4 of wp19-anchors.md,
-	// pinned by internal/confidence's own TestForIssue and by
-	// internal/diagnose's TestConfidenceTableCoversEveryKnownIssueKind), so
-	// the level is the producer's, not a table lookup — which is exactly why
-	// the same tag guard below must be observed rendering both ways from one
-	// Issue value.
+	// RolloutStuck and must not learn it (R189/R190; pinned by internal/
+	// confidence's own TestForIssue, whose high list names RolloutStuck —
+	// internal/diagnose's confidenceTable is not a second guard on that,
+	// because its test skips the ForIssue comparison for a producer-supplied
+	// kind), so the level is the producer's, not a table lookup — which is
+	// exactly why the same tag guard below must be observed rendering both
+	// ways from one Issue value.
 	ws := []inventory.Workload{
 		{Namespace: "shop", Name: "cache", Kind: "Deployment", Desired: 1, Ready: 0, Status: "Degraded",
 			RootCause: "registry ghcr.io (2 workloads failing to pull)",

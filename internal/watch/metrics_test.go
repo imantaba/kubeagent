@@ -76,8 +76,8 @@ func sampleResult() *scan.Result {
 		PDBIssues:        []pdbhealth.Issue{{Namespace: "shop", Name: "api", Category: "blocking"}},
 		HPAIssues:        []hpahealth.Issue{{Namespace: "shop", Name: "api-hpa", Category: "capped"}},
 		WebhookIssues: []webhookhealth.Issue{
-			{Kind: "ValidatingWebhookConfiguration", Config: "policy-webhook", Webhook: "w", Problem: "no-endpoints", Reason: "backend missing"},
-			{Kind: "ValidatingWebhookConfiguration", Config: "slow-webhook", Webhook: "s.io", Problem: "high-timeout", Reason: "timeoutSeconds too high"},
+			{Kind: "ValidatingWebhookConfiguration", Config: "policy-webhook", Webhook: "w", Problem: "NoEndpoints", Reason: "backend missing"},
+			{Kind: "ValidatingWebhookConfiguration", Config: "slow-webhook", Webhook: "s.io", Problem: "HighTimeout", Reason: "timeoutSeconds too high"},
 		},
 		QuotaIssues:   []quotahealth.Issue{{Namespace: "shop", Quota: "compute", Resource: "pods", Severity: "near"}},
 		KubeletHealth: nodehealth.Report{Probed: 2, Unhealthy: []nodehealth.Issue{{Node: "w"}}},

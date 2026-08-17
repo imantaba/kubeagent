@@ -58,6 +58,46 @@ func fromDiagnose(f diagnose.Finding) Finding {
 	}
 }
 
+// pdbCategoryToIssue maps a pdbhealth.Issue's lowercase Category onto the
+// finding vocabulary's CamelCase spelling shared by gate JSON, the watch
+// daemon's /issues and this tool result. A category this map does not
+// recognise falls back to the raw value instead of vanishing, so a category
+// landing out of order (WP14 teaches pdbhealth.Assess to emit "singleton"
+// after this map already carries it) still renders rather than disappearing
+// silently.
+var pdbCategoryToIssue = map[string]string{
+	"unsatisfiable": "PDBUnsatisfiable",
+	"stale":         "PDBStale",
+	"blocking":      "PDBBlocked",
+	"singleton":     "PDBSingleton",
+}
+
+// pdbIssue applies pdbCategoryToIssue, falling back to the raw category on a
+// miss.
+func pdbIssue(category string) string {
+	if v, ok := pdbCategoryToIssue[category]; ok {
+		return v
+	}
+	return category
+}
+
+// hpaCategoryToIssue is pdbCategoryToIssue's HPA counterpart, same
+// fallback-on-miss rule.
+var hpaCategoryToIssue = map[string]string{
+	"unable":  "HPAUnableToScale",
+	"metrics": "HPAMetricsFailed",
+	"capped":  "HPACapped",
+}
+
+// hpaIssue applies hpaCategoryToIssue, falling back to the raw category on a
+// miss.
+func hpaIssue(category string) string {
+	if v, ok := hpaCategoryToIssue[category]; ok {
+		return v
+	}
+	return category
+}
+
 func fromWorkload(w inventory.Workload) Finding {
 	return Finding{
 		Severity:  "warning",
@@ -115,15 +155,15 @@ func findingsFromResult(res scan.Result) []Finding {
 	}
 	for _, i := range res.StuckTerminating {
 		out = append(out, Finding{Severity: "warning", Kind: i.Kind, Namespace: i.Namespace,
-			Name: i.Name, Reason: "stuck terminating", Detail: i.Reason})
+			Name: i.Name, Reason: "StuckTerminating", Detail: i.Reason})
 	}
 	for _, i := range res.PDBIssues {
 		out = append(out, Finding{Severity: "warning", Kind: "PodDisruptionBudget", Namespace: i.Namespace,
-			Name: i.Name, Reason: i.Category, Detail: i.Reason})
+			Name: i.Name, Reason: pdbIssue(i.Category), Detail: i.Reason})
 	}
 	for _, i := range res.HPAIssues {
 		out = append(out, Finding{Severity: "warning", Kind: "HorizontalPodAutoscaler", Namespace: i.Namespace,
-			Name: i.Name, Reason: i.Category, Detail: i.Reason})
+			Name: i.Name, Reason: hpaIssue(i.Category), Detail: i.Reason})
 	}
 	for _, i := range res.WebhookIssues {
 		out = append(out, Finding{Severity: "warning", Kind: i.Kind, Namespace: "",

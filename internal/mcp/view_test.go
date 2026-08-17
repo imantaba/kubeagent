@@ -6,10 +6,13 @@ import (
 	"testing"
 
 	"github.com/imantaba/kubeagent/internal/diagnose"
+	"github.com/imantaba/kubeagent/internal/hpahealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/pdbhealth"
 	"github.com/imantaba/kubeagent/internal/pvchealth"
 	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/svchealth"
+	"github.com/imantaba/kubeagent/internal/termhealth"
 )
 
 func TestFindingsFromResult_DetectorFindingIsCriticalWithARemediationHint(t *testing.T) {
@@ -110,6 +113,62 @@ func TestFindingsFromResult_CoversEveryAttentionClassNotJustWorkloads(t *testing
 	if !kinds["Service"] || !kinds["PersistentVolumeClaim"] {
 		t.Errorf("kinds = %v, want both Service and PersistentVolumeClaim; a triage payload that "+
 			"reports only workloads silently drops every other class the CLI treats as degrading", kinds)
+	}
+}
+
+// TestFindingsFromResult_UsesCamelCaseFindingVocabulary asserts that
+// stuck-terminating, PDB and HPA issues surface in the MCP tool result's
+// Reason field with the CamelCase spelling shared by gate JSON and the watch
+// daemon's /issues — not the raw lowercase reason/category the source
+// packages carry.
+func TestFindingsFromResult_UsesCamelCaseFindingVocabulary(t *testing.T) {
+	res := scan.Result{
+		StuckTerminating: []termhealth.Issue{
+			{Kind: "Namespace", Name: "legacy-ns", Age: "2h", Reason: "stuck in Terminating"},
+		},
+		PDBIssues: []pdbhealth.Issue{
+			{Namespace: "shop", Name: "unsat", Category: "unsatisfiable", Reason: "r1"},
+			{Namespace: "shop", Name: "stl", Category: "stale", Reason: "r2"},
+			{Namespace: "shop", Name: "blk", Category: "blocking", Reason: "r3"},
+			{Namespace: "shop", Name: "sgl", Category: "singleton", Reason: "r4"},
+		},
+		HPAIssues: []hpahealth.Issue{
+			{Namespace: "shop", Name: "unable-hpa", Category: "unable", Reason: "r5"},
+			{Namespace: "shop", Name: "metrics-hpa", Category: "metrics", Reason: "r6"},
+			{Namespace: "shop", Name: "capped-hpa", Category: "capped", Reason: "r7"},
+		},
+	}
+
+	got := findingsFromResult(res)
+	want := map[string]string{
+		"legacy-ns":   "StuckTerminating",
+		"unsat":       "PDBUnsatisfiable",
+		"stl":         "PDBStale",
+		"blk":         "PDBBlocked",
+		"sgl":         "PDBSingleton",
+		"unable-hpa":  "HPAUnableToScale",
+		"metrics-hpa": "HPAMetricsFailed",
+		"capped-hpa":  "HPACapped",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("findingsFromResult() = %d findings, want %d: %+v", len(got), len(want), got)
+	}
+	seen := make(map[string]bool, len(got))
+	for _, f := range got {
+		wantReason, ok := want[f.Name]
+		if !ok {
+			t.Errorf("unexpected finding for %s: %+v", f.Name, f)
+			continue
+		}
+		if f.Reason != wantReason {
+			t.Errorf("%s: Reason = %q, want %q", f.Name, f.Reason, wantReason)
+		}
+		seen[f.Name] = true
+	}
+	for name := range want {
+		if !seen[name] {
+			t.Errorf("missing finding for %s", name)
+		}
 	}
 }
 

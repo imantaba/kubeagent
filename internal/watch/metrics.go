@@ -232,7 +232,7 @@ func (m *metrics) update(cluster string, res *scan.Result, dur time.Duration, no
 	c.webhooksFailing = 0
 	c.webhookLatencyRisks = 0
 	for _, i := range res.WebhookIssues {
-		if i.Problem == "high-timeout" {
+		if i.Problem == "HighTimeout" {
 			c.webhookLatencyRisks++
 		} else {
 			c.webhooksFailing++

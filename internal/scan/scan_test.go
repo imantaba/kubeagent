@@ -1019,8 +1019,8 @@ func TestEvaluate_FlagsDownWebhook(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(res.WebhookIssues) != 1 || res.WebhookIssues[0].Problem != "no-endpoints" {
-		t.Fatalf("expected one no-endpoints webhook issue, got %+v", res.WebhookIssues)
+	if len(res.WebhookIssues) != 1 || res.WebhookIssues[0].Problem != "NoEndpoints" {
+		t.Fatalf("expected one NoEndpoints webhook issue, got %+v", res.WebhookIssues)
 	}
 }
 
@@ -1264,12 +1264,12 @@ func TestEvaluate_FlagsSlowWebhook(t *testing.T) {
 	}
 	found := false
 	for _, is := range res.WebhookIssues {
-		if is.Problem == "high-timeout" {
+		if is.Problem == "HighTimeout" {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("expected a high-timeout webhook issue, got %+v", res.WebhookIssues)
+		t.Errorf("expected a HighTimeout webhook issue, got %+v", res.WebhookIssues)
 	}
 }
 

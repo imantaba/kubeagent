@@ -6,10 +6,14 @@ import (
 	"github.com/imantaba/kubeagent/internal/certhealth"
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/diagnose"
+	"github.com/imantaba/kubeagent/internal/findings"
+	"github.com/imantaba/kubeagent/internal/hpahealth"
 	"github.com/imantaba/kubeagent/internal/ingresshealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/pdbhealth"
 	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/svchealth"
+	"github.com/imantaba/kubeagent/internal/termhealth"
 	"github.com/imantaba/kubeagent/internal/watchstate"
 )
 
@@ -34,10 +38,10 @@ func TestIssueKeys_CoversEverySource(t *testing.T) {
 		"Ingress/shop/web:NoEndpoints",
 		"PVC/shop/data-pvc:ProvisioningFailed",
 		"Namespace/legacy-ns:StuckTerminating",
-		"PodDisruptionBudget/shop/api:blocking",
-		"HorizontalPodAutoscaler/shop/api-hpa:capped",
-		"ValidatingWebhookConfiguration/policy-webhook/w:no-endpoints",
-		"ValidatingWebhookConfiguration/slow-webhook/s.io:high-timeout",
+		"PodDisruptionBudget/shop/api:PDBBlocked",
+		"HorizontalPodAutoscaler/shop/api-hpa:HPACapped",
+		"ValidatingWebhookConfiguration/policy-webhook/w:NoEndpoints",
+		"ValidatingWebhookConfiguration/slow-webhook/s.io:HighTimeout",
 		"ResourceQuota/shop/compute/pods:near",
 		"Node/w:KubeletUnhealthy",
 		"Cluster/control-plane:Unhealthy",
@@ -57,6 +61,56 @@ func TestIssueKeys_CoversEverySource(t *testing.T) {
 			delete(got, w)
 		}
 		t.Errorf("issueKeys returned %d unique keys, want %d; surplus: %v", total, len(want), got)
+	}
+}
+
+// TestIssueKeys_AgreesWithGateOnStuckTerminatingPDBAndHPAVocabulary drives the
+// same scan.Result through issueKeys (the watch daemon's /issues projection)
+// and findings.Flatten (gate's projection) and asserts the two name every
+// stuck-terminating, PDB and HPA instance with the identical CamelCase Issue
+// string — so /issues and gate can never disagree about the same input.
+func TestIssueKeys_AgreesWithGateOnStuckTerminatingPDBAndHPAVocabulary(t *testing.T) {
+	res := scan.Result{
+		StuckTerminating: []termhealth.Issue{
+			{Kind: "Namespace", Name: "legacy-ns", Age: "2h", Reason: "stuck in Terminating"},
+		},
+		PDBIssues: []pdbhealth.Issue{
+			{Namespace: "shop", Name: "unsat", Category: "unsatisfiable", Reason: "r1"},
+			{Namespace: "shop", Name: "stl", Category: "stale", Reason: "r2"},
+			{Namespace: "shop", Name: "blk", Category: "blocking", Reason: "r3"},
+			{Namespace: "shop", Name: "sgl", Category: "singleton", Reason: "r4"},
+		},
+		HPAIssues: []hpahealth.Issue{
+			{Namespace: "shop", Name: "unable-hpa", Category: "unable", Reason: "r5"},
+			{Namespace: "shop", Name: "metrics-hpa", Category: "metrics", Reason: "r6"},
+			{Namespace: "shop", Name: "capped-hpa", Category: "capped", Reason: "r7"},
+		},
+	}
+
+	watchIssues := map[string]string{} // name -> issue, from /issues
+	for _, k := range issueKeys(&res) {
+		watchIssues[k.Name] = k.Issue
+	}
+	gateIssues := map[string]string{} // name -> issue, from gate
+	for _, f := range findings.Flatten(res) {
+		gateIssues[f.Name] = f.Issue
+	}
+
+	names := []string{"legacy-ns", "unsat", "stl", "blk", "sgl", "unable-hpa", "metrics-hpa", "capped-hpa"}
+	for _, name := range names {
+		w, ok := watchIssues[name]
+		if !ok {
+			t.Errorf("%s: missing from /issues", name)
+			continue
+		}
+		g, ok := gateIssues[name]
+		if !ok {
+			t.Errorf("%s: missing from gate", name)
+			continue
+		}
+		if w != g {
+			t.Errorf("%s: /issues says %q, gate says %q; the two surfaces disagree", name, w, g)
+		}
 	}
 }
 

@@ -2190,7 +2190,7 @@ func TestPrintInventory_WebhookIssues(t *testing.T) {
 		Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy"},
 		WebhookIssues: []webhookhealth.Issue{
 			{Kind: "ValidatingWebhookConfiguration", Config: "policy-webhook", Webhook: "validate.policy.io",
-				Service: "kube-system/policy-svc", Problem: "no-endpoints",
+				Service: "kube-system/policy-svc", Problem: "NoEndpoints",
 				Reason: "backend Service kube-system/policy-svc has no ready endpoints — failurePolicy Fail rejects every intercepted create/update"},
 		},
 	}
@@ -2201,8 +2201,8 @@ func TestPrintInventory_WebhookIssues(t *testing.T) {
 	if !strings.Contains(out, "✗ policy-webhook  ValidatingWebhookConfiguration  webhook validate.policy.io") {
 		t.Errorf("missing webhook header line:\n%s", out)
 	}
-	if !strings.Contains(out, "⚠ WebhookDown: backend Service kube-system/policy-svc has no ready endpoints") {
-		t.Errorf("missing WebhookDown reason line:\n%s", out)
+	if !strings.Contains(out, "⚠ NoEndpoints: backend Service kube-system/policy-svc has no ready endpoints") {
+		t.Errorf("missing NoEndpoints reason line:\n%s", out)
 	}
 	if !strings.Contains(out, "1 admission webhook failing") {
 		t.Errorf("missing attention-line fragment:\n%s", out)
@@ -2215,26 +2215,26 @@ func TestPrintInventory_NoWebhookSectionWhenEmpty(t *testing.T) {
 	if err := PrintInventory(in, "text", &buf); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(buf.String(), "WebhookDown") {
+	if strings.Contains(buf.String(), "NoEndpoints") {
 		t.Errorf("no webhook section expected when empty:\n%s", buf.String())
 	}
 }
 
 func TestPrintWebhookIssues_LatencyLabel(t *testing.T) {
 	in := Input{Result: inventory.Result{}, WebhookIssues: []webhookhealth.Issue{
-		{Kind: "ValidatingWebhookConfiguration", Config: "slow-validator", Webhook: "policy.example.com", Problem: "high-timeout", Reason: "timeoutSeconds 30 ≥ 15s under failurePolicy Fail — a slow webhook blocks every intercepted create/update for up to 30s, then rejects it"},
-		{Kind: "ValidatingWebhookConfiguration", Config: "down-validator", Webhook: "down.io", Service: "ns/svc", Problem: "no-endpoints", Reason: "backend Service ns/svc has no ready endpoints — failurePolicy Fail rejects every intercepted create/update"},
+		{Kind: "ValidatingWebhookConfiguration", Config: "slow-validator", Webhook: "policy.example.com", Problem: "HighTimeout", Reason: "timeoutSeconds 30 ≥ 15s under failurePolicy Fail — a slow webhook blocks every intercepted create/update for up to 30s, then rejects it"},
+		{Kind: "ValidatingWebhookConfiguration", Config: "down-validator", Webhook: "down.io", Service: "ns/svc", Problem: "NoEndpoints", Reason: "backend Service ns/svc has no ready endpoints — failurePolicy Fail rejects every intercepted create/update"},
 	}}
 	var b bytes.Buffer
 	if err := PrintInventory(in, "text", &b); err != nil {
 		t.Fatal(err)
 	}
 	out := b.String()
-	if !strings.Contains(out, "⚠ WebhookSlow: timeoutSeconds 30 ≥ 15s") {
-		t.Errorf("missing WebhookSlow line:\n%s", out)
+	if !strings.Contains(out, "⚠ HighTimeout: timeoutSeconds 30 ≥ 15s") {
+		t.Errorf("missing HighTimeout line:\n%s", out)
 	}
-	if !strings.Contains(out, "⚠ WebhookDown: backend Service ns/svc has no ready endpoints") {
-		t.Errorf("backend issue should still render WebhookDown:\n%s", out)
+	if !strings.Contains(out, "⚠ NoEndpoints: backend Service ns/svc has no ready endpoints") {
+		t.Errorf("backend issue should still render NoEndpoints:\n%s", out)
 	}
 }
 

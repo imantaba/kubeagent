@@ -537,7 +537,7 @@ func attentionLine(in Input, real []svchealth.Issue, realIng []ingresshealth.Rou
 	}
 	webhookFailing, webhookSlow := 0, 0
 	for _, i := range in.WebhookIssues {
-		if i.Problem == "high-timeout" {
+		if i.Problem == "HighTimeout" {
 			webhookSlow++
 		} else {
 			webhookFailing++
@@ -880,11 +880,7 @@ func printWebhookIssues(issues []webhookhealth.Issue, w io.Writer) error {
 		if _, err := fmt.Fprintf(w, "  ✗ %s  %s  webhook %s\n", is.Config, is.Kind, is.Webhook); err != nil {
 			return err
 		}
-		label := "WebhookDown"
-		if is.Problem == "high-timeout" {
-			label = "WebhookSlow"
-		}
-		if _, err := fmt.Fprintf(w, "      ⚠ %s: %s\n", label, is.Reason); err != nil {
+		if _, err := fmt.Fprintf(w, "      ⚠ %s: %s\n", is.Problem, is.Reason); err != nil {
 			return err
 		}
 	}

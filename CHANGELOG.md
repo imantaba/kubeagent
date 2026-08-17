@@ -15,6 +15,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   variable, the offending value and the valid range. Valid values are 1–30,
   matching the API server's own cap on a webhook's `timeoutSeconds`.
 
+- **Four finding-vocabulary groups are now CamelCase**, matching every other
+  issue kind in the tree: `stuck terminating` → `StuckTerminating`; the PDB
+  categories `unsatisfiable` → `PDBUnsatisfiable`, `stale` → `PDBStale`,
+  `blocking` → `PDBBlocked`, `singleton` → `PDBSingleton`; the HPA categories
+  `unable` → `HPAUnableToScale`, `metrics` → `HPAMetricsFailed`, `capped` →
+  `HPACapped`; and the admission-webhook problems `missing-service` →
+  `MissingService`, `no-endpoints` → `NoEndpoints`, `high-timeout` →
+  `HighTimeout`. This changes the string content of `gate`'s JSON `issue`
+  field, the watch daemon's `/issues` endpoint, and the MCP tool result's
+  `reason` field — a consumer matching any of the old lowercase or hyphenated
+  literals in those three surfaces breaks. No `schemaVersion` moves: none of
+  the affected fields carry an `enum` in the published schemas, so this is a
+  content change, not a shape change. A `pdbhealth.Issue`/`hpahealth.Issue`'s own
+  `category` field, and therefore `scan --output json`'s `pdbIssues[].category`
+  and `hpaIssues[].category`, stay lowercase — that field belongs to a typed
+  document, not the finding vocabulary. The text renderer's `NoEndpoints:` and
+  `HighTimeout:` lines replace the old `WebhookDown:`/`WebhookSlow:` labels it
+  used to synthesize; its `PDBBlocked:` and `HPAStuck:` lines were already the
+  target spelling and are unchanged.
+
 ## [1.16.1] - 2026-08-13
 
 ### Changed

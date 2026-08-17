@@ -106,9 +106,9 @@ func goldenInput(now time.Time) Input {
 		},
 		WebhookIssues: []webhookhealth.Issue{
 			{Kind: "ValidatingWebhookConfiguration", Config: "policy-webhook", Webhook: "validate.policy.io",
-				Service: "kube-system/policy-svc", Problem: "no-endpoints",
+				Service: "kube-system/policy-svc", Problem: "NoEndpoints",
 				Reason: "backend Service kube-system/policy-svc has no ready endpoints — failurePolicy Fail rejects every intercepted create/update"},
-			{Kind: "ValidatingWebhookConfiguration", Config: "slow-validator", Webhook: "policy.example.com", Problem: "high-timeout",
+			{Kind: "ValidatingWebhookConfiguration", Config: "slow-validator", Webhook: "policy.example.com", Problem: "HighTimeout",
 				Reason: "timeoutSeconds 30 ≥ 15s under failurePolicy Fail — a slow webhook blocks every intercepted create/update for up to 30s, then rejects it"},
 		},
 		QuotaIssues: []quotahealth.Issue{

@@ -103,9 +103,9 @@ NEEDS ATTENTION
   ✗ shop/api-hpa  HorizontalPodAutoscaler  targets Deployment/api
       ⚠ HPAStuck: can't fetch metrics — unable to get resource metric cpu: no metrics returned
   ✗ policy-webhook  ValidatingWebhookConfiguration  webhook validate.policy.io
-      ⚠ WebhookDown: backend Service kube-system/policy-svc has no ready endpoints — failurePolicy Fail rejects every intercepted create/update
+      ⚠ NoEndpoints: backend Service kube-system/policy-svc has no ready endpoints — failurePolicy Fail rejects every intercepted create/update
   ✗ slow-validator  ValidatingWebhookConfiguration  webhook policy.example.com
-      ⚠ WebhookSlow: timeoutSeconds 30 ≥ 15s under failurePolicy Fail — a slow webhook blocks every intercepted create/update for up to 30s, then rejects it
+      ⚠ HighTimeout: timeoutSeconds 30 ≥ 15s under failurePolicy Fail — a slow webhook blocks every intercepted create/update for up to 30s, then rejects it
   ✗ shop/compute  ResourceQuota  requests.cpu
       ⚠ QuotaExhausted: used 4 / hard 4 (100%)
 

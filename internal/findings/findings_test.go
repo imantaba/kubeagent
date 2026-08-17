@@ -8,11 +8,14 @@ import (
 
 	"github.com/imantaba/kubeagent/internal/baseline"
 	"github.com/imantaba/kubeagent/internal/diagnose"
+	"github.com/imantaba/kubeagent/internal/hpahealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/pdbhealth"
 	"github.com/imantaba/kubeagent/internal/policy"
 	"github.com/imantaba/kubeagent/internal/pvchealth"
 	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/svchealth"
+	"github.com/imantaba/kubeagent/internal/termhealth"
 )
 
 func TestLevelOrdering(t *testing.T) {
@@ -161,6 +164,61 @@ func TestFlattenIncludesHealthIssuesAsWarnings(t *testing.T) {
 	for _, f := range got {
 		if f.Level != Warning {
 			t.Errorf("%s %s/%s: Level = %v, want Warning", f.Kind, f.Namespace, f.Name, f.Level)
+		}
+	}
+}
+
+// TestFlattenUsesCamelCaseFindingVocabulary asserts that stuck-terminating,
+// PDB and HPA issues land in the flattened findings with the CamelCase Issue
+// spelling shared by gate JSON, the watch daemon's /issues and the MCP tool
+// result — not the raw lowercase reason/category the source packages carry.
+func TestFlattenUsesCamelCaseFindingVocabulary(t *testing.T) {
+	res := scan.Result{
+		StuckTerminating: []termhealth.Issue{
+			{Kind: "Namespace", Name: "legacy-ns", Age: "2h", Reason: "stuck in Terminating"},
+		},
+		PDBIssues: []pdbhealth.Issue{
+			{Namespace: "shop", Name: "unsat", Category: "unsatisfiable", Reason: "r1"},
+			{Namespace: "shop", Name: "stl", Category: "stale", Reason: "r2"},
+			{Namespace: "shop", Name: "blk", Category: "blocking", Reason: "r3"},
+			{Namespace: "shop", Name: "sgl", Category: "singleton", Reason: "r4"},
+		},
+		HPAIssues: []hpahealth.Issue{
+			{Namespace: "shop", Name: "unable-hpa", Category: "unable", Reason: "r5"},
+			{Namespace: "shop", Name: "metrics-hpa", Category: "metrics", Reason: "r6"},
+			{Namespace: "shop", Name: "capped-hpa", Category: "capped", Reason: "r7"},
+		},
+	}
+
+	got := Flatten(res)
+	want := map[string]string{
+		"legacy-ns":   "StuckTerminating",
+		"unsat":       "PDBUnsatisfiable",
+		"stl":         "PDBStale",
+		"blk":         "PDBBlocked",
+		"sgl":         "PDBSingleton",
+		"unable-hpa":  "HPAUnableToScale",
+		"metrics-hpa": "HPAMetricsFailed",
+		"capped-hpa":  "HPACapped",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("Flatten returned %d findings, want %d: %+v", len(got), len(want), got)
+	}
+	seen := make(map[string]bool, len(got))
+	for _, f := range got {
+		wantIssue, ok := want[f.Name]
+		if !ok {
+			t.Errorf("unexpected finding for %s: %+v", f.Name, f)
+			continue
+		}
+		if f.Issue != wantIssue {
+			t.Errorf("%s: Issue = %q, want %q", f.Name, f.Issue, wantIssue)
+		}
+		seen[f.Name] = true
+	}
+	for name := range want {
+		if !seen[name] {
+			t.Errorf("missing finding for %s", name)
 		}
 	}
 }

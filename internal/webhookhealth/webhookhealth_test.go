@@ -1,6 +1,7 @@
 package webhookhealth
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -64,8 +65,8 @@ func TestAssess_NoEndpoints(t *testing.T) {
 	services := []corev1.Service{svc("kube-system", "policy-svc")}
 	slices := []discoveryv1.EndpointSlice{sliceFor("kube-system", "policy-svc", false)} // 0 ready
 	is, ok := find(Assess([]admissionv1.ValidatingWebhookConfiguration{v}, nil, services, slices, 15), "validate.policy.io")
-	if !ok || is.Problem != "no-endpoints" {
-		t.Fatalf("want no-endpoints, got %+v", is)
+	if !ok || is.Problem != "NoEndpoints" {
+		t.Fatalf("want NoEndpoints, got %+v", is)
 	}
 	if is.Kind != "ValidatingWebhookConfiguration" || is.Config != "policy-webhook" || is.Service != "kube-system/policy-svc" {
 		t.Errorf("wrong identity: %+v", is)
@@ -79,8 +80,8 @@ func TestAssess_MissingService(t *testing.T) {
 	m := mwc("image-signing", mhook("sign.example.com", failP(),
 		admissionv1.WebhookClientConfig{Service: svcRef("secure", "signer")}))
 	is, ok := find(Assess(nil, []admissionv1.MutatingWebhookConfiguration{m}, nil, nil, 15), "sign.example.com")
-	if !ok || is.Problem != "missing-service" {
-		t.Fatalf("want missing-service, got %+v", is)
+	if !ok || is.Problem != "MissingService" {
+		t.Fatalf("want MissingService, got %+v", is)
 	}
 	if is.Kind != "MutatingWebhookConfiguration" {
 		t.Errorf("kind = %q", is.Kind)
@@ -143,8 +144,8 @@ func TestAssess_HighTimeoutFlagged(t *testing.T) {
 	if !ok {
 		t.Fatal("want a high-timeout issue for a healthy 30s Fail webhook")
 	}
-	if is.Problem != "high-timeout" {
-		t.Errorf("Problem = %q, want high-timeout", is.Problem)
+	if is.Problem != "HighTimeout" {
+		t.Errorf("Problem = %q, want HighTimeout", is.Problem)
 	}
 	if !strings.Contains(is.Reason, "timeoutSeconds 30") || !strings.Contains(is.Reason, "≥ 15s") {
 		t.Errorf("Reason = %q", is.Reason)
@@ -190,13 +191,13 @@ func TestAssess_NilTimeoutNotFlagged(t *testing.T) {
 
 func TestAssess_BackendDownHighTimeoutNoDoubleReport(t *testing.T) {
 	v := vwc("down", vhookT("down.io", failP(), admissionv1.WebhookClientConfig{Service: svcRef("ns", "gone")}, 30))
-	// no Service "gone" collected → missing-service
+	// no Service "gone" collected → MissingService
 	got := Assess([]admissionv1.ValidatingWebhookConfiguration{v}, nil, nil, nil, 15)
 	if len(got) != 1 {
 		t.Fatalf("want exactly one issue (backend, not doubled), got %+v", got)
 	}
-	if got[0].Problem != "missing-service" {
-		t.Errorf("Problem = %q, want missing-service (backend wins)", got[0].Problem)
+	if got[0].Problem != "MissingService" {
+		t.Errorf("Problem = %q, want MissingService (backend wins)", got[0].Problem)
 	}
 }
 
@@ -207,8 +208,8 @@ func TestAssess_URLWebhookHighTimeoutFlagged(t *testing.T) {
 	if !ok {
 		t.Fatal("URL-based Fail webhook with high timeout should be flagged")
 	}
-	if is.Problem != "high-timeout" || is.Service != "" {
-		t.Errorf("issue = %+v, want high-timeout with empty Service", is)
+	if is.Problem != "HighTimeout" || is.Service != "" {
+		t.Errorf("issue = %+v, want HighTimeout with empty Service", is)
 	}
 }
 
@@ -227,5 +228,37 @@ func TestAssess_ThresholdRespected(t *testing.T) {
 	slices := []discoveryv1.EndpointSlice{sliceFor("ns", "svc", true)}
 	if _, ok := find(Assess([]admissionv1.ValidatingWebhookConfiguration{v}, nil, services, slices, 31), "t.io"); ok {
 		t.Error("threshold 31 should not flag a 30s webhook")
+	}
+}
+
+// TestAssess_ProblemValuesAreCamelCase locks the shape of every value Assess
+// puts in Problem: CamelCase, not the hyphenated style it used to be. It
+// drives all three problem kinds through Assess itself, so a future problem
+// value that rejoins the hyphenated style fails this test rather than
+// silently reintroducing the vocabulary split this package was renamed to
+// close.
+func TestAssess_ProblemValuesAreCamelCase(t *testing.T) {
+	down := vwc("down-cfg", vhook("missing.io", failP(), admissionv1.WebhookClientConfig{Service: svcRef("ns", "gone")}))
+	noEP := vwc("noep-cfg", vhook("noendpoints.io", failP(), admissionv1.WebhookClientConfig{Service: svcRef("ns", "up")}))
+	slow := vwc("slow-cfg", vhookT("slow.io", failP(), admissionv1.WebhookClientConfig{Service: svcRef("ns", "healthy")}, 30))
+	services := []corev1.Service{svc("ns", "up"), svc("ns", "healthy")}
+	slices := []discoveryv1.EndpointSlice{sliceFor("ns", "up", false), sliceFor("ns", "healthy", true)}
+
+	got := Assess([]admissionv1.ValidatingWebhookConfiguration{down, noEP, slow}, nil, services, slices, 15)
+	if len(got) != 3 {
+		t.Fatalf("want 3 issues, got %d: %+v", len(got), got)
+	}
+	shape := regexp.MustCompile(`^[A-Z][A-Za-z]*$`)
+	seen := map[string]bool{}
+	for _, is := range got {
+		if !shape.MatchString(is.Problem) {
+			t.Errorf("Problem %q does not match ^[A-Z][A-Za-z]*$", is.Problem)
+		}
+		seen[is.Problem] = true
+	}
+	for _, want := range []string{"MissingService", "NoEndpoints", "HighTimeout"} {
+		if !seen[want] {
+			t.Errorf("missing Problem value %q among %+v", want, got)
+		}
 	}
 }

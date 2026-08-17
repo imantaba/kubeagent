@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`scan` now discloses two things it used to skip silently, both under
+  admission-webhook health.** A `clientConfig.url` backend on a `Fail`-policy
+  webhook is not a `Service` kubeagent can check the endpoints of; `scan` now
+  counts these and, when the count is non-zero, prints one NOTES line —
+  `"N Fail-policy admission webhook(s) not checked: clientConfig.url
+  backend"` — naming that they exist without guessing at their health. No
+  `Issue` is added and no gauge moves; the count is carried on `scan.Result`
+  and `report.Input` as untagged fields, so nothing about the published JSON
+  changes and no `schemaVersion` moves. Separately, `-n <namespace>` already
+  skipped the admission-webhook check entirely (for every namespace,
+  including `kube-system`) without saying so; the `-n` header note now
+  carries a second sentence — "cluster-wide checks skipped under -n:
+  admission webhooks" — alongside the existing system-rollup caveat, joined
+  by `\n` and rendered as its own line.
+
+### Fixed
+
+- **A webhook backed by an `ExternalName` Service was reported as having no
+  ready endpoints.** `ExternalName` is a DNS CNAME and never carries an
+  `EndpointSlice`, the same reasoning `internal/svchealth` already applies to
+  its own check; `internal/webhookhealth.Assess` now mirrors that guard, so a
+  found `ExternalName` backend produces no issue and does not suppress a
+  co-occurring high-timeout finding. A backend that is missing outright is
+  still reported, whatever its intended type.
+
+- **A webhook with an empty `rules` list was flagged as if it intercepted
+  requests.** A `Validating`/`MutatingWebhook` with no rules intercepts
+  nothing, so a down or slow backend behind it can never have rejected or
+  delayed a real request; `Assess` now skips it before either check. The
+  package doc's "cluster-wide" claim is also narrowed: blast radius depends
+  on rules and selectors this package does not read, so a flagged webhook's
+  effect may be the whole cluster or a single namespace.
+
+- **A webhook with both a down backend and a high `timeoutSeconds` reported
+  only the backend problem, with the timeout silently dropped.** The
+  precedence itself was correct — a dead backend dominates a report about
+  latency — but the co-occurring timeout was invisible until the backend came
+  back up. The backend issue's reason string now gains a suffix, `" (and
+  timeoutSeconds %d ≥ %ds)"`, when the same webhook also clears the latency
+  threshold. No `Issue` is added or removed; row count and both gauges are
+  unchanged.
+
 ### Changed
 
 - **`KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS` is now validated instead of silently
@@ -93,6 +137,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shape changes. Both comparisons that decide the new behavior — the
   `ScalingActive` reason switch and the existing `TooManyReplicas` match — run
   on the raw condition `Reason`, unchanged from before.
+
+- **`gate`'s text output for a cluster-scoped finding no longer carries a
+  leading slash before the name.** The identity column built `"Kind
+  %s/%s"` unconditionally from `Namespace` and `Name`; a finding with no
+  namespace — a `ValidatingWebhookConfiguration`, for example — rendered as
+  `"ValidatingWebhookConfiguration /vwc-missing"` instead of
+  `"ValidatingWebhookConfiguration vwc-missing"`. `gate --output json` is
+  unaffected (`namespace` still encodes as `""`), so no `schemaVersion`
+  moves.
+
+- **A webhook finding's name now carries the webhook alongside the
+  configuration.** `gate`'s JSON `name`, SARIF's
+  `artifactLocation.uri`, and the MCP tool result's `name` used to read the
+  configuration name alone, so two Fail-policy webhooks at or above the
+  timeout threshold in the same `ValidatingWebhookConfiguration` produced two
+  findings indistinguishable from each other — same `kind`, same empty
+  `namespace`, same `name`. All three now read `"config/webhook"`, matching
+  the watch daemon's `/issues`, which already did. `gate`'s text output
+  changes the same way. No `schemaVersion` moves: `name` is a free-form
+  string with no `enum` and no pattern in the published schemas.
 
 ## [1.16.1] - 2026-08-13
 

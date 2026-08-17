@@ -209,7 +209,9 @@ func TestAssess_SortedByKindNamespaceName(t *testing.T) {
 }
 
 func TestAssess_NamespaceIgnoresResolvedCondition(t *testing.T) {
-	// A ConditionFalse (resolved) condition must NOT be reported; fall back to spec.finalizers.
+	// A ConditionFalse (resolved) condition must NOT be reported; the only
+	// spec finalizer is "kubernetes", which the fall-through drops, and there
+	// is no stuck pod or PVC in the namespace for the second pass to name.
 	ns := corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{Name: "ns", DeletionTimestamp: delTime(1 * time.Hour)},
 		Spec:       corev1.NamespaceSpec{Finalizers: []corev1.FinalizerName{"kubernetes"}},
@@ -223,8 +225,85 @@ func TestAssess_NamespaceIgnoresResolvedCondition(t *testing.T) {
 	if contains(got[0].Reason, "NamespaceFinalizersRemaining") {
 		t.Errorf("a ConditionFalse condition must not be reported as the blocker, got %q", got[0].Reason)
 	}
-	if !contains(got[0].Reason, "finalizers kubernetes") {
-		t.Errorf("want the spec.finalizers fallback, got %q", got[0].Reason)
+	want := "deletion pending — no namespace finalizer names the blocker"
+	if got[0].Reason != want {
+		t.Errorf("Reason = %q, want %q", got[0].Reason, want)
+	}
+}
+
+func TestAssess_NamespaceNamesStuckPodBlocker(t *testing.T) {
+	ns := corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "wedged", DeletionTimestamp: delTime(3 * time.Hour)}}
+	pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "wedged", Name: "api",
+		DeletionTimestamp: delTime(10 * time.Minute), Finalizers: []string{"example.com/cleanup"}}}
+	got := Assess([]corev1.Namespace{ns}, []corev1.Pod{pod}, nil, nil, 2*time.Minute, now)
+	if len(got) != 2 {
+		t.Fatalf("want a Namespace issue and a Pod issue, got %+v", got)
+	}
+	nsIssue := got[0]
+	if nsIssue.Kind != "Namespace" {
+		t.Fatalf("got[0] = %+v, want the Namespace issue first", nsIssue)
+	}
+	if !contains(nsIssue.Reason, "blocked by wedged/api (Pod, finalizer example.com/cleanup)") {
+		t.Errorf("Reason = %q, want it to name the stuck pod", nsIssue.Reason)
+	}
+}
+
+func TestAssess_NamespaceCapsBlockersAtThree(t *testing.T) {
+	ns := corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "wedged", DeletionTimestamp: delTime(3 * time.Hour)}}
+	var pods []corev1.Pod
+	for _, name := range []string{"api-a", "api-b", "api-c", "api-d"} {
+		pods = append(pods, corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "wedged", Name: name,
+			DeletionTimestamp: delTime(10 * time.Minute), Finalizers: []string{"example.com/cleanup"}}})
+	}
+	got := Assess([]corev1.Namespace{ns}, pods, nil, nil, 2*time.Minute, now)
+	if len(got) != 5 {
+		t.Fatalf("want a Namespace issue and four Pod issues, got %+v", got)
+	}
+	nsIssue := got[0]
+	if !contains(nsIssue.Reason, "+1 more") {
+		t.Errorf("Reason = %q, want a +1 more tail past three blockers", nsIssue.Reason)
+	}
+	if !(contains(nsIssue.Reason, "api-a") && contains(nsIssue.Reason, "api-b") && contains(nsIssue.Reason, "api-c")) {
+		t.Errorf("Reason = %q, want the first three blockers named", nsIssue.Reason)
+	}
+	if contains(nsIssue.Reason, "api-d") {
+		t.Errorf("Reason = %q, want the fourth blocker folded into +1 more, not named", nsIssue.Reason)
+	}
+}
+
+func TestAssess_NamespaceFallThroughFinalizerWithoutStuckChild(t *testing.T) {
+	ns := corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: "wedged", DeletionTimestamp: delTime(3 * time.Hour)},
+		Spec:       corev1.NamespaceSpec{Finalizers: []corev1.FinalizerName{"example.com/ns-cleanup"}},
+	}
+	got := Assess([]corev1.Namespace{ns}, nil, nil, nil, 2*time.Minute, now)
+	if len(got) != 1 {
+		t.Fatalf("want one issue, got %+v", got)
+	}
+	want := "finalizers example.com/ns-cleanup"
+	if got[0].Reason != want {
+		t.Errorf("Reason = %q, want %q", got[0].Reason, want)
+	}
+}
+
+func TestAssess_NamespaceConditionUnaffectedBySecondPass(t *testing.T) {
+	ns := corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: "legacy-ns", DeletionTimestamp: delTime(3 * time.Hour)},
+		Status: corev1.NamespaceStatus{Conditions: []corev1.NamespaceCondition{
+			{Type: "NamespaceFinalizersRemaining", Status: corev1.ConditionTrue, Message: "Some content in the namespace has finalizers remaining: kubernetes."}}},
+	}
+	pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "legacy-ns", Name: "api",
+		DeletionTimestamp: delTime(10 * time.Minute), Finalizers: []string{"example.com/cleanup"}}}
+	got := Assess([]corev1.Namespace{ns}, []corev1.Pod{pod}, nil, nil, 2*time.Minute, now)
+	if len(got) != 2 {
+		t.Fatalf("want a Namespace issue and a Pod issue, got %+v", got)
+	}
+	nsIssue := got[0]
+	if contains(nsIssue.Reason, "blocked by") {
+		t.Errorf("a condition-derived Reason must not gain a blocked-by clause, got %q", nsIssue.Reason)
+	}
+	if !contains(nsIssue.Reason, "NamespaceFinalizersRemaining") {
+		t.Errorf("Reason = %q, want the condition text unchanged", nsIssue.Reason)
 	}
 }
 

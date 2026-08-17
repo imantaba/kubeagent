@@ -60,7 +60,41 @@ func Assess(namespaces []corev1.Namespace, pods []corev1.Pod, pvcs []corev1.Pers
 		}
 		return out[i].Name < out[j].Name
 	})
+	// Second pass: a Namespace issue whose Reason came from nsReason's
+	// fall-through (no blocking condition was found) may still be explained
+	// by a stuck Pod or PVC already in out. This reads out, never the raw
+	// pods/pvcs slices, and never namespaces or resource kinds Assess was not
+	// given — so a blocker that is not itself past threshold, or that belongs
+	// to a kind Assess does not receive, is never named. blocked by … is a
+	// naming, not a census.
+	for i := range out {
+		if out[i].Kind != "Namespace" || !fallThrough(out[i].Reason) {
+			continue
+		}
+		var blockers []string
+		for _, iss := range out {
+			if iss.Namespace == out[i].Name {
+				blockers = append(blockers, iss.Namespace+"/"+iss.Name+" ("+iss.Kind+", "+iss.Reason+")")
+			}
+		}
+		if len(blockers) > 0 {
+			out[i].Reason += " — blocked by " + capList(blockers, 3)
+		}
+	}
 	return out
+}
+
+// fallThrough reports whether a Namespace issue's reason came from
+// nsReason's fall-through (spec.finalizers, or the "no namespace finalizer"
+// message) rather than a blocking condition in nsConditionOrder — the only
+// case the second pass above may act on.
+func fallThrough(reason string) bool {
+	for _, t := range nsConditionOrder {
+		if strings.HasPrefix(reason, string(t)+" — ") {
+			return false
+		}
+	}
+	return true
 }
 
 // stuckFor reports the compact age and whether dt is set and older than threshold.
@@ -197,14 +231,19 @@ func nsReason(ns corev1.Namespace) string {
 			return string(t) + " — " + trimMsg(safetext.Line(c.Message))
 		}
 	}
-	if len(ns.Spec.Finalizers) > 0 {
-		fs := make([]string, len(ns.Spec.Finalizers))
-		for i, f := range ns.Spec.Finalizers {
-			fs[i] = string(f)
+	var fs []string
+	for _, f := range ns.Spec.Finalizers {
+		// "kubernetes" is the built-in finalizer every namespace carries; it
+		// never names a blocker, so the fall-through drops it from the list.
+		if f == "kubernetes" {
+			continue
 		}
+		fs = append(fs, string(f))
+	}
+	if len(fs) > 0 {
 		return "finalizers " + strings.Join(fs, ", ")
 	}
-	return "deletion pending"
+	return "deletion pending — no namespace finalizer names the blocker"
 }
 
 func trimMsg(s string) string { return strings.TrimRight(strings.TrimSpace(s), ".") }

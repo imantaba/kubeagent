@@ -1201,9 +1201,42 @@ func TestPrintInventory_TextCollapsesSixIdenticalFindingsToOneHeadAndOneEvidence
 	}
 }
 
+// A collapsed group prints its shared tail once, below the evidence, so a
+// block is not 1+len(distinct evidence) lines: a pair carrying a resources
+// block prints three. This is the case the groupFindings comment names.
+func TestPrintInventory_TextCollapsedPairPrintsItsResourcesTailOnce(t *testing.T) {
+	res := &diagnose.ContainerResources{
+		Container: "app", CPURequest: "100m", CPULimit: "200m",
+		MemRequest: "64Mi", MemLimit: "128Mi",
+	}
+	oom := func(pod string) diagnose.Finding {
+		return diagnose.Finding{
+			Pod: "shop/" + pod, Issue: "OOMKilled", Container: "app",
+			Reason:    "Container was killed for exceeding its memory limit",
+			Evidence:  `container "app", exitCode=137`,
+			Resources: res,
+		}
+	}
+	out := renderFindings(t, false, oom("web-abc"), oom("web-def"))
+	if got := strings.Count(out, "⚠ OOMKilled"); got != 1 {
+		t.Errorf("want one head line for two identical findings, got %d:\n%s", got, out)
+	}
+	if !strings.Contains(out, "⚠ OOMKilled: Container was killed for exceeding its memory limit ×2") {
+		t.Errorf("want the count of two on the head line:\n%s", out)
+	}
+	if got := strings.Count(out, "resources: memory"); got != 1 {
+		t.Errorf("want exactly one resources line for the collapsed pair, got %d:\n%s", got, out)
+	}
+	if got := strings.Count(out, "↳ "); got != 1 {
+		t.Errorf("want exactly one evidence line, got %d:\n%s", got, out)
+	}
+}
+
 // Three distinct evidence values print one head carrying the count and one
-// ↳ line per distinct value — the case where a block prints fewer lines than
-// the findings it stands for becomes visible.
+// ↳ line per distinct value: four lines where rendering the three findings
+// separately took six. Shorter than the uncollapsed rendering — not shorter
+// than the finding count, which this case exceeds. The Six test above is
+// where a block comes out shorter than the count as well.
 func TestPrintInventory_TextThreeDistinctEvidenceLinesUnderOneHead(t *testing.T) {
 	out := renderFindings(t, false,
 		crashFinding("web-a", `container "app", restartCount=1`),

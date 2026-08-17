@@ -967,15 +967,17 @@ ones:
       ↳ container "web", restartCount=4
 ```
 
-A collapsed block loses no information: every distinct `↳` signal is printed
-on its own line, and the `×N` on the head is the number of findings the block
-stands for. It does print fewer lines than it would uncollapsed — that is the
-point — so read the count, not the line count, when you want to know how many
-pods are affected. Anything that differs between pods keeps them apart — a `--suggest` command
-names the pod, a resources block names that container's limits — and the one
-part allowed to vary inside a block is the `↳` signal, where every distinct
-value is printed on its own line. That is what shows the restart counts when
-they differ:
+A collapse drops no distinct `↳` signal: each one is printed on its own line,
+and the `×N` on the head is the number of findings the block stands for. What
+it does not render is how many findings sit behind each individual `↳` line —
+three pods reporting one signal and one pod reporting another print as `×4`
+above two lines. It does print fewer lines than it would uncollapsed — that is
+the point — so read the count, not the line count, when you want to know how
+many pods are affected. Anything that differs between pods keeps them apart — a
+`--suggest` command names the pod, a resources block names that container's
+limits — and the one part allowed to vary inside a block is the `↳` signal,
+where every distinct value is printed on its own line. That is what shows the
+restart counts when they differ:
 
 ```text
     ⚠ CrashLoopBackOff: Container repeatedly crashes after starting ×2

@@ -530,7 +530,7 @@ func attentionLine(in Input, real []svchealth.Issue, realIng []ingresshealth.Rou
 		parts = append(parts, fmt.Sprintf("%d %s stuck terminating", n, plural(n, "resource", "resources")))
 	}
 	if n := len(in.PDBIssues); n > 0 {
-		parts = append(parts, fmt.Sprintf("%d %s blocking drains", n, plural(n, "PodDisruptionBudget", "PodDisruptionBudgets")))
+		parts = append(parts, fmt.Sprintf("%d %s", n, plural(n, "PodDisruptionBudget issue", "PodDisruptionBudget issues")))
 	}
 	if n := len(in.HPAIssues); n > 0 {
 		parts = append(parts, fmt.Sprintf("%d %s can't scale", n, plural(n, "HPA", "HPAs")))

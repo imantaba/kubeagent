@@ -2133,8 +2133,28 @@ func TestPrintInventory_PDBIssues(t *testing.T) {
 	if !strings.Contains(out, "⚠ PDBBlocked: covers all 3 pods") {
 		t.Errorf("missing PDBBlocked reason line:\n%s", out)
 	}
-	if !strings.Contains(out, "1 PodDisruptionBudget blocking drains") {
+	if !strings.Contains(out, "1 PodDisruptionBudget issue") {
 		t.Errorf("missing attention-line fragment:\n%s", out)
+	}
+}
+
+func TestPrintInventory_PDBIssuesPlural(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy"},
+		PDBIssues: []pdbhealth.Issue{
+			{Namespace: "shop", Name: "api", Rule: "minAvailable: 3", Category: "unsatisfiable",
+				Reason: "covers all 3 pods — no voluntary eviction can ever proceed; every node drain will hang"},
+			{Namespace: "shop", Name: "solo", Rule: "minAvailable: 1", Category: "singleton",
+				Reason: "single-replica workload with no disruption headroom — often deliberate, but no voluntary eviction is possible; draining its node will hang"},
+		},
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "2 PodDisruptionBudget issues") {
+		t.Errorf("missing plural attention-line fragment:\n%s", out)
 	}
 }
 

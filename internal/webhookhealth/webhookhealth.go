@@ -1,9 +1,11 @@
 // Package webhookhealth flags admission webhooks whose failurePolicy is Fail and
 // whose backing Service is missing or has no ready endpoints, or has a high
 // timeoutSeconds (a latency landmine) — such a webhook rejects every create/update
-// it intercepts, cluster-wide. Pure and read-only: the caller supplies the webhook
-// configs and the collected Services/EndpointSlices. Advisory (never affects the
-// cluster verdict).
+// it intercepts. What a webhook actually intercepts is governed by its rules and
+// selectors, which this package does not read, so the blast radius may be the
+// whole cluster or a single namespace. Pure and read-only: the caller supplies
+// the webhook configs and the collected Services/EndpointSlices. Advisory (never
+// affects the cluster verdict).
 package webhookhealth
 
 import (
@@ -32,12 +34,13 @@ type Issue struct {
 // hook is a normalized view of a Validating/Mutating webhook entry so one routine
 // handles both (they share these fields but are distinct Go types).
 type hook struct {
-	kind    string
-	config  string
-	name    string
-	fp      *admissionv1.FailurePolicyType
-	service *admissionv1.ServiceReference
-	timeout *int32
+	kind     string
+	config   string
+	name     string
+	fp       *admissionv1.FailurePolicyType
+	service  *admissionv1.ServiceReference
+	timeout  *int32
+	hasRules bool
 }
 
 // Assess flags Fail-policy webhooks whose backend Service is missing or has no
@@ -53,12 +56,20 @@ func Assess(
 	var hooks []hook
 	for _, c := range validating {
 		for _, w := range c.Webhooks {
-			hooks = append(hooks, hook{"ValidatingWebhookConfiguration", c.Name, w.Name, w.FailurePolicy, w.ClientConfig.Service, w.TimeoutSeconds})
+			hooks = append(hooks, hook{
+				kind: "ValidatingWebhookConfiguration", config: c.Name, name: w.Name,
+				fp: w.FailurePolicy, service: w.ClientConfig.Service, timeout: w.TimeoutSeconds,
+				hasRules: len(w.Rules) > 0,
+			})
 		}
 	}
 	for _, c := range mutating {
 		for _, w := range c.Webhooks {
-			hooks = append(hooks, hook{"MutatingWebhookConfiguration", c.Name, w.Name, w.FailurePolicy, w.ClientConfig.Service, w.TimeoutSeconds})
+			hooks = append(hooks, hook{
+				kind: "MutatingWebhookConfiguration", config: c.Name, name: w.Name,
+				fp: w.FailurePolicy, service: w.ClientConfig.Service, timeout: w.TimeoutSeconds,
+				hasRules: len(w.Rules) > 0,
+			})
 		}
 	}
 
@@ -66,6 +77,9 @@ func Assess(
 	for _, h := range hooks {
 		if !failsClosed(h.fp) {
 			continue // Ignore policy
+		}
+		if !h.hasRules {
+			continue // a webhook that intercepts nothing cannot have rejected anything
 		}
 		backendFlagged := false
 		if h.service != nil {

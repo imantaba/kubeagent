@@ -19,12 +19,23 @@ func svcRef(ns, name string) *admissionv1.ServiceReference {
 
 func i32(n int32) *int32 { return &n }
 
+// oneRule is a single any-resource rule, used as the default Rules value by the
+// vhook/vhookT/mhook/mhookT helpers below. Without it every pre-existing fixture
+// — which exists to test backend/timeout logic, not rules-emptiness — would be
+// silently caught by the "no Rules" skip Assess gained for a rules-less webhook.
+func oneRule() []admissionv1.RuleWithOperations {
+	return []admissionv1.RuleWithOperations{{
+		Operations: []admissionv1.OperationType{admissionv1.Create},
+		Rule:       admissionv1.Rule{APIGroups: []string{"apps"}, APIVersions: []string{"v1"}, Resources: []string{"deployments"}},
+	}}
+}
+
 // vhookT / mhookT build a webhook with a timeoutSeconds set.
 func vhookT(name string, fp *admissionv1.FailurePolicyType, cc admissionv1.WebhookClientConfig, timeout int32) admissionv1.ValidatingWebhook {
-	return admissionv1.ValidatingWebhook{Name: name, FailurePolicy: fp, ClientConfig: cc, TimeoutSeconds: i32(timeout)}
+	return admissionv1.ValidatingWebhook{Name: name, FailurePolicy: fp, ClientConfig: cc, TimeoutSeconds: i32(timeout), Rules: oneRule()}
 }
 func mhookT(name string, fp *admissionv1.FailurePolicyType, cc admissionv1.WebhookClientConfig, timeout int32) admissionv1.MutatingWebhook {
-	return admissionv1.MutatingWebhook{Name: name, FailurePolicy: fp, ClientConfig: cc, TimeoutSeconds: i32(timeout)}
+	return admissionv1.MutatingWebhook{Name: name, FailurePolicy: fp, ClientConfig: cc, TimeoutSeconds: i32(timeout), Rules: oneRule()}
 }
 
 func vwc(name string, ws ...admissionv1.ValidatingWebhook) admissionv1.ValidatingWebhookConfiguration {
@@ -34,10 +45,10 @@ func mwc(name string, ws ...admissionv1.MutatingWebhook) admissionv1.MutatingWeb
 	return admissionv1.MutatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: name}, Webhooks: ws}
 }
 func vhook(name string, fp *admissionv1.FailurePolicyType, cc admissionv1.WebhookClientConfig) admissionv1.ValidatingWebhook {
-	return admissionv1.ValidatingWebhook{Name: name, FailurePolicy: fp, ClientConfig: cc}
+	return admissionv1.ValidatingWebhook{Name: name, FailurePolicy: fp, ClientConfig: cc, Rules: oneRule()}
 }
 func mhook(name string, fp *admissionv1.FailurePolicyType, cc admissionv1.WebhookClientConfig) admissionv1.MutatingWebhook {
-	return admissionv1.MutatingWebhook{Name: name, FailurePolicy: fp, ClientConfig: cc}
+	return admissionv1.MutatingWebhook{Name: name, FailurePolicy: fp, ClientConfig: cc, Rules: oneRule()}
 }
 
 func svc(ns, name string) corev1.Service {
@@ -312,5 +323,55 @@ func TestAssess_ExternalNameHighTimeoutStillFlagged(t *testing.T) {
 	is, ok := find(Assess([]admissionv1.ValidatingWebhookConfiguration{v}, nil, services, nil, 15), "extslow.io")
 	if !ok || is.Problem != "HighTimeout" {
 		t.Fatalf("an ExternalName backend with a high timeout must still be flagged as HighTimeout, got %+v", is)
+	}
+}
+
+// TestAssess_NilRulesNotFlagged: a webhook with Rules: nil intercepts nothing,
+// so a down backend on it cannot have rejected anything.
+func TestAssess_NilRulesNotFlagged(t *testing.T) {
+	w := admissionv1.ValidatingWebhook{Name: "norules.io", FailurePolicy: failP(),
+		ClientConfig: admissionv1.WebhookClientConfig{Service: svcRef("ns", "gone")}, Rules: nil}
+	v := vwc("norules-cfg", w)
+	if got := Assess([]admissionv1.ValidatingWebhookConfiguration{v}, nil, nil, nil, 15); len(got) != 0 {
+		t.Fatalf("a webhook with Rules: nil must not be flagged, got %+v", got)
+	}
+}
+
+// TestAssess_EmptySliceRulesNotFlagged: an explicit empty slice is the same as
+// nil for this guard.
+func TestAssess_EmptySliceRulesNotFlagged(t *testing.T) {
+	w := admissionv1.ValidatingWebhook{Name: "emptyrules.io", FailurePolicy: failP(),
+		ClientConfig: admissionv1.WebhookClientConfig{Service: svcRef("ns", "gone")},
+		Rules:        []admissionv1.RuleWithOperations{}}
+	v := vwc("emptyrules-cfg", w)
+	if got := Assess([]admissionv1.ValidatingWebhookConfiguration{v}, nil, nil, nil, 15); len(got) != 0 {
+		t.Fatalf("a webhook with Rules: []...{} must not be flagged, got %+v", got)
+	}
+}
+
+// TestAssess_OneRuleStillFlagged proves the skip is on emptiness only: one rule
+// is enough for a down backend to be reported.
+func TestAssess_OneRuleStillFlagged(t *testing.T) {
+	w := admissionv1.ValidatingWebhook{Name: "onerule.io", FailurePolicy: failP(),
+		ClientConfig: admissionv1.WebhookClientConfig{Service: svcRef("ns", "gone")},
+		Rules:        oneRule(),
+	}
+	v := vwc("onerule-cfg", w)
+	is, ok := find(Assess([]admissionv1.ValidatingWebhookConfiguration{v}, nil, nil, nil, 15), "onerule.io")
+	if !ok || is.Problem != "MissingService" {
+		t.Fatalf("a webhook with one rule must still be flagged, got %+v", is)
+	}
+}
+
+// TestAssess_EmptyRulesHighTimeoutNotFlagged proves the rules-empty skip
+// precedes the timeout check, not just the backend check.
+func TestAssess_EmptyRulesHighTimeoutNotFlagged(t *testing.T) {
+	w := admissionv1.ValidatingWebhook{Name: "norulesslow.io", FailurePolicy: failP(),
+		ClientConfig: admissionv1.WebhookClientConfig{Service: svcRef("ns", "svc")}, TimeoutSeconds: i32(30)}
+	v := vwc("norulesslow-cfg", w)
+	services := []corev1.Service{svc("ns", "svc")}
+	slices := []discoveryv1.EndpointSlice{sliceFor("ns", "svc", true)}
+	if got := Assess([]admissionv1.ValidatingWebhookConfiguration{v}, nil, services, slices, 15); len(got) != 0 {
+		t.Fatalf("the rules-empty skip must precede the timeout check, got %+v", got)
 	}
 }

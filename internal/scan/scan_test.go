@@ -1003,6 +1003,10 @@ func downWebhookObjects() []runtime.Object {
 			Name:          "validate.policy.io",
 			FailurePolicy: &fail,
 			ClientConfig:  admissionv1.WebhookClientConfig{Service: &admissionv1.ServiceReference{Namespace: "kube-system", Name: "policy-svc"}},
+			Rules: []admissionv1.RuleWithOperations{{
+				Operations: []admissionv1.OperationType{admissionv1.Create},
+				Rule:       admissionv1.Rule{APIGroups: []string{"apps"}, APIVersions: []string{"v1"}, Resources: []string{"deployments"}},
+			}},
 		}},
 	}
 	svc := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: "kube-system", Name: "policy-svc"}}
@@ -1255,6 +1259,10 @@ func TestEvaluate_FlagsSlowWebhook(t *testing.T) {
 			FailurePolicy:  &fail,
 			ClientConfig:   admissionv1.WebhookClientConfig{URL: &url},
 			TimeoutSeconds: p32(20),
+			Rules: []admissionv1.RuleWithOperations{{
+				Operations: []admissionv1.OperationType{admissionv1.Create},
+				Rule:       admissionv1.Rule{APIGroups: []string{"apps"}, APIVersions: []string{"v1"}, Resources: []string{"deployments"}},
+			}},
 		}},
 	}
 	cli := fake.NewSimpleClientset(node, vwc)

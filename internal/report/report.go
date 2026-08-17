@@ -1160,11 +1160,13 @@ type findingGroup struct {
 // counts when they differ, since that is where a restart count lives. A group
 // prints its head once, one line per distinct evidence value, and its shared
 // tail once — the resources block, the log excerpt, the suggestions. Whenever
-// it stands for more than one finding that is shorter than rendering those
-// findings separately, because the head and the tail go out once instead of
-// once per finding. It is not shorter than the finding *count*: a pair that
-// agrees prints two lines, and a pair carrying a resources block prints three.
-// count is what says how many findings stand behind the block.
+// it stands for more than one finding, the block is shorter than rendering
+// those findings separately, because the head and the tail go out once
+// instead of once per finding. Against the finding *count* there is no fixed
+// relation: a pair that agrees prints two lines, equal to the count; a pair
+// carrying a resources block prints three, more than the count; and six that
+// agree with no tail print two lines, fewer than the count. count is what
+// says how many findings stand behind the block.
 func groupFindings(findings []diagnose.Finding, suggest bool) []findingGroup {
 	var groups []findingGroup
 	at := map[string]int{} // block key -> index into groups

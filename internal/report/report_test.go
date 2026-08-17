@@ -1202,8 +1202,9 @@ func TestPrintInventory_TextCollapsesSixIdenticalFindingsToOneHeadAndOneEvidence
 }
 
 // A collapsed group prints its shared tail once, below the evidence, so a
-// block is not 1+len(distinct evidence) lines: a pair carrying a resources
-// block prints three. This is the case the groupFindings comment names.
+// block is 1+len(distinct evidence) lines only when that tail is empty: a
+// pair carrying a resources block prints three. That is the resources-tail
+// case the groupFindings comment names.
 func TestPrintInventory_TextCollapsedPairPrintsItsResourcesTailOnce(t *testing.T) {
 	res := &diagnose.ContainerResources{
 		Container: "app", CPURequest: "100m", CPULimit: "200m",

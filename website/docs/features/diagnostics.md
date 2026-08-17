@@ -662,17 +662,24 @@ with `KUBEAGENT_CERTS=true`.
 ### Next-step suggestions (opt-in)
 
 `scan --suggest` prints a deterministic, reviewed next-step suggestion and a
-read-only `kubectl` investigation command directly under each pod finding.
-It works **offline** (no API key required) and is **read-only** — kubeagent
-prints the command, it never runs it.
+read-only `kubectl` investigation command directly under each finding —
+including workload-level findings such as `RolloutStuck`, `JobFailed` and
+`FailedCreate`, which may have no pod row beneath them. It works **offline**
+(no API key required) and is **read-only** — kubeagent prints the command, it
+never runs it.
 
 ```text
-✗ shop/web  Deployment  0/2 Degraded
+✗ shop/web  Deployment  0/2 Degraded  · 8 restarts, last 1m ago
+    image shop/web:1.4.2
     ⚠ CrashLoopBackOff: Container repeatedly crashes after starting
-      ↳ container "web": restartCount=8
+      ↳ container "web", restartCount=8, last exit 1 (Error), 1m7s ago
       ↳ next step: starts then crashes — inspect the crash output
       ↳ try: kubectl -n shop logs web-abc -c web --previous
 ```
+
+Because a suggestion names the pod, `--suggest` also splits findings that would
+otherwise be grouped as `×N` — see [Grouping identical
+findings](#grouping-identical-findings) for why.
 
 Each finding maps to a single focused next step — for example,
 `CrashLoopBackOff` → check the previous logs; `ImagePullBackOff` → verify the
@@ -680,9 +687,19 @@ tag and credentials; `OOMKilled` → inspect the memory limits. The suggestions
 are deterministic and never model-decided: no finding is paraphrased or
 reordered by an LLM.
 
-This is the first **Theme C** (principled intelligence) slice — the
-deterministic remediation core that a later slice will hand to `--explain` for
-LLM ranking and phrasing (the LLM ranks; it never invents the remediation).
+A kind without its own next step — `ContainerStartError` is the current
+example — gets the generic `describe` command instead, as a property of the
+design rather than an omission: its cause is not knowable from the issue name
+alone, so the command that shows everything is the right one.
+
+A pod can carry more than one finding, and each gets its own next step, printed
+in finding order rather than in priority order — a container that both crash-loops
+and is OOM-killed shows the crash step first.
+
+This was the first **Theme C** (principled intelligence) slice — the
+deterministic remediation core that `--explain` now ranks and phrases: the LLM
+ranks and sequences these commands, and never invents or substitutes one. See
+[Explaining findings](#explaining-findings-opt-in) for how that grounding works.
 
 ### Stuck-terminating resources
 
@@ -918,6 +935,8 @@ a `NotReady` node names its kubelet-reported cause (the `NodeReady` condition's
 reason and message) instead of a bare `NotReady`. The cluster verdict and JSON
 schema are unchanged.
 
+### Grouping identical findings
+
 Findings on the same workload that would print the same lines are collapsed into
 one block with a count, so a twenty-replica Deployment whose replicas all crash
 the same way prints one `⚠` line reading `×20` rather than twenty identical
@@ -1011,6 +1030,8 @@ Pending/Unschedulable, VolumeAttachError (Multi-Attach), VolumeMountError, Resta
 The optional `--suggest` flag prints a deterministic next-step suggestion and
 a read-only `kubectl` investigation command under each finding — offline, no
 API key required.
+
+### Explaining findings (opt-in)
 
 The optional `--explain` flag makes a single API call to summarize findings
 in plain English. The explanation now **opens with a `Fix first:` ranked

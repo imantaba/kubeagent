@@ -1377,8 +1377,10 @@ func TestPrintInventory_TextCutsEvidenceAtARuneBoundary(t *testing.T) {
 	}
 }
 
-// The cap is a terminal-layout decision. JSON is the machine surface and the
-// place an operator goes for the complete cause, so it carries the whole string.
+// The cap is a terminal-layout decision applied only in the text renderer.
+// JSON carries the evidence as stored, uncapped by capEvidence — which is not
+// the same as carrying an unbounded original, since every untrusted value is
+// already bounded at safetext.MaxLine runes on the way in.
 func TestPrintInventory_JSONKeepsTheFullEvidence(t *testing.T) {
 	ev := strings.Repeat("z", 600)
 	var buf bytes.Buffer

@@ -1200,10 +1200,9 @@ const (
 	// A container runtime repeats every layer of a failure — the back-off
 	// preamble, the rpc error, the unpack failure, the resolve failure, the bare
 	// reference — and on a long registry path that composed line runs past the
-	// screen and takes the alignment of the rows below it with it. Real ones
-	// measure a few hundred characters and are the only place the true cause
-	// appears, so the budget is set where it keeps them whole and bites only on
-	// the pathological.
+	// screen. Real ones measure a few hundred characters and are the only place
+	// the true cause appears, so the budget is set where it keeps them whole and
+	// bites only on the pathological.
 	//
 	// This is not safetext.MaxLine restated. That budget bounds each hostile
 	// value at the moment it enters kubeagent; this one bounds the line a
@@ -1220,10 +1219,11 @@ const (
 // capEvidence fits s inside maxEvidence runes, marking the cut when it makes
 // one. Runes, not bytes, so a multi-byte character is never split.
 //
-// Text only: --output json is the machine surface and the place an operator
-// goes for the complete cause, so it carries the whole string. The cap is a
-// terminal-layout decision and narrows no claim — evidence quotes what the
-// cluster said, and the finding's own reason is untouched.
+// Text only: --output json carries the evidence as stored, without this cap.
+// That is not the same as carrying the whole thing — every untrusted API value
+// is bounded at safetext.MaxLine runes on the way in, so a longer message is
+// already short by the time it reaches here. This cap is a terminal-layout
+// decision layered on that bound; the finding's own reason is untouched.
 func capEvidence(s string) string {
 	if len(s) <= maxEvidence { // bytes >= runes, so most lines end here
 		return s

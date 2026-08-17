@@ -991,12 +991,17 @@ measures 508, the extra eight being the indent and the `↳` marker — ending i
 `… (truncated)` when the cap bites. A container runtime repeats every layer of a
 failure — the back-off preamble, the rpc error, the unpack failure, the resolve
 failure, the bare image reference — and on a long registry path that line runs
-past the screen and takes the alignment of the rows below it with it. Real ones
-measure a few hundred characters and arrive whole; the cap is set where it bites
-only on the pathological. The cut is on characters, not bytes, so a multi-byte
-character is never split, and it is marked because a silently shortened error
-reads as the whole error. `--output json` carries the full string — it is the
-machine surface and the place to go for the complete cause.
+past the screen. Real ones measure a few hundred characters and arrive whole;
+the cap is set where it bites only on the pathological. The cut is on
+characters, not bytes, so a multi-byte character is never split, and it is
+marked because a silently shortened error reads as the whole error.
+`--output json` is not subject to the 500-character text cap: it carries the
+evidence as kubeagent stored it. That value is itself bounded — every
+untrusted value from the API server passes through a 512-character limit on
+the way in, ending in `…` when it bites — so an unusually long
+container-runtime message is shortened in every kubeagent surface. When the
+JSON evidence ends in `…` and you need the rest, `kubectl -n <ns> describe pod
+<pod>` has the untruncated original.
 
 ### Agentic investigation (`--investigate`)
 

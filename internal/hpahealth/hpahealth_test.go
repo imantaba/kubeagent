@@ -75,6 +75,46 @@ func TestAssess_Capped(t *testing.T) {
 	}
 }
 
+func TestAssess_ScalingDisabled(t *testing.T) {
+	h := hpa("shop", "batch-hpa", "Deployment", "batch", 6,
+		cond(autoscalingv2.ScalingActive, corev1.ConditionFalse, "ScalingDisabled", "scaling is disabled since the replica count of the target is zero"))
+	is, ok := find(Assess([]autoscalingv2.HorizontalPodAutoscaler{h}), "batch-hpa")
+	if !ok || is.Category != "disabled" {
+		t.Fatalf("want disabled, got %+v", is)
+	}
+	if is.Reason != "scaling is disabled — scaling is disabled since the replica count of the target is zero" {
+		t.Errorf("reason = %q", is.Reason)
+	}
+}
+
+func TestAssess_AmbiguousSelector(t *testing.T) {
+	h := hpa("shop", "dup-hpa", "Deployment", "dup", 6,
+		cond(autoscalingv2.ScalingActive, corev1.ConditionFalse, "AmbiguousSelector", "selector overlaps with hpa other-hpa"))
+	is, ok := find(Assess([]autoscalingv2.HorizontalPodAutoscaler{h}), "dup-hpa")
+	if !ok || is.Category != "ambiguous" {
+		t.Fatalf("want ambiguous, got %+v", is)
+	}
+	if is.Reason != "two HPAs target the same pods — selector overlaps with hpa other-hpa" {
+		t.Errorf("reason = %q", is.Reason)
+	}
+}
+
+// TestAssess_UnknownScalingActiveReasonStaysMetrics pins the default arm: a
+// reason the table does not name must keep the pre-existing "metrics"
+// behaviour exactly, so a future edit that widens the table by accident is
+// caught here.
+func TestAssess_UnknownScalingActiveReasonStaysMetrics(t *testing.T) {
+	h := hpa("shop", "weird-hpa", "Deployment", "weird", 6,
+		cond(autoscalingv2.ScalingActive, corev1.ConditionFalse, "SomeFutureControllerReason", "a reason this table does not name"))
+	is, ok := find(Assess([]autoscalingv2.HorizontalPodAutoscaler{h}), "weird-hpa")
+	if !ok || is.Category != "metrics" {
+		t.Fatalf("want metrics (the default), got %+v", is)
+	}
+	if is.Reason != "can't fetch metrics — a reason this table does not name" {
+		t.Errorf("reason = %q", is.Reason)
+	}
+}
+
 func TestAssess_UnableBeatsMetrics(t *testing.T) {
 	h := hpa("a", "both", "Deployment", "x", 3,
 		cond(autoscalingv2.AbleToScale, corev1.ConditionFalse, "FailedGetScale", "no scale"),

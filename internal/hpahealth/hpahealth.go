@@ -1,5 +1,6 @@
 // Package hpahealth flags HorizontalPodAutoscalers that cannot scale as intended —
-// one that can't fetch metrics, can't act on its scale target, or is pinned at
+// one that can't fetch metrics, can't act on its scale target, has scaling
+// disabled, targets pods another HPA already claims, or is pinned at
 // maxReplicas while demand exceeds the cap — and names why. Pure and read-only:
 // the caller supplies the HPA objects; every signal comes from the HPA's own spec
 // and status conditions. Advisory (never affects the cluster verdict).
@@ -21,7 +22,7 @@ type Issue struct {
 	Namespace string `json:"namespace"`
 	Name      string `json:"name"`
 	Target    string `json:"target"`   // "Deployment/api" from spec.scaleTargetRef
-	Category  string `json:"category"` // "unable" | "metrics" | "capped"
+	Category  string `json:"category"` // "unable" | "metrics" | "disabled" | "ambiguous" | "capped"
 	Reason    string `json:"reason"`
 }
 
@@ -68,14 +69,29 @@ func reason(prefix, msg string) string {
 	return prefix
 }
 
-// classify returns the first matching category (unable → metrics → capped) for an
-// HPA, or ok=false when it is healthy/benign.
+// classify returns the first matching category (unable → ScalingActive →
+// capped) for an HPA, or ok=false when it is healthy/benign. disabled and
+// ambiguous are not new precedence steps: they are sub-cases of the
+// ScalingActive step, distinguished by the condition's own reason. Every
+// ScalingActive reason this file does not name still falls through to
+// metrics, exactly as it did before those two sub-cases existed.
 func classify(h autoscalingv2.HorizontalPodAutoscaler) (category, msg string, ok bool) {
 	if c := condition(h, autoscalingv2.AbleToScale); c != nil && c.Status == corev1.ConditionFalse {
 		return "unable", reason("can't scale", safetext.Line(c.Message)), true
 	}
 	if c := condition(h, autoscalingv2.ScalingActive); c != nil && c.Status == corev1.ConditionFalse {
-		return "metrics", reason("can't fetch metrics", safetext.Line(c.Message)), true
+		// The reason comparison is a matching decision, so — like the
+		// TooManyReplicas comparison below — it runs on the raw c.Reason: a
+		// control character spliced into the reason must not make it stop
+		// matching.
+		switch c.Reason {
+		case "ScalingDisabled":
+			return "disabled", reason("scaling is disabled", safetext.Line(c.Message)), true
+		case "AmbiguousSelector":
+			return "ambiguous", reason("two HPAs target the same pods", safetext.Line(c.Message)), true
+		default:
+			return "metrics", reason("can't fetch metrics", safetext.Line(c.Message)), true
+		}
 	}
 	// "TooManyReplicas" is the literal reason the upstream HPA controller sets on
 	// ScalingLimited when it clamps the desired count down to maxReplicas. The

@@ -136,19 +136,23 @@ func TestFindingsFromResult_UsesCamelCaseFindingVocabulary(t *testing.T) {
 			{Namespace: "shop", Name: "unable-hpa", Category: "unable", Reason: "r5"},
 			{Namespace: "shop", Name: "metrics-hpa", Category: "metrics", Reason: "r6"},
 			{Namespace: "shop", Name: "capped-hpa", Category: "capped", Reason: "r7"},
+			{Namespace: "shop", Name: "disabled-hpa", Category: "disabled", Reason: "r8"},
+			{Namespace: "shop", Name: "ambiguous-hpa", Category: "ambiguous", Reason: "r9"},
 		},
 	}
 
 	got := findingsFromResult(res)
 	want := map[string]string{
-		"legacy-ns":   "StuckTerminating",
-		"unsat":       "PDBUnsatisfiable",
-		"stl":         "PDBStale",
-		"blk":         "PDBBlocked",
-		"sgl":         "PDBSingleton",
-		"unable-hpa":  "HPAUnableToScale",
-		"metrics-hpa": "HPAMetricsFailed",
-		"capped-hpa":  "HPACapped",
+		"legacy-ns":     "StuckTerminating",
+		"unsat":         "PDBUnsatisfiable",
+		"stl":           "PDBStale",
+		"blk":           "PDBBlocked",
+		"sgl":           "PDBSingleton",
+		"unable-hpa":    "HPAUnableToScale",
+		"metrics-hpa":   "HPAMetricsFailed",
+		"capped-hpa":    "HPACapped",
+		"disabled-hpa":  "HPAScalingDisabled",
+		"ambiguous-hpa": "HPAAmbiguousSelector",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("findingsFromResult() = %d findings, want %d: %+v", len(got), len(want), got)

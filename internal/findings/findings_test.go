@@ -17,6 +17,8 @@ import (
 	"github.com/imantaba/kubeagent/internal/svchealth"
 	"github.com/imantaba/kubeagent/internal/termhealth"
 
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -191,19 +193,23 @@ func TestFlattenUsesCamelCaseFindingVocabulary(t *testing.T) {
 			{Namespace: "shop", Name: "unable-hpa", Category: "unable", Reason: "r5"},
 			{Namespace: "shop", Name: "metrics-hpa", Category: "metrics", Reason: "r6"},
 			{Namespace: "shop", Name: "capped-hpa", Category: "capped", Reason: "r7"},
+			{Namespace: "shop", Name: "disabled-hpa", Category: "disabled", Reason: "r8"},
+			{Namespace: "shop", Name: "ambiguous-hpa", Category: "ambiguous", Reason: "r9"},
 		},
 	}
 
 	got := Flatten(res)
 	want := map[string]string{
-		"legacy-ns":   "StuckTerminating",
-		"unsat":       "PDBUnsatisfiable",
-		"stl":         "PDBStale",
-		"blk":         "PDBBlocked",
-		"sgl":         "PDBSingleton",
-		"unable-hpa":  "HPAUnableToScale",
-		"metrics-hpa": "HPAMetricsFailed",
-		"capped-hpa":  "HPACapped",
+		"legacy-ns":     "StuckTerminating",
+		"unsat":         "PDBUnsatisfiable",
+		"stl":           "PDBStale",
+		"blk":           "PDBBlocked",
+		"sgl":           "PDBSingleton",
+		"unable-hpa":    "HPAUnableToScale",
+		"metrics-hpa":   "HPAMetricsFailed",
+		"capped-hpa":    "HPACapped",
+		"disabled-hpa":  "HPAScalingDisabled",
+		"ambiguous-hpa": "HPAAmbiguousSelector",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("Flatten returned %d findings, want %d: %+v", len(got), len(want), got)
@@ -248,6 +254,58 @@ func TestFlattenPDBSingletonFromAssess(t *testing.T) {
 	}
 	if got[0].Issue != "PDBSingleton" {
 		t.Errorf("Issue = %q, want PDBSingleton", got[0].Issue)
+	}
+}
+
+// TestFlattenScalingDisabledAndAmbiguousSelectorFromAssess composes
+// hpahealth.Assess with Flatten over two real HorizontalPodAutoscaler
+// objects, rather than hand-built hpahealth.Issue values: it proves Assess
+// actually emits the literals "disabled" and "ambiguous" that
+// hpaCategoryToIssue keys on, not just that the map has the entries.
+func TestFlattenScalingDisabledAndAmbiguousSelectorFromAssess(t *testing.T) {
+	disabled := autoscalingv2.HorizontalPodAutoscaler{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "batch-hpa"},
+		Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
+			ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{Kind: "Deployment", Name: "batch"},
+			MaxReplicas:    6,
+		},
+		Status: autoscalingv2.HorizontalPodAutoscalerStatus{Conditions: []autoscalingv2.HorizontalPodAutoscalerCondition{
+			{Type: autoscalingv2.ScalingActive, Status: corev1.ConditionFalse, Reason: "ScalingDisabled", Message: "scaling is disabled"},
+		}},
+	}
+	ambiguous := autoscalingv2.HorizontalPodAutoscaler{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "dup-hpa"},
+		Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
+			ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{Kind: "Deployment", Name: "dup"},
+			MaxReplicas:    6,
+		},
+		Status: autoscalingv2.HorizontalPodAutoscalerStatus{Conditions: []autoscalingv2.HorizontalPodAutoscalerCondition{
+			{Type: autoscalingv2.ScalingActive, Status: corev1.ConditionFalse, Reason: "AmbiguousSelector", Message: "selector overlaps with another HPA"},
+		}},
+	}
+
+	res := scan.Result{HPAIssues: hpahealth.Assess([]autoscalingv2.HorizontalPodAutoscaler{disabled, ambiguous})}
+	got := Flatten(res)
+	if len(got) != 2 {
+		t.Fatalf("Flatten returned %d findings, want 2: %+v", len(got), got)
+	}
+	want := map[string]string{"batch-hpa": "HPAScalingDisabled", "dup-hpa": "HPAAmbiguousSelector"}
+	seen := make(map[string]bool, len(got))
+	for _, f := range got {
+		wantIssue, ok := want[f.Name]
+		if !ok {
+			t.Errorf("unexpected finding for %s: %+v", f.Name, f)
+			continue
+		}
+		if f.Issue != wantIssue {
+			t.Errorf("%s: Issue = %q, want %q", f.Name, f.Issue, wantIssue)
+		}
+		seen[f.Name] = true
+	}
+	for name := range want {
+		if !seen[name] {
+			t.Errorf("missing finding for %s", name)
+		}
 	}
 }
 

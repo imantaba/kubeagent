@@ -31,9 +31,11 @@ func pdbIssue(category string) string {
 // hpaCategoryToIssue is pdbCategoryToIssue's HPA counterpart, same
 // fallback-on-miss rule.
 var hpaCategoryToIssue = map[string]string{
-	"unable":  "HPAUnableToScale",
-	"metrics": "HPAMetricsFailed",
-	"capped":  "HPACapped",
+	"unable":    "HPAUnableToScale",
+	"metrics":   "HPAMetricsFailed",
+	"disabled":  "HPAScalingDisabled",
+	"ambiguous": "HPAAmbiguousSelector",
+	"capped":    "HPACapped",
 }
 
 // hpaIssue applies hpaCategoryToIssue, falling back to the raw category on a

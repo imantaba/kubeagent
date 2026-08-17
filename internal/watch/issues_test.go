@@ -84,6 +84,8 @@ func TestIssueKeys_AgreesWithGateOnStuckTerminatingPDBAndHPAVocabulary(t *testin
 			{Namespace: "shop", Name: "unable-hpa", Category: "unable", Reason: "r5"},
 			{Namespace: "shop", Name: "metrics-hpa", Category: "metrics", Reason: "r6"},
 			{Namespace: "shop", Name: "capped-hpa", Category: "capped", Reason: "r7"},
+			{Namespace: "shop", Name: "disabled-hpa", Category: "disabled", Reason: "r8"},
+			{Namespace: "shop", Name: "ambiguous-hpa", Category: "ambiguous", Reason: "r9"},
 		},
 	}
 
@@ -96,7 +98,7 @@ func TestIssueKeys_AgreesWithGateOnStuckTerminatingPDBAndHPAVocabulary(t *testin
 		gateIssues[f.Name] = f.Issue
 	}
 
-	names := []string{"legacy-ns", "unsat", "stl", "blk", "sgl", "unable-hpa", "metrics-hpa", "capped-hpa"}
+	names := []string{"legacy-ns", "unsat", "stl", "blk", "sgl", "unable-hpa", "metrics-hpa", "capped-hpa", "disabled-hpa", "ambiguous-hpa"}
 	for _, name := range names {
 		w, ok := watchIssues[name]
 		if !ok {

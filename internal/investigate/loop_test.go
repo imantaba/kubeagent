@@ -157,3 +157,41 @@ func TestRunLoop_BudgetSlicesWithinATurn(t *testing.T) {
 		t.Errorf("narrative = %q, want %q", narrative, "done")
 	}
 }
+
+// TestRunLoop_AnswersEveryToolUseEvenWhenOverBudget proves R219: when a
+// single reply requests more tool_use blocks than the remaining budget
+// allows, the loop must still produce one tool_result per tool_use -- the
+// over-budget ones refused rather than dropped. The previous behaviour
+// (break, dropping the remainder) sends the next request fewer tool_result
+// blocks than the model's own prior message had tool_use blocks, which the
+// Anthropic API rejects as malformed; the live evidence was a real
+// investigation landing on exactly maxToolCalls with more calls pending.
+//
+// One reply requests 20 tool_use blocks -- 8 (maxToolCalls) fit the budget,
+// 12 do not. Only 8 reads may execute (the budget is still enforced), but
+// all 20 must reach the model as answered.
+func TestRunLoop_AnswersEveryToolUseEvenWhenOverBudget(t *testing.T) {
+	const n = 20
+	calls := make([]toolCall, n)
+	for i := range calls {
+		calls[i] = mkCall("describe", map[string]string{"kind": "pod", "namespace": "shop", "name": fmt.Sprintf("p%d", i)})
+	}
+	conv := &fakeConv{t: t, replies: []reply{
+		{Calls: calls},
+		{Text: "done", Done: true},
+	}}
+	exec := &countingExec{}
+	narrative, _, err := runLoop(context.Background(), conv, exec, NewScope(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exec.n != maxToolCalls {
+		t.Errorf("executed %d reads, want exactly maxToolCalls=%d -- the budget must still be enforced", exec.n, maxToolCalls)
+	}
+	if conv.gotResult != n {
+		t.Errorf("model was sent %d tool_result blocks for %d tool_use blocks in its own prior message -- every tool_use must be answered", conv.gotResult, n)
+	}
+	if narrative != "done" {
+		t.Errorf("narrative = %q, want %q", narrative, "done")
+	}
+}

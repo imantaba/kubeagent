@@ -62,7 +62,13 @@ func runLoop(ctx context.Context, conv conversation, exec executor, scope *Scope
 		var results []toolResult
 		for _, c := range rep.Calls {
 			if calls >= maxToolCalls {
-				break
+				// Refuse rather than drop: the model's own prior message
+				// requested this tool_use, and the API rejects a request
+				// whose tool_result count does not match it. No read
+				// happens for a refused call -- the budget is still
+				// enforced -- but the request stays well-formed.
+				results = append(results, errResult(c.ID, "tool-call budget exhausted for this investigation"))
+				continue
 			}
 			calls++
 			trail = append(trail, label(c))

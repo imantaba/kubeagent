@@ -327,6 +327,74 @@ func TestRun_ExplainLocalNeedsModel(t *testing.T) {
 	}
 }
 
+// TestRun_ExplainGuardsDoNotFireForInvestigate proves R207: both --explain-only
+// precondition guards -- the key-or-endpoint check, and the local-model check
+// nested inside "an endpoint is set" -- must not fire when --investigate is
+// what actually selected the model path. --investigate supersedes --explain
+// and never reads the local model name, so an --explain-only requirement must
+// never block it, even when --explain is also set on the same command line.
+func TestRun_ExplainGuardsDoNotFireForInvestigate(t *testing.T) {
+	t.Run("neither key nor endpoint set, both flags: error names --investigate not --explain", func(t *testing.T) {
+		t.Setenv("ANTHROPIC_API_KEY", "")
+		t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "")
+		err := Run([]string{"scan", "--investigate", "--explain"})
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+		if !strings.Contains(err.Error(), "--investigate") {
+			t.Errorf("want the error to name --investigate (it supersedes --explain), got: %v", err)
+		}
+		if strings.Contains(err.Error(), "--explain") {
+			t.Errorf("error must not name --explain when --investigate is also set: %v", err)
+		}
+	})
+
+	t.Run("neither set, --explain alone: error names --explain", func(t *testing.T) {
+		t.Setenv("ANTHROPIC_API_KEY", "")
+		t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "")
+		err := Run([]string{"scan", "--explain"})
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+		if !strings.Contains(err.Error(), "--explain") {
+			t.Errorf("want the error to name --explain, got: %v", err)
+		}
+	})
+
+	t.Run("key and endpoint both set, no model, both flags: not the needs-model error", func(t *testing.T) {
+		// --investigate never reads explainModel -- the local-model guard is
+		// --explain's alone -- so with an Anthropic key present, --investigate
+		// must be able to proceed to cluster-connect even though the local
+		// endpoint's model requirement (which only --explain would need) is
+		// unmet.
+		t.Setenv("ANTHROPIC_API_KEY", "test-key")
+		t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "http://localhost:11434/v1")
+		t.Setenv("KUBEAGENT_MODEL", "")
+		err := Run([]string{"scan", "--investigate", "--explain", "--kubeconfig", "/nonexistent/path"})
+		if err == nil {
+			t.Fatal("expected a cluster-connect error for a nonexistent kubeconfig")
+		}
+		if strings.Contains(err.Error(), "needs --model") {
+			t.Errorf("the local-model guard must not fire when --investigate is set: %v", err)
+		}
+		if !strings.Contains(err.Error(), "loading kubeconfig") {
+			t.Errorf("expected the run to reach cluster-connect (proving both guards were skipped), got: %v", err)
+		}
+	})
+
+	t.Run("no key, endpoint set, no model, --explain alone: still the needs-model error", func(t *testing.T) {
+		// Pins the single-flag behavior: with only --explain set, the
+		// local-model guard is unchanged by this fix.
+		t.Setenv("ANTHROPIC_API_KEY", "")
+		t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "http://localhost:11434/v1")
+		t.Setenv("KUBEAGENT_MODEL", "")
+		err := Run([]string{"scan", "--explain"})
+		if err == nil || !strings.Contains(err.Error(), "needs --model") {
+			t.Fatalf("want the needs-model error, got %v", err)
+		}
+	})
+}
+
 func TestRun_ModelFlagIsRecognized(t *testing.T) {
 	// --model must be a known flag: with it set and no API key, the error is
 	// the fail-fast key error, NOT "flag provided but not defined".

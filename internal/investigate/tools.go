@@ -24,7 +24,7 @@ func toolSpecs() []toolSpec {
 				"namespace": prop("the object's namespace (empty for a node)"),
 				"name":      prop("the object's name"),
 			},
-			Required: []string{"kind", "name"},
+			Required: []string{"kind", "namespace", "name"},
 		},
 		{
 			Name:        "get_events",

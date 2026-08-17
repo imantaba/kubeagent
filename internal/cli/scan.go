@@ -90,7 +90,7 @@ func bindScanFlags(cmd *cobra.Command, o *scanOptions) {
 	f.StringVar(&o.output, "output", "text", "output format: text | json | html")
 	f.BoolVar(&o.explain, "explain", false, "summarize findings via one LLM call (needs ANTHROPIC_API_KEY, or KUBEAGENT_EXPLAIN_ENDPOINT for a local OpenAI-compatible model)")
 	f.BoolVar(&o.investigate, "investigate", false, "agentic read-only investigation of findings via a bounded tool-use loop (needs ANTHROPIC_API_KEY; supersedes --explain)")
-	f.StringVar(&o.model, "model", "", "model for --explain / --investigate (default: $KUBEAGENT_MODEL or claude-opus-4-8; the local model name when KUBEAGENT_EXPLAIN_ENDPOINT is set)")
+	f.StringVar(&o.model, "model", "", "model for --explain / --investigate (default: $KUBEAGENT_MODEL, else claude-opus-4-8). --explain with KUBEAGENT_EXPLAIN_ENDPOINT set takes the local model name here instead; --investigate is Anthropic-only and always sends this value to the Anthropic API.")
 	f.BoolVar(&o.includeCron, "include-cron", false, "include CronJobs in the report")
 	f.BoolVar(&o.includeRestarts, "include-restarts", false, "include workloads that are healthy now but have restarted")
 	f.BoolVar(&o.lintSecrets, "lint-secrets", false, "scan ConfigMaps and pod env for credentials stored in the clear (never prints values)")
@@ -182,9 +182,12 @@ func runScan(o scanOptions) error {
 	if o.securityVerbose && !o.security {
 		return fmt.Errorf("--security-verbose requires --security")
 	}
-	// --explain needs Anthropic, or a local OpenAI-compatible endpoint; check before scanning.
+	// --explain needs Anthropic, or a local OpenAI-compatible endpoint; check
+	// before scanning. --investigate supersedes --explain (checked below,
+	// separately), so this guard is --explain's alone: with both flags set,
+	// the --investigate guard is what must fire, not this one.
 	explainEndpoint := os.Getenv("KUBEAGENT_EXPLAIN_ENDPOINT")
-	if o.explain && explainEndpoint == "" && os.Getenv("ANTHROPIC_API_KEY") == "" {
+	if !o.investigate && o.explain && explainEndpoint == "" && os.Getenv("ANTHROPIC_API_KEY") == "" {
 		return fmt.Errorf("--explain needs ANTHROPIC_API_KEY, or set KUBEAGENT_EXPLAIN_ENDPOINT for a local OpenAI-compatible model")
 	}
 	// --investigate requires the Anthropic API key directly; local endpoints do not
@@ -201,7 +204,11 @@ func runScan(o scanOptions) error {
 	var explainModel string
 	if explainEndpoint != "" {
 		explainModel = firstNonEmpty(o.model, os.Getenv("KUBEAGENT_MODEL")) // no Anthropic default for a local model
-		if o.explain && explainModel == "" {
+		// Same reasoning as the guard above: --investigate never reads
+		// explainModel (the tool-use loop is Anthropic-only), so this
+		// requirement is --explain's alone and must not fire when
+		// --investigate is what actually selected the model path.
+		if !o.investigate && o.explain && explainModel == "" {
 			return fmt.Errorf("--explain with KUBEAGENT_EXPLAIN_ENDPOINT needs --model (or KUBEAGENT_MODEL) set to the local model name")
 		}
 	} else {

@@ -45,6 +45,19 @@ func TestAssess_Unsatisfiable(t *testing.T) {
 	}
 }
 
+func TestAssess_UnsatisfiableOverAsk(t *testing.T) {
+	// minAvailable 5 over only 3 pods → over-ask, not the equal case: the
+	// budget demands more healthy pods than the workload even has.
+	got := Assess([]policyv1.PodDisruptionBudget{pdb("shop", "overask", 5, 3, 5, 3, 0)})
+	is, ok := find(got, "overask")
+	if !ok || is.Category != "unsatisfiable" {
+		t.Fatalf("want unsatisfiable, got %+v", got)
+	}
+	if is.Reason != "requires 5 healthy pods but only 3 exist — no voluntary eviction can ever proceed; every node drain will hang" {
+		t.Errorf("reason = %q", is.Reason)
+	}
+}
+
 func TestAssess_Blocking(t *testing.T) {
 	// disruptionsAllowed 0 with only 1/2 guarded pods healthy.
 	got := Assess([]policyv1.PodDisruptionBudget{pdb("shop", "cache", 2, 3, 2, 1, 0)})

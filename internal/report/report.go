@@ -1152,13 +1152,14 @@ type findingGroup struct {
 // apart with. Only the text output collapses: the JSON document is the one
 // that gets forwarded, and it still carries one finding per pod.
 //
-// The key is the whole rendered block bar the evidence line, so a group can
-// never print fewer lines than the findings it stands for. Everything that
+// The key is the whole rendered block bar the evidence line. Everything that
 // varies per pod and is not evidence keeps the findings apart: a --suggest
 // command names the pod, a resources block names the container's limits, a log
 // excerpt is that pod's own. Evidence is the one part allowed to vary inside a
 // group, and every distinct value is printed — which is what shows the restart
-// counts when they differ, since that is where a restart count lives.
+// counts when they differ, since that is where a restart count lives. A group
+// therefore prints 1+len(distinct evidence) lines, which is fewer than the
+// findings it stands for when they agree; count is what carries that number.
 func groupFindings(findings []diagnose.Finding, suggest bool) []findingGroup {
 	var groups []findingGroup
 	at := map[string]int{} // block key -> index into groups

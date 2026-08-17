@@ -1181,6 +1181,46 @@ func TestPrintInventory_TextCollapsesIdenticalFindings(t *testing.T) {
 	}
 }
 
+// Six is not two: every earlier collapse test in this file uses a pair. One
+// head line must stand for all six identical findings, and the collapse must
+// not grow a second evidence line where the six agree.
+func TestPrintInventory_TextCollapsesSixIdenticalFindingsToOneHeadAndOneEvidence(t *testing.T) {
+	ev := `container "app", restartCount=1`
+	out := renderFindings(t, false,
+		crashFinding("web-a", ev), crashFinding("web-b", ev), crashFinding("web-c", ev),
+		crashFinding("web-d", ev), crashFinding("web-e", ev), crashFinding("web-f", ev),
+	)
+	if got := strings.Count(out, "⚠ CrashLoopBackOff"); got != 1 {
+		t.Errorf("want exactly one head line for six identical findings, got %d:\n%s", got, out)
+	}
+	if !strings.Contains(out, "⚠ CrashLoopBackOff: Container repeatedly crashes after starting ×6") {
+		t.Errorf("want the count of six on the head line:\n%s", out)
+	}
+	if got := strings.Count(out, "↳ "+ev); got != 1 {
+		t.Errorf("want exactly one evidence line for six identical findings, got %d:\n%s", got, out)
+	}
+}
+
+// Three distinct evidence values print one head carrying the count and one
+// ↳ line per distinct value — the case where a block prints fewer lines than
+// the findings it stands for becomes visible.
+func TestPrintInventory_TextThreeDistinctEvidenceLinesUnderOneHead(t *testing.T) {
+	out := renderFindings(t, false,
+		crashFinding("web-a", `container "app", restartCount=1`),
+		crashFinding("web-b", `container "app", restartCount=2`),
+		crashFinding("web-c", `container "app", restartCount=3`),
+	)
+	if got := strings.Count(out, "⚠ CrashLoopBackOff"); got != 1 {
+		t.Errorf("want exactly one head line for three findings, got %d:\n%s", got, out)
+	}
+	if !strings.Contains(out, "⚠ CrashLoopBackOff: Container repeatedly crashes after starting ×3") {
+		t.Errorf("want the count of three on the head line:\n%s", out)
+	}
+	if got := strings.Count(out, "↳ "); got != 3 {
+		t.Errorf("want exactly three evidence lines for three distinct findings, got %d:\n%s", got, out)
+	}
+}
+
 // The count is the point of the collapse, so a lone finding must not grow one.
 func TestPrintInventory_TextOmitsTheCountForOneFinding(t *testing.T) {
 	out := renderFindings(t, false, crashFinding("web-abc", `container "app", restartCount=1`))
@@ -1218,9 +1258,10 @@ func TestPrintInventory_TextDoesNotCollapseUnlikeFindings(t *testing.T) {
 	}
 }
 
-// A --suggest command names the pod, so two pods have two different commands.
-// The collapse keys on the whole block for exactly this reason: it may never
-// print fewer lines than the findings it stands for.
+// A --suggest command names the pod, so two pods have two different
+// commands. The collapse keys on the whole block, so two pods whose
+// --suggest commands differ do not collapse: each pod's own command
+// survives.
 func TestPrintInventory_TextSuggestKeepsEveryPodsCommand(t *testing.T) {
 	ev := `container "app", restartCount=1`
 	out := renderFindings(t, true, crashFinding("web-abc", ev), crashFinding("web-def", ev))

@@ -307,6 +307,57 @@ func TestAssess_NamespaceConditionUnaffectedBySecondPass(t *testing.T) {
 	}
 }
 
+func TestAssess_NamespaceFinalizersRemainingOutranksContentRemaining(t *testing.T) {
+	ns := corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: "ns", DeletionTimestamp: delTime(1 * time.Hour)},
+		Status: corev1.NamespaceStatus{Conditions: []corev1.NamespaceCondition{
+			{Type: "NamespaceContentRemaining", Status: corev1.ConditionTrue, Message: "some resources remain"},
+			{Type: "NamespaceFinalizersRemaining", Status: corev1.ConditionTrue, Message: "some content has finalizers remaining: example.com/cleanup"},
+		}},
+	}
+	got := Assess([]corev1.Namespace{ns}, nil, nil, nil, 2*time.Minute, now)
+	if len(got) != 1 {
+		t.Fatalf("want one issue, got %+v", got)
+	}
+	if !contains(got[0].Reason, "NamespaceFinalizersRemaining") {
+		t.Errorf("Reason = %q, want FinalizersRemaining to outrank ContentRemaining", got[0].Reason)
+	}
+}
+
+func TestAssess_NamespaceDeletionContentFailureOutranksFinalizersRemaining(t *testing.T) {
+	ns := corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: "ns", DeletionTimestamp: delTime(1 * time.Hour)},
+		Status: corev1.NamespaceStatus{Conditions: []corev1.NamespaceCondition{
+			{Type: "NamespaceContentRemaining", Status: corev1.ConditionTrue, Message: "some resources remain"},
+			{Type: "NamespaceFinalizersRemaining", Status: corev1.ConditionTrue, Message: "some content has finalizers remaining: example.com/cleanup"},
+			{Type: "NamespaceDeletionContentFailure", Status: corev1.ConditionTrue, Message: "discovery failed"},
+		}},
+	}
+	got := Assess([]corev1.Namespace{ns}, nil, nil, nil, 2*time.Minute, now)
+	if len(got) != 1 {
+		t.Fatalf("want one issue, got %+v", got)
+	}
+	if !contains(got[0].Reason, "NamespaceDeletionContentFailure") {
+		t.Errorf("Reason = %q, want DeletionContentFailure to outrank both others", got[0].Reason)
+	}
+}
+
+func TestAssess_NamespaceContentRemainingAloneUnchanged(t *testing.T) {
+	ns := corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: "ns", DeletionTimestamp: delTime(1 * time.Hour)},
+		Status: corev1.NamespaceStatus{Conditions: []corev1.NamespaceCondition{
+			{Type: "NamespaceContentRemaining", Status: corev1.ConditionTrue, Message: "some resources remain"},
+		}},
+	}
+	got := Assess([]corev1.Namespace{ns}, nil, nil, nil, 2*time.Minute, now)
+	if len(got) != 1 {
+		t.Fatalf("want one issue, got %+v", got)
+	}
+	if !contains(got[0].Reason, "NamespaceContentRemaining") {
+		t.Errorf("Reason = %q, want ContentRemaining reported when it is the only True condition", got[0].Reason)
+	}
+}
+
 func TestAssess_SubMinuteThresholdRendersUnderOneMinute(t *testing.T) {
 	pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "quick", DeletionTimestamp: delTime(45 * time.Second)}}
 	got := Assess(nil, []corev1.Pod{pod}, nil, nil, 30*time.Second, now)

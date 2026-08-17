@@ -29,7 +29,7 @@ type Issue struct {
 
 // nsConditionOrder lists the blocking namespace conditions in the order to report.
 var nsConditionOrder = []corev1.NamespaceConditionType{
-	"NamespaceDeletionContentFailure", "NamespaceContentRemaining", "NamespaceFinalizersRemaining",
+	"NamespaceDeletionContentFailure", "NamespaceFinalizersRemaining", "NamespaceContentRemaining",
 }
 
 // Assess flags every resource whose deletion has been pending longer than

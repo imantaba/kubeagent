@@ -98,6 +98,9 @@ func classify(h autoscalingv2.HorizontalPodAutoscaler) (category, msg string, ok
 	// comparison is a matching decision, so it runs on the raw value — a control
 	// character spliced into the reason must not make it stop matching.
 	if c := condition(h, autoscalingv2.ScalingLimited); c != nil && c.Status == corev1.ConditionTrue && c.Reason == "TooManyReplicas" {
+		if h.Status.CurrentReplicas < h.Spec.MaxReplicas {
+			return "capped", fmt.Sprintf("at %d of maxReplicas %d — desired exceeds the cap", h.Status.CurrentReplicas, h.Spec.MaxReplicas), true
+		}
 		return "capped", fmt.Sprintf("pinned at maxReplicas %d — desired exceeds the cap", h.Spec.MaxReplicas), true
 	}
 	return "", "", false

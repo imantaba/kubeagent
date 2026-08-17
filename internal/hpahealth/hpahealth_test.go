@@ -63,15 +63,33 @@ func TestAssess_Metrics(t *testing.T) {
 	}
 }
 
+// TestAssess_Capped covers both shapes of the ScalingLimited/capped arm: pinned
+// exactly at the cap, and clamped below it because demand has since eased.
+// CurrentReplicas is set explicitly in both cases (8 and 10, against
+// MaxReplicas 10) rather than left at hpa()'s zero value — a fixture whose
+// branch depends on an unset field proves nothing, and TooManyReplicas with
+// zero current replicas is a state the upstream HPA controller cannot produce.
 func TestAssess_Capped(t *testing.T) {
-	h := hpa("ops", "ingest-hpa", "Deployment", "ingest", 10,
-		cond(autoscalingv2.ScalingLimited, corev1.ConditionTrue, "TooManyReplicas", "the desired replica count is more than the maximum replica count"))
-	is, ok := find(Assess([]autoscalingv2.HorizontalPodAutoscaler{h}), "ingest-hpa")
-	if !ok || is.Category != "capped" {
-		t.Fatalf("want capped, got %+v", is)
-	}
-	if is.Reason != "pinned at maxReplicas 10 — desired exceeds the cap" {
-		t.Errorf("reason = %q", is.Reason)
+	for _, tc := range []struct {
+		name            string
+		currentReplicas int32
+		wantReason      string
+	}{
+		{"AtCap", 10, "pinned at maxReplicas 10 — desired exceeds the cap"},
+		{"BelowCap", 8, "at 8 of maxReplicas 10 — desired exceeds the cap"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := hpa("ops", "ingest-hpa", "Deployment", "ingest", 10,
+				cond(autoscalingv2.ScalingLimited, corev1.ConditionTrue, "TooManyReplicas", "the desired replica count is more than the maximum replica count"))
+			h.Status.CurrentReplicas = tc.currentReplicas
+			is, ok := find(Assess([]autoscalingv2.HorizontalPodAutoscaler{h}), "ingest-hpa")
+			if !ok || is.Category != "capped" {
+				t.Fatalf("want capped, got %+v", is)
+			}
+			if is.Reason != tc.wantReason {
+				t.Errorf("reason = %q, want %q", is.Reason, tc.wantReason)
+			}
+		})
 	}
 }
 

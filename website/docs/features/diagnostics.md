@@ -705,14 +705,17 @@ ranks and sequences these commands, and never invents or substitutes one. See
 
 `scan` flags a resource wedged in `Terminating` — deletion pending longer than
 two minutes by default (see `KUBEAGENT_TERMINATING_THRESHOLD`) — and names the
-blocker: a **Namespace** stuck on a finalizer or a
-downstream condition (`NamespaceFinalizersRemaining` / `NamespaceContentRemaining`
-/ `NamespaceDeletionContentFailure`, message shown as-is), a **Pod** stuck past
-its grace period (its finalizers, or "deletion not confirmed" when the node is
-gone), or a **PVC** held by `pvc-protection` (cross-referenced to a pod still
-mounting it). Read-only and advisory — it never removes a finalizer (that is a
-`--fix` concern) and never changes the cluster verdict. The daemon exposes
-`kubeagent_resources_stuck_terminating`.
+blocker: a **Namespace** stuck on a finalizer or a downstream condition
+(`NamespaceDeletionContentFailure` / `NamespaceFinalizersRemaining` /
+`NamespaceContentRemaining`, message sanitized and trimmed), a **Pod** stuck
+past its grace period (its own finalizers, or the node named as NotReady or no
+longer existing when node data resolves `spec.nodeName` — an unset name, no
+node data, or a matched Ready node keeps the generic "deletion not confirmed"
+fallback), or a **PVC** held by `pvc-protection` (cross-referenced to the pod
+or pods still mounting it) or by any other finalizer. Read-only and advisory —
+it never removes a finalizer (removing one is a deliberate manual act, outside
+kubeagent's remediation allowlist) and never changes the cluster verdict. The
+daemon exposes `kubeagent_resources_stuck_terminating`.
 
 ### PodDisruptionBudget-blocked drains
 

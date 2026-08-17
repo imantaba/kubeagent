@@ -31,6 +31,13 @@ type Finding struct {
 	Detail          string `json:"detail,omitempty"`
 	Confidence      string `json:"confidence,omitempty"`
 	RemediationHint string `json:"remediationHint,omitempty"`
+	// LogCause is the plain-language cause scan --logs classified from the
+	// container's previous instance, carried across only when the server was
+	// started with --logs and this finding was one --logs actually probed.
+	// LogExcerpt — the raw log line — deliberately has no counterpart here:
+	// raw container output must never reach an MCP tool result, the same
+	// split the --explain prompt path already enforces.
+	LogCause string `json:"logCause,omitempty"`
 }
 
 func splitNamespacedName(s string) (namespace, name string) {
@@ -55,6 +62,7 @@ func fromDiagnose(f diagnose.Finding) Finding {
 		Detail:          detail,
 		Confidence:      f.Confidence,
 		RemediationHint: remediation.For(f).NextStep,
+		LogCause:        f.LogCause,
 	}
 }
 

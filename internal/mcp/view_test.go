@@ -3,6 +3,7 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/imantaba/kubeagent/internal/diagnose"
@@ -279,6 +280,47 @@ func TestCapFindings_SortedCriticalsSurviveTruncationAheadOfWarnings(t *testing.
 			t.Errorf("got a %q finding in the surviving set: %+v; sorted criticals must survive "+
 				"truncation ahead of warnings", f.Severity, f)
 		}
+	}
+}
+
+// TestFromDiagnose_CarriesLogCauseButNeverLogExcerpt pins R182: fromDiagnose
+// copies a detector finding's LogCause into the tool result, but LogExcerpt —
+// raw container output — never crosses into an MCP tool result, the same
+// split the --explain egress test already pins for the model prompt path.
+// Asserted on the marshalled JSON bytes, not the struct: a missing json tag
+// on a new field would still pass a struct comparison.
+func TestFromDiagnose_CarriesLogCauseButNeverLogExcerpt(t *testing.T) {
+	f := diagnose.Finding{
+		Pod: "payments/api-abc", Issue: "CrashLoopBackOff",
+		Reason: "container exits immediately", Container: "api",
+		LogCause:   "application panic (code bug)",
+		LogExcerpt: "panic: runtime error: invalid memory address",
+	}
+	blob, err := json.Marshal(fromDiagnose(f))
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if !strings.Contains(string(blob), `"logCause":"application panic (code bug)"`) {
+		t.Errorf("Marshal() = %s, want a logCause key carrying the finding's LogCause", blob)
+	}
+	if strings.Contains(string(blob), "logExcerpt") {
+		t.Errorf("Marshal() = %s, must not carry a logExcerpt key — raw container output must never reach an MCP tool result", blob)
+	}
+}
+
+// TestFromDiagnose_EmptyLogCauseOmitsTheKey pins the other half: a finding no
+// log fetch touched (a server run without --logs, or a finding --logs never
+// probed) has an empty LogCause, and omitempty drops the key entirely — a
+// tool result from a server without --logs stays byte-identical to what it
+// was before this field existed.
+func TestFromDiagnose_EmptyLogCauseOmitsTheKey(t *testing.T) {
+	f := diagnose.Finding{Pod: "payments/api-abc", Issue: "CrashLoopBackOff", Reason: "container exits immediately"}
+	blob, err := json.Marshal(fromDiagnose(f))
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if strings.Contains(string(blob), "logCause") {
+		t.Errorf("Marshal() = %s, must carry no logCause key when LogCause is empty", blob)
 	}
 }
 

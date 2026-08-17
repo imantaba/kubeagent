@@ -62,3 +62,26 @@ func TestClassify_ConnRefusedNeverEmitsContainerText(t *testing.T) {
 		t.Errorf("Excerpt = %q, want the whole raw line %q", got.Excerpt, cases[0].log)
 	}
 }
+
+// TestClassify_RefusesContainerRuntimePlaceholder pins R187: a body whose
+// only non-empty content is the kubelet's own log-unavailable placeholder is
+// refused (zero Clue) rather than classified — matching a signature against
+// it would report the container runtime's own message as if it were the
+// crashed container's behaviour.
+func TestClassify_RefusesContainerRuntimePlaceholder(t *testing.T) {
+	const placeholder = "unable to retrieve container logs for containerd://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+	if got := Classify(placeholder); got != (Clue{}) {
+		t.Errorf("placeholder alone: want zero Clue, got %+v", got)
+	}
+
+	mixed := "panic: runtime error: invalid memory address\n" + placeholder
+	if got := Classify(mixed); got.Signature != "panic" || got.Cause != "application panic (code bug)" {
+		t.Errorf("placeholder beside real output: want the panic cause, got %+v — the refusal must not swallow a real answer", got)
+	}
+
+	midline := "container runtime says: unable to retrieve container logs for containerd://xyz, retrying"
+	if got := Classify(midline); got.Signature != "" || got.Cause != "last output before exit (no known signature)" {
+		t.Errorf("mid-line mention (unanchored): want normal fallback classification, got %+v", got)
+	}
+}

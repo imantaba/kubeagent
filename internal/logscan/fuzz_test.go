@@ -20,6 +20,7 @@ func FuzzClassify(f *testing.F) {
 	f.Add("dial tcp \xff\xfe: connect: connection refused")
 	f.Add("yaml: line 3: found character that cannot start any token\n\u202e")
 	f.Add("\n\n   \n")
+	f.Add("unable to retrieve container logs for containerd://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 
 	f.Fuzz(func(t *testing.T, log string) {
 		clue := Classify(log)

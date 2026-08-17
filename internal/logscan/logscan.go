@@ -48,11 +48,41 @@ var signatures = []signature{
 
 const maxExcerpt = 200
 
+// containerRuntimePlaceholder matches the kubelet's own stand-in for "there is
+// no log to show" (e.g. "unable to retrieve container logs for
+// containerd://<id>: rpc error: ..."). It is control-plane text, never
+// something the crashed container itself wrote to stdout/stderr, so it must
+// not be classified as if it were.
+var containerRuntimePlaceholder = regexp.MustCompile(`(?i)^unable to retrieve container logs for `)
+
+// isOnlyPlaceholder reports whether every non-empty line is the kubelet's
+// placeholder. A body that mixes the placeholder with genuine output (a real
+// panic line, say) still classifies normally — see Classify.
+func isOnlyPlaceholder(lines []string) bool {
+	found := false
+	for _, ln := range lines {
+		ln = strings.TrimSpace(ln)
+		if ln == "" {
+			continue
+		}
+		if !containerRuntimePlaceholder.MatchString(ln) {
+			return false
+		}
+		found = true
+	}
+	return found
+}
+
 // Classify scans the log's non-empty lines against the signature library (in order) and
 // returns the first matching line's clue; if none match it falls back to the last
-// non-empty line. An empty/whitespace log returns the zero Clue.
+// non-empty line. An empty/whitespace log returns the zero Clue. A log whose only
+// non-empty content is the container-runtime placeholder also returns the zero
+// Clue: there is nothing here to classify.
 func Classify(log string) Clue {
 	lines := strings.Split(log, "\n")
+	if isOnlyPlaceholder(lines) {
+		return Clue{}
+	}
 	for _, s := range signatures {
 		for _, ln := range lines {
 			ln = strings.TrimSpace(ln)

@@ -236,6 +236,14 @@ func dropsAll(c corev1.Container) bool {
 
 // exposedService flags Services reachable from outside the cluster.
 func exposedService(svc corev1.Service) (Finding, bool) {
+	// An ExternalName Service is a DNS CNAME, not a proxied Service: the API
+	// server itself warns "spec.externalIPs is ignored when spec.type is
+	// \"ExternalName\"" on admission, and it carries no NodePort or
+	// LoadBalancer ingress either. Flagging it would report an exposure that
+	// cannot exist.
+	if svc.Spec.Type == corev1.ServiceTypeExternalName {
+		return Finding{}, false
+	}
 	var reason string
 	switch {
 	case svc.Spec.Type == corev1.ServiceTypeLoadBalancer:
@@ -260,6 +268,12 @@ func servicePorts(svc corev1.Service) string {
 		ps = append(ps, strconv.Itoa(int(p.Port)))
 	}
 	if len(ps) == 0 {
+		// Against an API-server-validated cluster this is unreachable now
+		// that exposedService skips ExternalName: a portless NodePort and a
+		// portless ClusterIP (the only other paths that reach here) are both
+		// refused by the API server with "spec.ports: Required value". Kept
+		// as a guard for a future exposedService arm — and reachable from a
+		// fake clientset or a hand-built Service, so it stays exercised.
 		return "no ports"
 	}
 	return "port(s) " + strings.Join(ps, ",")

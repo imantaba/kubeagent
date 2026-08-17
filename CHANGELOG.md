@@ -72,6 +72,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   write — so this only changes the parenthetical, never whether the finding
   fires. No `schemaVersion` moves: `detail` is a free-form string.
 
+- **`externalIPs` on an `ExternalName` Service was reported as an exposure it
+  cannot cause.** `ExternalName` is a DNS CNAME, not a proxied Service — it
+  carries no NodePort or LoadBalancer ingress, and the API server itself
+  warns `spec.externalIPs is ignored when spec.type is "ExternalName"` on
+  admission. `exposedService` now returns early for
+  `ServiceTypeExternalName`, before the `LoadBalancer`/`NodePort` switch and
+  before the `externalIPs` arm. `LoadBalancer`, `NodePort` and
+  `externalIPs`-on-a-`ClusterIP` keep firing exactly as before; the tier
+  summary's workload and finding counts drop by one only on a fixture that
+  had an `ExternalName` false positive. No `schemaVersion` moves.
+
 ### Changed
 
 - **`KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS` is now validated instead of silently

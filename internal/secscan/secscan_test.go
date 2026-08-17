@@ -322,6 +322,22 @@ func TestAssess_ExposedService(t *testing.T) {
 	}
 }
 
+func TestAssess_ExposedService_ExternalNameSkipsExternalIPs(t *testing.T) {
+	svcs := []corev1.Service{
+		{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "extname"},
+			Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeExternalName, ExternalIPs: []string{"1.2.3.4"}, ExternalName: "example.internal"}},
+		{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "clusterip"},
+			Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeClusterIP, ExternalIPs: []string{"1.2.3.4"}, Ports: []corev1.ServicePort{{Port: 80}}}},
+	}
+	got := Assess(nil, svcs, nil)
+	if count(got, "ExposedService") != 1 {
+		t.Fatalf("want one ExposedService finding (ExternalName skipped), got %+v", got)
+	}
+	if got[0].Workload != "clusterip" {
+		t.Errorf("want the ClusterIP service flagged, not the ExternalName one: %+v", got)
+	}
+}
+
 func TestAssess_ExposedService_NodePortAndExternalIPs(t *testing.T) {
 	svcs := []corev1.Service{
 		{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "np"},

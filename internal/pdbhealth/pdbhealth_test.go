@@ -158,12 +158,33 @@ func TestAssess_MaxUnavailableZeroRuleString(t *testing.T) {
 
 func TestAssess_NotFlagged(t *testing.T) {
 	cases := []policyv1.PodDisruptionBudget{
-		pdb("a", "singleton", 1, 1, 1, 1, 0), // single replica → excluded by expectedPods>1 guard
 		pdb("a", "healthy23", 2, 3, 2, 3, 1), // minAvailable 2 of 3, disruptionsAllowed 1
 		pdb("a", "atfloor", 2, 3, 2, 2, 0),   // minAvailable 2 of 3, exactly at floor (current==desired, allowed 0) → benign
 	}
 	if got := Assess(cases); len(got) != 0 {
 		t.Fatalf("expected nothing flagged, got %+v", got)
+	}
+}
+
+func TestAssess_Singleton(t *testing.T) {
+	// Single replica, healthy, disruptionsAllowed 0 → flagged: no voluntary
+	// eviction is possible even though the shape is often deliberate.
+	got := Assess([]policyv1.PodDisruptionBudget{pdb("a", "singleton", 1, 1, 1, 1, 0)})
+	is, ok := find(got, "singleton")
+	if !ok || is.Category != "singleton" {
+		t.Fatalf("want singleton, got %+v", got)
+	}
+	if is.Reason != "single-replica workload with no disruption headroom — often deliberate, but no voluntary eviction is possible; draining its node will hang" {
+		t.Errorf("reason = %q", is.Reason)
+	}
+
+	// A single-replica PDB that currently permits a disruption must NOT
+	// over-fire: it fails the singleton guard's DesiredHealthy >= ExpectedPods
+	// (0 >= 1 is false), falls through to the blocking arm, and fails that
+	// arm's DisruptionsAllowed == 0 too.
+	got = Assess([]policyv1.PodDisruptionBudget{pdb("a", "permits", 1, 1, 0, 0, 1)})
+	if _, ok := find(got, "permits"); ok {
+		t.Errorf("single-replica PDB that currently allows a disruption must not be flagged, got %+v", got)
 	}
 }
 

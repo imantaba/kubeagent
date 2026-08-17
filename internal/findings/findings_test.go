@@ -16,6 +16,10 @@ import (
 	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/svchealth"
 	"github.com/imantaba/kubeagent/internal/termhealth"
+
+	policyv1 "k8s.io/api/policy/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 func TestLevelOrdering(t *testing.T) {
@@ -220,6 +224,30 @@ func TestFlattenUsesCamelCaseFindingVocabulary(t *testing.T) {
 		if !seen[name] {
 			t.Errorf("missing finding for %s", name)
 		}
+	}
+}
+
+// TestFlattenPDBSingletonFromAssess composes pdbhealth.Assess with Flatten
+// over a real PDB object, rather than a hand-built pdbhealth.Issue: it proves
+// Assess actually emits the literal "singleton" that pdbCategoryToIssue keys
+// on, not just that the map has the entry.
+func TestFlattenPDBSingletonFromAssess(t *testing.T) {
+	minAvail := intstr.FromInt(1)
+	pdb := policyv1.PodDisruptionBudget{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "solo"},
+		Spec:       policyv1.PodDisruptionBudgetSpec{MinAvailable: &minAvail},
+		Status: policyv1.PodDisruptionBudgetStatus{
+			ExpectedPods: 1, DesiredHealthy: 1, CurrentHealthy: 1, DisruptionsAllowed: 0,
+		},
+	}
+
+	res := scan.Result{PDBIssues: pdbhealth.Assess([]policyv1.PodDisruptionBudget{pdb})}
+	got := Flatten(res)
+	if len(got) != 1 {
+		t.Fatalf("Flatten returned %d findings, want 1: %+v", len(got), got)
+	}
+	if got[0].Issue != "PDBSingleton" {
+		t.Errorf("Issue = %q, want PDBSingleton", got[0].Issue)
 	}
 }
 

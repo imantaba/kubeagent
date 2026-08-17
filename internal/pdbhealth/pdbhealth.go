@@ -1,6 +1,7 @@
 // Package pdbhealth flags PodDisruptionBudgets that will block a node drain — a
 // PDB that can never allow a voluntary eviction, one whose selector matches no
-// pods, or one blocking evictions on an already-degraded workload. Pure and
+// pods, one guarding a single-replica workload with no disruption headroom, or
+// one blocking evictions on an already-degraded workload. Pure and
 // read-only: the caller supplies the PDB objects; every count comes from the
 // PDB's own status. Advisory (never affects the cluster verdict).
 package pdbhealth
@@ -17,13 +18,15 @@ type Issue struct {
 	Namespace string `json:"namespace"`
 	Name      string `json:"name"`
 	Rule      string `json:"rule"`     // "minAvailable: 3" | "maxUnavailable: 0"
-	Category  string `json:"category"` // "stale" | "unsatisfiable" | "blocking"
+	Category  string `json:"category"` // "stale" | "unsatisfiable" | "blocking" | "singleton"
 	Reason    string `json:"reason"`
 }
 
 // Assess flags PDBs that will block a node drain, sorted by (Namespace, Name).
-// A benign PDB (a healthy at-floor budget, a single-replica singleton, or one
-// that currently allows a disruption) is not flagged.
+// A benign PDB (a healthy at-floor budget, or one that currently allows a
+// disruption) is not flagged. A single-replica singleton IS flagged, as
+// category "singleton": no voluntary eviction is possible even though the
+// shape is often deliberate.
 func Assess(pdbs []policyv1.PodDisruptionBudget) []Issue {
 	var out []Issue
 	for _, p := range pdbs {
@@ -58,8 +61,8 @@ func ruleString(p policyv1.PodDisruptionBudget) string {
 }
 
 // classify returns the first matching category (unsatisfiable → stale →
-// unsatisfiable → blocking) for a PDB, or ok=false when it is benign. All
-// counts come from status.
+// singleton → unsatisfiable → blocking) for a PDB, or ok=false when it is
+// benign. All counts come from status.
 func classify(p policyv1.PodDisruptionBudget) (category, reason string, ok bool) {
 	s := p.Status
 	switch {
@@ -67,6 +70,8 @@ func classify(p policyv1.PodDisruptionBudget) (category, reason string, ok bool)
 		return "unsatisfiable", "neither minAvailable nor maxUnavailable is set — the API server allows no voluntary eviction at all; every node drain will hang", true
 	case s.ExpectedPods == 0:
 		return "stale", "selector currently matches no pods", true
+	case s.ExpectedPods == 1 && s.DesiredHealthy >= s.ExpectedPods:
+		return "singleton", "single-replica workload with no disruption headroom — often deliberate, but no voluntary eviction is possible; draining its node will hang", true
 	case s.ExpectedPods > 1 && s.DesiredHealthy >= s.ExpectedPods:
 		if s.DesiredHealthy > s.ExpectedPods {
 			return "unsatisfiable", fmt.Sprintf("requires %d healthy pods but only %d exist — no voluntary eviction can ever proceed; every node drain will hang", s.DesiredHealthy, s.ExpectedPods), true

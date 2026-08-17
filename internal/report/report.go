@@ -1013,9 +1013,13 @@ func printSecurityIssues(issues []secscan.Finding, verbose bool, w io.Writer) er
 	}
 
 	// Restricted aggregate (default only, when there are restricted findings).
+	// The denominator is every workload in the section, not just the restricted
+	// ones: "2 across 1 workload" reads as if restricted coverage were total,
+	// when the section may also carry baseline/exposed workloads that are clean
+	// on the restricted profile. "of M" names the actual population.
 	if !verbose && nRestricted > 0 {
-		if _, err := fmt.Fprintf(w, "\n  restricted (hardening gaps, near-universal): %d across %d %s\n",
-			nRestricted, len(restrictedWorkloads), plural(len(restrictedWorkloads), "workload", "workloads")); err != nil {
+		if _, err := fmt.Fprintf(w, "\n  restricted (hardening gaps, near-universal): %d across %d of %d %s\n",
+			nRestricted, len(restrictedWorkloads), len(allWorkloads), plural(len(allWorkloads), "workload", "workloads")); err != nil {
 			return err
 		}
 		var checks []string

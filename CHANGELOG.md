@@ -227,6 +227,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   changes the same way. No `schemaVersion` moves: `name` is a free-form
   string with no `enum` and no pattern in the published schemas.
 
+- **The SECURITY section's restricted aggregate read as if hardening
+  coverage were total.** `"restricted (hardening gaps, near-universal): N
+  across M workloads"` counted only the restricted-profile workloads in both
+  the numerator and the denominator, so a section that also carried clean
+  baseline/exposed workloads understated the population the aggregate speaks
+  for. The line now reads `"N across M of T workloads"`, where `T` is every
+  workload in the SECURITY section; the verbose view, which omits the
+  aggregate entirely, is unchanged. No `schemaVersion` moves: this is
+  `scan`'s text renderer only, and the aggregate line was never part of the
+  JSON output.
+
 ## [1.16.1] - 2026-08-13
 
 ### Changed

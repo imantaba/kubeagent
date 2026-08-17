@@ -118,7 +118,7 @@ SECURITY  (advisory — does not affect the cluster verdict)
   ✗ shop/payments  Service
       [kubeagent] ExposedService — type NodePort exposes port(s) 80 externally
 
-  restricted (hardening gaps, near-universal): 18 across 6 workloads
+  restricted (hardening gaps, near-universal): 18 across 6 of 7 workloads
     RunAsRoot ×6 · AllowPrivilegeEscalation ×6 · CapabilitiesNotDropped ×6
     → run with --security-verbose to list every finding per workload
 

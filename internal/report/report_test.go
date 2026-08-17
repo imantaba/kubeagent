@@ -1415,7 +1415,7 @@ func TestPrintInventory_SecurityDefaultView(t *testing.T) {
 	if strings.Contains(out, "✗ shop/web") {
 		t.Errorf("a restricted-only workload must not get a detail block:\n%s", out)
 	}
-	if !strings.Contains(out, "restricted (hardening gaps, near-universal): 3 across 2 workloads") {
+	if !strings.Contains(out, "restricted (hardening gaps, near-universal): 3 across 2 of 2 workloads") {
 		t.Errorf("missing restricted aggregate:\n%s", out)
 	}
 	if !strings.Contains(out, "RunAsRoot ×1 · AllowPrivilegeEscalation ×1 · CapabilitiesNotDropped ×1") {
@@ -1471,11 +1471,36 @@ func TestPrintInventory_SecurityOnlyRestricted(t *testing.T) {
 	if strings.Contains(out, "✗ ") {
 		t.Errorf("restricted-only findings must produce no detail blocks:\n%s", out)
 	}
-	if !strings.Contains(out, "restricted (hardening gaps, near-universal): 2 across 1 workload") {
+	if !strings.Contains(out, "restricted (hardening gaps, near-universal): 2 across 1 of 1 workload") {
 		t.Errorf("missing restricted aggregate for restricted-only input:\n%s", out)
 	}
 	if strings.Contains(out, "No issues found") {
 		t.Errorf("all-clear must stay suppressed:\n%s", out)
+	}
+}
+
+// TestPrintInventory_SecurityAggregateDenominatorDisagreesWithNumerator covers
+// N=1 restricted workload out of M=3 total workloads: the only fixture where
+// the numerator and denominator disagree on singular/plural, so it is the
+// only observer that can catch the aggregate's plural argument being wired to
+// the wrong count (restrictedWorkloads instead of allWorkloads).
+func TestPrintInventory_SecurityAggregateDenominatorDisagreesWithNumerator(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		SecurityIssues: []secscan.Finding{
+			{Namespace: "shop", Workload: "svc-a", Kind: "Deployment", Container: "app", Profile: "baseline", Check: "Privileged", Detail: "p"},
+			{Namespace: "shop", Workload: "svc-b", Kind: "Deployment", Profile: "baseline", Check: "HostPath", Detail: "h"},
+			{Namespace: "shop", Workload: "web", Kind: "Deployment", Container: "web", Profile: "restricted", Check: "RunAsRoot", Detail: "r"},
+			{Namespace: "shop", Workload: "web", Kind: "Deployment", Container: "web", Profile: "restricted", Check: "CapabilitiesNotDropped", Detail: "c"},
+		},
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "restricted (hardening gaps, near-universal): 2 across 1 of 3 workloads") {
+		t.Errorf("want the denominator noun to agree with the total (3 workloads), not the restricted count (1 workload):\n%s", out)
 	}
 }
 

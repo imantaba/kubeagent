@@ -169,7 +169,7 @@ func findingsFromResult(res scan.Result) []Finding {
 	}
 	for _, i := range res.WebhookIssues {
 		out = append(out, Finding{Severity: "warning", Kind: i.Kind, Namespace: "",
-			Name: i.Config, Reason: i.Problem, Detail: i.Reason})
+			Name: i.Config + "/" + i.Webhook, Reason: i.Problem, Detail: i.Reason})
 	}
 	for _, i := range res.QuotaIssues {
 		out = append(out, Finding{Severity: "warning", Kind: "ResourceQuota", Namespace: i.Namespace,

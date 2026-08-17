@@ -12,6 +12,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/jsonschema"
 	"github.com/imantaba/kubeagent/internal/policy"
 	"github.com/imantaba/kubeagent/internal/scan"
+	"github.com/imantaba/kubeagent/internal/webhookhealth"
 )
 
 // degraded builds a workload with one critical detector finding.
@@ -210,6 +211,53 @@ func TestDecideWaiverForAResourceThatNeverFailedIsInert(t *testing.T) {
 	}
 	if len(v.Inconclusive) != 0 {
 		t.Errorf("Inconclusive = %v, want empty: a waiver must not invent a blind spot", v.Inconclusive)
+	}
+}
+
+// TestDecideAndRenderTextDistinguishTwoWebhooksInOneConfig is R167's
+// end-to-end regression fixture: one ValidatingWebhookConfiguration
+// (vwc-multi) carrying two Fail-policy webhooks at/above the timeout
+// threshold must produce two distinguishable rows all the way through
+// Decide (findings.Flatten's Name fix) and RenderText (gate's text
+// renderer) — two rows differing in the identity column, not only in the
+// reason line, since both share Kind, Namespace and Issue.
+func TestDecideAndRenderTextDistinguishTwoWebhooksInOneConfig(t *testing.T) {
+	res := scan.Result{
+		WebhookIssues: []webhookhealth.Issue{
+			{Kind: "ValidatingWebhookConfiguration", Config: "vwc-multi", Webhook: "a-slow.multi.example.com",
+				Problem: "HighTimeout", Reason: "timeoutSeconds 30 >= 15s under failurePolicy Fail"},
+			{Kind: "ValidatingWebhookConfiguration", Config: "vwc-multi", Webhook: "b-slow.multi.example.com",
+				Problem: "HighTimeout", Reason: "timeoutSeconds 45 >= 15s under failurePolicy Fail"},
+		},
+	}
+	v := Decide(res, Options{FailOn: findings.Warning})
+	if len(v.Failing) != 2 {
+		t.Fatalf("Failing = %+v, want 2 findings", v.Failing)
+	}
+	// gate --output json leg: the two findings differ in Name.
+	if v.Failing[0].Name == v.Failing[1].Name {
+		t.Fatalf("the two webhook findings must have distinct Name, both got %q", v.Failing[0].Name)
+	}
+	names := map[string]bool{v.Failing[0].Name: true, v.Failing[1].Name: true}
+	for _, want := range []string{"vwc-multi/a-slow.multi.example.com", "vwc-multi/b-slow.multi.example.com"} {
+		if !names[want] {
+			t.Errorf("Failing findings %+v missing Name %q", v.Failing, want)
+		}
+	}
+
+	// gate text leg: two distinct identity-column lines, not just two reason lines.
+	var buf strings.Builder
+	if err := RenderText(&buf, v); err != nil {
+		t.Fatalf("RenderText: %v", err)
+	}
+	text := buf.String()
+	for _, want := range []string{
+		"ValidatingWebhookConfiguration vwc-multi/a-slow.multi.example.com  HighTimeout",
+		"ValidatingWebhookConfiguration vwc-multi/b-slow.multi.example.com  HighTimeout",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("RenderText output missing identity line %q; got:\n%s", want, text)
+		}
 	}
 }
 

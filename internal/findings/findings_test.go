@@ -16,6 +16,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/svchealth"
 	"github.com/imantaba/kubeagent/internal/termhealth"
+	"github.com/imantaba/kubeagent/internal/webhookhealth"
 
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
@@ -237,6 +238,43 @@ func TestFlattenUsesCamelCaseFindingVocabulary(t *testing.T) {
 // over a real PDB object, rather than a hand-built pdbhealth.Issue: it proves
 // Assess actually emits the literal "singleton" that pdbCategoryToIssue keys
 // on, not just that the map has the entry.
+// TestFlattenWebhookIssueNameCarriesTheWebhookNotJustTheConfig pins R167: a
+// finding's Name for a webhook issue is "config/webhook", not just "config" —
+// the old shape collapsed two distinct webhooks in one
+// ValidatingWebhookConfiguration into byte-identical findings. vwc-multi
+// carries two Fail-policy webhooks at/above the timeout threshold, matching
+// the shape this decision was written against.
+func TestFlattenWebhookIssueNameCarriesTheWebhookNotJustTheConfig(t *testing.T) {
+	res := scan.Result{
+		WebhookIssues: []webhookhealth.Issue{
+			{Kind: "ValidatingWebhookConfiguration", Config: "vwc-multi", Webhook: "a-slow.multi.example.com",
+				Problem: "HighTimeout", Reason: "timeoutSeconds 30 >= 15s under failurePolicy Fail"},
+			{Kind: "ValidatingWebhookConfiguration", Config: "vwc-multi", Webhook: "b-slow.multi.example.com",
+				Problem: "HighTimeout", Reason: "timeoutSeconds 45 >= 15s under failurePolicy Fail"},
+		},
+	}
+	got := Flatten(res)
+	if len(got) != 2 {
+		t.Fatalf("Flatten returned %d findings, want 2: %+v", len(got), got)
+	}
+	names := map[string]bool{}
+	for _, f := range got {
+		if f.Namespace != "" {
+			t.Errorf("webhook finding Namespace = %q, want empty (unchanged by this decision)", f.Namespace)
+		}
+		names[f.Name] = true
+	}
+	want := []string{"vwc-multi/a-slow.multi.example.com", "vwc-multi/b-slow.multi.example.com"}
+	for _, w := range want {
+		if !names[w] {
+			t.Errorf("Flatten findings %+v missing Name %q", got, w)
+		}
+	}
+	if len(names) != 2 {
+		t.Errorf("the two webhook findings must be distinguishable by Name, got names %v", names)
+	}
+}
+
 func TestFlattenPDBSingletonFromAssess(t *testing.T) {
 	minAvail := intstr.FromInt(1)
 	pdb := policyv1.PodDisruptionBudget{

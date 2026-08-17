@@ -13,6 +13,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/svchealth"
 	"github.com/imantaba/kubeagent/internal/termhealth"
+	"github.com/imantaba/kubeagent/internal/webhookhealth"
 )
 
 func TestFindingsFromResult_DetectorFindingIsCriticalWithARemediationHint(t *testing.T) {
@@ -185,6 +186,39 @@ func TestFindingsFromResult_ExpectedServiceIssuesAreNotFindings(t *testing.T) {
 
 	if got := findingsFromResult(res); len(got) != 0 {
 		t.Errorf("findingsFromResult() = %v, want none — the CLI does not treat expected issues as attention", got)
+	}
+}
+
+// TestFindingsFromResult_WebhookFindingNameCarriesTheWebhookNotJustTheConfig
+// pins R167 on the MCP tool result: a webhook finding's Name is
+// "config/webhook", matching gate and the watch daemon's /issues, so two
+// distinct webhooks in one ValidatingWebhookConfiguration produce two
+// distinguishable rows rather than colliding on the config name alone.
+func TestFindingsFromResult_WebhookFindingNameCarriesTheWebhookNotJustTheConfig(t *testing.T) {
+	res := scan.Result{
+		WebhookIssues: []webhookhealth.Issue{
+			{Kind: "ValidatingWebhookConfiguration", Config: "vwc-multi", Webhook: "a-slow.multi.example.com",
+				Problem: "HighTimeout", Reason: "timeoutSeconds 30 >= 15s under failurePolicy Fail"},
+			{Kind: "ValidatingWebhookConfiguration", Config: "vwc-multi", Webhook: "b-slow.multi.example.com",
+				Problem: "HighTimeout", Reason: "timeoutSeconds 45 >= 15s under failurePolicy Fail"},
+		},
+	}
+	got := findingsFromResult(res)
+	if len(got) != 2 {
+		t.Fatalf("findingsFromResult returned %d findings, want 2: %+v", len(got), got)
+	}
+	names := map[string]bool{}
+	for _, f := range got {
+		names[f.Name] = true
+	}
+	want := []string{"vwc-multi/a-slow.multi.example.com", "vwc-multi/b-slow.multi.example.com"}
+	for _, w := range want {
+		if !names[w] {
+			t.Errorf("findingsFromResult rows %+v missing Name %q", got, w)
+		}
+	}
+	if len(names) != 2 {
+		t.Errorf("the two webhook findings must be distinguishable by Name, got names %v", names)
 	}
 }
 

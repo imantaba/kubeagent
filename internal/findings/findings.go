@@ -209,7 +209,7 @@ func Flatten(res scan.Result) []Finding {
 	}
 	for _, i := range res.WebhookIssues {
 		out = append(out, Finding{Level: Warning, Kind: i.Kind, Namespace: "",
-			Name: i.Config, Issue: i.Problem, Reason: i.Reason})
+			Name: i.Config + "/" + i.Webhook, Issue: i.Problem, Reason: i.Reason})
 	}
 	for _, i := range res.QuotaIssues {
 		out = append(out, Finding{Level: Warning, Kind: "ResourceQuota", Namespace: i.Namespace,

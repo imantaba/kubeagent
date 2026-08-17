@@ -101,6 +101,14 @@ func TestAssess_NamespaceIgnoresResolvedCondition(t *testing.T) {
 	}
 }
 
+func TestAssess_SubMinuteThresholdRendersUnderOneMinute(t *testing.T) {
+	pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "quick", DeletionTimestamp: delTime(45 * time.Second)}}
+	got := Assess(nil, []corev1.Pod{pod}, nil, 30*time.Second, now)
+	if len(got) != 1 || got[0].Age != "<1m" {
+		t.Fatalf("want a <1m age at a 30s threshold, got %+v", got)
+	}
+}
+
 func TestAssess_ExactlyAtThresholdNotFlagged(t *testing.T) {
 	pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "edge", DeletionTimestamp: delTime(2 * time.Minute)}}
 	if got := Assess(nil, []corev1.Pod{pod}, nil, 2*time.Minute, now); len(got) != 0 {

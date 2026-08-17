@@ -692,7 +692,7 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 		securityIssues = secscan.Assess(p, s, inputs.ReplicaSets)
 	}
 
-	stuckTerminating := termhealth.Assess(namespaces, inputs.Pods, pvcs, 2*time.Minute, now)
+	stuckTerminating := termhealth.Assess(namespaces, inputs.Pods, pvcs, terminatingThreshold(), now)
 	pdbIssues := pdbhealth.Assess(pdbs)
 	hpaIssues := hpahealth.Assess(hpas)
 

@@ -704,7 +704,8 @@ ranks and sequences these commands, and never invents or substitutes one. See
 ### Stuck-terminating resources
 
 `scan` flags a resource wedged in `Terminating` — deletion pending longer than
-two minutes — and names the blocker: a **Namespace** stuck on a finalizer or a
+two minutes by default (see `KUBEAGENT_TERMINATING_THRESHOLD`) — and names the
+blocker: a **Namespace** stuck on a finalizer or a
 downstream condition (`NamespaceFinalizersRemaining` / `NamespaceContentRemaining`
 / `NamespaceDeletionContentFailure`, message shown as-is), a **Pod** stuck past
 its grace period (its finalizers, or "deletion not confirmed" when the node is

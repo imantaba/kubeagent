@@ -97,3 +97,26 @@ so APF classifies them accordingly.
 
 Set `KUBEAGENT_QPS` alone and client-go applies its own default burst; set both
 to control the bucket precisely.
+
+## `KUBEAGENT_TERMINATING_THRESHOLD`
+
+How long a resource may sit in `Terminating` before the
+[stuck-terminating check](diagnostics.md#stuck-terminating-resources) flags it.
+
+| | |
+|---|---|
+| Default | `2m` |
+| Format | A Go duration (`30s`, `10m`, `2m30s`, …) |
+| Bad value | Ignored — the default is used, and the scan still runs |
+
+```bash
+KUBEAGENT_TERMINATING_THRESHOLD=30s kubeagent scan
+```
+
+A value that does not parse as a Go duration, or that parses to zero or
+negative, falls back to the default rather than disabling the check — a
+threshold of zero would flag every deletion in flight.
+
+Lower it to catch a wedged deletion sooner on a cluster where operators expect
+`Terminating` to clear in seconds; raise it on a cluster with slow finalizer
+webhooks, where two minutes is routine and not yet a problem.

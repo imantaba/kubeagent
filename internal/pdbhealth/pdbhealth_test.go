@@ -118,6 +118,30 @@ func TestAssess_Stale(t *testing.T) {
 	}
 }
 
+func TestAssess_NoRuleField(t *testing.T) {
+	// Neither minAvailable nor maxUnavailable is set. The API server
+	// accepts this without complaint, and it allows no voluntary eviction
+	// at all — the strictest possible rule, spelled by its absence rather
+	// than by a value. pdb() cannot build this fixture: it always sets
+	// MinAvailable, so this uses an inline literal instead.
+	p := policyv1.PodDisruptionBudget{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "ops", Name: "norule-pdb"},
+		Status: policyv1.PodDisruptionBudgetStatus{
+			ExpectedPods: 0, DesiredHealthy: 0, CurrentHealthy: 3, DisruptionsAllowed: 0,
+		},
+	}
+	is, ok := find(Assess([]policyv1.PodDisruptionBudget{p}), "norule-pdb")
+	if !ok || is.Category != "unsatisfiable" {
+		t.Fatalf("want unsatisfiable, got %+v", is)
+	}
+	if is.Rule != "(no rule set)" {
+		t.Errorf("rule = %q, want (no rule set)", is.Rule)
+	}
+	if is.Reason != "neither minAvailable nor maxUnavailable is set — the API server allows no voluntary eviction at all; every node drain will hang" {
+		t.Errorf("reason = %q", is.Reason)
+	}
+}
+
 func TestAssess_MaxUnavailableZeroRuleString(t *testing.T) {
 	// maxUnavailable 0 on a multi-replica workload → unsatisfiable, rule names maxUnavailable.
 	mu := intstr.FromInt(0)

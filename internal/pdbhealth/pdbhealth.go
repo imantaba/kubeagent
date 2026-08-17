@@ -29,7 +29,7 @@ func Assess(pdbs []policyv1.PodDisruptionBudget) []Issue {
 	for _, p := range pdbs {
 		rule := ruleString(p)
 		if rule == "" {
-			continue // neither minAvailable nor maxUnavailable set — nothing to say
+			rule = "(no rule set)"
 		}
 		if cat, reason, ok := classify(p); ok {
 			out = append(out, Issue{Namespace: p.Namespace, Name: p.Name, Rule: rule, Category: cat, Reason: reason})
@@ -44,8 +44,8 @@ func Assess(pdbs []policyv1.PodDisruptionBudget) []Issue {
 	return out
 }
 
-// ruleString renders the PDB's rule ("minAvailable: 3" / "maxUnavailable: 0").
-// Exactly one of the two is set on a valid PDB; if neither is, returns "".
+// ruleString renders the PDB's rule ("minAvailable: 3" / "maxUnavailable: 0"),
+// or "" when neither field is set.
 func ruleString(p policyv1.PodDisruptionBudget) string {
 	switch {
 	case p.Spec.MinAvailable != nil:
@@ -57,11 +57,14 @@ func ruleString(p policyv1.PodDisruptionBudget) string {
 	}
 }
 
-// classify returns the first matching category (stale → unsatisfiable → blocking)
-// for a PDB, or ok=false when it is benign. All counts come from status.
+// classify returns the first matching category (unsatisfiable → stale →
+// unsatisfiable → blocking) for a PDB, or ok=false when it is benign. All
+// counts come from status.
 func classify(p policyv1.PodDisruptionBudget) (category, reason string, ok bool) {
 	s := p.Status
 	switch {
+	case p.Spec.MinAvailable == nil && p.Spec.MaxUnavailable == nil:
+		return "unsatisfiable", "neither minAvailable nor maxUnavailable is set — the API server allows no voluntary eviction at all; every node drain will hang", true
 	case s.ExpectedPods == 0:
 		return "stale", "selector currently matches no pods", true
 	case s.ExpectedPods > 1 && s.DesiredHealthy >= s.ExpectedPods:

@@ -1,8 +1,8 @@
 // Package termhealth flags resources wedged in Terminating — a Namespace stuck on
 // a finalizer or a downstream condition, a Pod stuck past its grace period, a PVC
 // held by pvc-protection — and names the blocker. Pure and read-only: the caller
-// supplies the namespaces, pods, PVCs, threshold, and clock. Advisory (never
-// affects the cluster verdict).
+// supplies the namespaces, pods, PVCs, nodes, threshold, and clock. Advisory
+// (never affects the cluster verdict).
 package termhealth
 
 import (
@@ -34,7 +34,7 @@ var nsConditionOrder = []corev1.NamespaceConditionType{
 
 // Assess flags every resource whose deletion has been pending longer than
 // threshold, sorted by (Kind, Namespace, Name).
-func Assess(namespaces []corev1.Namespace, pods []corev1.Pod, pvcs []corev1.PersistentVolumeClaim, threshold time.Duration, now time.Time) []Issue {
+func Assess(namespaces []corev1.Namespace, pods []corev1.Pod, pvcs []corev1.PersistentVolumeClaim, nodes []corev1.Node, threshold time.Duration, now time.Time) []Issue {
 	var out []Issue
 	for _, ns := range namespaces {
 		if age, ok := stuckFor(ns.DeletionTimestamp, threshold, now); ok {
@@ -43,7 +43,7 @@ func Assess(namespaces []corev1.Namespace, pods []corev1.Pod, pvcs []corev1.Pers
 	}
 	for _, p := range pods {
 		if age, ok := stuckFor(p.DeletionTimestamp, threshold, now); ok {
-			out = append(out, Issue{Kind: "Pod", Namespace: p.Namespace, Name: p.Name, Age: age, PastGrace: true, Reason: podReason(p)})
+			out = append(out, Issue{Kind: "Pod", Namespace: p.Namespace, Name: p.Name, Age: age, PastGrace: true, Reason: podReason(p, nodes)})
 		}
 	}
 	for _, c := range pvcs {
@@ -89,11 +89,44 @@ func compactDur(d time.Duration) string {
 	}
 }
 
-func podReason(p corev1.Pod) string {
+// podReason explains why a Pod's deletion has not been confirmed. A pod with
+// its own finalizers is never attributed to a node — the finalizer is the
+// blocker regardless of what the node is doing. Otherwise, when the pod names
+// a node and nodes has data for it, a NotReady node is named as the likely
+// cause; an unknown node name (spec.nodeName unset) or no node data at all
+// (nodes empty — a blind spot, not evidence of anything) keeps the
+// unattributed fallback rather than guessing.
+func podReason(p corev1.Pod, nodes []corev1.Node) string {
 	if len(p.Finalizers) > 0 {
 		return "finalizer " + strings.Join(p.Finalizers, ", ")
 	}
-	return "deletion not confirmed (node gone or kubelet not reporting)"
+	const fallback = "deletion not confirmed (node gone or kubelet not reporting)"
+	name := p.Spec.NodeName
+	if name == "" || len(nodes) == 0 {
+		return fallback
+	}
+	for _, n := range nodes {
+		if n.Name != name {
+			continue
+		}
+		if nodeNotReady(n) {
+			return "deletion not confirmed — node " + name + " is NotReady"
+		}
+		return fallback
+	}
+	return "deletion not confirmed — node " + name + " no longer exists"
+}
+
+// nodeNotReady reports whether n's NodeReady condition is anything but True.
+// A node with no NodeReady condition at all is treated as not ready, matching
+// the convention internal/clusterhealth already uses.
+func nodeNotReady(n corev1.Node) bool {
+	for _, c := range n.Status.Conditions {
+		if c.Type == corev1.NodeReady {
+			return c.Status != corev1.ConditionTrue
+		}
+	}
+	return true
 }
 
 func pvcReason(c corev1.PersistentVolumeClaim, pods []corev1.Pod) string {

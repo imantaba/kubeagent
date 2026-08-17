@@ -109,7 +109,7 @@ func FuzzTermAssess(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, params []byte) {
 		nss, pods, pvcs := fuzzTerm(fuzzgen.New(params))
-		got := Assess(nss, pods, pvcs, time.Minute, fuzzBase)
+		got := Assess(nss, pods, pvcs, nil, time.Minute, fuzzBase)
 
 		for _, iss := range got {
 			fuzzgen.AssertSafe(t, "issue.reason", iss.Reason)
@@ -120,7 +120,7 @@ func FuzzTermAssess(f *testing.F) {
 			fuzzgen.AssertBounded(t, "issue.age", iss.Age, 24)
 		}
 
-		again := Assess(nss, pods, pvcs, time.Minute, fuzzBase)
+		again := Assess(nss, pods, pvcs, nil, time.Minute, fuzzBase)
 		if !reflect.DeepEqual(got, again) {
 			t.Errorf("Assess is not deterministic")
 		}

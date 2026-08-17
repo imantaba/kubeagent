@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -47,7 +48,7 @@ func TestAssess_PrivilegedFoldsToDeployment(t *testing.T) {
 	pod := rsOwned("payments", "api-xyz", "api-rs",
 		corev1.Container{Name: "app", SecurityContext: &corev1.SecurityContext{Privileged: boolp(true)}})
 	rs := []appsv1.ReplicaSet{rsForDeploy("payments", "api-rs", "api")}
-	got := Assess([]corev1.Pod{pod}, nil, rs)
+	got := Assess([]corev1.Pod{pod}, nil, rs, nil)
 	if count(got, "Privileged") != 1 {
 		t.Fatalf("want one Privileged finding, got %+v", got)
 	}
@@ -66,7 +67,7 @@ func TestResolveWorkload_NodeOwnerIsThePodItself(t *testing.T) {
 			OwnerReferences: []metav1.OwnerReference{{Kind: "Node", Name: "worker-2", Controller: &ctrl}},
 		},
 	}
-	wl := resolveWorkload(pod, nil)
+	wl := resolveWorkload(pod, nil, nil)
 	if wl.Kind != "Pod" || wl.Name != "etcd-worker-2" {
 		t.Errorf("want a Node-owned pod to resolve to itself, got %+v", wl)
 	}
@@ -74,7 +75,7 @@ func TestResolveWorkload_NodeOwnerIsThePodItself(t *testing.T) {
 
 func TestResolveWorkload_NoOwnerIsThePodItself(t *testing.T) {
 	pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "infra", Name: "standalone"}}
-	wl := resolveWorkload(pod, nil)
+	wl := resolveWorkload(pod, nil, nil)
 	if wl.Kind != "Pod" || wl.Name != "standalone" {
 		t.Errorf("want an unowned pod to resolve to itself, got %+v", wl)
 	}
@@ -89,16 +90,71 @@ func TestResolveWorkload_ReplicaSetStillFoldsToDeployment(t *testing.T) {
 		},
 	}
 	rsByKey := map[string]appsv1.ReplicaSet{"shop/api-rs": rsForDeploy("shop", "api-rs", "api")}
-	wl := resolveWorkload(pod, rsByKey)
+	wl := resolveWorkload(pod, rsByKey, nil)
 	if wl.Kind != "Deployment" || wl.Name != "api" {
 		t.Errorf("want a ReplicaSet-owned pod to still fold to its Deployment, got %+v", wl)
+	}
+}
+
+// jobOwned builds a Job controlled by CronJob cronJobName, in namespace ns.
+// If cronJobName is "", the Job is bare (no controller owner of its own).
+func jobOwned(ns, jobName, cronJobName string) batchv1.Job {
+	job := batchv1.Job{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: jobName}}
+	if cronJobName != "" {
+		ctrl := true
+		job.OwnerReferences = []metav1.OwnerReference{{Kind: "CronJob", Name: cronJobName, Controller: &ctrl}}
+	}
+	return job
+}
+
+func TestResolveWorkload_JobOwnerFoldsToCronJob(t *testing.T) {
+	ctrl := true
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "shop", Name: "report-29780989-abcde",
+			OwnerReferences: []metav1.OwnerReference{{Kind: "Job", Name: "report-29780989", Controller: &ctrl}},
+		},
+	}
+	jobsByKey := map[string]batchv1.Job{"shop/report-29780989": jobOwned("shop", "report-29780989", "report")}
+	wl := resolveWorkload(pod, nil, jobsByKey)
+	if wl.Kind != "CronJob" || wl.Name != "report" {
+		t.Errorf("want a CronJob-owned Job's pod to fold to the CronJob, got %+v", wl)
+	}
+}
+
+func TestResolveWorkload_BareJobStaysJob(t *testing.T) {
+	ctrl := true
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "shop", Name: "migrate-abcde",
+			OwnerReferences: []metav1.OwnerReference{{Kind: "Job", Name: "migrate", Controller: &ctrl}},
+		},
+	}
+	jobsByKey := map[string]batchv1.Job{"shop/migrate": jobOwned("shop", "migrate", "")}
+	wl := resolveWorkload(pod, nil, jobsByKey)
+	if wl.Kind != "Job" || wl.Name != "migrate" {
+		t.Errorf("want a bare Job's pod to stay Job/<name>, got %+v", wl)
+	}
+}
+
+func TestResolveWorkload_JobAbsentFromSliceStaysJob(t *testing.T) {
+	ctrl := true
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "shop", Name: "migrate-abcde",
+			OwnerReferences: []metav1.OwnerReference{{Kind: "Job", Name: "migrate", Controller: &ctrl}},
+		},
+	}
+	wl := resolveWorkload(pod, nil, nil) // migrate is absent from the (nil) jobs map
+	if wl.Kind != "Job" || wl.Name != "migrate" {
+		t.Errorf("want a Job absent from the slice to stay Job/<name>, got %+v", wl)
 	}
 }
 
 func TestAssess_NotPrivileged(t *testing.T) {
 	pod := rsOwned("shop", "web-xyz", "web-rs",
 		corev1.Container{Name: "web", SecurityContext: &corev1.SecurityContext{Privileged: boolp(false)}})
-	if count(Assess([]corev1.Pod{pod}, nil, nil), "Privileged") != 0 {
+	if count(Assess([]corev1.Pod{pod}, nil, nil, nil), "Privileged") != 0 {
 		t.Error("a non-privileged container must not be flagged Privileged")
 	}
 }
@@ -108,7 +164,7 @@ func TestAssess_HostNamespaces(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Namespace: "infra", Name: "agent"},
 		Spec:       corev1.PodSpec{HostNetwork: true, HostPID: true, Containers: []corev1.Container{{Name: "c"}}},
 	}
-	got := Assess([]corev1.Pod{pod}, nil, nil)
+	got := Assess([]corev1.Pod{pod}, nil, nil, nil)
 	if count(got, "HostNamespaces") != 1 {
 		t.Fatalf("want one HostNamespaces finding, got %+v", got)
 	}
@@ -124,7 +180,7 @@ func TestAssess_HostNamespaces_SingularSuffix(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Namespace: "infra", Name: "agent"},
 		Spec:       corev1.PodSpec{HostPID: true, Containers: []corev1.Container{{Name: "c"}}},
 	}
-	got := Assess([]corev1.Pod{pod}, nil, nil)
+	got := Assess([]corev1.Pod{pod}, nil, nil, nil)
 	if count(got, "HostNamespaces") != 1 {
 		t.Fatalf("want one HostNamespaces finding, got %+v", got)
 	}
@@ -141,7 +197,7 @@ func TestAssess_HostNamespaces_PluralSuffix(t *testing.T) {
 			Containers: []corev1.Container{{Name: "c"}},
 		},
 	}
-	got := Assess([]corev1.Pod{pod}, nil, nil)
+	got := Assess([]corev1.Pod{pod}, nil, nil, nil)
 	if count(got, "HostNamespaces") != 1 {
 		t.Fatalf("want one HostNamespaces finding, got %+v", got)
 	}
@@ -157,7 +213,7 @@ func TestAssess_DedupsReplicas(t *testing.T) {
 		rsOwned("payments", "api-2", "api-rs", c),
 	}
 	rs := []appsv1.ReplicaSet{rsForDeploy("payments", "api-rs", "api")}
-	if n := count(Assess(pods, nil, rs), "Privileged"); n != 1 {
+	if n := count(Assess(pods, nil, rs, nil), "Privileged"); n != 1 {
 		t.Errorf("two replicas of one Deployment must collapse to one finding, got %d", n)
 	}
 }
@@ -171,7 +227,7 @@ func TestAssess_HostPath(t *testing.T) {
 				HostPath: &corev1.HostPathVolumeSource{Path: "/var/run/docker.sock"}}}},
 		},
 	}
-	got := Assess([]corev1.Pod{pod}, nil, nil)
+	got := Assess([]corev1.Pod{pod}, nil, nil, nil)
 	if count(got, "HostPath") != 1 {
 		t.Fatalf("want one HostPath finding, got %+v", got)
 	}
@@ -191,7 +247,7 @@ func TestAssess_HostPath_ReadOnlyMount(t *testing.T) {
 				HostPath: &corev1.HostPathVolumeSource{Path: "/var/run/docker.sock"}}}},
 		},
 	}
-	got := Assess([]corev1.Pod{pod}, nil, nil)
+	got := Assess([]corev1.Pod{pod}, nil, nil, nil)
 	if count(got, "HostPath") != 1 {
 		t.Fatalf("want one HostPath finding, got %+v", got)
 	}
@@ -212,7 +268,7 @@ func TestAssess_HostPath_MixedReadOnlyAndWritableMounts(t *testing.T) {
 				HostPath: &corev1.HostPathVolumeSource{Path: "/var/run/docker.sock"}}}},
 		},
 	}
-	got := Assess([]corev1.Pod{pod}, nil, nil)
+	got := Assess([]corev1.Pod{pod}, nil, nil, nil)
 	if count(got, "HostPath") != 1 {
 		t.Fatalf("want one HostPath finding, got %+v", got)
 	}
@@ -230,7 +286,7 @@ func TestAssess_HostPath_NoContainerMountsIt(t *testing.T) {
 				HostPath: &corev1.HostPathVolumeSource{Path: "/var/run/docker.sock"}}}},
 		},
 	}
-	got := Assess([]corev1.Pod{pod}, nil, nil)
+	got := Assess([]corev1.Pod{pod}, nil, nil, nil)
 	if count(got, "HostPath") != 1 {
 		t.Fatalf("want one HostPath finding, got %+v", got)
 	}
@@ -250,7 +306,7 @@ func TestAssess_MultipleHostPaths(t *testing.T) {
 			},
 		},
 	}
-	if n := count(Assess([]corev1.Pod{pod}, nil, nil), "HostPath"); n != 2 {
+	if n := count(Assess([]corev1.Pod{pod}, nil, nil, nil), "HostPath"); n != 2 {
 		t.Errorf("two distinct hostPath volumes must each be reported, got %d", n)
 	}
 }
@@ -258,7 +314,7 @@ func TestAssess_MultipleHostPaths(t *testing.T) {
 func TestAssess_HostPort(t *testing.T) {
 	pod := rsOwned("shop", "web-1", "web-rs",
 		corev1.Container{Name: "web", Ports: []corev1.ContainerPort{{HostPort: 8080, ContainerPort: 8080}}})
-	if count(Assess([]corev1.Pod{pod}, nil, nil), "HostPort") != 1 {
+	if count(Assess([]corev1.Pod{pod}, nil, nil, nil), "HostPort") != 1 {
 		t.Errorf("want one HostPort finding")
 	}
 }
@@ -269,7 +325,7 @@ func TestAssess_AddedCapability(t *testing.T) {
 		SecurityContext: &corev1.SecurityContext{Capabilities: &corev1.Capabilities{
 			Add: []corev1.Capability{"NET_BIND_SERVICE", "SYS_ADMIN"}}},
 	})
-	got := Assess([]corev1.Pod{pod}, nil, nil)
+	got := Assess([]corev1.Pod{pod}, nil, nil, nil)
 	if count(got, "AddedCapability") != 1 {
 		t.Fatalf("want one AddedCapability finding, got %+v", got)
 	}
@@ -279,7 +335,7 @@ func TestAssess_AddedCapability(t *testing.T) {
 		SecurityContext: &corev1.SecurityContext{Capabilities: &corev1.Capabilities{
 			Add: []corev1.Capability{"NET_BIND_SERVICE"}}},
 	})
-	if count(Assess([]corev1.Pod{ok}, nil, nil), "AddedCapability") != 0 {
+	if count(Assess([]corev1.Pod{ok}, nil, nil, nil), "AddedCapability") != 0 {
 		t.Errorf("NET_BIND_SERVICE alone must not be flagged")
 	}
 }
@@ -298,7 +354,7 @@ func hardenedContainer(name string) corev1.Container {
 
 func TestAssess_RunAsRoot_DefaultFlagged(t *testing.T) {
 	pod := rsOwned("shop", "web-1", "web-rs", corev1.Container{Name: "web"}) // no securityContext
-	if count(Assess([]corev1.Pod{pod}, nil, nil), "RunAsRoot") != 1 {
+	if count(Assess([]corev1.Pod{pod}, nil, nil, nil), "RunAsRoot") != 1 {
 		t.Error("a container with no runAsNonRoot must be flagged RunAsRoot")
 	}
 }
@@ -309,7 +365,7 @@ func TestAssess_RunAsRoot_PodLevelNonRootSatisfies(t *testing.T) {
 		SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: boolp(false), Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
 	})
 	pod.Spec.SecurityContext = &corev1.PodSecurityContext{RunAsNonRoot: boolp(true)} // inherited by the container
-	if count(Assess([]corev1.Pod{pod}, nil, nil), "RunAsRoot") != 0 {
+	if count(Assess([]corev1.Pod{pod}, nil, nil, nil), "RunAsRoot") != 0 {
 		t.Error("pod-level runAsNonRoot must satisfy the container")
 	}
 }
@@ -319,14 +375,14 @@ func TestAssess_RunAsUserZeroFlagged(t *testing.T) {
 		Name:            "web",
 		SecurityContext: &corev1.SecurityContext{RunAsUser: int64p(0), AllowPrivilegeEscalation: boolp(false), Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
 	})
-	if count(Assess([]corev1.Pod{pod}, nil, nil), "RunAsRoot") != 1 {
+	if count(Assess([]corev1.Pod{pod}, nil, nil, nil), "RunAsRoot") != 1 {
 		t.Error("runAsUser 0 must be flagged RunAsRoot")
 	}
 }
 
 func TestAssess_AllowPrivilegeEscalationAndCaps(t *testing.T) {
 	pod := rsOwned("shop", "web-1", "web-rs", corev1.Container{Name: "web"}) // nothing set
-	got := Assess([]corev1.Pod{pod}, nil, nil)
+	got := Assess([]corev1.Pod{pod}, nil, nil, nil)
 	if count(got, "AllowPrivilegeEscalation") != 1 {
 		t.Error("no allowPrivilegeEscalation:false must be flagged")
 	}
@@ -337,7 +393,7 @@ func TestAssess_AllowPrivilegeEscalationAndCaps(t *testing.T) {
 
 func TestAssess_HardenedPodClean(t *testing.T) {
 	pod := rsOwned("shop", "web-1", "web-rs", hardenedContainer("web"))
-	if got := Assess([]corev1.Pod{pod}, nil, nil); len(got) != 0 {
+	if got := Assess([]corev1.Pod{pod}, nil, nil, nil); len(got) != 0 {
 		t.Errorf("a fully hardened pod must yield no findings, got %+v", got)
 	}
 }
@@ -349,7 +405,7 @@ func TestAssess_ExposedService(t *testing.T) {
 		{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "internal"},
 			Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeClusterIP, Ports: []corev1.ServicePort{{Port: 80}}}},
 	}
-	got := Assess(nil, svcs, nil)
+	got := Assess(nil, svcs, nil, nil)
 	if count(got, "ExposedService") != 1 {
 		t.Fatalf("want one ExposedService finding, got %+v", got)
 	}
@@ -366,7 +422,7 @@ func TestAssess_ExposedService_ExternalNameSkipsExternalIPs(t *testing.T) {
 		{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "clusterip"},
 			Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeClusterIP, ExternalIPs: []string{"1.2.3.4"}, Ports: []corev1.ServicePort{{Port: 80}}}},
 	}
-	got := Assess(nil, svcs, nil)
+	got := Assess(nil, svcs, nil, nil)
 	if count(got, "ExposedService") != 1 {
 		t.Fatalf("want one ExposedService finding (ExternalName skipped), got %+v", got)
 	}
@@ -382,7 +438,7 @@ func TestAssess_ExposedService_NodePortAndExternalIPs(t *testing.T) {
 		{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "eip"},
 			Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeClusterIP, ExternalIPs: []string{"1.2.3.4"}, Ports: []corev1.ServicePort{{Port: 80}}}},
 	}
-	if n := count(Assess(nil, svcs, nil), "ExposedService"); n != 2 {
+	if n := count(Assess(nil, svcs, nil, nil), "ExposedService"); n != 2 {
 		t.Errorf("NodePort and externalIPs services must each be flagged, got %d", n)
 	}
 }

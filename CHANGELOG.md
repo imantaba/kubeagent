@@ -102,6 +102,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `schemaVersion` moves: `kind` carries no `enum` in the published scan
   schema.
 
+- **A CronJob's pods churned through the SECURITY section as a new,
+  unattributed `Job` row every tick.** A CronJob's Job children carry a
+  ticked name (`report-29780988`, then `report-29780989`, ...), and
+  `resolveWorkload` used to leave a Job-owned pod attributed to that Job
+  directly, so each tick's findings looked like a new, unrelated workload.
+  `secscan.Assess` now takes a fourth argument, `jobs []batchv1.Job`, and
+  `resolveWorkload` folds a pod whose controller owner is a Job present in
+  that slice, and whose Job's own controller owner is a CronJob, up to
+  `CronJob/<name>` — mirroring the existing ReplicaSet-to-Deployment fold. A
+  bare Job (or one absent from the slice) still resolves to `Job/<name>`:
+  its name is stable and is the object the operator created, so there is
+  nothing above it to fold to. No new cluster read and no RBAC change —
+  Jobs are already collected unconditionally and carried on `scan`'s
+  inventory inputs regardless of `--security`; the sole production call
+  site now passes `inputs.Jobs` alongside the already-unfiltered
+  `inputs.ReplicaSets`. No `schemaVersion` moves: `kind` and `workload` are
+  free-form strings.
+
 ### Changed
 
 - **`KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS` is now validated instead of silently

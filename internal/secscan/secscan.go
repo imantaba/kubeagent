@@ -2,7 +2,7 @@
 // security-posture problems — privileged/over-privileged containers, insecure
 // container defaults, and exposed Services. It is a curated subset of PSS
 // (baseline + restricted), not a conformance implementation. Pure and
-// read-only: the caller supplies the pods, services, and replicasets.
+// read-only: the caller supplies the pods, services, replicasets, and jobs.
 package secscan
 
 import (
@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -35,12 +36,17 @@ type Finding struct {
 
 // Assess flags PSS-aligned security-posture problems in the given pods and
 // services. replicaSets is used only to fold a Deployment's pods up to the
-// Deployment for display. Pure; the caller supplies already-namespace-filtered
+// Deployment for display; jobs is used the same way, to fold a CronJob's
+// pods up to the CronJob. Pure; the caller supplies already-namespace-filtered
 // inputs.
-func Assess(pods []corev1.Pod, services []corev1.Service, replicaSets []appsv1.ReplicaSet) []Finding {
+func Assess(pods []corev1.Pod, services []corev1.Service, replicaSets []appsv1.ReplicaSet, jobs []batchv1.Job) []Finding {
 	rsByKey := make(map[string]appsv1.ReplicaSet, len(replicaSets))
 	for _, rs := range replicaSets {
 		rsByKey[rs.Namespace+"/"+rs.Name] = rs
+	}
+	jobsByKey := make(map[string]batchv1.Job, len(jobs))
+	for _, job := range jobs {
+		jobsByKey[job.Namespace+"/"+job.Name] = job
 	}
 	seen := make(map[string]bool)
 	var out []Finding
@@ -53,7 +59,7 @@ func Assess(pods []corev1.Pod, services []corev1.Service, replicaSets []appsv1.R
 		out = append(out, f)
 	}
 	for _, pod := range pods {
-		wl := resolveWorkload(pod, rsByKey)
+		wl := resolveWorkload(pod, rsByKey, jobsByKey)
 		for _, f := range podFindings(pod, wl) {
 			add(f)
 		}
@@ -71,8 +77,9 @@ func Assess(pods []corev1.Pod, services []corev1.Service, replicaSets []appsv1.R
 type workloadRef struct{ Kind, Name string }
 
 // resolveWorkload maps a pod to its top-level workload: its controlling owner,
-// folded up one level when that owner is a ReplicaSet (→ its Deployment).
-func resolveWorkload(pod corev1.Pod, rsByKey map[string]appsv1.ReplicaSet) workloadRef {
+// folded up one level when that owner is a ReplicaSet (→ its Deployment) or a
+// Job whose own controller owner is a CronJob (→ the CronJob).
+func resolveWorkload(pod corev1.Pod, rsByKey map[string]appsv1.ReplicaSet, jobsByKey map[string]batchv1.Job) workloadRef {
 	owner := controllerOf(pod.OwnerReferences)
 	if owner == nil {
 		return workloadRef{Kind: "Pod", Name: pod.Name}
@@ -91,6 +98,17 @@ func resolveWorkload(pod corev1.Pod, rsByKey map[string]appsv1.ReplicaSet) workl
 			}
 		}
 		return workloadRef{Kind: "ReplicaSet", Name: owner.Name}
+	}
+	if owner.Kind == "Job" {
+		if job, ok := jobsByKey[pod.Namespace+"/"+owner.Name]; ok {
+			if cj := controllerOf(job.OwnerReferences); cj != nil && cj.Kind == "CronJob" {
+				return workloadRef{Kind: "CronJob", Name: cj.Name}
+			}
+		}
+		// A bare Job (or one absent from the slice) stays Job/<name>: its
+		// name is stable and is the object the operator created — there is
+		// nothing above it to fold to.
+		return workloadRef{Kind: "Job", Name: owner.Name}
 	}
 	return workloadRef{Kind: owner.Kind, Name: owner.Name}
 }

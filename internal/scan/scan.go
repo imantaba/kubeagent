@@ -167,6 +167,30 @@ func hasPreviousInstance(pod *corev1.Pod, container string) bool {
 	return false
 }
 
+// lastTerminationReason returns the named container's LastTerminationState
+// reason, or "" when it has none. It searches both status slices, the same
+// two hasPreviousInstance does, for the same reason: initcontainer.go names
+// its Container from the init slice.
+func lastTerminationReason(pod *corev1.Pod, container string) string {
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.Name == container {
+			if t := cs.LastTerminationState.Terminated; t != nil {
+				return t.Reason
+			}
+			return ""
+		}
+	}
+	for _, cs := range pod.Status.InitContainerStatuses {
+		if cs.Name == container {
+			if t := cs.LastTerminationState.Terminated; t != nil {
+				return t.Reason
+			}
+			return ""
+		}
+	}
+	return ""
+}
+
 // coreDNSPods returns the Running CoreDNS pods (kube-system, k8s-app=kube-dns).
 func coreDNSPods(pods []corev1.Pod) []corev1.Pod {
 	var out []corev1.Pod
@@ -484,23 +508,33 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 			p := &inputs.Pods[i]
 			podByKey[p.Namespace+"/"+p.Name] = p
 		}
-		enriched := map[string]bool{} // one log fetch + one enriched finding per pod/container
+		enrichedIdx := map[string]int{} // one log fetch per pod/container; the value is the logTargets index, so a later duplicate can retarget it
 		for i := range findings {
 			if findings[i].Container == "" {
 				continue
 			}
-			if pod := podByKey[findings[i].Pod]; pod == nil || !hasPreviousInstance(pod, findings[i].Container) {
+			pod := podByKey[findings[i].Pod]
+			if pod == nil || !hasPreviousInstance(pod, findings[i].Container) {
 				continue // never restarted: there is no previous instance to fetch
 			}
 			key := findings[i].Pod + "/" + findings[i].Container
-			if enriched[key] {
-				continue // a container that trips two detectors (e.g. CrashLoop + OOM) is enriched once
+			if idx, ok := enrichedIdx[key]; ok {
+				// Still one fetch per container (e.g. a container that trips
+				// both CrashLoop and OOMKilled). If this finding's Issue names
+				// the container's own last termination reason, it explains the
+				// exit better than whichever finding claimed the slot first, so
+				// the block moves to it — the finding that explains the exit is
+				// the one an operator reads.
+				if reason := lastTerminationReason(pod, findings[i].Container); reason != "" && findings[i].Issue == reason {
+					logTargets[idx].finding = i
+				}
+				continue
 			}
 			ns, name, ok := splitNamespacedName(findings[i].Pod) // "ns/pod"
 			if !ok {
 				continue
 			}
-			enriched[key] = true
+			enrichedIdx[key] = len(logTargets)
 			logTargets = append(logTargets, logTarget{finding: i, namespace: ns, pod: name, container: findings[i].Container})
 		}
 	}

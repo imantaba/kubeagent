@@ -382,6 +382,129 @@ func TestEvaluate_LogsDedupPerContainer(t *testing.T) {
 	}
 }
 
+// TestEvaluate_LogsTargetsTheFindingThatExplainsTheExit pins R185: a container
+// that trips two detectors still gets one log fetch, but the block goes to
+// whichever finding names the container's own last termination reason, not
+// simply the first one diagnose.Run happened to emit. CrashLoopDetector runs
+// before OOMKilledDetector in diagnose.DefaultDetectors, so "first wins" would
+// always have kept the CrashLoopBackOff finding here — this fixture pins the
+// retarget to OOMKilled instead, because that is the finding that actually
+// explains why the container exited.
+func TestEvaluate_LogsTargetsTheFindingThatExplainsTheExit(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "web-1", Namespace: "shop", Labels: map[string]string{"app": "web"}},
+		Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
+			Name:                 "web",
+			State:                corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+			LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "OOMKilled", ExitCode: 137}},
+		}}},
+	}
+	client := fake.NewSimpleClientset(pod)
+	res, err := Evaluate(context.Background(), client, Options{Logs: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var oomCause, crashCause string
+	for _, w := range res.Inventory.Workloads {
+		for _, f := range w.Findings {
+			if f.Pod != "shop/web-1" {
+				continue
+			}
+			switch f.Issue {
+			case "OOMKilled":
+				oomCause = f.LogCause
+			case "CrashLoopBackOff":
+				crashCause = f.LogCause
+			}
+		}
+	}
+	if oomCause == "" {
+		t.Error("OOMKilled finding should carry a LogCause, got none")
+	}
+	if crashCause != "" {
+		t.Errorf("CrashLoopBackOff finding should carry no LogCause once OOMKilled explains the exit, got %q", crashCause)
+	}
+	if n := countPodsLogReads(client); n != 1 {
+		t.Errorf("pods/log reads = %d, want 1 (one fetch per container, regardless of how many findings it trips)", n)
+	}
+}
+
+// TestEvaluate_LogsFirstFindingWinsWithoutAMatchingTerminationReason pins the
+// sibling path: when the container's last termination reason names neither
+// competing finding's Issue, the retarget never fires and the first finding
+// diagnose.Run emitted keeps the log block — proving the retarget is
+// conditional on the container's own reason, not unconditional on any
+// duplicate key. RestartLoop and ProbeFailure are the pair used here because
+// they are the only other two detectors that can both name the same running
+// container at once (RestartLoop needs Running + a durable restart history;
+// ProbeFailure needs Running + an Unhealthy event; RestartLoopDetector runs
+// before ProbeFailureDetector in diagnose.DefaultDetectors), and neither
+// Issue string ("RestartLoop", "ProbeFailure") ever equals a termination
+// reason of "Error" — so an implementation that retargeted on any duplicate
+// key, instead of checking the reason, would wrongly move the block here.
+func TestEvaluate_LogsFirstFindingWinsWithoutAMatchingTerminationReason(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web-1", Labels: map[string]string{"app": "web"}},
+		Status: corev1.PodStatus{
+			Phase:      corev1.PodRunning,
+			Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionFalse}},
+			ContainerStatuses: []corev1.ContainerStatus{{
+				Name:         "web",
+				RestartCount: 3,
+				State:        corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: metav1.NewTime(time.Now().Add(-1 * time.Minute))}},
+				LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+					ExitCode: 1, Reason: "Error", FinishedAt: metav1.NewTime(time.Now().Add(-2 * time.Minute)),
+				}},
+			}},
+		},
+	}
+	event := &corev1.Event{
+		ObjectMeta:     metav1.ObjectMeta{Namespace: "shop", Name: "web-1.unhealthy"},
+		Reason:         "Unhealthy",
+		Type:           "Warning",
+		Message:        "Readiness probe failed: HTTP probe failed with statuscode: 503",
+		LastTimestamp:  metav1.Now(),
+		InvolvedObject: corev1.ObjectReference{Kind: "Pod", Namespace: "shop", Name: "web-1", FieldPath: "spec.containers{web}"},
+	}
+	client := fake.NewSimpleClientset(pod, event)
+	res, err := Evaluate(context.Background(), client, Options{Logs: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	seen := map[string]bool{}
+	var restartCause, probeCause string
+	for _, w := range res.Inventory.Workloads {
+		for _, f := range w.Findings {
+			if f.Pod != "shop/web-1" {
+				continue
+			}
+			seen[f.Issue] = true
+			switch f.Issue {
+			case "RestartLoop":
+				restartCause = f.LogCause
+			case "ProbeFailure":
+				probeCause = f.LogCause
+			}
+		}
+	}
+	for _, want := range []string{"RestartLoop", "ProbeFailure"} {
+		if !seen[want] {
+			t.Fatalf("fixture did not produce the expected %q finding (findings seen: %v) — the test setup is broken, not the retarget under test", want, seen)
+		}
+	}
+	if restartCause == "" {
+		t.Error("RestartLoop (the first finding diagnose.Run emitted) should still carry the LogCause: first-wins")
+	}
+	if probeCause != "" {
+		t.Errorf("ProbeFailure should not carry a LogCause — its Issue does not match the container's Error termination reason, so the retarget must not fire, got %q", probeCause)
+	}
+	if n := countPodsLogReads(client); n != 1 {
+		t.Errorf("pods/log reads = %d, want 1 (one fetch per container, regardless of how many findings it trips)", n)
+	}
+}
+
 // findLogCause returns the first finding's LogCause for the given "ns/pod".
 func findLogCause(r Result, pod string) string {
 	for _, w := range r.Inventory.Workloads {

@@ -108,6 +108,25 @@ func TestAssess_ExactlyAtThresholdNotFlagged(t *testing.T) {
 	}
 }
 
+func TestCompactDur(t *testing.T) {
+	cases := []struct {
+		d    time.Duration
+		want string
+	}{
+		{31 * time.Second, "<1m"},
+		{59 * time.Second, "<1m"},
+		{60 * time.Second, "1m"},
+		{90 * time.Second, "1m"},
+		{61 * time.Minute, "1h"},
+		{25 * time.Hour, "1d"},
+	}
+	for _, c := range cases {
+		if got := compactDur(c.d); got != c.want {
+			t.Errorf("compactDur(%v) = %q, want %q", c.d, got, c.want)
+		}
+	}
+}
+
 func contains(s, sub string) bool {
 	return len(sub) == 0 || (len(s) >= len(sub) && indexOf(s, sub) >= 0)
 }

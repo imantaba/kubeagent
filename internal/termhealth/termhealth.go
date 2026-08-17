@@ -75,7 +75,7 @@ func stuckFor(dt *metav1.Time, threshold time.Duration, now time.Time) (string, 
 	return compactDur(d), true
 }
 
-// compactDur renders a duration as the largest whole unit: Nd / Nh / Nm (min "1m").
+// compactDur renders a duration as the largest whole unit: Nd / Nh / Nm (min "<1m").
 func compactDur(d time.Duration) string {
 	switch {
 	case d >= 24*time.Hour:
@@ -85,7 +85,7 @@ func compactDur(d time.Duration) string {
 	case d >= time.Minute:
 		return strconv.Itoa(int(d/time.Minute)) + "m"
 	default:
-		return "1m"
+		return "<1m"
 	}
 }
 

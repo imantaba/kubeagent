@@ -65,6 +65,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   carry no `enum` in the published scan schema, so a new category value and
   reworded reason text are content changes, not shape changes.
 
+- **`hpahealth.Assess` now distinguishes a disabled or ambiguous HPA from an
+  ordinary metrics failure, and names the observed replica count when one is
+  capped.** The `ScalingActive` arm used to collapse every `False` reason into
+  category `metrics` with the prefix "can't fetch metrics"; an HPA whose
+  scaling the upstream HPA controller reports disabled under `ScalingDisabled`,
+  and one whose selector it reports overlapping another HPA's under
+  `AmbiguousSelector`, were reported identically to one that simply could not
+  read a metric. Those two reasons now classify as `disabled` ("scaling is
+  disabled") and `ambiguous` ("two HPAs target the same pods"); every other
+  `ScalingActive` reason keeps falling through to `metrics`, unchanged.
+  Separately, the `ScalingLimited`/`capped` arm used to always render "pinned
+  at maxReplicas N — desired exceeds the cap", even once the HPA's current
+  replica count had already fallen back below the cap; it now reads
+  `status.currentReplicas` and renders "at N of maxReplicas M — desired
+  exceeds the cap" when current is below max, keeping the pinned-at-cap
+  sentence when it is not. No new cluster read and no RBAC change:
+  `status.currentReplicas` is already on the object `Assess` receives. The
+  finding vocabulary grows from three HPA categories to five; `disabled` →
+  `HPAScalingDisabled` and `ambiguous` → `HPAAmbiguousSelector` join the three
+  duplicated `hpaCategoryToIssue` maps (`internal/findings`, `internal/mcp`,
+  the watch daemon's `/issues`), so gate JSON, the MCP tool result and
+  `/issues` all render the CamelCase spelling instead of falling back to the
+  raw category. No `schemaVersion` moves: `hpahealth.Issue`'s `category` and
+  `reason` fields carry no `enum` in the published scan schema, so a new
+  category value and a reworded capped-arm reason are content changes, not
+  shape changes. Both comparisons that decide the new behavior — the
+  `ScalingActive` reason switch and the existing `TooManyReplicas` match — run
+  on the raw condition `Reason`, unchanged from before.
+
 ## [1.16.1] - 2026-08-13
 
 ### Changed

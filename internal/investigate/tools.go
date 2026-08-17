@@ -18,7 +18,7 @@ func toolSpecs() []toolSpec {
 	return []toolSpec{
 		{
 			Name:        "describe",
-			Description: "Read structured status of one in-scope object (pod, deployment, replicaset, statefulset, daemonset, job, node, or pvc). Returns phase/conditions/container states — never logs, IPs, env, or secrets.",
+			Description: "Read structured status of one in-scope object (pod, deployment, replicaset, statefulset, daemonset, job, node, or pvc). Returns phase/conditions/container states — never logs, env, or secrets, and never an address kubeagent chose (pod/host/cluster IP); quoted API text may still contain a URL the cluster wrote.",
 			Properties: map[string]any{
 				"kind":      prop("one of: pod, deployment, replicaset, statefulset, daemonset, job, node, pvc"),
 				"namespace": prop("the object's namespace (empty for a node)"),

@@ -10,6 +10,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
+
+	"github.com/imantaba/kubeagent/internal/redact"
+	"github.com/imantaba/kubeagent/internal/safetext"
 )
 
 func call(name string, input map[string]string) toolCall {
@@ -147,5 +150,262 @@ func TestReader_GetRelated_OwnerAddsToScope(t *testing.T) {
 	}
 	if !s.Allowed("replicaset", "shop", "web-5f") {
 		t.Error("resolved owner must be added to scope")
+	}
+}
+
+// --- R211/R212: free-text fields (condition/waiting/terminated reasons and
+// messages, event reasons and messages) are not validated by the API server,
+// so they pass through sanitize (safetext.Line, then redact.Addresses) on
+// their way into a tool result.
+
+// TestSanitize_TruncatesToMaxLine pins R212's length bound: sanitize never
+// hands the model more than safetext.MaxLine runes of a single free-text
+// field, ellipsis included in that budget.
+func TestSanitize_TruncatesToMaxLine(t *testing.T) {
+	long := strings.Repeat("a", safetext.MaxLine+50)
+	got := sanitize(long)
+	if r := []rune(got); len(r) != safetext.MaxLine {
+		t.Errorf("sanitize(...) length = %d runes, want exactly MaxLine=%d", len(r), safetext.MaxLine)
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Errorf("sanitize(...) = %q, want a truncated line to end with safetext.Line's ellipsis", got)
+	}
+}
+
+// TestSanitize_DropsControlAndFormatCharacters pins the other half of R212:
+// a Unicode formatting character (category Cf, e.g. U+202E RIGHT-TO-LEFT
+// OVERRIDE) is dropped rather than rendered.
+func TestSanitize_DropsControlAndFormatCharacters(t *testing.T) {
+	got := sanitize("before‮after")
+	if strings.ContainsRune(got, '‮') {
+		t.Errorf("sanitize(...) = %q, want the Cf override character dropped", got)
+	}
+	if got != "beforeafter" {
+		t.Errorf("sanitize(...) = %q, want %q", got, "beforeafter")
+	}
+}
+
+// TestSanitize_OrderMatters is the executable form of CORRECTION 8's
+// justification for sanitize's internal order (safetext.Line first, then
+// redact.Addresses -- never the reverse). A control character can sit
+// inside an address and split it, which breaks the address regexp's match.
+// Sanitizing first repairs the split before the regexp ever runs, so the
+// address is caught; redacting first tests the still-split text, misses it,
+// and only afterwards has Line strip the character that was hiding it --
+// leaving the address in the clear. This is the opposite of the project's
+// usual "match on the raw value" rule, and deliberately so: here the raw
+// value is what lets the address evade the match.
+func TestSanitize_OrderMatters(t *testing.T) {
+	// No port, deliberately: with a port suffix, the fragment left after the
+	// override splits the four-part quad can still satisfy the address
+	// regexp's separate, more permissive "hostname:port" alternative (e.g.
+	// "0.10:53" alone looks like a two-label host with a port), which would
+	// redact a piece of the address even in the wrong order and blur the
+	// point. A bare IP has no such fallback: split into "10.96." and
+	// "0.10", neither the four-group IP alternative nor the ":port"
+	// alternative matches either fragment.
+	raw := "connecting to 10.96.‮0.10 failed"
+
+	got := sanitize(raw)
+	if !strings.Contains(got, "<redacted>") {
+		t.Errorf("sanitize(...) = %q, want the control-character-split address redacted", got)
+	}
+	if strings.Contains(got, "10.96.0.10") {
+		t.Errorf("sanitize(...) = %q, the repaired address must not survive in the clear", got)
+	}
+
+	// The rejected order: redact first (on text the control character still
+	// splits), then sanitize.
+	redactedFirst := safetext.Line(redact.Addresses(raw))
+	if !strings.Contains(redactedFirst, "10.96.0.10") {
+		t.Errorf("redact-then-sanitize unexpectedly caught the split address (%q) -- if the regexp now matches through a Cf character, CORRECTION 8's justification for sanitize's order needs revisiting", redactedFirst)
+	}
+}
+
+// TestReader_DescribePod_SanitizesFreeTextFields proves R211/R212 are wired
+// into all four describePod expressions: the pod condition Reason, the
+// waiting container's Reason and Message, and the terminated container's
+// Reason. Structured fields (the container name, restart count, exit code)
+// must survive untouched.
+func TestReader_DescribePod_SanitizesFreeTextFields(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "web-abc", Namespace: "shop"},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			Conditions: []corev1.PodCondition{{
+				Type: corev1.PodReady, Status: corev1.ConditionFalse,
+				Reason: "Blocked by 10.96.0.10:53",
+			}},
+			ContainerStatuses: []corev1.ContainerStatus{
+				{
+					Name: "web", RestartCount: 2,
+					State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{
+						Reason: "CrashLoopBackOff", Message: "back-off talking to 10.96.0.11:53",
+					}},
+				},
+				{
+					Name: "sidecar",
+					State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+						Reason: "OOMKilled near 10.96.0.12:53", ExitCode: 137,
+					}},
+				},
+			},
+		},
+	}
+	r := Reader{client: fake.NewSimpleClientset(pod)}
+	s := NewScope(nil)
+	s.Add("pod", "shop", "web-abc")
+
+	res := r.execute(context.Background(), call("describe", map[string]string{
+		"kind": "pod", "namespace": "shop", "name": "web-abc",
+	}), s)
+
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", res.Content)
+	}
+	for _, addr := range []string{"10.96.0.10:53", "10.96.0.11:53", "10.96.0.12:53"} {
+		if strings.Contains(res.Content, addr) {
+			t.Errorf("address %q leaked unredacted into: %q", addr, res.Content)
+		}
+	}
+	if n := strings.Count(res.Content, "<redacted>"); n != 3 {
+		t.Errorf("want 3 redactions (condition reason, waiting message, terminated reason), got %d in: %q", n, res.Content)
+	}
+	if !strings.Contains(res.Content, "CrashLoopBackOff") || !strings.Contains(res.Content, "restarts=2") || !strings.Contains(res.Content, "exit 137") {
+		t.Errorf("structured fields must survive sanitizing untouched: %q", res.Content)
+	}
+}
+
+// TestReader_DescribePod_URLResidualSurvivesRedaction pins the accepted
+// residual: redact.Addresses matches bare host:port and IP:port shapes, not
+// an arbitrary URL, so a registry address quoted inside an image-pull
+// failure keeps its scheme and path intact even after sanitizing. This is
+// deliberate, not a bug -- pin it so a later change to the regexp cannot
+// silently widen or narrow it unnoticed.
+func TestReader_DescribePod_URLResidualSurvivesRedaction(t *testing.T) {
+	const wantURL = "https://registry.example.com/v2/library/nginx/manifests/v1"
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "web-abc", Namespace: "shop"},
+		Status: corev1.PodStatus{
+			ContainerStatuses: []corev1.ContainerStatus{{
+				Name: "web",
+				State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{
+					Reason:  "ErrImagePull",
+					Message: `Failed to pull image: Get "` + wantURL + `": unauthorized`,
+				}},
+			}},
+		},
+	}
+	r := Reader{client: fake.NewSimpleClientset(pod)}
+	s := NewScope(nil)
+	s.Add("pod", "shop", "web-abc")
+
+	res := r.execute(context.Background(), call("describe", map[string]string{
+		"kind": "pod", "namespace": "shop", "name": "web-abc",
+	}), s)
+
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", res.Content)
+	}
+	if !strings.Contains(res.Content, wantURL) {
+		t.Errorf("expected the accepted residual (URL survives sanitizing unredacted), got: %q", res.Content)
+	}
+}
+
+// TestReader_DescribeWorkload_SanitizesConditionMessage proves R211/R212 are
+// wired into describeWorkload's deployment condition Reason and Message.
+func TestReader_DescribeWorkload_SanitizesConditionMessage(t *testing.T) {
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: "shop"},
+		Status: appsv1.DeploymentStatus{
+			Conditions: []appsv1.DeploymentCondition{{
+				Type: appsv1.DeploymentAvailable, Status: corev1.ConditionFalse,
+				Reason: "MinimumReplicasUnavailable", Message: "cannot reach 10.96.0.20:53",
+			}},
+		},
+	}
+	r := Reader{client: fake.NewSimpleClientset(dep)}
+	s := NewScope(nil)
+	s.Add("deployment", "shop", "web")
+
+	res := r.execute(context.Background(), call("describe", map[string]string{
+		"kind": "deployment", "namespace": "shop", "name": "web",
+	}), s)
+
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", res.Content)
+	}
+	if strings.Contains(res.Content, "10.96.0.20:53") {
+		t.Errorf("address leaked into deployment condition output: %q", res.Content)
+	}
+	if !strings.Contains(res.Content, "<redacted>") {
+		t.Errorf("want the address redacted: %q", res.Content)
+	}
+	if !strings.Contains(res.Content, "MinimumReplicasUnavailable") {
+		t.Errorf("structured reason must survive: %q", res.Content)
+	}
+}
+
+// TestReader_DescribeNode_SanitizesConditionMessage proves R211/R212 are
+// wired into describeNode's condition Reason and Message -- the site neither
+// decision names by line, but CORRECTION 2 requires it wrapped too.
+func TestReader_DescribeNode_SanitizesConditionMessage(t *testing.T) {
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "node-1"},
+		Status: corev1.NodeStatus{
+			Conditions: []corev1.NodeCondition{{
+				Type: corev1.NodeReady, Status: corev1.ConditionFalse,
+				Reason: "KubeletNotReady", Message: "container runtime unreachable at 10.96.0.30:6443",
+			}},
+		},
+	}
+	r := Reader{client: fake.NewSimpleClientset(node)}
+	s := NewScope(nil)
+	s.Add("node", "", "node-1")
+
+	res := r.execute(context.Background(), call("describe", map[string]string{
+		"kind": "node", "namespace": "", "name": "node-1",
+	}), s)
+
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", res.Content)
+	}
+	if strings.Contains(res.Content, "10.96.0.30:6443") {
+		t.Errorf("address leaked into node condition output: %q", res.Content)
+	}
+	if !strings.Contains(res.Content, "<redacted>") {
+		t.Errorf("want the address redacted: %q", res.Content)
+	}
+	if !strings.Contains(res.Content, "KubeletNotReady") {
+		t.Errorf("structured reason must survive: %q", res.Content)
+	}
+}
+
+// TestReader_GetEvents_SanitizesReasonAndMessage proves R211/R212 are wired
+// into getEvents' event Reason and Message.
+func TestReader_GetEvents_SanitizesReasonAndMessage(t *testing.T) {
+	ev := &corev1.Event{
+		ObjectMeta:     metav1.ObjectMeta{Name: "web-abc.1", Namespace: "shop"},
+		InvolvedObject: corev1.ObjectReference{Name: "web-abc", Namespace: "shop"},
+		Reason:         "FailedMount at 10.96.0.40:2049", Message: "unable to mount volume from 10.96.0.41:2049", Count: 1,
+	}
+	r := Reader{client: fake.NewSimpleClientset(ev)}
+	s := NewScope(nil)
+	s.Add("pod", "shop", "web-abc")
+
+	res := r.execute(context.Background(), call("get_events", map[string]string{
+		"namespace": "shop", "name": "web-abc",
+	}), s)
+
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", res.Content)
+	}
+	for _, addr := range []string{"10.96.0.40:2049", "10.96.0.41:2049"} {
+		if strings.Contains(res.Content, addr) {
+			t.Errorf("address %q leaked into event output: %q", addr, res.Content)
+		}
+	}
+	if n := strings.Count(res.Content, "<redacted>"); n != 2 {
+		t.Errorf("want 2 redactions (event reason and message), got %d in: %q", n, res.Content)
 	}
 }

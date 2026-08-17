@@ -2134,16 +2134,30 @@ func TestPrintInventory_CertificatesNotesBullet(t *testing.T) {
 }
 
 func TestPrintInventory_ConfidenceTags(t *testing.T) {
+	// RolloutStuck is one issue string rendered two different ways: internal/
+	// rollouthealth's Deployment arm sets "high" (a controller-set condition —
+	// a direct read) and its StatefulSet/DaemonSet arm sets "medium" (counters
+	// and a grace period — an inference). confidence.ForIssue does not know
+	// RolloutStuck and must not learn it (ADDENDUM A4 of wp19-anchors.md,
+	// pinned by internal/confidence's own TestForIssue and by
+	// internal/diagnose's TestConfidenceTableCoversEveryKnownIssueKind), so
+	// the level is the producer's, not a table lookup — which is exactly why
+	// the same tag guard below must be observed rendering both ways from one
+	// Issue value.
 	ws := []inventory.Workload{
 		{Namespace: "shop", Name: "cache", Kind: "Deployment", Desired: 1, Ready: 0, Status: "Degraded",
 			RootCause: "registry ghcr.io (2 workloads failing to pull)",
 			Findings: []diagnose.Finding{
 				{Issue: "RestartLoop", Reason: "keeps erroring", Confidence: "medium"},
 				{Issue: "CrashLoopBackOff", Reason: "repeatedly crashes", Confidence: "high"},
+				{Issue: "RolloutStuck", Reason: "the Deployment's rollout cannot complete — the new pods are not becoming available", Confidence: "high"},
 			}},
 		{Namespace: "shop", Name: "db", Kind: "StatefulSet", Desired: 1, Ready: 0, Status: "Degraded",
 			RootCause: "node worker-2 (NotReady)",
-			Findings:  []diagnose.Finding{{Issue: "VolumeAttachError", Reason: "Multi-Attach", Confidence: "high"}}},
+			Findings: []diagnose.Finding{
+				{Issue: "VolumeAttachError", Reason: "Multi-Attach", Confidence: "high"},
+				{Issue: "RolloutStuck", Reason: "the StatefulSet's rollout cannot complete — the new pods are not becoming available", Confidence: "medium"},
+			}},
 	}
 	var buf bytes.Buffer
 	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Degraded", NodesReady: 2, NodesTotal: 3},
@@ -2163,6 +2177,13 @@ func TestPrintInventory_ConfidenceTags(t *testing.T) {
 	}
 	if strings.Contains(out, "node worker-2 (NotReady) [") {
 		t.Errorf("node attribution (high) must be unmarked:\n%s", out)
+	}
+	if !strings.Contains(out, "⚠ RolloutStuck [medium]: the StatefulSet's rollout cannot complete — the new pods are not becoming available") {
+		t.Errorf("StatefulSet's RolloutStuck (medium) should be tagged:\n%s", out)
+	}
+	if !strings.Contains(out, "⚠ RolloutStuck: the Deployment's rollout cannot complete — the new pods are not becoming available") ||
+		strings.Contains(out, "RolloutStuck [high]") {
+		t.Errorf("Deployment's RolloutStuck (high) must be unmarked:\n%s", out)
 	}
 }
 

@@ -89,3 +89,23 @@ func TestConfidenceTableCoversEveryKnownIssueKind(t *testing.T) {
 		}
 	}
 }
+
+// TestConfidenceTableHasNoStaleEntry is the reverse of
+// TestConfidenceTableCoversEveryKnownIssueKind: nothing in confidenceTable
+// names a kind internal/knownissues no longer knows. Without this, a
+// retired detector's row could sit in confidenceTable forever with no test
+// ever flagging it for cleanup. This mirrors the pair
+// internal/diagnose/knownissues_test.go already establishes for the kind
+// vocabulary itself — TestDetectorsProduceOnlyDocumentedKinds (forward) and
+// TestEveryDocumentedKindIsProduced (reverse).
+func TestConfidenceTableHasNoStaleEntry(t *testing.T) {
+	known := map[string]bool{}
+	for _, k := range append(append([]string(nil), knownissues.Kinds()...), knownissues.WorkloadKinds()...) {
+		known[k] = true
+	}
+	for kind := range confidenceTable {
+		if !known[kind] {
+			t.Errorf("confidenceTable has an entry for %q, which internal/knownissues no longer documents — remove the stale row", kind)
+		}
+	}
+}

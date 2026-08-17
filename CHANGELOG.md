@@ -204,9 +204,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   knows better than the issue string wins. A StatefulSet's or DaemonSet's
   stuck-rollout line in the text report now carries a trailing `[medium]` tag;
   the long-standing Deployment case is unchanged. A new `internal/diagnose`
-  table test pins the confidence level for every kind `internal/knownissues`
-  documents — all nineteen, the sixteen pod-detector kinds plus the three
-  workload-level kinds — so a future kind cannot arrive without someone
+  table test pins the confidence level — or, for `RolloutStuck`, the fact
+  that a producer sets it per arm — for every issue kind `internal/knownissues`
+  knows: the sixteen pod-detector kinds it documents plus the three
+  workload-level kinds it names. A future kind cannot arrive without someone
   writing down which level it is and why. `confidence` carries no `enum` in
   any published schema, so a producer setting its own value moves no
   `schemaVersion`.

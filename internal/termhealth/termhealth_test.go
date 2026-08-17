@@ -64,6 +64,63 @@ func TestAssess_PVCProtectionNamesMountingPod(t *testing.T) {
 	}
 }
 
+// mountingPodFixture is a pod mounting claim via a PersistentVolumeClaim volume.
+func mountingPodFixture(ns, name, claim string) corev1.Pod {
+	return corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name},
+		Spec: corev1.PodSpec{Volumes: []corev1.Volume{{Name: "d", VolumeSource: corev1.VolumeSource{
+			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: claim}}}}}}
+}
+
+func TestAssess_PVCProtectionNamesTwoMountingPods(t *testing.T) {
+	pvc := corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "data",
+		DeletionTimestamp: delTime(20 * time.Minute), Finalizers: []string{"kubernetes.io/pvc-protection"}}}
+	pods := []corev1.Pod{
+		mountingPodFixture("shop", "db-0", "data"),
+		mountingPodFixture("shop", "db-1", "data"),
+	}
+	got := Assess(nil, pods, []corev1.PersistentVolumeClaim{pvc}, 2*time.Minute, now)
+	want := "pvc-protection — still mounted by pods shop/db-0, shop/db-1"
+	if len(got) != 1 || got[0].Reason != want {
+		t.Fatalf("Reason = %q, want %q", got[0].Reason, want)
+	}
+}
+
+func TestAssess_PVCProtectionCapsAtThreeMountingPods(t *testing.T) {
+	pvc := corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "data",
+		DeletionTimestamp: delTime(20 * time.Minute), Finalizers: []string{"kubernetes.io/pvc-protection"}}}
+	pods := []corev1.Pod{
+		mountingPodFixture("shop", "db-0", "data"),
+		mountingPodFixture("shop", "db-1", "data"),
+		mountingPodFixture("shop", "db-2", "data"),
+		mountingPodFixture("shop", "db-3", "data"),
+		mountingPodFixture("shop", "db-4", "data"),
+	}
+	got := Assess(nil, pods, []corev1.PersistentVolumeClaim{pvc}, 2*time.Minute, now)
+	want := "pvc-protection — still mounted by pods shop/db-0, shop/db-1, shop/db-2 +2 more"
+	if len(got) != 1 || got[0].Reason != want {
+		t.Fatalf("Reason = %q, want %q", got[0].Reason, want)
+	}
+}
+
+func TestAssess_PVCProtectionIgnoresOtherNamespaceMounter(t *testing.T) {
+	pvc := corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "data",
+		DeletionTimestamp: delTime(20 * time.Minute), Finalizers: []string{"kubernetes.io/pvc-protection"}}}
+	pod := mountingPodFixture("other", "db-0", "data")
+	got := Assess(nil, []corev1.Pod{pod}, []corev1.PersistentVolumeClaim{pvc}, 2*time.Minute, now)
+	if len(got) != 1 || got[0].Reason != "pvc-protection" {
+		t.Fatalf("a cross-namespace mounter must not be named, got %+v", got)
+	}
+}
+
+func TestAssess_PVCProtectionNoMountingPod(t *testing.T) {
+	pvc := corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "data",
+		DeletionTimestamp: delTime(20 * time.Minute), Finalizers: []string{"kubernetes.io/pvc-protection"}}}
+	got := Assess(nil, nil, []corev1.PersistentVolumeClaim{pvc}, 2*time.Minute, now)
+	if len(got) != 1 || got[0].Reason != "pvc-protection" {
+		t.Fatalf("zero mounters must render the bare string, got %+v", got)
+	}
+}
+
 func TestAssess_BelowThresholdAndNoDeletionSkipped(t *testing.T) {
 	recent := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "recent", DeletionTimestamp: delTime(30 * time.Second)}}
 	alive := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "alive"}}

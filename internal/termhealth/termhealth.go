@@ -105,8 +105,12 @@ func pvcReason(c corev1.PersistentVolumeClaim, pods []corev1.Pod) string {
 		}
 	}
 	if hasProtection {
-		if mp := mountingPod(c, pods); mp != "" {
-			return "pvc-protection — still mounted by pod " + mp
+		if mp := mountingPods(c, pods); len(mp) > 0 {
+			noun := "pod"
+			if len(mp) > 1 {
+				noun = "pods"
+			}
+			return "pvc-protection — still mounted by " + noun + " " + capList(mp, 3)
 		}
 		return "pvc-protection"
 	}
@@ -116,19 +120,33 @@ func pvcReason(c corev1.PersistentVolumeClaim, pods []corev1.Pod) string {
 	return "deletion pending"
 }
 
-// mountingPod returns "ns/name" of the first same-namespace pod mounting the PVC.
-func mountingPod(c corev1.PersistentVolumeClaim, pods []corev1.Pod) string {
+// mountingPods returns "ns/name" for every same-namespace pod mounting the
+// PVC, in the order pods were given.
+func mountingPods(c corev1.PersistentVolumeClaim, pods []corev1.Pod) []string {
+	var out []string
 	for _, p := range pods {
 		if p.Namespace != c.Namespace {
 			continue
 		}
 		for _, v := range p.Spec.Volumes {
 			if v.PersistentVolumeClaim != nil && v.PersistentVolumeClaim.ClaimName == c.Name {
-				return p.Namespace + "/" + p.Name
+				out = append(out, p.Namespace+"/"+p.Name)
+				break
 			}
 		}
 	}
-	return ""
+	return out
+}
+
+// capList joins the first n items of items with ", ", appending " +N more"
+// for the rest. items is never re-sorted — the order is whatever the caller
+// handed in, so a deterministic list requires a deterministically ordered
+// input.
+func capList(items []string, n int) string {
+	if len(items) <= n {
+		return strings.Join(items, ", ")
+	}
+	return strings.Join(items[:n], ", ") + " +" + strconv.Itoa(len(items)-n) + " more"
 }
 
 func nsReason(ns corev1.Namespace) string {

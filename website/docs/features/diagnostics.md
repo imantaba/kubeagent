@@ -975,8 +975,10 @@ NEEDS ATTENTION
 
 ### Security posture (opt-in)
 
-`scan --security` walks every pod and each Service and flags
-high-signal, Pod Security Standards-aligned problems: privileged or
+A cluster-wide `scan --security` walks every pod and Service outside
+`kube-system`, `kube-node-lease` and `kube-public`; scoped with `-n` it walks
+every pod and Service in that namespace, system namespaces included — and
+flags high-signal, Pod Security Standards-aligned problems: privileged or
 over-privileged containers (privileged, host namespaces, `hostPath`, `hostPort`,
 dangerous added capabilities), insecure container defaults (runs as root,
 `allowPrivilegeEscalation` not disabled, capabilities not dropped), and Services

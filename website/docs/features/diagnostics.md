@@ -1037,7 +1037,9 @@ describe a flagged object, list its events, and hop to related resources
 (owner Deployment, node, PVC) to chase the root cause across the finding's
 resource graph. When the loop concludes it emits an **Investigation** section:
 an evidence trail (`consulted: ...` line) followed by a grounded Fix-first
-narrative.
+narrative. The **commands** are kubeagent's deterministic, pre-reviewed ones,
+and the narrative around them — the ranking, the sequencing, and any remedial
+step described in prose — is the model's and is **not** pre-reviewed.
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
@@ -1114,9 +1116,10 @@ answer.
 
 ## Status
 
-`kubeagent scan` performs a read-only, whole-cluster scan and reports
-CrashLoopBackOff, ImagePullBackOff/ErrImagePull, OOMKilled,
-Pending/Unschedulable, VolumeAttachError (Multi-Attach), VolumeMountError, RestartLoop, ProbeFailure, init-container failures, failed Jobs/CronJobs, controllers that cannot create pods (FailedCreate), containers blocked by a missing ConfigMap or Secret (CreateContainerConfigError), and Deployments, StatefulSets and DaemonSets whose rollout has wedged (RolloutStuck), in text or JSON.
+`kubeagent scan` performs a read-only, whole-cluster scan, in text or JSON.
+The `###` sections on this page are the inventory of what it checks;
+`kubeagent known-issues` is the same inventory as a command, machine-checked
+against the detector set.
 
 The optional `--suggest` flag prints a deterministic next-step suggestion and
 a read-only `kubectl` investigation command under each finding — offline, no
@@ -1128,10 +1131,17 @@ The optional `--explain` flag makes a single API call to summarize findings
 in plain English. The explanation now **opens with a `Fix first:` ranked
 remediation list** — cluster/kube-system problems (P1) before workload issues
 (P2), most-blocking first — and each per-issue Fix is **grounded on
-kubeagent's deterministic, pre-reviewed `--suggest` command**: the model ranks,
-sequences, and phrases, but never invents or substitutes a command. The
+kubeagent's deterministic, pre-reviewed `--suggest` command**: the
+**commands** are kubeagent's deterministic, pre-reviewed ones, and the
+narrative around them — the ranking, the sequencing, and any remedial step
+described in prose — is the model's and is **not** pre-reviewed. The
 deterministic offline core (`scan`, `--suggest`) is unchanged; `--explain`
-remains opt-in.
+remains opt-in. The Fix command sent to the model has its pod name replaced
+with `<pod>` — a generated per-replica name identifies one instance rather
+than explaining the workload, the same reason kubeagent does not render pod
+rows — so a rendered `--explain` Fix line may read `kubectl -n shop describe
+pod <pod>` rather than the real name; run `--suggest` alongside `--explain`
+for the real command.
 
 By default `--explain` calls the Claude API and requires `ANTHROPIC_API_KEY`.
 To run **fully offline / on-network** against a local model instead, set
@@ -1158,13 +1168,12 @@ unchanged.
 ## Example output
 
 ```text
-P2 — Workload issues
-
-  NAMESPACE   NAME               KIND        READY   STATUS              RESTARTS
-  staging     api-server         Deployment  0/2     CrashLoopBackOff    47
-  staging     image-builder      Deployment  0/1     ImagePullBackOff    0
-  production  worker             Deployment  0/3     OOMKilled           12
-  production  batch-processor    Job         0/1     Pending             0
+NEEDS ATTENTION
+✗ shop/web  Deployment  0/1 Degraded
+    ⚠ ImagePullBackOff: Bad image reference or registry authentication
+    ↳ changed: rollout to revision 6, 4d ago · image nginx:1.27 → nginx:bad
+✗ shop/cart  Deployment  1/2 Degraded
+    ⚠ CrashLoopBackOff: Container repeatedly crashes after starting
 ```
 
 ## What changed
@@ -1191,4 +1200,8 @@ ReplicaSet: a Deployment at revision 6 whose earlier ReplicaSets have been
 garbage-collected still gets its line, without the image delta. The rule holds
 for `--output json` too, where the `rollout` key is simply absent — it is an
 optional key, already absent for workloads that are not flagged Deployments and
-for rollouts older than the window.
+for rollouts older than the window, and that is a different absence from a
+healthy-quiet workload's: `inventory.Prioritize` drops those from the
+`workloads` array entirely, so a workload can be in the array without a
+`rollout` key, or missing from the array altogether, and the two mean
+different things.

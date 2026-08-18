@@ -1069,28 +1069,46 @@ finding's priority or the cluster verdict.
 `scan --output text` groups findings by how urgently they need action:
 
 - **NEEDS ATTENTION** — failing workloads, Services with no ready endpoints,
-  credential warnings, volumes over the disk-usage threshold, and broken ingress
-  routes.
-- **NOTES** — advisories that rarely need immediate action: PersistentVolumeClaims
-  on a `Delete` reclaim policy (a grouped summary; pass `--pvc-reclaim` for the
-  full list), Services that are intentionally empty (scaled to zero or a CronJob
-  between runs), and counts of workloads hidden behind `--include-restarts` /
-  `--include-cron`.
-- **CONTEXT** — reference data: node readiness and kubelet reservations (collapsed
-  to one line when all nodes are fine), the cluster resource summary, and platform
+  credential warnings, volumes over the disk-usage threshold, broken ingress
+  routes, PersistentVolumeClaims that cannot provision, resources stuck
+  terminating, PodDisruptionBudgets blocking a drain, HorizontalPodAutoscalers
+  that cannot scale, failing or slow admission webhooks, and ResourceQuota
+  entries at or over their limit.
+- **NOTES** — advisories that rarely need immediate action, in the order they
+  print: nodes that reserve no memory or no ephemeral-storage for the OS and
+  kubelet, PersistentVolumeClaims on a `Delete` reclaim policy (a grouped
+  summary; pass `--pvc-reclaim` for the full list), Services and ingress routes
+  that are intentionally empty (scaled to zero or a CronJob between runs), and
+  counts of workloads hidden behind `--include-restarts` / `--include-cron`.
+- **CONTEXT** — reference data: kubelet reservations (collapsed to one line
+  when all nodes reserve the same), the cluster resource summary, and platform
   facts.
 
-A "Needs attention" line under the cluster verdict summarizes how many workloads
-are failing and how many Services have no endpoints. `--output json` is
-unaffected and always contains the full detail.
+Node readiness prints in the **header**, above the three sections, not in
+CONTEXT — `Cluster: Degraded — 5/6 nodes Ready` followed by one `✗ node` row
+per unready node, because an unready node is the first thing a report should
+say rather than reference data.
 
-Each finding in **NEEDS ATTENTION** now shows its underlying signal on an
-indented `↳` line — for example, an unschedulable pod prints the scheduler's
-verbatim message (`0/5 nodes are available: 3 Insufficient memory, …`) directly
-in the text output, without needing `--output json` or `--explain`. Similarly,
-a `NotReady` node names its kubelet-reported cause (the `NodeReady` condition's
-reason and message) instead of a bare `NotReady`. The cluster verdict and JSON
-schema are unchanged.
+A "Needs attention" line under the cluster verdict summarizes every NEEDS
+ATTENTION category that fired, joined by `·` — failing workloads first, then
+Services without endpoints, volumes low on disk, broken ingress routes, PVCs,
+stuck resources, PodDisruptionBudgets, HPAs, webhooks and quotas. When findings
+were attributed to a shared root cause the workload clause carries the rollup —
+`11 workloads failing (3 ⇐ 2 root causes)` means three of the eleven were
+traced to two underlying causes; see [Root-cause attribution](#root-cause-attribution).
+`--output json` is unaffected and always contains the full detail.
+
+Each **workload** finding in **NEEDS ATTENTION** shows its underlying signal on
+an indented `↳` line, when the finding has evidence distinct from its reason —
+for example, an unschedulable pod prints the scheduler's verbatim message
+(`0/5 nodes are available: 3 Insufficient memory, …`) directly in the text
+output, without needing `--output json` or `--explain`. Similarly, a
+`NotReady` node names its kubelet-reported cause (the `NodeReady` condition's
+reason and message) instead of a bare `NotReady`. The object rows in the same
+section — Services, PVCs, PodDisruptionBudgets, HPAs, webhooks, quotas,
+ingress routes and volumes low on disk — carry their signal inline on the row
+itself and print no `↳` line. The cluster verdict and JSON schema are
+unchanged.
 
 ### Grouping identical findings
 

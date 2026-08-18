@@ -253,7 +253,7 @@ type Input struct {
 // terminating pod that is flagged for an unrelated reason — e.g. an
 // ImagePullBackOff finding on a pod that also happens to be stuck
 // terminating — losing that second finding. That is exactly the trap
-// internal/rollouthealth's own comment warns about (rollouthealth.go:136-144):
+// internal/rollouthealth's own comment warns about (rollouthealth.go:146-150):
 // a workload failing for two independent reasons must not have one of them
 // silently dropped by widening a suppression clause instead of replacing it.
 func stuckTerminatingSuppresses(issue termhealth.Issue, wl inventory.Workload) bool {

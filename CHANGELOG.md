@@ -384,9 +384,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   failing-workload count in the summary line drops by one per suppression
   without a separate patch — `Status == "Failed"` is one of the conditions
   that count was already keying on — and the stuck-terminating count is
-  untouched. Nothing else moves: no detector runs differently, `gate`'s
-  verdict is unaffected (both rows were already `warning`), and JSON output
-  only loses an array element, so no `schemaVersion` moves.
+  untouched. A third quantity in that same line can move too: a suppressed
+  workload that already carried a root-cause node attribution is no longer
+  counted toward the summary's `(N ⇐ ...)` parenthetical either, since that
+  count is folded from the same filtered list — shrinking a multi-cause
+  count, collapsing it to the single-node form, or dropping the
+  parenthetical outright. That is the consistent choice: counting a
+  workload toward an attribution whose row the reader can no longer see
+  would be worse. No detector runs differently, and `gate`'s verdict is
+  unaffected — not because the two rows share a severity, but because
+  `internal/findings` builds its finding set from `scan.Result` directly
+  and never calls into `internal/report`, so `gate` cannot observe this
+  suppression at all, regardless of severity. JSON output only loses an
+  array element, so no `schemaVersion` moves.
 
 ### Changed
 

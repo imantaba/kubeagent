@@ -284,6 +284,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the model supplied it, so an omitted value used to reach client-go as an
   empty string instead of being refused up front.
 
+- **Both model-path system prompts modeled the markdown they told the model
+  not to use.** `explain.SystemPrompt` demonstrated a bold `**<namespace/name>
+  — <the issue>**` header and bulleted lines while asking the model to
+  explain a plain-text report, and `--investigate` builds its own system
+  prompt by appending onto that same constant, so the markdown reached both
+  `--explain` and `--investigate`. The prompt now states the constraint once
+  — no markdown emphasis, no headings, no horizontal rules, no fenced code
+  blocks — and its own template follows it: a bare header line, then
+  two-space indented lines beneath it. This is a prompt-only change; a model
+  can still choose to disobey it.
+
+- **A `--investigate` narrative cut off at the model's own output limit said
+  nothing about it.** The stop reason was never inspected, so a narrative
+  that stopped mid-sentence — in the worst observed case, five of sixteen
+  issues covered and no `Fix first:` list at all — rendered as if it were
+  complete. The report now appends one line under the investigation section,
+  `(narrative truncated at the model's output limit)`, whenever the model's
+  final reply stopped there. The output ceiling on that call is also raised,
+  and the prompt now tells the model to rank findings by severity, cover the
+  most severe ones, and say how many it left unexamined when there are more
+  — narratives are truncated less often now, not never, and the notice
+  appears under the investigation section only; `--explain`'s own narrative
+  has no equivalent check and gained none here. Nothing is added to or
+  removed from any published schema: the flag lives on the report input the
+  text renderer reads, not on the exported JSON view.
+
+- **The `--explain`/`--investigate` prompt could repeat the same finding once
+  per pod and grow without bound.** A workload with many crashing replicas
+  sent one full block per pod even when every field but the pod name was
+  identical, and a workload with many distinct findings sent all of them
+  regardless of count. Consecutive finding blocks that are byte-identical
+  after redaction now collapse into one, with a `(×N)` count appended to its
+  `issue:` line, and each workload's prompt now stops after three blocks with
+  one line naming how many more were left out. This narrows the request the
+  same way the raised output ceiling above widens the response — the two act
+  on opposite sides of the same model call. It converges with, without
+  duplicating, the equivalent collapse `internal/report`'s text renderer
+  already does on its own, narrower key. No `schemaVersion` moves and no
+  golden file changes: this reshapes the prompt, not the report.
+
 ### Changed
 
 - **`KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS` is now validated instead of silently

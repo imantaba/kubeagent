@@ -48,6 +48,7 @@ func initFinding(pod *corev1.Pod, cs corev1.ContainerStatus, idx, total int) *Fi
 			Reason:    "an init container's image cannot be pulled — the pod cannot start",
 			Evidence:  fmt.Sprintf("init container %q %s: %s", cs.Name, pos, safetext.Line(w.Message)),
 			Container: cs.Name,
+			Image:     cs.Image,
 		}
 	}
 	for _, term := range []*corev1.ContainerStateTerminated{cs.State.Terminated, cs.LastTerminationState.Terminated} {

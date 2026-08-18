@@ -79,12 +79,27 @@ func TestAnnotate_EmptyDownNoop(t *testing.T) {
 	}
 }
 
-// pullWL builds a flagged Deployment with an image-pull finding on the given image.
+// pullWL builds a flagged Deployment with an image-pull finding on the given
+// image. The workload's display image and the finding's own image are the
+// same value — the single-container, failing-pod-first shape every pre-R228
+// case here models.
 func pullWL(name, image, issue string) inventory.Workload {
 	return inventory.Workload{Namespace: "shop", Name: name, Kind: "Deployment",
 		Ready: 0, Desired: 1, Status: "Degraded", Image: image,
 		Findings: []diagnose.Finding{{Pod: "shop/" + name, Issue: issue,
-			Reason: "Bad image reference or registry authentication"}}}
+			Reason: "Bad image reference or registry authentication", Image: image}}}
+}
+
+// pullWLWithImage is pullWL's R228 sibling: it lets the workload's display
+// image and the failing finding's own image differ, modeling a multi-container
+// pod (the failing container is not Containers[0]) or a multi-pod workload
+// (the failing pod is not the first pod). AnnotateRegistry must key on
+// findingImage, not displayImage.
+func pullWLWithImage(name, displayImage, findingImage, issue string) inventory.Workload {
+	return inventory.Workload{Namespace: "shop", Name: name, Kind: "Deployment",
+		Ready: 0, Desired: 1, Status: "Degraded", Image: displayImage,
+		Findings: []diagnose.Finding{{Pod: "shop/" + name, Issue: issue,
+			Reason: "Bad image reference or registry authentication", Image: findingImage}}}
 }
 
 func TestRegistryHost(t *testing.T) {
@@ -168,6 +183,72 @@ func TestAnnotateRegistry_TwoGroupsIndependent(t *testing.T) {
 	if ws[0].RootCause != "registry ghcr.io (2 workloads failing to pull)" ||
 		ws[2].RootCause != "registry quay.io (2 workloads failing to pull)" {
 		t.Errorf("each group gets its own host, got %q / %q", ws[0].RootCause, ws[2].RootCause)
+	}
+}
+
+// R228 fixture (1): the failing container is not Containers[0]. The
+// workload's display image (its first container) sits at one host; the
+// finding that actually failed to pull names a different container, at a
+// different host. Grouping must follow the finding's image, not the display
+// image.
+func TestAnnotateRegistry_GroupedByFailingContainerNotFirst(t *testing.T) {
+	ws := []inventory.Workload{
+		pullWLWithImage("frontend", "example.net/frontend/web:1", "example.com/frontend/sidecar:9", "ImagePullBackOff"),
+		pullWLWithImage("search", "example.net/search/web:1", "example.com/search/sidecar:9", "ErrImagePull"),
+	}
+	AnnotateRegistry(ws)
+	want := "registry example.com (2 workloads failing to pull)"
+	if ws[0].RootCause != want || ws[1].RootCause != want {
+		t.Errorf("must group by the failing container's image host, got %q / %q", ws[0].RootCause, ws[1].RootCause)
+	}
+}
+
+// R228 fixture (2): the failing pod is not the workload's first pod. Same
+// shape as fixture (1) — the display image again differs from the failing
+// finding's image — framed at pod granularity instead of container
+// granularity.
+func TestAnnotateRegistry_GroupedByFailingPodNotFirst(t *testing.T) {
+	ws := []inventory.Workload{
+		pullWLWithImage("billing", "example.net/billing/api:1", "example.org/billing/worker:4", "ImagePullBackOff"),
+		pullWLWithImage("payments", "example.net/payments/api:1", "example.org/payments/worker:4", "ErrImagePull"),
+	}
+	AnnotateRegistry(ws)
+	want := "registry example.org (2 workloads failing to pull)"
+	if ws[0].RootCause != want || ws[1].RootCause != want {
+		t.Errorf("must group by the failing pod's image host, got %q / %q", ws[0].RootCause, ws[1].RootCause)
+	}
+}
+
+// R228 fixture (3), the negative control: when the failing pod is the
+// workload's first pod and the container is its only one, the display image
+// and the failing finding's image coincide, so grouping must be
+// byte-identical to pre-R228 behaviour. This is the guard against a rewrite,
+// not evidence for the fix — it does not fail before the fix either.
+func TestAnnotateRegistry_SingleContainerFailingPodFirstByteIdenticalToToday(t *testing.T) {
+	ws := []inventory.Workload{
+		pullWLWithImage("frontend", "example.com/shop/frontend:2.4", "example.com/shop/frontend:2.4", "ImagePullBackOff"),
+		pullWLWithImage("search", "example.com/shop/search:1.9", "example.com/shop/search:1.9", "ErrImagePull"),
+	}
+	AnnotateRegistry(ws)
+	want := "registry example.com (2 workloads failing to pull)"
+	if ws[0].RootCause != want || ws[1].RootCause != want {
+		t.Errorf("byte-identical grouping expected, got %q / %q", ws[0].RootCause, ws[1].RootCause)
+	}
+}
+
+// R228 fixture (4), arm (B): a pull finding with no determinable image is
+// skipped entirely — no RootCause, and it must not inflate any other group's
+// count.
+func TestAnnotateRegistry_PullFindingWithEmptyImageNotGrouped(t *testing.T) {
+	noImage := pullWLWithImage("cache", "example.com/shop/cache:1", "", "ImagePullBackOff")
+	other := pullWLWithImage("web", "example.com/shop/web:1", "example.com/shop/web:1", "ImagePullBackOff")
+	ws := []inventory.Workload{noImage, other}
+	AnnotateRegistry(ws)
+	if ws[0].RootCause != "" {
+		t.Errorf("a pull finding with no determinable image must not be grouped, got %q", ws[0].RootCause)
+	}
+	if ws[1].RootCause != "" {
+		t.Errorf("with the undetermined-image workload excluded, the group is 1 -> no attribution, got %q", ws[1].RootCause)
 	}
 }
 

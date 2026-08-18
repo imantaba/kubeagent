@@ -56,3 +56,20 @@ func TestImagePullDetector_IgnoresRunningContainers(t *testing.T) {
 		t.Errorf("expected nil, got %+v", f)
 	}
 }
+
+// R228: the failing container's image is captured on the Finding itself, not
+// just implied by the workload's display image — internal/rootcause keys its
+// registry-outage grouping on it.
+func TestImagePullDetector_SetsImage(t *testing.T) {
+	facts := PodFacts{Pod: podWaiting("default", "web", "app", "ImagePullBackOff", "")}
+	facts.Pod.Status.ContainerStatuses[0].Image = "example.com/app:bad"
+
+	f := ImagePullDetector{}.Detect(facts)
+
+	if f == nil {
+		t.Fatal("expected a finding, got nil")
+	}
+	if f.Image != "example.com/app:bad" {
+		t.Errorf("Image = %q, want %q", f.Image, "example.com/app:bad")
+	}
+}

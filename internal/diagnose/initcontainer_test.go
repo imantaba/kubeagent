@@ -55,6 +55,23 @@ func TestInitContainerDetector_ImagePull(t *testing.T) {
 	}
 }
 
+// R228 twin: the image-pull arm alone captures Image; the other three arms
+// (OOMKilled, CreateContainerConfigError, CrashLoopBackOff) are not pull
+// failures and are out of R228's scope.
+func TestInitContainerDetector_ImagePullSetsImage(t *testing.T) {
+	pod := podWithInit("shop", "orders",
+		corev1.ContainerStatus{Name: "fetch-config", Image: "example.com/config:bad",
+			State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff"}}},
+	)
+	f := InitContainerDetector{}.Detect(PodFacts{Pod: pod})
+	if f == nil {
+		t.Fatal("expected an Init:ImagePullBackOff finding")
+	}
+	if f.Image != "example.com/config:bad" {
+		t.Errorf("Image = %q, want %q", f.Image, "example.com/config:bad")
+	}
+}
+
 func TestInitContainerDetector_OOMKilledPrecedenceAndResources(t *testing.T) {
 	pod := podWithInit("shop", "orders",
 		corev1.ContainerStatus{Name: "loader", RestartCount: 3,

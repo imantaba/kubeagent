@@ -18,6 +18,7 @@ func (d ImagePullDetector) Detect(facts PodFacts) *Finding {
 				Issue:    w.Reason,
 				Reason:   "Bad image reference or registry authentication",
 				Evidence: fmt.Sprintf("container %q: %s", cs.Name, safetext.Line(w.Message)),
+				Image:    cs.Image,
 			}
 		}
 	}

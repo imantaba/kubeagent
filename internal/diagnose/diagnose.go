@@ -38,6 +38,7 @@ type Finding struct {
 	Evidence   string              `json:"evidence"`             // the exact signal observed
 	Resources  *ContainerResources `json:"resources,omitempty"`  // set by OOMKilled
 	Container  string              `json:"container,omitempty"`  // crashing container, set by crash detectors
+	Image      string              `json:"-"`                    // raw image reference of the failing container (matching only, not serialized); set by ImagePullDetector and the init-container image-pull arm, consumed by internal/rootcause and internal/rollout
 	Confidence string              `json:"confidence,omitempty"` // "high" (direct k8s state) | "medium" (heuristic); set by the producer where it knows better, else filled by confidence.Annotate
 	LogCause   string              `json:"logCause,omitempty"`   // set by scan --logs enrichment
 	LogExcerpt string              `json:"logExcerpt,omitempty"` // set by scan --logs enrichment (text output only)

@@ -818,8 +818,13 @@ the order is stale, singleton, unsatisfiable, blocking.
 Findings appear in **NEEDS ATTENTION** with the rule and the reason, e.g.:
 `✗ shop/api-pdb  PodDisruptionBudget  minAvailable: 3` / `⚠ PDBBlocked: covers
 all 3 pods — no voluntary eviction can ever proceed; every node drain will hang`.
-Read-only and advisory — it does not change the cluster verdict. The daemon
-exposes `kubeagent_pdb_blocking_issues`. Adds a base
+The text report prefixes every one of these findings with the constant label
+`PDBBlocked`, regardless of category — the example above is actually the
+`unsatisfiable` category, not `blocking`. The category is what the JSON and
+watch surfaces publish as a distinct issue kind: `PDBUnsatisfiable`,
+`PDBStale`, `PDBBlocked`, or `PDBSingleton`. Read-only and advisory — it does
+not change the cluster verdict. The daemon exposes
+`kubeagent_pdb_blocking_issues`. Adds a base
 `policy/poddisruptionbudgets` read grant.
 
 ### HPA-can't-scale
@@ -864,7 +869,12 @@ precedence tiers.
 Each finding names the HPA, its scale target, and the reason — for example:
 `✗ shop/api-hpa  HorizontalPodAutoscaler  targets Deployment/api` /
 `⚠ HPAStuck: can't fetch metrics — the HPA was unable to compute the replica
-count: unable to get external metric shop/queue_depth/nil: …`.
+count: unable to get external metric shop/queue_depth/nil: …`. The text report
+prefixes every one of these findings with the constant label `HPAStuck`,
+regardless of category — the example above is the `metrics` category. The
+category is what the JSON and watch surfaces publish as a distinct issue
+kind: `HPAUnableToScale`, `HPAMetricsFailed`, `HPAScalingDisabled`,
+`HPAAmbiguousSelector`, or `HPACapped`.
 
 Read-only and advisory — it does not change the cluster verdict. The daemon
 exposes `kubeagent_hpa_scaling_issues`. Adds a base

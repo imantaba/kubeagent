@@ -889,6 +889,20 @@ The check only flags webhooks under `failurePolicy: Fail` (the default in
 `failurePolicy: Ignore` are skipped — if their backend is down the API server
 falls through silently, which is by design.
 
+A webhook with empty `rules` is skipped too, for a different reason: one that
+intercepts no request can never reject one, so there is nothing to flag. A
+webhook backed by an **ExternalName** Service is treated differently rather
+than skipped — an ExternalName Service is a DNS CNAME, not endpoint-backed, so
+zero ready endpoints on one is not evidence the backend is down and does not
+produce a `NoEndpoints` finding. An ExternalName Service that does not exist
+at all is unaffected by that carve-out and still reports `MissingService`.
+
+A webhook backed by `clientConfig.url` instead of a Service is out of reach
+for a different reason again: this check has no way to verify the
+reachability of an arbitrary URL, so it does not guess at one as an Issue.
+`scan` counts these in-scope, Fail-policy, URL-backed webhooks instead, and
+reports the count in NOTES.
+
 The check is **cluster-wide only**: it is skipped when `--namespace`/`-n` is
 set, because the check cross-references each webhook's backend Service against
 the collected Services — a namespace-scoped scan only collects that namespace's

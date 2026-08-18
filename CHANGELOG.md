@@ -56,8 +56,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when the container that actually failed was a different one — so the
   line could read as unrelated to the failure it sat next to. The delta is
   now reported for whichever container the workload's active finding
-  names, falling back to the previous first-container behavior whenever no
-  finding names an image or none of the template's containers match. The
+  names, falling back to the previous first-container behavior whenever the
+  finding's container cannot be resolved on both sides of the rollout. The
   line now also names that container whenever it isn't the template's
   first, so a single-container workload's line is unchanged. The container
   name is carried internally and rendered into text only; it is not added

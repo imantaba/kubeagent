@@ -173,7 +173,9 @@ func imageByName(rs appsv1.ReplicaSet, name string) (string, bool) {
 // names: it looks up the finding's image in cur's template to get a
 // container name, then reads that same name's image out of prev. matched is
 // false — and the other three returns are zero — whenever no finding carries
-// an image, or the image matches no container in cur, in which case the
+// an image, the image matches no container in cur, or the matched container
+// has no same-named counterpart in prev (added by this revision rather than
+// changed by it, so there is no delta to describe for it), in which case the
 // caller falls back to firstImage's unqualified delta exactly as before this
 // helper existed.
 func changedContainer(w inventory.Workload, prev, cur appsv1.ReplicaSet) (oldImage, newImage, container string, matched bool) {
@@ -185,6 +187,9 @@ func changedContainer(w inventory.Workload, prev, cur appsv1.ReplicaSet) (oldIma
 	if !ok {
 		return "", "", "", false
 	}
-	old, _ := imageByName(prev, name)
+	old, ok := imageByName(prev, name)
+	if !ok {
+		return "", "", "", false
+	}
 	return old, img, name, true
 }

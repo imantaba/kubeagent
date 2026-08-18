@@ -658,6 +658,28 @@ func TestPrintInventory_TextShowsRolloutChange(t *testing.T) {
 	if !strings.Contains(out, "image nginx:1.27 → nginx:bad") {
 		t.Errorf("missing image delta:\n%s", out)
 	}
+	if strings.Contains(out, "container ") {
+		t.Errorf("Rollout.Container is empty; the delta line must not carry a container suffix:\n%s", out)
+	}
+}
+
+// R235: when the matched container is not the pod template's first,
+// Rollout.Container names it and the delta line grows a `(container %q)`
+// suffix.
+func TestPrintInventory_TextShowsRolloutContainerSuffix(t *testing.T) {
+	wl := inventory.Workload{Namespace: "shop", Name: "web", Kind: "Deployment", Desired: 1, Ready: 0, Status: "Degraded",
+		Findings: []diagnose.Finding{{Issue: "ImagePullBackOff", Reason: "bad image"}},
+		Rollout: &inventory.RolloutChange{Revision: "6", Since: "4d ago",
+			OldImage: "example.com/shop/sidecar:ok", NewImage: "example.com/shop/sidecar:bad", Container: "sidecar"}}
+	var buf bytes.Buffer
+	result := inventory.Result{Workloads: []inventory.Workload{wl}}
+	if err := PrintInventory(Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1}, Result: result}, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "image example.com/shop/sidecar:ok → example.com/shop/sidecar:bad (container \"sidecar\")") {
+		t.Errorf("missing container suffix on the image delta:\n%s", out)
+	}
 }
 
 func TestPrintInventory_JSONIncludesCredentialWarnings(t *testing.T) {

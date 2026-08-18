@@ -1349,6 +1349,9 @@ func printWorkload(wl inventory.Workload, now time.Time, suggest bool, w io.Writ
 		line := fmt.Sprintf("    ↳ changed: rollout to revision %s, %s", wl.Rollout.Revision, wl.Rollout.Since)
 		if wl.Rollout.NewImage != "" {
 			line += fmt.Sprintf(" · image %s → %s", wl.Rollout.OldImage, wl.Rollout.NewImage)
+			if wl.Rollout.Container != "" {
+				line += fmt.Sprintf(" (container %q)", wl.Rollout.Container)
+			}
 		}
 		if _, err := fmt.Fprintln(w, line); err != nil {
 			return err

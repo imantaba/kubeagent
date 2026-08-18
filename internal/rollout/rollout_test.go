@@ -23,13 +23,19 @@ func flaggedDep(ns, name string) inventory.Workload {
 // rs builds a ReplicaSet owned by `owner` at `revision`, created `age` before
 // now, whose single container runs `image`.
 func rs(ns, name, owner, revision, image string, age time.Duration) appsv1.ReplicaSet {
+	return rsContainers(ns, name, owner, revision, age, corev1.Container{Name: "c", Image: image})
+}
+
+// rsContainers builds a ReplicaSet owned by `owner` at `revision`, created `age`
+// before now, with the given named containers.
+func rsContainers(ns, name, owner, revision string, age time.Duration, containers ...corev1.Container) appsv1.ReplicaSet {
 	r := appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{
 		Namespace: ns, Name: name,
 		Annotations:       map[string]string{"deployment.kubernetes.io/revision": revision},
 		OwnerReferences:   []metav1.OwnerReference{{Kind: "Deployment", Name: owner}},
 		CreationTimestamp: metav1.Time{Time: now.Add(-age)},
 	}}
-	r.Spec.Template.Spec.Containers = []corev1.Container{{Name: "c", Image: image}}
+	r.Spec.Template.Spec.Containers = containers
 	return r
 }
 
@@ -102,6 +108,113 @@ func TestAnnotate_LaterRevisionAnnotatedWithoutAPriorReplicaSet(t *testing.T) {
 	}
 	if got.OldImage != "" || got.NewImage != "" {
 		t.Errorf("no prior revision -> no delta, got %+v", got)
+	}
+}
+
+// R235 fixture (1): a multi-container Deployment where the failing finding
+// names the second container. The delta must be reported for that container,
+// not the template's first, and Rollout.Container must carry its name.
+func TestAnnotate_MultiContainerDeltaForFailingContainer(t *testing.T) {
+	wls := []inventory.Workload{{
+		Namespace: "shop", Name: "web", Kind: "Deployment", Desired: 1, Ready: 0,
+		Findings: []diagnose.Finding{{Issue: "ImagePullBackOff", Image: "example.com/shop/sidecar:bad"}},
+	}}
+	rss := []appsv1.ReplicaSet{
+		rsContainers("shop", "web-1", "web", "1", 30*24*time.Hour,
+			corev1.Container{Name: "app", Image: "example.com/shop/app:1.0"},
+			corev1.Container{Name: "sidecar", Image: "example.com/shop/sidecar:ok"}),
+		rsContainers("shop", "web-2", "web", "2", 4*24*time.Hour,
+			corev1.Container{Name: "app", Image: "example.com/shop/app:1.0"},
+			corev1.Container{Name: "sidecar", Image: "example.com/shop/sidecar:bad"}),
+	}
+	Annotate(wls, rss, now)
+	got := wls[0].Rollout
+	if got == nil {
+		t.Fatal("expected a Rollout annotation")
+	}
+	if got.OldImage != "example.com/shop/sidecar:ok" || got.NewImage != "example.com/shop/sidecar:bad" {
+		t.Errorf("expected the delta for the failing container (sidecar), got OldImage=%q NewImage=%q", got.OldImage, got.NewImage)
+	}
+	if got.Container != "sidecar" {
+		t.Errorf("Container = %q, want %q (not the template's first container)", got.Container, "sidecar")
+	}
+}
+
+// R235 fixture (2): the single-container case, the guard against a rewrite.
+// Even though the finding's image matches the (only, first) container, the
+// matched container equals the template's first, so Container must stay
+// empty — byte-identical to today's behavior.
+func TestAnnotate_SingleContainerFindingImageMatchesFirstContainerNoSuffix(t *testing.T) {
+	wls := []inventory.Workload{{
+		Namespace: "shop", Name: "web", Kind: "Deployment", Desired: 1, Ready: 0,
+		Findings: []diagnose.Finding{{Issue: "ImagePullBackOff", Image: "example.com/shop/web:bad"}},
+	}}
+	rss := []appsv1.ReplicaSet{
+		rs("shop", "web-1", "web", "1", "example.com/shop/web:ok", 30*24*time.Hour),
+		rs("shop", "web-2", "web", "2", "example.com/shop/web:bad", 4*24*time.Hour),
+	}
+	Annotate(wls, rss, now)
+	got := wls[0].Rollout
+	if got == nil {
+		t.Fatal("expected a Rollout annotation")
+	}
+	if got.OldImage != "example.com/shop/web:ok" || got.NewImage != "example.com/shop/web:bad" {
+		t.Errorf("unexpected delta: %+v", got)
+	}
+	if got.Container != "" {
+		t.Errorf("Container = %q, want empty — the single-container case must render byte-identically to today", got.Container)
+	}
+}
+
+// R235 fixture (3): no finding carries an image — Annotate must fall back to
+// today's firstImage behavior exactly, and Container must stay empty.
+func TestAnnotate_NoFindingImageFallsBackToFirstImage(t *testing.T) {
+	wls := []inventory.Workload{{
+		Namespace: "shop", Name: "web", Kind: "Deployment", Desired: 1, Ready: 0,
+		Findings: []diagnose.Finding{{Issue: "CrashLoopBackOff"}}, // no Image set
+	}}
+	rss := []appsv1.ReplicaSet{
+		rsContainers("shop", "web-1", "web", "1", 30*24*time.Hour,
+			corev1.Container{Name: "app", Image: "example.com/shop/app:1.0"},
+			corev1.Container{Name: "sidecar", Image: "example.com/shop/sidecar:ok"}),
+		rsContainers("shop", "web-2", "web", "2", 4*24*time.Hour,
+			corev1.Container{Name: "app", Image: "example.com/shop/app:2.0"},
+			corev1.Container{Name: "sidecar", Image: "example.com/shop/sidecar:bad"}),
+	}
+	Annotate(wls, rss, now)
+	got := wls[0].Rollout
+	if got == nil {
+		t.Fatal("expected a Rollout annotation")
+	}
+	if got.OldImage != "example.com/shop/app:1.0" || got.NewImage != "example.com/shop/app:2.0" {
+		t.Errorf("no finding image -> want the fallback to the template's first container, got %+v", got)
+	}
+	if got.Container != "" {
+		t.Errorf("Container = %q, want empty in the fallback case", got.Container)
+	}
+}
+
+// R235 fixture (4): a finding whose image matches no container in the
+// template — same fallback as fixture (3), and no panic.
+func TestAnnotate_FindingImageMatchesNoContainerFallsBack(t *testing.T) {
+	wls := []inventory.Workload{{
+		Namespace: "shop", Name: "web", Kind: "Deployment", Desired: 1, Ready: 0,
+		Findings: []diagnose.Finding{{Issue: "ImagePullBackOff", Image: "example.net/other/unrelated:v1"}},
+	}}
+	rss := []appsv1.ReplicaSet{
+		rs("shop", "web-1", "web", "1", "example.com/shop/web:ok", 30*24*time.Hour),
+		rs("shop", "web-2", "web", "2", "example.com/shop/web:bad", 4*24*time.Hour),
+	}
+	Annotate(wls, rss, now)
+	got := wls[0].Rollout
+	if got == nil {
+		t.Fatal("expected a Rollout annotation")
+	}
+	if got.OldImage != "example.com/shop/web:ok" || got.NewImage != "example.com/shop/web:bad" {
+		t.Errorf("finding image matches no container -> want the fallback to firstImage, got %+v", got)
+	}
+	if got.Container != "" {
+		t.Errorf("Container = %q, want empty in the fallback case", got.Container)
 	}
 }
 

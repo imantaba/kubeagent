@@ -228,6 +228,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   producer setting its own value moves no
   `schemaVersion`.
 
+- **A failed `--explain` or `--investigate` call used to discard an entire
+  scan.** The model-path error aborted the run before the deterministic report
+  ever rendered, so a working scan produced zero bytes on stdout and a
+  non-zero exit — the empty-narrative case (an investigation that concluded
+  with no text) hit the same fate. A failure on either path is now reduced to
+  one stderr notice naming the flag and the reason, and the report renders on
+  stdout at exit 0, the same as an unflagged run. The URL an API error
+  carries, and the URL a failed request carries, are both reduced to
+  `scheme://host`. This does not close every gap: the notice can still carry
+  the resolved dial target inside a transport failure's wrapped cause, and,
+  when `--explain` targets a local endpoint that answers with a non-2xx
+  status, it quotes the start of that endpoint's own response body verbatim,
+  up to a truncation bound — text the endpoint chose, not kubeagent's, that
+  can carry a URL with its path intact — a known residual no decision in this
+  change covers. Nothing is added to or removed from any published schema: a
+  run with no successful enrichment simply omits that key, exactly as an
+  unflagged run already does.
+
+- **An investigation landing on its tool-call budget could send the model a
+  malformed request.** When `--investigate`'s bounded tool-use loop reached
+  its call limit mid-turn, it dropped the model's remaining requested tool
+  calls instead of answering them, so the next request carried fewer
+  results than the prior message's tool-use count — a shape the API
+  rejects. Every tool call is now answered: a call past the budget receives
+  a fixed refusal message instead of a read, so the budget is enforced
+  exactly as before but the request stays well-formed.
+
+- **Free-text fields reaching a tool result during `--investigate` were
+  not sanitized or redacted.** A condition, container waiting/terminated,
+  or event Reason and Message is text the kubelet or a controller wrote,
+  not validated by the API server. It now passes through the same ingress
+  sanitizer used elsewhere before reaching a tool result, and a network
+  address embedded in that text is now redacted. This does not close every
+  gap: an arbitrary URL the cluster's own text carries — a registry address
+  quoted inside an image-pull failure, for example — still reaches the
+  model with its path intact, a known residual no decision in this change
+  covers.
+
+- **`--explain`'s own requirement checks could refuse a run that had
+  already satisfied `--investigate`'s.** With both flags set, `--explain`'s
+  checks for an API key or a local model name fired on the flag alone, so
+  `--investigate --explain` together could be rejected by an error naming
+  `--explain`'s requirements even though `--investigate` supersedes
+  `--explain` and its own, separate check is the one that should run. Both
+  checks are now `--explain`'s alone; `--investigate` is unaffected. The
+  `--model` flag's help text now says what `--investigate` does with the
+  value it is given: it always sends `--model`'s value to the Anthropic
+  API, never a configured local endpoint. That is a separate fact from
+  `--investigate`'s own read-only-toward-the-cluster promise — the help
+  text does not say that part, but the promise still holds, and the two
+  are worth keeping apart rather than blurring one into the other. The
+  tool-use loop's `describe` tool now requires a namespace
+  argument: its executor already dereferenced that field whether or not
+  the model supplied it, so an omitted value used to reach client-go as an
+  empty string instead of being refused up front.
+
 ### Changed
 
 - **`KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS` is now validated instead of silently

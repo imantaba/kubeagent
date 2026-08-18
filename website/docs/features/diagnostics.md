@@ -784,18 +784,36 @@ daemon exposes `kubeagent_resources_stuck_terminating`.
 
 ### PodDisruptionBudget-blocked drains
 
-`scan` flags a PodDisruptionBudget that will block a node drain, covering three
+`scan` flags a PodDisruptionBudget that will block a node drain, covering four
 categories:
 
-- **unsatisfiable** — the budget requires more healthy pods than the workload has
-  (e.g. `minAvailable: 3` covering only 3 replicas), so no voluntary eviction can
-  ever be permitted; every `kubectl drain` will hang indefinitely.
 - **stale** — the PDB's selector matches no pods (the workload was renamed,
-  deleted, or the selector drifted), so the budget protects nothing but would
-  still block drain attempts.
+  deleted, scaled to zero, or the selector drifted). It protects nothing and
+  blocks nothing today, because eviction consults only the PDBs that match the
+  pod being evicted — but it will start constraining drains the moment a
+  workload matches it again.
+- **singleton** — a single-replica workload with `minAvailable: 1` (or an
+  equivalent `maxUnavailable: 0`) has no disruption headroom: no voluntary
+  eviction is possible, and draining its node will hang. Often deliberate — a
+  workload the operator never wants evicted — so treat it as a signal to
+  confirm intent, not automatically as a misconfiguration.
+- **unsatisfiable** — either the PDB sets neither `minAvailable` nor
+  `maxUnavailable` at all, or its rule requires at least as many healthy pods as
+  the workload has (e.g. `minAvailable: 3` covering only 3 replicas). Either
+  way, no voluntary eviction can ever be permitted; every `kubectl drain` will
+  hang indefinitely.
 - **blocking** — the workload is already degraded (fewer healthy pods than the PDB
   demands), so `DisruptionsAllowed == 0` and the node cannot be drained until the
   workload heals.
+
+Each PDB is evaluated independently. Two individually-benign budgets selecting
+the same pods make those pods un-evictable, because the eviction API refuses a
+pod covered by more than one PDB; kubeagent does not currently detect that.
+
+A PDB can match more than one of these; the first that applies is reported. A
+PDB with neither `minAvailable` nor `maxUnavailable` set is always
+`unsatisfiable`, regardless of its pod counts; for every PDB that does set one,
+the order is stale, singleton, unsatisfiable, blocking.
 
 Findings appear in **NEEDS ATTENTION** with the rule and the reason, e.g.:
 `✗ shop/api-pdb  PodDisruptionBudget  minAvailable: 3` / `⚠ PDBBlocked: covers

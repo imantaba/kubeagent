@@ -942,12 +942,16 @@ signal implies the diagnosis: **high** when Kubernetes itself asserts the state
 (CrashLoopBackOff, OOMKilled, Unschedulable, a controller event, …) and
 **medium** for a kubeagent heuristic (`RestartLoop`, `ProbeFailure`), a finding
 that reports a failure without claiming to know its cause
-(`ContainerStartError`), or a statistical correlation (a shared-registry
-attribution). High is the unmarked
+(`ContainerStartError`), or an inference from counters rather than a
+controller-set condition (a StatefulSet or DaemonSet's `RolloutStuck` finding —
+the same issue string is high on a Deployment, where the controller sets the
+condition itself). A correlation hint's own medium level is a different case,
+explained in the next paragraph rather than here. High is the unmarked
 default; the text report tags only the less-certain findings and hints
 (`⚠ RestartLoop [medium]: …`, `↳ likely caused by registry … [medium]`) so the
-tag draws the eye to exactly what to second-guess. JSON always carries
-`"confidence"` on every finding.
+tag draws the eye to exactly what to second-guess. `scan --output json`
+carries `"confidence"` on every finding; the gate's JSON and the watch
+daemon's `/issues` publish a narrower finding record that omits it.
 
 The tag on a **hint** works differently from the one on a finding, and only in the
 text report. A root-cause attribution is not a finding and has no `confidence`
@@ -955,7 +959,13 @@ field: JSON carries it as the plain string `"rootCause"`. The `[medium]` the tex
 report prints beside one is derived from the *kind* of cause — node and PVC
 attributions are high (and so print unmarked), a shared-registry attribution is
 medium — so a JSON consumer reads the level from the cause type rather than from a
-field.
+field. The HTML report shows neither tag, on a finding or a hint.
+
+A `--baseline` deviation is a third case: its confidence is stated once, in
+the `BASELINE DEVIATIONS` heading, rather than per row, and it carries no
+`confidence` field in any JSON document — neither `baseline.Deviation`, which
+has none, nor the `findings.Finding`s `FromBaseline` produces. See
+[Baseline](baseline.md).
 
 Confidence is informational — it never changes a
 finding's priority or the cluster verdict.

@@ -296,7 +296,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   can still choose to disobey it.
 
 - **A `--investigate` narrative cut off at the model's own output limit said
-  nothing about it.** The stop reason was never inspected, so a narrative
+  nothing about it.** The stop reason was already read, but only to decide
+  whether the tool-use loop had finished — never to notice it had hit the
+  output limit, so no truncation signal reached the report. A narrative
   that stopped mid-sentence — in the worst observed case, five of sixteen
   issues covered and no `Fix first:` list at all — rendered as if it were
   complete. The report now appends one line under the investigation section,

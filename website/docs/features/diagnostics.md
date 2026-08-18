@@ -442,7 +442,8 @@ cannot split kube- from system-reserved). A per-resource summary appears under
 `CONTEXT` — one line each for memory, CPU, and ephemeral-storage, reading `N of M nodes
 reserve none` or `all M nodes reserve some` (with `⚠`/`✓` on the memory and
 ephemeral-storage lines). A node that reserves no
-**memory** or no **ephemeral-storage** is flagged with a **WARNING** in `NOTES` —
+**memory** or no **ephemeral-storage** is named in `NOTES`, with the line
+saying why it matters —
 both let OS/kubelet memory or disk pressure destabilise the node. CPU reservation
 is shown but not warned, since it is compressible and many clusters intentionally
 leave it unset. `not reported` is a whole-row state: it is shown only when **no**
@@ -451,26 +452,43 @@ nodes report it and some do not, the line instead prints the ratio over the
 reporting nodes, with the excluded count named beside it — `N of M nodes reserve
 none  (K nodes do not report it)`. The
 check reads only the Node objects already listed during a scan, so it needs no
-extra permissions, and it is advisory: it never changes the cluster verdict.
+extra permissions, and it is advisory: no `--fail-on` level selects on it, and it
+never changes the cluster verdict.
 
 ### PVC reclaim policy
 
-`scan` lists Bound PersistentVolumeClaims whose bound PersistentVolume has
-`reclaimPolicy: Delete`. For those volumes, deleting the PVC (or the PV) tells
+`scan` reports Bound PersistentVolumeClaims whose bound PersistentVolume has
+`reclaimPolicy: Delete` — by default as one summary line grouped by
+StorageClass (`classA ×N, classB ×M`); the full per-claim list is available
+with `--pvc-reclaim`. For those volumes, deleting the PVC (or the PV) tells
 the provisioner to destroy the underlying storage — so the section is a
-data-loss audit: which claims are *not* protected by `Retain`. The reclaim
+data-loss audit for that reclaim policy: which `Delete`-reclaiming claims are
+*not* protected by `Retain`. `Recycle` is out of scope: it is deprecated (the
+API server warns on create) and supported only by the HostPath and NFS
+plugins, so a Bound PVC on a `Recycle` volume is not reported here. The reclaim
 policy is read from the bound PV (the authoritative value), so only Bound PVCs
 appear. `Delete` is the common default for dynamic provisioners, so the list can
 be long; it is informational and never changes the cluster verdict. Reading PVCs
-and PVs needs only `get`/`list`/`watch`.
+and PVs needs only `get`/`list` — see `kubeagent rbac print --profile scan` for
+the exact rule.
 
 ### Disk usage (opt-in)
 
-`scan --disk-usage` reads each node's kubelet `/stats/summary` and warns when a
-node's root filesystem or a PersistentVolumeClaim is at or over
-`--disk-threshold` (default `0.80`) — an early warning that fires before the
-kubelet's `DiskPressure` eviction signal. Over-threshold volumes appear in
-**NEEDS ATTENTION**; the full detail is in JSON `diskUsage`.
+`scan --disk-usage` reads each node's kubelet `/stats/summary` and warns when
+the filesystem the kubelet reports as `nodefs` — the one holding the kubelet
+root directory, configurable via `--root-dir` — or a PersistentVolumeClaim
+whose volume driver reports usage statistics to the kubelet, is at or over
+`--disk-threshold` (default `0.80`). hostPath-backed volumes — including what
+the `local-path` provisioner that kind and k3s default to creates — report no
+usage statistics, so those claims are not assessed and the section will not
+mention them. At the default `0.80` this warns earlier than a kubelet left on
+upstream default eviction thresholds, but not on every cluster: a custom
+`evictionHard` (`nodefs.available: 25%` evicts at 75%, before kubeagent's
+`80%`) can cross first, and kubeagent compares **used** against capacity while
+the kubelet's `DiskPressure` signal compares **available** against capacity,
+so on a filesystem with reserved blocks the two numbers differ by the reserve
+(5.09 percentage points on the cluster this was measured on). Over-threshold
+volumes appear in **NEEDS ATTENTION**; the full detail is in JSON `diskUsage`.
 
 It is **off by default**: it needs the `nodes/proxy` subresource (a broader grant
 than kubeagent's usual `get`/`list`/`watch`), so you opt in explicitly with the
@@ -493,7 +511,9 @@ its backend Service, in one of three forms:
 Only Service backends are checked (Resource backends are skipped), and routes
 resolve within the Ingress's own namespace. It is read-only and advisory: it
 appears in **NEEDS ATTENTION** and JSON `ingressIssues` but does not change
-the cluster verdict.
+the cluster verdict. The check does not consider whether an ingress controller
+implements the route's `ingressClassName`, so an Ingress left behind by a
+removed or replaced controller is still reported.
 
 When a broken route's backend Service has no ready endpoints, the Detail also
 names *why* — the same root cause the [Service check](service-health.md) reports,
@@ -540,12 +560,16 @@ events for an event-based reason.
 no failure event and have a schedulable StorageClass — are never flagged. It is the
 provision-time complement to `VolumeAttachError` (attach-time). It appears in **NEEDS
 ATTENTION** and JSON `pvcIssues` but is advisory (it does not change the cluster verdict).
-Read-only; correlates against collected StorageClasses and PVs (no new flag or metric).
+Read-only; correlates against collected StorageClasses and PVs. It needs no
+flag of its own, and the watch daemon exports it as the gauge
+`kubeagent_pvc_pending_issues`.
 
 ### Node heartbeat freshness
 
 Each node renews a `Lease` in `kube-node-lease` about every 10 seconds; the
-control plane only marks a node `NotReady` after ~40 seconds of missed renewals.
+control plane only marks a node `NotReady` after its own
+`--node-monitor-grace-period` of missed renewals (50 seconds by default on
+Kubernetes 1.32 and later, 40 before that).
 `scan` reads those Leases and flags a node that still reads **Ready** but whose
 lease has gone stale — `✗ node worker-2 kubelet not heartbeating (lease 48s
 stale)` — so a crashed, hung, or partitioned kubelet shows up *before* the node
@@ -554,9 +578,13 @@ been renewed) is flagged the same way, rendered `✗ node worker-2 no kubelet
 lease` — that rendering does not consult the threshold, since there is no
 renewal timestamp to measure staleness against. It degrades the cluster verdict, and
 the threshold is tunable with `--node-heartbeat-threshold` (default `40s`;
-`0` disables it). Compares against the scanner's clock, so run it in-cluster
-(the watch daemon) or on a clock-synced host. The count of flagged nodes is
-also exposed in JSON as `nodesStaleHeartbeat`.
+`0` disables it) — in the watch daemon, which takes no such flag, set
+`KUBEAGENT_NODE_HEARTBEAT_THRESHOLD` instead. At the default the warning
+arrives roughly ten seconds before the flip on a 50-second grace period; lower
+the threshold to widen that window, at the cost of flagging nodes whose
+renewals are merely slow. Compares against the scanner's clock, so run it
+in-cluster (the watch daemon) or on a clock-synced host. The count of flagged
+nodes is also exposed in JSON as `nodesStaleHeartbeat`.
 
 ### Expected-node list
 

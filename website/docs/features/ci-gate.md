@@ -106,7 +106,7 @@ pipeline" pattern — see [Least-privilege RBAC](rbac.md#kubeagent-rbac-check).
 With `--wait-for`, only findings attributable to the named workload decide
 the exit code: the workload itself, and anything owned by it (its pods).
 Everything else the scan turned up is still printed, under a
-`not counted (outside scope)` line, so an unrelated problem elsewhere in the
+`not counted (below --fail-on)` line, so an unrelated problem elsewhere in the
 namespace is visible without failing the build for it.
 
 Accepted kinds, case-insensitive, each also taking its `kubectl` short form
@@ -161,7 +161,7 @@ Deployment/api in demo: 2/2 updated, 2 available
 
 GATE: pass — nothing at or above critical (scope: Deployment/api in demo)
 
-not counted (outside scope): 1 finding
+not counted (below --fail-on): 1 finding
 ```
 
 Exit code: `0`. The `broken` Deployment's finding is still real, still

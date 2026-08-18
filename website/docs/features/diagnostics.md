@@ -954,12 +954,13 @@ Valid values are 1–30. The API server refuses a webhook `timeoutSeconds` above
 30 could only ever match nothing; kubeagent refuses it rather than reporting a
 clean posture.
 
-The check runs on every `Fail`-policy webhook whose backend is not already
-reported down. A webhook that is both backend-down and slow reports the
-backend problem only — that is the one that already rejects every request —
-with its timeout named in the same reason. Its latency finding, and its place
-in `kubeagent_admission_webhook_latency_risks`, appear on the next scan once
-the backend is healthy.
+The check runs on every `Fail`-policy webhook that has at least one `rules`
+entry and whose backend is not already reported down. A webhook that is both
+backend-down and slow reports the backend problem only — that is the one that
+already rejects every request — with its timeout named in the same reason.
+Its latency finding, and its place in
+`kubeagent_admission_webhook_latency_risks`, appear on the next scan once the
+backend is healthy.
 
 The check is **cluster-wide only** (skipped under `--namespace`) and
 **advisory** — it does not change the cluster verdict. The daemon exposes

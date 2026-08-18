@@ -123,9 +123,11 @@
 
 - **Certificate expiry (opt-in)** — `scan --certs` flags expired and soon-expiring TLS certificates (public cert metadata only) with the Ingress routes they front; daemon gauges + a separate secrets RBAC add-on. See [Failure diagnostics](features/diagnostics.md).
 
-- **Finding confidence** — every finding and correlation hint is labelled high
-  (direct Kubernetes state) or medium (kubeagent heuristic / statistical
-  correlation); tagged in the report only when not high, always in JSON. See
+- **Finding confidence** — every finding and correlation hint is labelled
+  high (direct Kubernetes state) or medium (kubeagent heuristic for a
+  finding; a statistical correlation, such as a shared-registry attribution,
+  for a hint); tagged in the report only when not high, and carried in JSON
+  only on `scan --output json`'s findings — not on every JSON document. See
   [Failure diagnostics](features/diagnostics.md).
 
 - **Stuck-terminating detection** — flags namespaces/pods/PVCs wedged in

@@ -248,6 +248,72 @@ func TestAnnotate_FindingContainerAddedThisRevisionFallsBackToFirstImage(t *test
 	}
 }
 
+// R235 fixture (6), added in this round: the finding's image matches a
+// container whose image is unchanged between revisions (a sidecar that has
+// been failing to pull since before this rollout), while a different
+// container (app) carries a real delta this revision introduced.
+// changedContainer must report no match — old == img is not a delta — so
+// Annotate falls back to firstImage's unqualified delta (app's real
+// v1 -> v2 change) instead of dropping the delta line entirely.
+func TestAnnotate_FindingContainerImageUnchangedFallsBackToFirstImage(t *testing.T) {
+	wls := []inventory.Workload{{
+		Namespace: "shop", Name: "web", Kind: "Deployment", Desired: 1, Ready: 0,
+		Findings: []diagnose.Finding{{Issue: "ImagePullBackOff", Image: "example.com/shop/sidecar:v1"}},
+	}}
+	rss := []appsv1.ReplicaSet{
+		rsContainers("shop", "web-1", "web", "1", 30*24*time.Hour,
+			corev1.Container{Name: "app", Image: "example.com/shop/app:v1"},
+			corev1.Container{Name: "sidecar", Image: "example.com/shop/sidecar:v1"}),
+		rsContainers("shop", "web-2", "web", "2", 4*24*time.Hour,
+			corev1.Container{Name: "app", Image: "example.com/shop/app:v2"},
+			corev1.Container{Name: "sidecar", Image: "example.com/shop/sidecar:v1"}),
+	}
+	Annotate(wls, rss, now)
+	got := wls[0].Rollout
+	if got == nil {
+		t.Fatal("expected a Rollout annotation")
+	}
+	if got.OldImage != "example.com/shop/app:v1" || got.NewImage != "example.com/shop/app:v2" {
+		t.Errorf("finding's container image unchanged -> want the fallback to app's real delta, got %+v", got)
+	}
+	if got.Container != "" {
+		t.Errorf("Container = %q, want empty — the fallback names no container", got.Container)
+	}
+}
+
+// R235 fixture (7), added in this round: the finding's image matches a
+// container whose image in prev is the empty string — no image was ever
+// recorded for it there — while a different container (app) carries a real
+// delta this revision introduced. changedContainer must report no match — an
+// empty old image is not a delta either — so Annotate falls back to
+// firstImage's unqualified delta (app's real v1 -> v2 change) instead of
+// dropping the delta line entirely.
+func TestAnnotate_FindingContainerPrevImageEmptyFallsBackToFirstImage(t *testing.T) {
+	wls := []inventory.Workload{{
+		Namespace: "shop", Name: "web", Kind: "Deployment", Desired: 1, Ready: 0,
+		Findings: []diagnose.Finding{{Issue: "ImagePullBackOff", Image: "example.com/shop/sidecar:v2"}},
+	}}
+	rss := []appsv1.ReplicaSet{
+		rsContainers("shop", "web-1", "web", "1", 30*24*time.Hour,
+			corev1.Container{Name: "app", Image: "example.com/shop/app:v1"},
+			corev1.Container{Name: "sidecar", Image: ""}),
+		rsContainers("shop", "web-2", "web", "2", 4*24*time.Hour,
+			corev1.Container{Name: "app", Image: "example.com/shop/app:v2"},
+			corev1.Container{Name: "sidecar", Image: "example.com/shop/sidecar:v2"}),
+	}
+	Annotate(wls, rss, now)
+	got := wls[0].Rollout
+	if got == nil {
+		t.Fatal("expected a Rollout annotation")
+	}
+	if got.OldImage != "example.com/shop/app:v1" || got.NewImage != "example.com/shop/app:v2" {
+		t.Errorf("finding's container has an empty image in prev -> want the fallback to app's real delta, got %+v", got)
+	}
+	if got.Container != "" {
+		t.Errorf("Container = %q, want empty — the fallback names no container", got.Container)
+	}
+}
+
 func TestAnnotate_SkipsNonDeploymentAndHealthy(t *testing.T) {
 	ss := inventory.Workload{Namespace: "shop", Name: "ss", Kind: "StatefulSet", Desired: 1, Ready: 0}
 	healthy := inventory.Workload{Namespace: "shop", Name: "ok", Kind: "Deployment", Desired: 1, Ready: 1}

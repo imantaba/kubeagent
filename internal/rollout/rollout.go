@@ -170,13 +170,14 @@ func imageByName(rs appsv1.ReplicaSet, name string) (string, bool) {
 }
 
 // changedContainer locates the container the workload's failing finding
-// names: it looks up the finding's image in cur's template to get a
-// container name, then reads that same name's image out of prev. matched is
-// false — and the other three returns are zero — whenever no finding carries
-// an image, the image matches no container in cur, or the matched container
-// has no same-named counterpart in prev (added by this revision rather than
-// changed by it, so there is no delta to describe for it), in which case the
-// caller falls back to firstImage's unqualified delta exactly as before this
+// names and returns that container's own image change: it looks up the
+// finding's image in cur's template to get a container name, then reads
+// that same name's image out of prev. matched is true — and the other three
+// returns meaningful — only when every step of that succeeds and prev
+// records a different, non-empty image for that container, i.e. only when
+// there is a real delta to describe for the finding's own container.
+// Whenever there is not, the other three returns are zero and the caller
+// falls back to firstImage's unqualified delta exactly as before this
 // helper existed.
 func changedContainer(w inventory.Workload, prev, cur appsv1.ReplicaSet) (oldImage, newImage, container string, matched bool) {
 	img, ok := findingImage(w)
@@ -188,7 +189,7 @@ func changedContainer(w inventory.Workload, prev, cur appsv1.ReplicaSet) (oldIma
 		return "", "", "", false
 	}
 	old, ok := imageByName(prev, name)
-	if !ok {
+	if !ok || old == "" || old == img {
 		return "", "", "", false
 	}
 	return old, img, name, true

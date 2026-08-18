@@ -899,9 +899,8 @@ Findings appear in **NEEDS ATTENTION** with the configuration name, kind, and
 the webhook name, followed by the reason — for example:
 
 ```text
-✗ policy-webhook  ValidatingWebhookConfiguration  webhook validate.policy.io
-    ⚠ NoEndpoints: backend Service kube-system/policy-svc has no ready
-      endpoints — failurePolicy Fail rejects every intercepted create/update
+  ✗ policy-webhook  ValidatingWebhookConfiguration  webhook validate.policy.io
+      ⚠ NoEndpoints: backend Service kube-system/policy-svc has no ready endpoints — failurePolicy Fail rejects every intercepted create/update
 ```
 
 Read-only and advisory — it never changes the cluster verdict. The daemon

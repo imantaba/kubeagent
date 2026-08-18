@@ -312,6 +312,17 @@ func TestSystemPrompt_RanksAndGrounds(t *testing.T) {
 	}
 }
 
+// TestSystemPrompt_NoMarkdown proves R224: the prompt must not demonstrate the
+// markdown emphasis, fenced code, headings or horizontal rules it forbids the
+// model from using.
+func TestSystemPrompt_NoMarkdown(t *testing.T) {
+	for _, bad := range []string{"**", "```", "\n# ", "\n---\n"} {
+		if strings.Contains(SystemPrompt, bad) {
+			t.Errorf("SystemPrompt must be plain text; found markdown marker %q", bad)
+		}
+	}
+}
+
 func TestResolveModel(t *testing.T) {
 	cases := []struct {
 		name, flag, env, want string

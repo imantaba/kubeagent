@@ -523,7 +523,9 @@ one hop up the graph:
   endpoints (likely 502/503) — the selector matches no pods`
 - **matching pods are on a down node** — `backend Service payments:80 has no
   ready endpoints (likely 502/503) — matching pods on down node worker-2
-  (NotReady)`
+  (NotReady)`, or, when the matching pods span more than one down node,
+  `backend Service payments:80 has no ready endpoints (likely 502/503) —
+  matching pods on 2 down nodes`
 - **matching pods exist but none are Ready** — `backend Service payments:80 has
   no ready endpoints (likely 502/503) — 3 matching pods, 0 ready`
 

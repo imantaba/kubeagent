@@ -1303,11 +1303,14 @@ narrative around them — the ranking, the sequencing, and any remedial step
 described in prose — is the model's and is **not** pre-reviewed. The
 deterministic offline core (`scan`, `--suggest`) is unchanged; `--explain`
 remains opt-in. The Fix command sent to the model has its pod name replaced
-with `<pod>` — a generated per-replica name identifies one instance rather
-than explaining the workload, the same reason kubeagent does not render pod
-rows — so a rendered `--explain` Fix line may read `kubectl -n shop describe
-pod <pod>` rather than the real name; run `--suggest` alongside `--explain`
-for the real command.
+with `<pod>` when the finding names a specific pod of a controller-owned
+workload and that pod's name differs from the workload's own identity — a
+generated per-replica name identifies one instance rather than the
+Deployment, StatefulSet, DaemonSet or Job being explained. A finding
+diagnosed on the workload object itself (RolloutStuck) or on an ownerless
+pod keeps its real name. So a rendered `--explain` Fix line may read
+`kubectl -n shop describe pod <pod>` rather than the real name; run
+`--suggest` alongside `--explain` for the real command.
 
 By default `--explain` calls the Claude API and requires `ANTHROPIC_API_KEY`.
 To run **fully offline / on-network** against a local model instead, set
@@ -1336,10 +1339,11 @@ unchanged.
 ```text
 NEEDS ATTENTION
 ✗ shop/web  Deployment  0/1 Degraded
+    image nginx:bad
     ⚠ ImagePullBackOff: Bad image reference or registry authentication
+      ↳ container "web": Back-off pulling image "nginx:bad": not found
     ↳ changed: rollout to revision 6, 4d ago · image nginx:1.27 → nginx:bad
-✗ shop/cart  Deployment  1/2 Degraded
-    ⚠ CrashLoopBackOff: Container repeatedly crashes after starting
+    web-5b8-2wplt  0/1  ImagePullBackOff  restarts=0  worker-1  10.244.2.4  4d
 ```
 
 ## What changed

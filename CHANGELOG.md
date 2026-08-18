@@ -36,6 +36,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Root-cause registry grouping could key on the wrong container's image.**
+  A workload's image-pull failure is attributed to a shared registry outage
+  by grouping workloads whose failing pull shares a host, but the grouping
+  read the workload's own summary image field rather than the image the
+  failing container actually reported — so on a multi-container workload
+  where the pull failure wasn't on the first or display container, the
+  wrong reference was hashed into the group, silently mis-grouping or
+  dropping that workload's contribution. Grouping now reads the image
+  straight off the finding that recorded the pull failure. A workload whose
+  pull finding carries no determinable image is excluded from grouping
+  entirely, rather than grouped under a guessed host. The image kubeagent
+  now matches on is carried internally only and is never written to any
+  published document, so no report schema gains a field.
+
+- **A rollout's reported image change could name the wrong container on a
+  multi-container workload.** The "changed: rollout to revision N" line
+  always described the pod template's first container's image delta, even
+  when the container that actually failed was a different one — so the
+  line could read as unrelated to the failure it sat next to. The delta is
+  now reported for whichever container the workload's active finding
+  names, falling back to the previous first-container behavior whenever no
+  finding names an image or none of the template's containers match. The
+  line now also names that container whenever it isn't the template's
+  first, so a single-container workload's line is unchanged. The container
+  name is carried internally and rendered into text only; it is not added
+  to any published document, so no report schema gains a field.
+
 - **`scan --investigate`'s text report silently omitted the `consulted:` line
   when the model made no reads.** A narrative with an empty read trail printed
   no `consulted:` line at all, which reads as "the model read something and

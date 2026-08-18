@@ -135,16 +135,19 @@
   [Failure diagnostics](features/diagnostics.md).
 
 - **PDB-blocked drains** — flags a PodDisruptionBudget that will block a node
-  drain: unsatisfiable (requires more healthy pods than exist), stale (selector
-  matches no pods), or blocking (workload already degraded so
-  `DisruptionsAllowed == 0`). Advisory and read-only; the daemon exposes
+  drain: unsatisfiable (for example, requires more healthy pods than exist),
+  stale (selector matches no pods), blocking (workload already degraded so
+  `DisruptionsAllowed == 0`), or singleton (a single-replica workload with no
+  disruption headroom). Advisory and read-only; the daemon exposes
   `kubeagent_pdb_blocking_issues`. See [Failure diagnostics](features/diagnostics.md).
 
 - **HPA-can't-scale** — flags a HorizontalPodAutoscaler that is stuck: can't
   fetch metrics (`metrics` category), can't act on its scale target at all
-  (`unable` category), or is pinned at `maxReplicas` while demand exceeds the
-  cap (`capped` category). Advisory and read-only; the daemon exposes
-  `kubeagent_hpa_scaling_issues`. See [Failure diagnostics](features/diagnostics.md).
+  (`unable` category), has scaling disabled (`disabled` category), targets
+  pods another HPA already claims (`ambiguous` category), or is pinned at
+  `maxReplicas` while demand exceeds the cap (`capped` category). Advisory and
+  read-only; the daemon exposes `kubeagent_hpa_scaling_issues`. See
+  [Failure diagnostics](features/diagnostics.md).
 
 - **Admission-webhook failure** — `scan` flags a Validating/Mutating webhook
   whose `failurePolicy` is `Fail` and whose backing Service is missing or has no

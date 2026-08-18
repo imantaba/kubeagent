@@ -49,14 +49,14 @@ is a choice, not an oversight:
 
 Every `schemaVersion` is `MAJOR.MINOR`. Every surface starts at `1.0`;
 `gate` is at `1.1` today, having gained one optional field; `scan` is at
-`1.3`, having gained three; `fleet` is at `1.2`, having gained two
+`1.6`, having gained six; `fleet` is at `1.2`, having gained two
 optional `name` properties — and **the schema version is not the kubeagent
 release version** — a surface's number moves only when its own document's
 shape moves, so a new `scan` field does not disturb a script reading the
 `gate` document.
 
 - **MINOR** — adds an *optional* field, or adds an enum value. A parser
-  written against `1.0` still works against `1.3`: it just won't know about
+  written against `1.0` still works against `1.6`: it just won't know about
   anything past `1.0`. The new field's own type may have required fields of
   its own — no document validated against `1.0` could ever reach them, since
   `1.0` never mentions that type at all.

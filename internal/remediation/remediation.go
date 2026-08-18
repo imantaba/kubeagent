@@ -29,13 +29,15 @@ func For(f diagnose.Finding) Suggestion {
 		return Suggestion{"the container exceeded its memory limit — raise the limit or fix the leak", describeCmd(ns, pod)}
 	case "Unschedulable":
 		return Suggestion{"no node can place the pod — check resource requests, taints, and affinity", describeCmd(ns, pod)}
-	case "CreateContainerConfigError":
+	case "CreateContainerConfigError", "Init:CreateContainerConfigError":
 		return Suggestion{"a referenced ConfigMap or Secret is missing — create it or fix the reference", describeCmd(ns, pod)}
 	case "ProbeFailure":
 		return Suggestion{"the probe keeps failing — check the probe config and the app's health endpoint", describeCmd(ns, pod)}
 	case "VolumeAttachError":
 		return Suggestion{"the volume can't attach — check the PVC/PV binding and the CSI driver", describeCmd(ns, pod)}
-	case "Init:ImagePullBackOff":
+	case "VolumeMountError":
+		return Suggestion{"a mounted ConfigMap or Secret is missing — create it or fix the volume", describeCmd(ns, pod)}
+	case "Init:ImagePullBackOff", "Init:ErrImagePull":
 		// The image never pulled, so there are no logs — describe shows the pull event.
 		return Suggestion{"an init container's image can't be pulled — the pod cannot start; verify the tag and registry credentials", describeCmd(ns, pod)}
 	case "Init:CrashLoopBackOff", "Init:OOMKilled":
@@ -43,7 +45,7 @@ func For(f diagnose.Finding) Suggestion {
 	case "FailedCreate":
 		return Suggestion{"the controller can't create pods — check for quota, LimitRange, or a rejecting admission webhook", eventsCmd(ns, "FailedCreate")}
 	case "JobFailed":
-		return Suggestion{"the Job exhausted its retries — inspect the failed pod's logs", logsCmd(ns, pod, "")}
+		return Suggestion{"the Job exhausted its retries — inspect the failed pod's logs", jobLogsCmd(ns, pod)}
 	case "RolloutStuck":
 		return Suggestion{"the rollout is wedged — inspect the workload's pods and its events", objectEventsCmd(ns, pod)}
 	default:
@@ -66,6 +68,15 @@ func logsCmd(ns, pod, container string) string {
 	return fmt.Sprintf("kubectl -n %s logs %s%s --previous", ns, pod, c)
 }
 
+// jobLogsCmd builds the log-fetch command for a failed Job, addressed to the
+// Job itself rather than to one of its pods. kubectl resolves a Job reference
+// to one of its pods on its own, and a Job pod's restartPolicy is Never, so it
+// never has a previous container — a --previous flag here would always find
+// nothing.
+func jobLogsCmd(ns, name string) string {
+	return fmt.Sprintf("kubectl -n %s logs job/%s", ns, name)
+}
+
 func describeCmd(ns, pod string) string {
 	return fmt.Sprintf("kubectl -n %s describe pod %s", ns, pod)
 }
@@ -75,7 +86,10 @@ func describeCmd(ns, pod string) string {
 // A RolloutStuck finding names a Deployment, a StatefulSet or a DaemonSet, and a
 // Finding carries no kind — so `describe <kind> <name>` cannot be built without
 // guessing one, and the guess would be wrong two times in three. An event is
-// addressable by name alone, so this command is correct whichever kind fired.
+// addressable by name alone, so this command resolves whichever kind fired.
+// It is addressable, not explanatory: a controller records few events of its
+// own, and a stall is usually visible on its ReplicaSet's or its pods' events
+// instead. The suggestion text says "pods and its events" for that reason.
 func objectEventsCmd(ns, name string) string {
 	return fmt.Sprintf("kubectl -n %s get events --field-selector involvedObject.name=%s", ns, name)
 }

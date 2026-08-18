@@ -29,7 +29,10 @@ func ForIssue(issue string) string {
 
 // ForRootCause returns the confidence of a root-cause attribution from its cause
 // type: node and PVC are evidence-backed ("high"); a shared registry is a
-// statistical inference ("medium"). Empty or unrecognized input returns "".
+// statistical inference ("medium"). Empty or unrecognized input returns "" —
+// and at internal/report's only call site that renders unmarked, the same as
+// "high", because a tag is added only when the level is non-empty and not
+// "high".
 func ForRootCause(rootCause string) string {
 	switch {
 	case strings.HasPrefix(rootCause, "node "):
@@ -43,12 +46,27 @@ func ForRootCause(rootCause string) string {
 	}
 }
 
-// Annotate stamps Confidence on every finding of every workload — a single choke
-// point covering all finding producers. Mutates in place; idempotent.
+// Annotate fills Confidence on every finding of every workload that does not
+// already carry one — a single choke point covering every finding producer
+// that leaves the field empty. A producer that knows better than the issue
+// string wins: internal/rollouthealth sets Confidence itself on its
+// RolloutStuck findings (one level per arm, since the same issue string
+// covers a controller-set condition on a Deployment and an inferred, wedged
+// counter on a StatefulSet or DaemonSet), and Annotate leaves those alone.
+// Mutates in place. Idempotent for a different reason than a stamp would be:
+// a second call fills nothing, because the first call already left no empty
+// field behind.
+//
+// This only works because every producer that sets its own Confidence runs
+// before Annotate — internal/scan/scan.go calls rollouthealth.Annotate ahead
+// of confidence.Annotate. Reordering that would silently fall back to
+// ForIssue's answer for those findings instead of failing loudly.
 func Annotate(workloads []inventory.Workload) {
 	for i := range workloads {
 		for j := range workloads[i].Findings {
-			workloads[i].Findings[j].Confidence = ForIssue(workloads[i].Findings[j].Issue)
+			if workloads[i].Findings[j].Confidence == "" {
+				workloads[i].Findings[j].Confidence = ForIssue(workloads[i].Findings[j].Issue)
+			}
 		}
 	}
 }

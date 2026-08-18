@@ -102,7 +102,7 @@ indented one field per line.
     { "name": "core", "summary": "the inventory every command reads: pods, nodes, workloads, events, services, PVCs and the rest", "allowed": true },
     { "name": "certs", "flag": "--certs", "summary": "TLS certificate expiry, read from the public tls.crt of kubernetes.io/tls Secrets", "allowed": false, "missing": ["list secrets"] },
     { "name": "logs", "flag": "--logs", "summary": "the last lines of a crashed container's previous log, to name the cause", "allowed": false, "missing": ["get pods/log"] },
-    { "name": "diskusage", "flag": "--disk-usage", "summary": "node filesystem and inode pressure, read from the kubelet summary API", "allowed": false, "missing": ["get nodes/proxy"] }
+    { "name": "diskusage", "flag": "--disk-usage", "summary": "node root filesystem and PersistentVolumeClaim usage, read from the kubelet summary API", "allowed": false, "missing": ["get nodes/proxy"] }
   ]
 }
 ```
@@ -146,11 +146,31 @@ walking the table directly instead.)
 | `credlint` | `--lint-secrets` | nothing beyond core |
 | `cronjobs` | `--include-cron` | nothing beyond core |
 | `restarts` | `--include-restarts` | nothing beyond core |
+| `investigate` | `--investigate` | nothing beyond core |
 
 `operators` and `gitops` are `list`-only and scan-only: the watch daemon
 never reads these custom resources, so neither is wired into the Helm chart —
 adding a chart toggle for a grant the daemon never uses would be the opposite
 of least privilege.
+
+`controlplane`'s grant is usually already held: Kubernetes' own default
+`system:public-info-viewer` and `system:discovery` ClusterRoles grant `get
+/readyz` to `system:authenticated`, so `kubeagent rbac check` will typically
+report this feature runnable even without `deploy/rbac-controlplane.yaml` or
+Helm's `controlPlaneHealth.enabled=true` applied. kubeagent still ships that
+add-on grant explicitly, both because it is the correct grant to request and
+because it is what keeps `rbac print` honest about every path the feature
+reads, for the clusters that have narrowed those defaults.
+
+`certs`'s grant is worth naming precisely: `secrets: list` is a whole-object
+read, and there is no server-side field projection for Secrets, so the API
+server returns `tls.key` in the response body alongside `tls.crt` for every
+`kubernetes.io/tls` Secret in scope. kubeagent's own code never reads,
+prints, or stores that field — see [Certificate expiry
+(opt-in)](diagnostics.md#certificate-expiry-opt-in) — but that is a property
+of kubeagent's code, not of the grant. Whoever holds `certs` receives every
+private key in scope regardless of what kubeagent goes on to do with the
+response.
 
 ## Blind spots
 

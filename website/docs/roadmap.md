@@ -123,9 +123,11 @@
 
 - **Certificate expiry (opt-in)** — `scan --certs` flags expired and soon-expiring TLS certificates (public cert metadata only) with the Ingress routes they front; daemon gauges + a separate secrets RBAC add-on. See [Failure diagnostics](features/diagnostics.md).
 
-- **Finding confidence** — every finding and correlation hint is labelled high
-  (direct Kubernetes state) or medium (kubeagent heuristic / statistical
-  correlation); tagged in the report only when not high, always in JSON. See
+- **Finding confidence** — every finding and correlation hint is labelled
+  high (direct Kubernetes state) or medium (kubeagent heuristic for a
+  finding; a statistical correlation, such as a shared-registry attribution,
+  for a hint); tagged in the report only when not high, and carried in JSON
+  only on `scan --output json`'s findings — not on every JSON document. See
   [Failure diagnostics](features/diagnostics.md).
 
 - **Stuck-terminating detection** — flags namespaces/pods/PVCs wedged in
@@ -133,16 +135,19 @@
   [Failure diagnostics](features/diagnostics.md).
 
 - **PDB-blocked drains** — flags a PodDisruptionBudget that will block a node
-  drain: unsatisfiable (requires more healthy pods than exist), stale (selector
-  matches no pods), or blocking (workload already degraded so
-  `DisruptionsAllowed == 0`). Advisory and read-only; the daemon exposes
+  drain: unsatisfiable (for example, requires more healthy pods than exist),
+  stale (selector matches no pods), blocking (workload already degraded so
+  `DisruptionsAllowed == 0`), or singleton (a single-replica workload with no
+  disruption headroom). Advisory and read-only; the daemon exposes
   `kubeagent_pdb_blocking_issues`. See [Failure diagnostics](features/diagnostics.md).
 
 - **HPA-can't-scale** — flags a HorizontalPodAutoscaler that is stuck: can't
   fetch metrics (`metrics` category), can't act on its scale target at all
-  (`unable` category), or is pinned at `maxReplicas` while demand exceeds the
-  cap (`capped` category). Advisory and read-only; the daemon exposes
-  `kubeagent_hpa_scaling_issues`. See [Failure diagnostics](features/diagnostics.md).
+  (`unable` category), has scaling disabled (`disabled` category), targets
+  pods another HPA already claims (`ambiguous` category), or is pinned at
+  `maxReplicas` while demand exceeds the cap (`capped` category). Advisory and
+  read-only; the daemon exposes `kubeagent_hpa_scaling_issues`. See
+  [Failure diagnostics](features/diagnostics.md).
 
 - **Admission-webhook failure** — `scan` flags a Validating/Mutating webhook
   whose `failurePolicy` is `Fail` and whose backing Service is missing or has no
@@ -200,11 +205,13 @@
 
 - **Control-plane / etcd health (`--control-plane-health`)** (Theme-B control-plane closer) —
   opt-in `scan --control-plane-health` probes the apiserver `/readyz?verbose`
-  endpoint and flags an unhealthy control plane, naming the failing checks (etcd,
-  admission/controller poststarthooks, informer-sync). Covers apiserver + etcd;
-  scheduler/controller-manager health is a documented follow-on. Read-only; needs
-  the `/readyz` add-on grant (`deploy/rbac-controlplane.yaml` or Helm
-  `controlPlaneHealth.enabled=true`); the daemon exposes
+  endpoint and flags a control plane that reports itself not ready. Covers
+  apiserver + etcd; scheduler/controller-manager health is not covered.
+  Read-only, an extra request per scan, and advisory. Most clusters already
+  allow the `/readyz` read via the default `system:public-info-viewer` /
+  `system:discovery` roles; kubeagent still ships an explicit add-on grant
+  (`deploy/rbac-controlplane.yaml` or Helm `controlPlaneHealth.enabled=true`)
+  for clusters that have narrowed those defaults. The daemon exposes
   `kubeagent_control_plane_unhealthy`. See
   [Failure diagnostics](features/diagnostics.md).
 
@@ -222,7 +229,7 @@
   is at or above 15 (env `KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS`, Helm
   `webhookLatency.timeoutThreshold`) — a latency landmine that blocks every
   intercepted create/update for up to that long, then rejects it. Rendered
-  `WebhookSlow`; complements the existing webhook-failure check (missing/no-endpoints
+  `HighTimeout`; complements the existing webhook-failure check (MissingService/NoEndpoints
   backend). Read-only, always-on, advisory; the daemon exposes
   `kubeagent_admission_webhook_latency_risks`; no new RBAC.
   See [Failure diagnostics](features/diagnostics.md).

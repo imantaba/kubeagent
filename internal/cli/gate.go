@@ -43,12 +43,20 @@ func scopeTo(opts gate.Options, t rolloutwait.Target) gate.Options {
 // interleave with its own output can redirect it. A fleet sweep calls this
 // once for the whole run, not once per cluster, so an unusable
 // KUBEAGENT_QUOTA_THRESHOLD is reported once however many clusters follow.
-func gateScanOptions(namespace string, w io.Writer) scan.Options {
+//
+// An error means KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS is unparseable or outside
+// [1, 30] — the API server's own cap — and the caller must refuse the run
+// rather than report a clean webhook posture that was never checked.
+func gateScanOptions(namespace string, w io.Writer) (scan.Options, error) {
+	webhookTimeout, err := envIntRange("KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS", 15, 1, 30)
+	if err != nil {
+		return scan.Options{}, err
+	}
 	return scan.Options{
 		Namespace:               namespace,
 		QuotaThreshold:          quotaThresholdFromEnv(w),
-		WebhookTimeoutThreshold: int32(envInt("KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS", 15)),
-	}
+		WebhookTimeoutThreshold: int32(webhookTimeout),
+	}, nil
 }
 
 // gateOptions is `kubeagent gate`'s parsed command line. One field per flag,
@@ -201,7 +209,11 @@ func runGateOpts(o gateOptions) error {
 	// sections are deliberately not exposed on gate in this slice: each one
 	// is extra API reads and its own gate tests, and adding them later is
 	// additive and breaks no contract.
-	scanRes, err := scan.Evaluate(ctx, client, gateScanOptions(o.namespace, os.Stderr))
+	scanOpts, err := gateScanOptions(o.namespace, os.Stderr)
+	if err != nil {
+		return &exitError{code: gate.CodeUsage, msg: err.Error()}
+	}
+	scanRes, err := scan.Evaluate(ctx, client, scanOpts)
 	if err != nil {
 		// Exit 2 for the same reason the wait uses it: the scan failed outright,
 		// so there is no verdict, and a gate that saw nothing must never report

@@ -35,7 +35,7 @@ type ClusterHealth struct {
 // node (internal/rootcause).
 type DownNode struct {
 	Name   string `json:"name"`
-	Reason string `json:"reason"` // "NotReady" | "kubelet not heartbeating"
+	Reason string `json:"reason"` // "NotReady" | "kubelet not heartbeating" | "no kubelet lease"
 }
 
 // Heartbeat carries the node-lease inputs for the kubelet-heartbeat-freshness
@@ -44,6 +44,12 @@ type Heartbeat struct {
 	Leases    []coordinationv1.Lease
 	Now       time.Time
 	Threshold time.Duration
+
+	// Unavailable reports that the Lease list could not be read at all (a
+	// refused or failed read), as distinct from a node having no Lease. When
+	// set, the heartbeat check does not run: kubeagent did not look, so it
+	// knows nothing about any kubelet's heartbeat and must claim nothing.
+	Unavailable bool
 }
 
 // Assess computes the verdict from nodes and the assembled workloads. A node is
@@ -66,11 +72,11 @@ func Assess(nodes []corev1.Node, hb Heartbeat, expected []string, workloads []in
 		}
 		if ready {
 			ch.NodesReady++
-			if hb.Threshold > 0 {
-				if iss, stale := staleHeartbeat(leaseByNode, n.Name, hb.Now, hb.Threshold); stale {
+			if hb.Threshold > 0 && !hb.Unavailable {
+				if iss, reason, stale := staleHeartbeat(leaseByNode, n.Name, hb.Now, hb.Threshold); stale {
 					issues = append(issues, iss)
 					ch.NodesStaleHeartbeat++
-					ch.DownNodes = append(ch.DownNodes, DownNode{Name: n.Name, Reason: "kubelet not heartbeating"})
+					ch.DownNodes = append(ch.DownNodes, DownNode{Name: n.Name, Reason: reason})
 				}
 			}
 		}
@@ -121,27 +127,43 @@ func cleanExpected(expected []string) []string {
 }
 
 // staleHeartbeat reports whether a Ready node's kubelet lease is stale (or
-// missing/renewTime-less) beyond the threshold, and the issue string to record.
-func staleHeartbeat(leaseByNode map[string]coordinationv1.Lease, node string, now time.Time, threshold time.Duration) (string, bool) {
+// missing/renewTime-less) beyond the threshold, the issue string to record,
+// and the DownNode reason the caller should attribute it under. The two
+// failing arms carry different reasons: a missing (or renewTime-less) Lease
+// is "no kubelet lease" — kubeagent has no evidence to judge staleness from —
+// while an actually-stale Lease is "kubelet not heartbeating" — evidence the
+// kubelet stopped. Conflating them previously left DownNode.Reason
+// hard-coded to the latter regardless of which arm fired.
+func staleHeartbeat(leaseByNode map[string]coordinationv1.Lease, node string, now time.Time, threshold time.Duration) (issue, reason string, stale bool) {
 	l, ok := leaseByNode[node]
 	if !ok || l.Spec.RenewTime == nil {
-		return "no kubelet lease", true
+		return "no kubelet lease", "no kubelet lease", true
 	}
 	staleness := now.Sub(l.Spec.RenewTime.Time)
 	if staleness > threshold {
-		return fmt.Sprintf("kubelet not heartbeating (lease %s stale)", staleness.Round(time.Second)), true
+		return fmt.Sprintf("kubelet not heartbeating (lease %s stale)", staleness.Round(time.Second)), "kubelet not heartbeating", true
 	}
-	return "", false
+	return "", "", false
 }
 
-// NamespaceScopeNote returns a caveat for the verdict when the scan is scoped to
-// a single namespace that excludes kube-system, so the system rollup could not
-// run. Returns "" when the rollup was in scope (all namespaces, or -n kube-system).
+// NamespaceScopeNote returns a caveat for the verdict when the scan is scoped
+// to a single namespace, naming what a -n scope causes to be skipped. Up to
+// two sentences, joined by "\n": the system-rollup sentence fires for any
+// namespace except kube-system (the system rollup ran there); the
+// admission-webhook sentence fires for every non-empty namespace, including
+// kube-system, because internal/scan's webhook check is skipped under any -n,
+// unconditionally. The two conditions differ and cannot share one guard.
+// Returns "" only for namespace == "" (cluster-wide, nothing skipped).
 func NamespaceScopeNote(namespace string) string {
-	if namespace != "" && namespace != systemNamespace {
-		return "node health only — re-run without -n (or with -n kube-system) for the system workload check"
+	if namespace == "" {
+		return ""
 	}
-	return ""
+	var sentences []string
+	if namespace != systemNamespace {
+		sentences = append(sentences, "node health only — re-run without -n (or with -n kube-system) for the system workload check")
+	}
+	sentences = append(sentences, "cluster-wide checks skipped under -n: admission webhooks")
+	return strings.Join(sentences, "\n")
 }
 
 // nodeHealth returns whether the node's Ready condition is true and a list of

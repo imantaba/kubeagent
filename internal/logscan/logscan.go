@@ -30,10 +30,13 @@ type signature struct {
 var signatures = []signature{
 	{"panic", regexp.MustCompile(`(?i)^panic:|goroutine \d+ \[running\]:`), func([]string) string { return "application panic (code bug)" }},
 	{"entrypoint", regexp.MustCompile(`(?i)exec:.*(?:executable file not found|no such file or directory|permission denied)`), func([]string) string { return "bad command or entrypoint" }},
-	// m[1] is a \S+ capture from the container's own log. \S excludes only
-	// whitespace, so it can carry ESC, NUL, or invalid UTF-8 — sanitize it.
-	{"conn-refused", regexp.MustCompile(`(?i)dial tcp (\S+): connect: connection refused`), func(m []string) string {
-		return "cannot reach a dependency (" + safetext.Line(m[1]) + ") — connection refused"
+	// No submatch reaches the returned cause. report.go renders LogCause
+	// unredacted, so interpolating the dialed address here would forward
+	// whatever the container printed — including a credential embedded in a
+	// URL — off the machine. The raw line still reaches Excerpt, sanitized and
+	// truncated, which is where an operator can see it.
+	{"conn-refused", regexp.MustCompile(`(?i)dial tcp \S+: connect: connection refused`), func([]string) string {
+		return "cannot reach a dependency — connection refused"
 	}},
 	{"dns", regexp.MustCompile(`(?i)no such host|server misbehaving`), func([]string) string { return "DNS resolution failed (name lookup)" }},
 	{"oom-inproc", regexp.MustCompile(`(?i)out of memory|cannot allocate memory|std::bad_alloc`), func([]string) string { return "ran out of memory in-process" }},
@@ -45,11 +48,41 @@ var signatures = []signature{
 
 const maxExcerpt = 200
 
+// containerRuntimePlaceholder matches the kubelet's own stand-in for "there is
+// no log to show" (e.g. "unable to retrieve container logs for
+// containerd://<id>: rpc error: ..."). It is control-plane text, never
+// something the crashed container itself wrote to stdout/stderr, so it must
+// not be classified as if it were.
+var containerRuntimePlaceholder = regexp.MustCompile(`(?i)^unable to retrieve container logs for `)
+
+// isOnlyPlaceholder reports whether every non-empty line is the kubelet's
+// placeholder. A body that mixes the placeholder with genuine output (a real
+// panic line, say) still classifies normally — see Classify.
+func isOnlyPlaceholder(lines []string) bool {
+	found := false
+	for _, ln := range lines {
+		ln = strings.TrimSpace(ln)
+		if ln == "" {
+			continue
+		}
+		if !containerRuntimePlaceholder.MatchString(ln) {
+			return false
+		}
+		found = true
+	}
+	return found
+}
+
 // Classify scans the log's non-empty lines against the signature library (in order) and
 // returns the first matching line's clue; if none match it falls back to the last
-// non-empty line. An empty/whitespace log returns the zero Clue.
+// non-empty line. An empty/whitespace log returns the zero Clue. A log whose only
+// non-empty content is the container-runtime placeholder also returns the zero
+// Clue: there is nothing here to classify.
 func Classify(log string) Clue {
 	lines := strings.Split(log, "\n")
+	if isOnlyPlaceholder(lines) {
+		return Clue{}
+	}
 	for _, s := range signatures {
 		for _, ln := range lines {
 			ln = strings.TrimSpace(ln)
@@ -63,7 +96,11 @@ func Classify(log string) Clue {
 	}
 	for i := len(lines) - 1; i >= 0; i-- {
 		if ln := strings.TrimSpace(lines[i]); ln != "" {
-			return Clue{Excerpt: sanitize(ln), Cause: "last output before exit (no known signature)"}
+			// "25" names internal/collect.PreviousLogs's TailLines: that is the
+			// only window this function ever sees, so a signature earlier in the
+			// container's own output is invisible here, not absent. Keep the two
+			// in sync if either changes.
+			return Clue{Excerpt: sanitize(ln), Cause: "last output before exit (no signature in the last 25 lines)"}
 		}
 	}
 	return Clue{}

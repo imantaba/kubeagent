@@ -6,9 +6,11 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 
 	admissionv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
@@ -28,6 +30,8 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
 	ktesting "k8s.io/client-go/testing"
+
+	"github.com/imantaba/kubeagent/internal/certhealth"
 )
 
 // The seven list functions the scan's phase-1 pool calls. Each wraps its error
@@ -555,15 +559,89 @@ func TestClassifyKubeletHealthz(t *testing.T) {
 	}{
 		{200, "ok", "ok", ""},
 		{500, "[+]ping ok\n[-]pleg failed\nhealthz check failed", "unhealthy", "[-]pleg failed"},
-		{500, "healthz check failed", "unhealthy", "healthz check failed"},
+		{500, "healthz check failed", "unhealthy", ""},
 		{403, "forbidden", "forbidden", ""},
+		{401, "unauthorized", "forbidden", ""},
 		{0, "", "unreachable", ""},
+		{502, "bad gateway", "unreachable", ""},
+		{503, "service unavailable", "unreachable", ""},
+		{504, "gateway timeout", "unreachable", ""},
 	}
 	for _, c := range cases {
 		p := classify("n", c.code, []byte(c.body))
 		if p.Node != "n" || p.Status != c.wantStatus || p.Detail != c.wantDetail {
 			t.Errorf("classify(%d, %q) = {%s, %q}, want {%s, %q}", c.code, c.body, p.Status, p.Detail, c.wantStatus, c.wantDetail)
 		}
+	}
+}
+
+func TestHealthzDetail(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		max  int
+		want string
+	}{
+		{"only failed line", "[-]pleg failed", 120, "[-]pleg failed"},
+		{"failed line after others", "[+]ping ok\nhealthz check failed\n[-]pleg failed", 120, "[-]pleg failed"},
+		{"no failed line, plain text", "healthz check failed", 120, ""},
+		{"no failed line, json status body", `{"status":"failure","reason":"kubelet stopped"}`, 120, ""},
+		{"empty body", "", 120, ""},
+		{"failed line longer than max is truncated", "[-]" + strings.Repeat("x", 130), 120, "[-]" + strings.Repeat("x", 117) + "…"},
+		{"forged [-] prefix split by a control character is not matched", "[\x00-]syncloop failed", 120, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := healthzDetail([]byte(c.body), c.max)
+			if got != c.want {
+				t.Errorf("healthzDetail(%q, %d) = %q, want %q", c.body, c.max, got, c.want)
+			}
+		})
+	}
+}
+
+// TestHealthzDetail_Sanitizes pins R75: the "[-]" prefix match runs on the
+// raw kubelet body — the forged-prefix case above proves that half — and the
+// value healthzDetail returns is sanitized clean of control characters and
+// escape bytes before it ever reaches the operator's terminal.
+func TestHealthzDetail_Sanitizes(t *testing.T) {
+	body := "[-]pleg failed\r\x1b[2K[-]forged different message"
+	got := healthzDetail([]byte(body), 120)
+	want := "[-]pleg failed [2K[-]forged different message"
+	if got != want {
+		t.Fatalf("healthzDetail(%q, 120) = %q, want %q", body, got, want)
+	}
+	for _, r := range got {
+		if unicode.IsControl(r) {
+			t.Errorf("healthzDetail(%q, 120) = %q contains control rune %U", body, got, r)
+		}
+	}
+	if strings.ContainsRune(got, '\x1b') {
+		t.Errorf("healthzDetail(%q, 120) = %q contains an ANSI escape byte", body, got)
+	}
+}
+
+// TestStatusCodeFrom pins R79(A): the fallback that recovers a /readyz
+// probe's HTTP status code from the error client-go's StatusCode(&code)
+// leaves at 0 when its serializer negotiator has no decoder for the
+// response's content type.
+func TestStatusCodeFrom(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"APIStatus error, code 500", &apierrors.StatusError{ErrStatus: metav1.Status{Code: 500}}, 500},
+		{"APIStatus error, code 403", &apierrors.StatusError{ErrStatus: metav1.Status{Code: 403}}, 403},
+		{"nil error", nil, 0},
+		{"plain error, not APIStatus", errors.New("boom"), 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := statusCodeFrom(c.err); got != c.want {
+				t.Errorf("statusCodeFrom(%v) = %d, want %d", c.err, got, c.want)
+			}
+		})
 	}
 }
 
@@ -577,6 +655,55 @@ func TestTLSSecrets(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].Name != "shop-tls" {
 		t.Fatalf("want the seeded TLS secret, got %+v", got)
+	}
+}
+
+// TestTLSSecretsZeroesPrivateKeyOnACopy pins R105(B): TLSSecrets zeroes
+// tls.key on the Secrets it returns, immediately after the List call and
+// before returning, shortening the private key's residency in kubeagent
+// from the whole scan down to nothing — kubeagent's own code never holds
+// it. tls.crt is unchanged, the tracker's own stored object is unaffected
+// (proven by a direct Get that bypasses TLSSecrets), and certhealth.Assess
+// over the result is unaffected, since it only ever reads tls.crt.
+func TestTLSSecretsZeroesPrivateKeyOnACopy(t *testing.T) {
+	crt := []byte("not-a-real-cert-tls.crt-bytes")
+	seed := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "shop-tls"},
+		Type:       corev1.SecretTypeTLS,
+		Data:       map[string][]byte{"tls.crt": crt, "tls.key": []byte("private-key-bytes-must-not-survive")},
+	}
+	client := fake.NewSimpleClientset(seed)
+
+	got, err := TLSSecrets(context.Background(), client, "shop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 secret, got %d", len(got))
+	}
+	if len(got[0].Data["tls.key"]) != 0 {
+		t.Errorf("tls.key = %q, want zeroed", got[0].Data["tls.key"])
+	}
+	if !bytes.Equal(got[0].Data["tls.crt"], crt) {
+		t.Errorf("tls.crt = %q, want unchanged (%q)", got[0].Data["tls.crt"], crt)
+	}
+
+	// The tracker's own stored object must be untouched: fetch it directly,
+	// bypassing TLSSecrets, and confirm tls.key is still intact there.
+	stored, err := client.CoreV1().Secrets("shop").Get(context.Background(), "shop-tls", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored.Data["tls.key"]) == 0 {
+		t.Fatalf("the tracker's own copy had tls.key zeroed too — TLSSecrets must operate on a copy, not the tracker's object")
+	}
+
+	// Assess only ever reads tls.crt, so its output must be identical whether
+	// tls.key is present or zeroed.
+	before := certhealth.Assess([]corev1.Secret{*seed}, nil, 30, time.Time{})
+	after := certhealth.Assess(got, nil, 30, time.Time{})
+	if !reflect.DeepEqual(before, after) {
+		t.Errorf("Assess differs after tls.key was zeroed: before=%+v after=%+v", before, after)
 	}
 }
 

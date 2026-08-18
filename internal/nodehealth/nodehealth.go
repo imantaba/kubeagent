@@ -18,13 +18,15 @@ type Issue struct {
 
 // Report is the advisory kubelet-health result.
 type Report struct {
-	Unhealthy []Issue `json:"unhealthy,omitempty"`
-	Probed    int     `json:"probed"`
-	Forbidden int     `json:"forbidden"`
+	Unhealthy   []Issue `json:"unhealthy,omitempty"`
+	Probed      int     `json:"probed"`
+	Forbidden   int     `json:"forbidden"`
+	Unreachable int     `json:"unreachable,omitempty"`
 }
 
 // Assess collapses per-node probes into the report: the unhealthy nodes plus the
-// probed/forbidden counts (used for the daemon gauge and the missing-grant hint).
+// probed/forbidden/unreachable counts (used for the daemon gauge and the
+// missing-grant hint).
 func Assess(probes []Probe) Report {
 	rep := Report{Probed: len(probes)}
 	for _, p := range probes {
@@ -33,6 +35,8 @@ func Assess(probes []Probe) Report {
 			rep.Unhealthy = append(rep.Unhealthy, Issue{Node: p.Node, Detail: p.Detail})
 		case "forbidden":
 			rep.Forbidden++
+		case "unreachable":
+			rep.Unreachable++
 		}
 	}
 	return rep

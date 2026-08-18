@@ -35,11 +35,14 @@
   tr.warning td.sev { color: var(--warning); }
   tr.info td.sev { color: var(--info); }
   .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85em; }
-  .empty { color: var(--muted); }
+  .empty { color: var(--muted); white-space: pre-line; }
   .blind { background: var(--panel); border-left: 3px solid var(--warning); padding: .75rem 1rem; }
   .blind p { color: var(--muted); margin: .25rem 0 .5rem; }
 {{- if .Policy}}
   .policy { background: var(--panel); border-left: 3px solid var(--muted); padding: .75rem 1rem; }
+{{- end}}
+{{- if .Certificates}}
+  .certs { background: var(--panel); border-left: 3px solid var(--info); padding: .75rem 1rem; }
 {{- end}}
   ul { margin: .5rem 0; padding-left: 1.2rem; }
   details { border: 1px solid var(--line); border-radius: 4px; padding: .5rem .75rem; margin-bottom: .6rem; }
@@ -76,6 +79,10 @@
   </p>
 </header>
 
+{{- if .SecurityRequested}}
+<p class="empty">Security posture was requested but is not part of the HTML report &mdash; re-run with --output text or --output json to see it.</p>
+{{- end}}
+
 {{- if .Blind}}
 <section class="blind">
   <h2>Blind spots</h2>
@@ -85,6 +92,41 @@
     <li><span class="mono">{{.Resource}}</span> &mdash; {{.Reason}}</li>
 {{- end}}
   </ul>
+</section>
+{{- end}}
+
+{{- if .Certificates}}
+<section class="certs">
+  <h2>Certificates</h2>
+{{- if .Certificates.Forbidden}}
+  <p class="empty">secrets access denied &mdash; apply deploy/rbac-certs.yaml (or Helm certs.enabled=true) to see this section.</p>
+{{- else}}
+{{- if .Certificates.Expired}}
+  <h3>Expired</h3>
+  <ul>
+{{- range .Certificates.Expired}}
+    <li><span class="mono">{{.Namespace}}/{{.Name}}</span> EXPIRED {{.Days}}d ago (CN {{.CommonName}}){{range .Ingresses}} &mdash; fronts ingress {{.}}{{end}}</li>
+{{- end}}
+  </ul>
+{{- end}}
+{{- if .Certificates.Expiring}}
+  <h3>Expiring</h3>
+  <ul>
+{{- range .Certificates.Expiring}}
+    <li><span class="mono">{{.Namespace}}/{{.Name}}</span> expires in {{.Days}}d (CN {{.CommonName}}){{range .Ingresses}} &mdash; fronts ingress {{.}}{{end}}</li>
+{{- end}}
+  </ul>
+{{- end}}
+{{- if .Certificates.Invalid}}
+  <h3>Invalid</h3>
+  <ul>
+{{- range .Certificates.Invalid}}
+    <li><span class="mono">{{.Namespace}}/{{.Name}}</span> &mdash; {{.Detail}}</li>
+{{- end}}
+  </ul>
+{{- end}}
+  <p class="meta">{{.Certificates.Checked}} certificates checked (warn window {{.Certificates.WarnDays}}d)</p>
+{{- end}}
 </section>
 {{- end}}
 

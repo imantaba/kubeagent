@@ -1,9 +1,41 @@
 package controlplane
 
 import (
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 )
+
+// checkLines builds a synthetic /readyz?verbose body with n distinct "[-]"
+// failed-check lines, named check-00, check-01, ….
+func checkLines(n int) []byte {
+	lines := make([]string, n)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("[-]check-%02d failed", i)
+	}
+	return []byte(strings.Join(lines, "\n") + "\n")
+}
+
+// TestFailedChecks_ExactlyAtCap pins the unchanged common case: a body with
+// exactly MaxFailedChecks failing lines returns exactly that many entries —
+// this is the row that proves R84 did not move the everyday cap.
+func TestFailedChecks_ExactlyAtCap(t *testing.T) {
+	got := failedChecks(checkLines(MaxFailedChecks))
+	if len(got) != MaxFailedChecks {
+		t.Fatalf("len(failedChecks) = %d, want %d", len(got), MaxFailedChecks)
+	}
+}
+
+// TestFailedChecks_CapPlusOne pins R84: a body with more failing lines than
+// the cap returns exactly MaxFailedChecks+1 entries, never more — enough for
+// a caller to detect truncation happened without an unbounded count.
+func TestFailedChecks_CapPlusOne(t *testing.T) {
+	got := failedChecks(checkLines(25))
+	if len(got) != MaxFailedChecks+1 {
+		t.Fatalf("len(failedChecks) = %d, want %d", len(got), MaxFailedChecks+1)
+	}
+}
 
 func TestParseReadyz_OK(t *testing.T) {
 	body := []byte("[+]ping ok\n[+]etcd ok\nreadyz check passed\n")

@@ -16,6 +16,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	storagev1 "k8s.io/api/storage/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -25,6 +26,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/diskusage"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/nodehealth"
+	"github.com/imantaba/kubeagent/internal/safetext"
 )
 
 // Pods lists pods in the given namespace (or all namespaces when empty).
@@ -458,7 +460,27 @@ func TLSSecrets(ctx context.Context, client kubernetes.Interface, namespace stri
 	if err != nil {
 		return nil, fmt.Errorf("listing TLS secrets: %w", err)
 	}
-	return secrets.Items, nil
+	// list has no server-side field projection for Secrets, so the API
+	// server already returned tls.key in the response body. Zero it here, on
+	// a copy of the Data map — never on the object List returned — so the
+	// private key's residency inside kubeagent ends at this line rather than
+	// lasting for the whole scan. certhealth.Assess only ever reads tls.crt,
+	// so this changes nothing it can observe.
+	out := make([]corev1.Secret, len(secrets.Items))
+	for i, s := range secrets.Items {
+		if _, ok := s.Data["tls.key"]; ok {
+			cp := make(map[string][]byte, len(s.Data))
+			for k, v := range s.Data {
+				if k == "tls.key" {
+					continue
+				}
+				cp[k] = v
+			}
+			s.Data = cp
+		}
+		out[i] = s
+	}
+	return out, nil
 }
 
 // ConfigMaps lists ConfigMaps in the namespace (empty = all), read-only.
@@ -528,6 +550,9 @@ func parseNodeSummary(node string, data []byte) (diskusage.NodeSummary, bool, er
 // grant reports a blind spot instead of quietly finding no log cause. An empty
 // log is ("", false, nil): nothing was refused, there was simply nothing there.
 func PreviousLogs(ctx context.Context, client kubernetes.Interface, ns, pod, container string) (string, bool, error) {
+	// 25 names the window internal/logscan.Classify's fallback cause reports
+	// ("no signature in the last 25 lines"). Keep the two in sync if either
+	// changes.
 	tail := int64(25)
 	raw, err := client.CoreV1().Pods(ns).GetLogs(pod, &corev1.PodLogOptions{
 		Container: container, Previous: true, TailLines: &tail,
@@ -584,24 +609,46 @@ func CoreDNSMetrics(ctx context.Context, client kubernetes.Interface, namespace,
 // ControlPlaneReadyz probes the apiserver /readyz?verbose endpoint and classifies
 // the result. Never returns an error (non-fatal, like KubeletHealthz). Needs the
 // nonResourceURLs /readyz get grant; a 401/403 yields Status "forbidden".
+//
+// A real apiserver's /readyz failure body is text/plain; client-go's serializer
+// negotiator has no decoder for that content type on a non-2xx response, and that
+// negotiation failure returns from StatusCode(&code) without ever setting code, so
+// the caller reads back 0 ("unreachable") no matter what status was actually
+// written. statusCodeFrom recovers it from the error the same negotiation failure
+// carries when code is left at 0.
 func ControlPlaneReadyz(ctx context.Context, client kubernetes.Interface) controlplane.Probe {
 	var code int
-	body, _ := client.CoreV1().RESTClient().Get().
+	body, err := client.CoreV1().RESTClient().Get().
 		AbsPath("/readyz").Param("verbose", "true").
 		Do(ctx).StatusCode(&code).Raw()
+	if code == 0 {
+		code = statusCodeFrom(err)
+	}
 	return controlplane.ParseReadyz(code, capBody(body))
 }
 
+// statusCodeFrom recovers the HTTP status code an error carries when it
+// satisfies apierrors.APIStatus, and 0 otherwise (including a nil err).
+func statusCodeFrom(err error) int {
+	status, ok := err.(apierrors.APIStatus)
+	if !ok {
+		return 0
+	}
+	return int(status.Status().Code)
+}
+
 // classify maps a /healthz probe result to a Probe. 200 is ok; 401/403 is
-// forbidden (grant missing); code 0 (no HTTP status — transport error) is
-// unreachable; any other status the kubelet returned is unhealthy.
+// forbidden (grant missing); code 0 (no HTTP status — transport error) or a
+// 502/503/504 gateway error is unreachable — the kubelet itself never
+// answered, whether the proxy could not reach it or gave up waiting; any
+// other status the kubelet returned is unhealthy.
 func classify(node string, code int, body []byte) nodehealth.Probe {
 	switch {
 	case code == 200:
 		return nodehealth.Probe{Node: node, Status: "ok"}
 	case code == 401 || code == 403:
 		return nodehealth.Probe{Node: node, Status: "forbidden"}
-	case code == 0:
+	case code == 0 || code == 502 || code == 503 || code == 504:
 		return nodehealth.Probe{Node: node, Status: "unreachable"}
 	default:
 		return nodehealth.Probe{Node: node, Status: "unhealthy", Detail: healthzDetail(body, 120)}
@@ -609,22 +656,21 @@ func classify(node string, code int, body []byte) nodehealth.Probe {
 }
 
 // healthzDetail returns the first failed-check line ("[-]…") from a kubelet
-// /healthz body, else the first non-empty line, trimmed and truncated to max runes.
+// /healthz body, trimmed, truncated to max runes and sanitized through
+// safetext.Line, or "" when the body carries no such line — an unparsed body
+// is not a diagnosis, and the row still degrades gracefully:
+// printKubeletHealth omits the detail suffix entirely when Detail is empty.
+// The "[-]" prefix test runs on the raw, unsanitized line: only the returned
+// value passes through safetext.Line, so a control character spliced into a
+// forged prefix cannot be sanitized away and then match.
 func healthzDetail(body []byte, max int) string {
-	var first string
 	for _, ln := range strings.Split(string(body), "\n") {
 		ln = strings.TrimSpace(ln)
-		if ln == "" {
-			continue
-		}
-		if first == "" {
-			first = ln
-		}
 		if strings.HasPrefix(ln, "[-]") {
-			return truncateRunes(ln, max)
+			return safetext.Line(truncateRunes(ln, max))
 		}
 	}
-	return truncateRunes(first, max)
+	return ""
 }
 
 func truncateRunes(s string, max int) string {

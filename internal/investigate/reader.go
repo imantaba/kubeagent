@@ -9,6 +9,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+
+	"github.com/imantaba/kubeagent/internal/redact"
+	"github.com/imantaba/kubeagent/internal/safetext"
 )
 
 // toolCall is one model-requested read (backend-agnostic; the Anthropic backend
@@ -28,9 +31,47 @@ type toolResult struct {
 }
 
 // Reader executes an allowed tool call via read-only client-go calls, rendering
-// only structured fields — never IPs, env, secret data, container args, or logs.
+// only structured fields — never env, secret data, container args, or logs —
+// and never an address it chose: no PodIP, HostIP, or ClusterIP field is ever
+// printed. A condition, waiting/terminated, or event Reason and Message is
+// free text the API server does not validate, so it passes through sanitize on
+// its way out (see describePod), which catches a network address embedded in
+// that text. It does not catch an arbitrary URL: the cluster's own text can
+// still carry one, path and all.
+//
+// That does not make a tool result address-free. When a client-go Get or List
+// call in this file fails, the error is returned to the model as err.Error(),
+// unfiltered by sanitize or by anything else -- a *url.Error from a failed
+// call names the API server's own host:port in its dial failure, and the
+// request path it was reaching for besides. This is a known gap: no decision
+// in this package closes it.
 type Reader struct {
 	client kubernetes.Interface
+}
+
+// sanitize prepares one free-text field (a condition, waiting/terminated, or
+// event Reason or Message) read from the API server for a tool result.
+//
+// The order is safetext.Line first, then redact.Addresses -- never the
+// reverse, and not for the reason the project's usual "match on the raw
+// value" rule would suggest. That rule exists so a hostile control character
+// spliced mid-word cannot evade a detector's raw-value signature match; taken
+// literally here it would argue for redacting first. The real reason for
+// this order is the opposite: a Unicode formatting character (category Cf,
+// e.g. U+202E) can sit inside an address and split it, which breaks
+// redact.Addresses' regexp. Sanitizing first repairs the split -- Line drops
+// the character before the regexp ever runs -- so the address is caught;
+// redacting first tests the still-split text, misses it, and only then has
+// Line strip the character that was hiding it, leaving the address in the
+// clear. Truncating before matching is safe here, unlike the raw-value rule's
+// usual concern: text past safetext.MaxLine is discarded, never rendered, so
+// an address in the dropped tail leaks nothing either way.
+//
+// sanitize does not catch everything: redact.Addresses matches a bare
+// host:port or IP:port shape, not an arbitrary URL, so a registry address
+// quoted inside an image-pull failure keeps its scheme and path intact.
+func sanitize(s string) string {
+	return redact.Addresses(safetext.Line(s))
 }
 
 func (r Reader) execute(ctx context.Context, c toolCall, scope *Scope) toolResult {
@@ -95,23 +136,33 @@ func nsFor(kind, ns string) string {
 	return ns
 }
 
+// describePod renders a pod's structured status: phase, node, conditions and
+// container states. It never renders an address kubeagent chose -- no PodIP,
+// HostIP, or ClusterIP appears here. A condition's Reason and a waiting or
+// terminated container's Reason and Message are free text the kubelet wrote,
+// not validated by the API server, so each passes through sanitize before
+// reaching the returned string. sanitize catches a network address embedded
+// in that text, but not an arbitrary URL: a registry address quoted inside an
+// image-pull failure, for example, can still reach the model with its scheme
+// and path intact -- the cluster's own text, quoted rather than chosen by
+// kubeagent.
 func describePod(p *corev1.Pod) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "pod %s/%s: phase=%s node=%s\n", p.Namespace, p.Name, p.Status.Phase, p.Spec.NodeName)
 	for _, cond := range p.Status.Conditions {
 		fmt.Fprintf(&b, "  condition %s=%s", cond.Type, cond.Status)
 		if cond.Reason != "" {
-			fmt.Fprintf(&b, " (%s)", cond.Reason)
+			fmt.Fprintf(&b, " (%s)", sanitize(cond.Reason))
 		}
 		b.WriteString("\n")
 	}
 	for _, cs := range p.Status.ContainerStatuses {
 		fmt.Fprintf(&b, "  container %s: ready=%t restarts=%d", cs.Name, cs.Ready, cs.RestartCount)
 		if cs.State.Waiting != nil {
-			fmt.Fprintf(&b, " waiting=%s: %s", cs.State.Waiting.Reason, cs.State.Waiting.Message)
+			fmt.Fprintf(&b, " waiting=%s: %s", sanitize(cs.State.Waiting.Reason), sanitize(cs.State.Waiting.Message))
 		}
 		if cs.State.Terminated != nil {
-			fmt.Fprintf(&b, " terminated=%s (exit %d)", cs.State.Terminated.Reason, cs.State.Terminated.ExitCode)
+			fmt.Fprintf(&b, " terminated=%s (exit %d)", sanitize(cs.State.Terminated.Reason), cs.State.Terminated.ExitCode)
 		}
 		b.WriteString("\n")
 	}
@@ -129,7 +180,7 @@ func (r Reader) describeWorkload(ctx context.Context, id, kind, ns, name string)
 		fmt.Fprintf(&b, "deployment %s/%s: ready=%d/%d updated=%d available=%d\n",
 			ns, name, d.Status.ReadyReplicas, d.Status.Replicas, d.Status.UpdatedReplicas, d.Status.AvailableReplicas)
 		for _, cnd := range d.Status.Conditions {
-			fmt.Fprintf(&b, "  condition %s=%s (%s): %s\n", cnd.Type, cnd.Status, cnd.Reason, cnd.Message)
+			fmt.Fprintf(&b, "  condition %s=%s (%s): %s\n", cnd.Type, cnd.Status, sanitize(cnd.Reason), sanitize(cnd.Message))
 		}
 	case "replicaset":
 		rs, err := r.client.AppsV1().ReplicaSets(ns).Get(ctx, name, metav1.GetOptions{})
@@ -165,7 +216,7 @@ func describeNode(n *corev1.Node) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "node %s: unschedulable=%t\n", n.Name, n.Spec.Unschedulable)
 	for _, cond := range n.Status.Conditions {
-		fmt.Fprintf(&b, "  condition %s=%s (%s): %s\n", cond.Type, cond.Status, cond.Reason, cond.Message)
+		fmt.Fprintf(&b, "  condition %s=%s (%s): %s\n", cond.Type, cond.Status, sanitize(cond.Reason), sanitize(cond.Message))
 	}
 	for _, t := range n.Spec.Taints {
 		fmt.Fprintf(&b, "  taint %s=%s:%s\n", t.Key, t.Value, t.Effect)
@@ -204,7 +255,7 @@ func (r Reader) getEvents(ctx context.Context, c toolCall, scope *Scope) toolRes
 	var b strings.Builder
 	fmt.Fprintf(&b, "events for %s/%s:\n", in.Namespace, in.Name)
 	for _, e := range evs.Items {
-		fmt.Fprintf(&b, "  %s: %s (x%d)\n", e.Reason, e.Message, e.Count)
+		fmt.Fprintf(&b, "  %s: %s (x%d)\n", sanitize(e.Reason), sanitize(e.Message), e.Count)
 	}
 	return okResult(c.ID, b.String())
 }

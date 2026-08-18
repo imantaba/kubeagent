@@ -6,6 +6,47 @@ import (
 	"github.com/imantaba/kubeagent/internal/watchstate"
 )
 
+// pdbCategoryToIssue maps a pdbhealth.Issue's lowercase Category onto the
+// finding vocabulary's CamelCase spelling shared by gate JSON, this daemon's
+// /issues and the MCP tool result. A category this map does not recognise
+// falls back to the raw value instead of vanishing, so a category landing
+// out of order (WP14 teaches pdbhealth.Assess to emit "singleton" after this
+// map already carries it) still renders rather than disappearing silently.
+var pdbCategoryToIssue = map[string]string{
+	"unsatisfiable": "PDBUnsatisfiable",
+	"stale":         "PDBStale",
+	"blocking":      "PDBBlocked",
+	"singleton":     "PDBSingleton",
+}
+
+// pdbIssue applies pdbCategoryToIssue, falling back to the raw category on a
+// miss.
+func pdbIssue(category string) string {
+	if v, ok := pdbCategoryToIssue[category]; ok {
+		return v
+	}
+	return category
+}
+
+// hpaCategoryToIssue is pdbCategoryToIssue's HPA counterpart, same
+// fallback-on-miss rule.
+var hpaCategoryToIssue = map[string]string{
+	"unable":    "HPAUnableToScale",
+	"metrics":   "HPAMetricsFailed",
+	"disabled":  "HPAScalingDisabled",
+	"ambiguous": "HPAAmbiguousSelector",
+	"capped":    "HPACapped",
+}
+
+// hpaIssue applies hpaCategoryToIssue, falling back to the raw category on a
+// miss.
+func hpaIssue(category string) string {
+	if v, ok := hpaCategoryToIssue[category]; ok {
+		return v
+	}
+	return category
+}
+
 // issueKeys projects one evaluation into the set of tracked issue instances.
 // Pure and deterministic; duplicates collapse, so two broken routes on the same
 // Ingress with the same problem yield one key. Sorting is the tracker's job.
@@ -60,10 +101,10 @@ func issueKeys(res *scan.Result) []watchstate.Key {
 		add(i.Kind, i.Namespace, i.Name, "StuckTerminating")
 	}
 	for _, i := range res.PDBIssues {
-		add("PodDisruptionBudget", i.Namespace, i.Name, i.Category)
+		add("PodDisruptionBudget", i.Namespace, i.Name, pdbIssue(i.Category))
 	}
 	for _, i := range res.HPAIssues {
-		add("HorizontalPodAutoscaler", i.Namespace, i.Name, i.Category)
+		add("HorizontalPodAutoscaler", i.Namespace, i.Name, hpaIssue(i.Category))
 	}
 	for _, i := range res.WebhookIssues {
 		add(i.Kind, "", i.Config+"/"+i.Webhook, i.Problem)

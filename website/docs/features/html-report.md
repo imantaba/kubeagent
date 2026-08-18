@@ -36,6 +36,10 @@ detailed views only appear in `--output text` and `--output json`.
 its narrative — and the list of sources it consulted — do not; those still need
 `--output text` or `--output json`.
 
+`--security` is the exception: its findings are not part of the ranked finding
+set, so they appear in `--output text` and `--output json` only. An HTML report
+produced with `--security` says so on the page.
+
 ## What the document deliberately does not contain
 
 **No cluster identity.** No context name, no API server URL, no kubeconfig

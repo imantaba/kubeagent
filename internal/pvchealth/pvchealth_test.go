@@ -1,6 +1,7 @@
 package pvchealth
 
 import (
+	"strings"
 	"testing"
 	"time"
 	"unicode"
@@ -36,7 +37,7 @@ func TestAssess_ProvisioningFailed(t *testing.T) {
 	events := []corev1.Event{pvcEvent("shop", "data-pvc", "ProvisioningFailed", `quota exceeded`)}
 	// SC "fast" exists, so structural cause is bypassed — the event reason surfaces instead.
 	scs := []storagev1.StorageClass{scClass("fast")}
-	got := Assess(pvcs, events, scs, nil)
+	got := Assess(pvcs, events, scs, nil, 10*time.Minute, time.Time{})
 	if len(got) != 1 {
 		t.Fatalf("want 1 issue, got %d", len(got))
 	}
@@ -49,14 +50,16 @@ func TestAssess_ProvisioningFailed(t *testing.T) {
 }
 
 func TestAssess_FailedBinding(t *testing.T) {
-	// nil StorageClassName falls through to the event path (ambiguous default-SC case).
+	// nil StorageClassName with a default StorageClass present falls through to the
+	// event path — the ambiguous case is only "no default exists" (R59).
 	pvc := corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "legacy"},
 		Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: nil},
 		Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimPending},
 	}
 	events := []corev1.Event{pvcEvent("shop", "legacy", "FailedBinding", "no persistent volumes available for this claim and no storage class is set")}
-	got := Assess([]corev1.PersistentVolumeClaim{pvc}, events, nil, nil)
+	scs := []storagev1.StorageClass{defaultSC("standard", "true")}
+	got := Assess([]corev1.PersistentVolumeClaim{pvc}, events, scs, nil, 10*time.Minute, time.Time{})
 	if len(got) != 1 || got[0].Reason != "FailedBinding" {
 		t.Fatalf("want 1 FailedBinding issue, got %+v", got)
 	}
@@ -66,7 +69,7 @@ func TestAssess_BoundPVCSkipped(t *testing.T) {
 	pvc := pendingPVC("shop", "data-pvc", "fast")
 	pvc.Status.Phase = corev1.ClaimBound
 	events := []corev1.Event{pvcEvent("shop", "data-pvc", "ProvisioningFailed", "stale")}
-	if got := Assess([]corev1.PersistentVolumeClaim{pvc}, events, nil, nil); len(got) != 0 {
+	if got := Assess([]corev1.PersistentVolumeClaim{pvc}, events, nil, nil, 10*time.Minute, time.Time{}); len(got) != 0 {
 		t.Errorf("a Bound PVC must not be flagged, got %+v", got)
 	}
 }
@@ -80,7 +83,7 @@ func TestAssess_WaitForFirstConsumerSkipped(t *testing.T) {
 	ev := pvcEvent("shop", "data-pvc", "WaitForFirstConsumer", "waiting for first consumer to be created before binding")
 	ev.Type = "Normal"
 	scs := []storagev1.StorageClass{scClass("local-path")}
-	if got := Assess(pvcs, []corev1.Event{ev}, scs, nil); len(got) != 0 {
+	if got := Assess(pvcs, []corev1.Event{ev}, scs, nil, 10*time.Minute, time.Time{}); len(got) != 0 {
 		t.Errorf("a WaitForFirstConsumer Pending PVC must not be flagged, got %+v", got)
 	}
 }
@@ -97,7 +100,7 @@ func TestAssess_CorrelationAndOrder(t *testing.T) {
 	}
 	// SC "fast" exists so structural cause is bypassed — events drive the issues.
 	scs := []storagev1.StorageClass{scClass("fast")}
-	got := Assess(pvcs, events, scs, nil)
+	got := Assess(pvcs, events, scs, nil, 10*time.Minute, time.Time{})
 	if len(got) != 2 {
 		t.Fatalf("want 2 issues, got %d: %+v", len(got), got)
 	}
@@ -120,7 +123,7 @@ func TestAssess_NewestEventWins(t *testing.T) {
 	// SC "fast" exists so structural cause is bypassed — events drive the issue.
 	scs := []storagev1.StorageClass{scClass("fast")}
 	// older first, so a naive first-match implementation would pick the wrong event.
-	got := Assess(pvcs, []corev1.Event{older, newer}, scs, nil)
+	got := Assess(pvcs, []corev1.Event{older, newer}, scs, nil, 10*time.Minute, time.Time{})
 	if len(got) != 1 {
 		t.Fatalf("want 1 issue, got %+v", got)
 	}
@@ -129,8 +132,113 @@ func TestAssess_NewestEventWins(t *testing.T) {
 	}
 }
 
+// R57: a failure event the controller has since spoken past — any strictly
+// newer event on the same PVC, regardless of reason — is history, not a
+// diagnosis, and must not be reported.
+func TestNewestFailureEvent_SupersededByLaterEventOfAnyReason(t *testing.T) {
+	failure := pvcEvent("shop", "nodefault-pvc", "FailedBinding", "no persistent volumes available for this claim and no storage class is set")
+	failure.LastTimestamp = metav1.NewTime(time.Unix(1000, 0))
+	later := pvcEvent("shop", "nodefault-pvc", "WaitForFirstConsumer", "waiting for first consumer to be created before binding")
+	later.LastTimestamp = metav1.NewTime(time.Unix(2000, 0))
+	got := newestFailureEvent([]corev1.Event{failure, later}, "shop", "nodefault-pvc")
+	if got != nil {
+		t.Fatalf("a failure event superseded by a strictly newer event of any reason must not be returned, got %+v", got)
+	}
+}
+
+func TestNewestFailureEvent_AloneStillFlagged(t *testing.T) {
+	failure := pvcEvent("shop", "data-pvc", "FailedBinding", "no persistent volumes available for this claim and no storage class is set")
+	got := newestFailureEvent([]corev1.Event{failure}, "shop", "data-pvc")
+	if got == nil || got.Reason != "FailedBinding" {
+		t.Fatalf("a lone failure event must still be flagged, got %+v", got)
+	}
+}
+
+func TestNewestFailureEvent_FailureNewerThanNonFailureStillFlagged(t *testing.T) {
+	earlier := pvcEvent("shop", "data-pvc", "WaitForFirstConsumer", "waiting for first consumer to be created before binding")
+	earlier.LastTimestamp = metav1.NewTime(time.Unix(1000, 0))
+	failure := pvcEvent("shop", "data-pvc", "FailedBinding", "no persistent volumes available for this claim and no storage class is set")
+	failure.LastTimestamp = metav1.NewTime(time.Unix(2000, 0))
+	got := newestFailureEvent([]corev1.Event{earlier, failure}, "shop", "data-pvc")
+	if got == nil || got.Reason != "FailedBinding" {
+		t.Fatalf("a failure event strictly newer than a non-failure event must still be flagged, got %+v", got)
+	}
+}
+
+func TestNewestFailureEvent_SameTimestampTieStillFlagged(t *testing.T) {
+	ts := metav1.NewTime(time.Unix(1000, 0))
+	failure := pvcEvent("shop", "data-pvc", "FailedBinding", "no persistent volumes available for this claim and no storage class is set")
+	failure.LastTimestamp = ts
+	normal := pvcEvent("shop", "data-pvc", "WaitForFirstConsumer", "waiting for first consumer to be created before binding")
+	normal.LastTimestamp = ts
+	got := newestFailureEvent([]corev1.Event{failure, normal}, "shop", "data-pvc")
+	if got == nil || got.Reason != "FailedBinding" {
+		t.Fatalf("a failure and a non-failure sharing one LastTimestamp must not silence the failure (strictly newer, not newer-or-equal), got %+v", got)
+	}
+}
+
+// TestAssess_FailureEventSupersededByLaterEvent_NoIssue exercises R57 through
+// the public Assess entry point, mirroring this scenario's nodefault-pvc: a
+// named StorageClass that exists (bypassing structuralCause) whose newest
+// admitted failure event has been superseded by a later event of any reason.
+func TestAssess_FailureEventSupersededByLaterEvent_NoIssue(t *testing.T) {
+	pvc := pendingPVC("shop", "nodefault-pvc", "fast")
+	failure := pvcEvent("shop", "nodefault-pvc", "FailedBinding", "no persistent volumes available for this claim and no storage class is set")
+	failure.LastTimestamp = metav1.NewTime(time.Unix(1000, 0))
+	later := pvcEvent("shop", "nodefault-pvc", "WaitForFirstConsumer", "waiting for first consumer to be created before binding")
+	later.LastTimestamp = metav1.NewTime(time.Unix(2000, 0))
+	scs := []storagev1.StorageClass{scClass("fast")}
+	if got := Assess([]corev1.PersistentVolumeClaim{pvc}, []corev1.Event{failure, later}, scs, nil, 10*time.Minute, time.Time{}); len(got) != 0 {
+		t.Fatalf("a failure event the controller has spoken past must not be reported, got %+v", got)
+	}
+}
+
 func scClass(name string) storagev1.StorageClass {
 	return storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: name}}
+}
+
+// scWithBinding is a StorageClass naming a provisioner and an explicit
+// VolumeBindingMode.
+func scWithBinding(name, provisioner string, mode storagev1.VolumeBindingMode) storagev1.StorageClass {
+	m := mode
+	return storagev1.StorageClass{
+		ObjectMeta:        metav1.ObjectMeta{Name: name},
+		Provisioner:       provisioner,
+		VolumeBindingMode: &m,
+	}
+}
+
+// pendingPVCWithCreation is a Pending PVC naming sc, created at created.
+func pendingPVCWithCreation(ns, name, sc string, created time.Time) corev1.PersistentVolumeClaim {
+	pvc := pendingPVC(ns, name, sc)
+	pvc.CreationTimestamp = metav1.NewTime(created)
+	return pvc
+}
+
+// defaultSC is a StorageClass carrying the well-known
+// "storageclass.kubernetes.io/is-default-class" annotation set to isDefaultValue,
+// e.g. defaultSC("standard", "true") for a genuine default.
+func defaultSC(name, isDefaultValue string) storagev1.StorageClass {
+	return storagev1.StorageClass{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        name,
+			Annotations: map[string]string{"storageclass.kubernetes.io/is-default-class": isDefaultValue},
+		},
+	}
+}
+
+// nilClassPVC is a Pending PVC with a nil StorageClassName (the ambiguous
+// "no class named" case) + a size + modes.
+func nilClassPVC(ns, name, size string, modes ...corev1.PersistentVolumeAccessMode) corev1.PersistentVolumeClaim {
+	return corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			StorageClassName: nil,
+			AccessModes:      modes,
+			Resources:        corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse(size)}},
+		},
+		Status: corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimPending},
+	}
 }
 
 // staticPVC is a Pending PVC with storageClassName "" (explicit static) + a size + modes.
@@ -170,7 +278,7 @@ func onlyIssue(t *testing.T, issues []Issue) Issue {
 
 func TestAssess_MissingStorageClass_NoEvent(t *testing.T) {
 	pvc := pendingPVC("shop", "data", "fast-ssd")
-	got := onlyIssue(t, Assess([]corev1.PersistentVolumeClaim{pvc}, nil, nil, nil))
+	got := onlyIssue(t, Assess([]corev1.PersistentVolumeClaim{pvc}, nil, nil, nil, 10*time.Minute, time.Time{}))
 	if got.Reason != "MissingStorageClass" {
 		t.Fatalf("reason = %q", got.Reason)
 	}
@@ -185,7 +293,7 @@ func TestAssess_MissingStorageClass_NoEvent(t *testing.T) {
 func TestAssess_MissingStorageClass_PresentSCNotFlagged(t *testing.T) {
 	pvc := pendingPVC("shop", "data", "fast-ssd")
 	scs := []storagev1.StorageClass{scClass("fast-ssd")}
-	if got := Assess([]corev1.PersistentVolumeClaim{pvc}, nil, scs, nil); len(got) != 0 {
+	if got := Assess([]corev1.PersistentVolumeClaim{pvc}, nil, scs, nil, 10*time.Minute, time.Time{}); len(got) != 0 {
 		t.Fatalf("a present dynamic SC with no event must not be flagged, got %+v", got)
 	}
 }
@@ -193,7 +301,7 @@ func TestAssess_MissingStorageClass_PresentSCNotFlagged(t *testing.T) {
 func TestAssess_StructuralBeatsEvent(t *testing.T) {
 	pvc := pendingPVC("shop", "data", "fast-ssd")
 	events := []corev1.Event{pvcEvent("shop", "data", "ProvisioningFailed", "some raw provisioner error")}
-	got := onlyIssue(t, Assess([]corev1.PersistentVolumeClaim{pvc}, events, nil, nil))
+	got := onlyIssue(t, Assess([]corev1.PersistentVolumeClaim{pvc}, events, nil, nil, 10*time.Minute, time.Time{}))
 	if got.Reason != "MissingStorageClass" || got.Detail != `references StorageClass "fast-ssd" which does not exist` {
 		t.Fatalf("structural cause must win over the event, got %+v", got)
 	}
@@ -203,7 +311,7 @@ func TestAssess_EventFallback_ValidDynamicSC(t *testing.T) {
 	pvc := pendingPVC("shop", "data", "standard")
 	scs := []storagev1.StorageClass{scClass("standard")}
 	events := []corev1.Event{pvcEvent("shop", "data", "ProvisioningFailed", "quota exceeded")}
-	got := onlyIssue(t, Assess([]corev1.PersistentVolumeClaim{pvc}, events, scs, nil))
+	got := onlyIssue(t, Assess([]corev1.PersistentVolumeClaim{pvc}, events, scs, nil, 10*time.Minute, time.Time{}))
 	if got.Reason != "ProvisioningFailed" || got.Detail != "quota exceeded" {
 		t.Fatalf("valid dynamic SC must fall through to the event, got %+v", got)
 	}
@@ -212,14 +320,14 @@ func TestAssess_EventFallback_ValidDynamicSC(t *testing.T) {
 func TestAssess_ValidDynamicSC_NoEvent_NotFlagged(t *testing.T) {
 	pvc := pendingPVC("shop", "data", "standard")
 	scs := []storagev1.StorageClass{scClass("standard")}
-	if got := Assess([]corev1.PersistentVolumeClaim{pvc}, nil, scs, nil); len(got) != 0 {
+	if got := Assess([]corev1.PersistentVolumeClaim{pvc}, nil, scs, nil, 10*time.Minute, time.Time{}); len(got) != 0 {
 		t.Fatalf("a normally-provisioning PVC must not be flagged, got %+v", got)
 	}
 }
 
 func TestAssess_NoMatchingPV_Empty(t *testing.T) {
 	pvc := staticPVC("shop", "data", "10Gi", corev1.ReadWriteOnce)
-	got := onlyIssue(t, Assess([]corev1.PersistentVolumeClaim{pvc}, nil, nil, nil))
+	got := onlyIssue(t, Assess([]corev1.PersistentVolumeClaim{pvc}, nil, nil, nil, 10*time.Minute, time.Time{}))
 	if got.Reason != "NoMatchingPV" {
 		t.Fatalf("reason = %q", got.Reason)
 	}
@@ -231,7 +339,7 @@ func TestAssess_NoMatchingPV_Empty(t *testing.T) {
 func TestAssess_NoMatchingPV_MatchingPVNotFlagged(t *testing.T) {
 	pvc := staticPVC("shop", "data", "10Gi", corev1.ReadWriteOnce)
 	pvs := []corev1.PersistentVolume{availPV("pv-1", "20Gi", "", corev1.ReadWriteOnce)}
-	if got := Assess([]corev1.PersistentVolumeClaim{pvc}, nil, nil, pvs); len(got) != 0 {
+	if got := Assess([]corev1.PersistentVolumeClaim{pvc}, nil, nil, pvs, 10*time.Minute, time.Time{}); len(got) != 0 {
 		t.Fatalf("a matching Available static PV must satisfy the claim, got %+v", got)
 	}
 }
@@ -239,7 +347,7 @@ func TestAssess_NoMatchingPV_MatchingPVNotFlagged(t *testing.T) {
 func TestAssess_NoMatchingPV_TooSmall(t *testing.T) {
 	pvc := staticPVC("shop", "data", "10Gi", corev1.ReadWriteOnce)
 	pvs := []corev1.PersistentVolume{availPV("pv-1", "5Gi", "", corev1.ReadWriteOnce)}
-	if got := Assess([]corev1.PersistentVolumeClaim{pvc}, nil, nil, pvs); len(got) != 1 || got[0].Reason != "NoMatchingPV" {
+	if got := Assess([]corev1.PersistentVolumeClaim{pvc}, nil, nil, pvs, 10*time.Minute, time.Time{}); len(got) != 1 || got[0].Reason != "NoMatchingPV" {
 		t.Fatalf("a too-small PV must not satisfy the claim, got %+v", got)
 	}
 }
@@ -247,7 +355,7 @@ func TestAssess_NoMatchingPV_TooSmall(t *testing.T) {
 func TestAssess_NoMatchingPV_WrongMode(t *testing.T) {
 	pvc := staticPVC("shop", "data", "10Gi", corev1.ReadWriteMany)
 	pvs := []corev1.PersistentVolume{availPV("pv-1", "20Gi", "", corev1.ReadWriteOnce)}
-	if got := Assess([]corev1.PersistentVolumeClaim{pvc}, nil, nil, pvs); len(got) != 1 || got[0].Reason != "NoMatchingPV" {
+	if got := Assess([]corev1.PersistentVolumeClaim{pvc}, nil, nil, pvs, 10*time.Minute, time.Time{}); len(got) != 1 || got[0].Reason != "NoMatchingPV" {
 		t.Fatalf("a PV lacking the requested access mode must not satisfy, got %+v", got)
 	}
 }
@@ -257,7 +365,7 @@ func TestAssess_NoMatchingPV_BoundPVNotCandidate(t *testing.T) {
 	pv := availPV("pv-1", "20Gi", "", corev1.ReadWriteOnce)
 	pv.Spec.ClaimRef = &corev1.ObjectReference{Namespace: "other", Name: "someone-else"}
 	pv.Status.Phase = corev1.VolumeBound
-	if got := Assess([]corev1.PersistentVolumeClaim{pvc}, nil, nil, []corev1.PersistentVolume{pv}); len(got) != 1 || got[0].Reason != "NoMatchingPV" {
+	if got := Assess([]corev1.PersistentVolumeClaim{pvc}, nil, nil, []corev1.PersistentVolume{pv}, 10*time.Minute, time.Time{}); len(got) != 1 || got[0].Reason != "NoMatchingPV" {
 		t.Fatalf("a bound PV must not be a candidate, got %+v", got)
 	}
 }
@@ -265,9 +373,200 @@ func TestAssess_NoMatchingPV_BoundPVNotCandidate(t *testing.T) {
 func TestAssess_NoMatchingPV_DynamicPVNotCandidate(t *testing.T) {
 	pvc := staticPVC("shop", "data", "10Gi", corev1.ReadWriteOnce)
 	pvs := []corev1.PersistentVolume{availPV("pv-1", "20Gi", "standard", corev1.ReadWriteOnce)} // dynamic class
-	if got := Assess([]corev1.PersistentVolumeClaim{pvc}, nil, nil, pvs); len(got) != 1 || got[0].Reason != "NoMatchingPV" {
+	if got := Assess([]corev1.PersistentVolumeClaim{pvc}, nil, nil, pvs, 10*time.Minute, time.Time{}); len(got) != 1 || got[0].Reason != "NoMatchingPV" {
 		t.Fatalf("a dynamic-class PV must not satisfy a static claim, got %+v", got)
 	}
+}
+
+// R58: anyMatchingPV honours the claim's selector and volume mode, and
+// distinguishes "no storage" (NoMatchingPV) from "your selector is wrong"
+// (PVSelectorMismatch).
+
+func TestAssess_PVSelectorMismatch_ExcludesOtherwiseSuitablePV(t *testing.T) {
+	pvc := staticPVC("shop", "selector-pvc", "10Gi", corev1.ReadWriteOnce)
+	pvc.Spec.Selector = &metav1.LabelSelector{MatchLabels: map[string]string{"tier": "fast"}}
+	// pv-1 satisfies size, mode, and class, but carries no labels — it fails
+	// only the selector.
+	pvs := []corev1.PersistentVolume{availPV("pv-1", "20Gi", "", corev1.ReadWriteOnce)}
+	got := onlyIssue(t, Assess([]corev1.PersistentVolumeClaim{pvc}, nil, nil, pvs, 10*time.Minute, time.Time{}))
+	if got.Reason != "PVSelectorMismatch" {
+		t.Fatalf("reason = %q, want PVSelectorMismatch", got.Reason)
+	}
+	if got.Detail != "no available PersistentVolume matches its selector (1 otherwise-suitable volume(s) excluded)" {
+		t.Fatalf("detail = %q", got.Detail)
+	}
+}
+
+func TestAssess_PVSelectorMismatch_LabelledPVMatchesNotFlagged(t *testing.T) {
+	pvc := staticPVC("shop", "selector-pvc", "10Gi", corev1.ReadWriteOnce)
+	pvc.Spec.Selector = &metav1.LabelSelector{MatchLabels: map[string]string{"tier": "fast"}}
+	pv := availPV("pv-1", "20Gi", "", corev1.ReadWriteOnce)
+	pv.Labels = map[string]string{"tier": "fast"}
+	if got := Assess([]corev1.PersistentVolumeClaim{pvc}, nil, nil, []corev1.PersistentVolume{pv}, 10*time.Minute, time.Time{}); len(got) != 0 {
+		t.Fatalf("a PV matching the selector must satisfy the claim, got %+v", got)
+	}
+}
+
+func TestAssess_VolumeModeMismatch_NoMatchingPV(t *testing.T) {
+	pvc := staticPVC("shop", "data", "10Gi", corev1.ReadWriteOnce)
+	block := corev1.PersistentVolumeBlock
+	pvc.Spec.VolumeMode = &block
+	pv := availPV("pv-1", "20Gi", "", corev1.ReadWriteOnce) // defaults to Filesystem
+	got := onlyIssue(t, Assess([]corev1.PersistentVolumeClaim{pvc}, nil, nil, []corev1.PersistentVolume{pv}, 10*time.Minute, time.Time{}))
+	if got.Reason != "NoMatchingPV" {
+		t.Fatalf("reason = %q, want the existing NoMatchingPV wording", got.Reason)
+	}
+	if got.Detail != "no available PersistentVolume matches its request (10Gi, ReadWriteOnce)" {
+		t.Fatalf("detail = %q must stay byte-identical to the existing wording", got.Detail)
+	}
+}
+
+func TestAssess_NoSelector_NothingMatches_ExistingWordingByteIdentical(t *testing.T) {
+	pvc := staticPVC("shop", "data", "10Gi", corev1.ReadWriteOnce)
+	got := onlyIssue(t, Assess([]corev1.PersistentVolumeClaim{pvc}, nil, nil, nil, 10*time.Minute, time.Time{}))
+	if got.Reason != "NoMatchingPV" {
+		t.Fatalf("reason = %q", got.Reason)
+	}
+	if got.Detail != "no available PersistentVolume matches its request (10Gi, ReadWriteOnce)" {
+		t.Fatalf("detail = %q must stay byte-identical", got.Detail)
+	}
+}
+
+func TestAssess_NoSelector_PVMatches_NotFlagged(t *testing.T) {
+	pvc := staticPVC("shop", "data", "10Gi", corev1.ReadWriteOnce)
+	pvs := []corev1.PersistentVolume{availPV("pv-1", "20Gi", "", corev1.ReadWriteOnce)}
+	if got := Assess([]corev1.PersistentVolumeClaim{pvc}, nil, nil, pvs, 10*time.Minute, time.Time{}); len(got) != 0 {
+		t.Fatalf("a matching PV with no selector on the claim must satisfy it, got %+v", got)
+	}
+}
+
+func TestAssess_PVSelectorMismatch_CountsAllExcluded(t *testing.T) {
+	pvc := staticPVC("shop", "selector-pvc", "10Gi", corev1.ReadWriteOnce)
+	pvc.Spec.Selector = &metav1.LabelSelector{MatchLabels: map[string]string{"tier": "fast"}}
+	pvs := []corev1.PersistentVolume{
+		availPV("pv-1", "20Gi", "", corev1.ReadWriteOnce),
+		availPV("pv-2", "20Gi", "", corev1.ReadWriteOnce),
+	}
+	got := onlyIssue(t, Assess([]corev1.PersistentVolumeClaim{pvc}, nil, nil, pvs, 10*time.Minute, time.Time{}))
+	if got.Reason != "PVSelectorMismatch" {
+		t.Fatalf("reason = %q, want PVSelectorMismatch", got.Reason)
+	}
+	if got.Detail != "no available PersistentVolume matches its selector (2 otherwise-suitable volume(s) excluded)" {
+		t.Fatalf("detail = %q", got.Detail)
+	}
+}
+
+// R59: a nil StorageClassName is ambiguous only when the cluster truly has no
+// default StorageClass; when one exists, the claim still defers to the event
+// path (TestAssess_FailedBinding pins that case).
+
+func TestAssess_NilClass_NoDefaultSC_NoMatchingPV(t *testing.T) {
+	pvc := nilClassPVC("shop", "nilsc2-pvc", "10Gi", corev1.ReadWriteOnce)
+	got := onlyIssue(t, Assess([]corev1.PersistentVolumeClaim{pvc}, nil, nil, nil, 10*time.Minute, time.Time{}))
+	if got.Reason != "NoMatchingPV" {
+		t.Fatalf("reason = %q, want NoMatchingPV", got.Reason)
+	}
+	if got.Detail != "no available PersistentVolume matches its request (10Gi, ReadWriteOnce)" {
+		t.Fatalf("detail = %q must stay byte-identical", got.Detail)
+	}
+}
+
+func TestAssess_NilClass_NoDefaultSC_MatchingPV_NotFlagged(t *testing.T) {
+	pvc := nilClassPVC("shop", "nilsc2-pvc", "10Gi", corev1.ReadWriteOnce)
+	pvs := []corev1.PersistentVolume{availPV("pv-1", "20Gi", "", corev1.ReadWriteOnce)}
+	if got := Assess([]corev1.PersistentVolumeClaim{pvc}, nil, nil, pvs, 10*time.Minute, time.Time{}); len(got) != 0 {
+		t.Fatalf("a nil-class claim with a matching PV and no default SC must not be flagged, got %+v", got)
+	}
+}
+
+func TestAssess_NilClass_DefaultAnnotatedFalse_CountsAsNoDefault(t *testing.T) {
+	pvc := nilClassPVC("shop", "nilsc2-pvc", "10Gi", corev1.ReadWriteOnce)
+	scs := []storagev1.StorageClass{defaultSC("standard", "false")}
+	got := onlyIssue(t, Assess([]corev1.PersistentVolumeClaim{pvc}, nil, scs, nil, 10*time.Minute, time.Time{}))
+	if got.Reason != "NoMatchingPV" {
+		t.Fatalf("reason = %q, want NoMatchingPV (an SC annotated \"false\" is not default)", got.Reason)
+	}
+}
+
+func TestAssess_NilClass_DefaultAnnotatedOtherValue_CountsAsNoDefault(t *testing.T) {
+	pvc := nilClassPVC("shop", "nilsc2-pvc", "10Gi", corev1.ReadWriteOnce)
+	scs := []storagev1.StorageClass{defaultSC("standard", "yes")}
+	got := onlyIssue(t, Assess([]corev1.PersistentVolumeClaim{pvc}, nil, scs, nil, 10*time.Minute, time.Time{}))
+	if got.Reason != "NoMatchingPV" {
+		t.Fatalf("reason = %q, want NoMatchingPV (only the literal \"true\" counts as default)", got.Reason)
+	}
+}
+
+func TestAssess_NilClass_DefaultPresent_FallsToEventPath(t *testing.T) {
+	pvc := nilClassPVC("shop", "nilsc2-pvc", "10Gi", corev1.ReadWriteOnce)
+	scs := []storagev1.StorageClass{defaultSC("standard", "true")}
+	// No matching PV and no event: with a default SC present the claim must not
+	// be flagged structurally — it defers to the (here absent) event.
+	if got := Assess([]corev1.PersistentVolumeClaim{pvc}, nil, scs, nil, 10*time.Minute, time.Time{}); len(got) != 0 {
+		t.Fatalf("a nil-class claim with a default SC present must defer to the event path, got %+v", got)
+	}
+}
+
+// R56: provisionerStalled is the last resort — it only runs once newestFailureEvent
+// has returned nil — and only for a claim naming an Immediate (or unset-mode) class
+// that has existed past the claim's age well beyond threshold.
+
+func TestAssess_ProvisionerStalled_ImmediatePastThreshold(t *testing.T) {
+	created := time.Unix(1_000_000, 0)
+	now := created.Add(11 * time.Minute)
+	pvc := pendingPVCWithCreation("shop", "data", "fast", created)
+	scs := []storagev1.StorageClass{scWithBinding("fast", "ebs.csi.aws.com", storagev1.VolumeBindingImmediate)}
+	got := onlyIssue(t, Assess([]corev1.PersistentVolumeClaim{pvc}, nil, scs, nil, 10*time.Minute, now))
+	if got.Reason != "ProvisionerNotResponding" {
+		t.Fatalf("reason = %q, want ProvisionerNotResponding", got.Reason)
+	}
+	if !strings.Contains(got.Detail, "fast") || !strings.Contains(got.Detail, "ebs.csi.aws.com") {
+		t.Fatalf("detail = %q, want it to name the StorageClass and its provisioner", got.Detail)
+	}
+}
+
+func TestAssess_ProvisionerStalled_ImmediateUnderThreshold_NotFlagged(t *testing.T) {
+	created := time.Unix(1_000_000, 0)
+	now := created.Add(9 * time.Minute)
+	pvc := pendingPVCWithCreation("shop", "data", "fast", created)
+	scs := []storagev1.StorageClass{scWithBinding("fast", "ebs.csi.aws.com", storagev1.VolumeBindingImmediate)}
+	if got := Assess([]corev1.PersistentVolumeClaim{pvc}, nil, scs, nil, 10*time.Minute, now); len(got) != 0 {
+		t.Fatalf("a claim younger than threshold must not be flagged, got %+v", got)
+	}
+}
+
+func TestAssess_ProvisionerStalled_WaitForFirstConsumer_NotFlagged(t *testing.T) {
+	created := time.Unix(1_000_000, 0)
+	now := created.Add(1 * time.Hour)
+	pvc := pendingPVCWithCreation("shop", "data", "local-path", created)
+	scs := []storagev1.StorageClass{scWithBinding("local-path", "rancher.io/local-path", storagev1.VolumeBindingWaitForFirstConsumer)}
+	if got := Assess([]corev1.PersistentVolumeClaim{pvc}, nil, scs, nil, 10*time.Minute, now); len(got) != 0 {
+		t.Fatalf("a WaitForFirstConsumer class must never be flagged as a stalled provisioner, got %+v", got)
+	}
+}
+
+func TestAssess_ProvisionerStalled_EventStillWinsWhenPresent(t *testing.T) {
+	created := time.Unix(1_000_000, 0)
+	now := created.Add(1 * time.Hour)
+	pvc := pendingPVCWithCreation("shop", "data", "fast", created)
+	scs := []storagev1.StorageClass{scWithBinding("fast", "ebs.csi.aws.com", storagev1.VolumeBindingImmediate)}
+	events := []corev1.Event{pvcEvent("shop", "data", "ProvisioningFailed", "quota exceeded")}
+	got := onlyIssue(t, Assess([]corev1.PersistentVolumeClaim{pvc}, events, scs, nil, 10*time.Minute, now))
+	if got.Reason != "ProvisioningFailed" || got.Detail != "quota exceeded" {
+		t.Fatalf("a real failure event must still win over the stall check, got %+v", got)
+	}
+}
+
+func TestAssess_ProvisionerStalled_ProvisionerSanitized(t *testing.T) {
+	created := time.Unix(1_000_000, 0)
+	now := created.Add(11 * time.Minute)
+	pvc := pendingPVCWithCreation("shop", "data", "fast", created)
+	scs := []storagev1.StorageClass{scWithBinding("fast", hostileText, storagev1.VolumeBindingImmediate)}
+	got := onlyIssue(t, Assess([]corev1.PersistentVolumeClaim{pvc}, nil, scs, nil, 10*time.Minute, now))
+	if got.Reason != "ProvisionerNotResponding" {
+		t.Fatalf("reason = %q, want ProvisionerNotResponding", got.Reason)
+	}
+	assertSanitized(t, "Detail", got.Detail)
 }
 
 // hostileText is what a provisioner's event message carries when the
@@ -285,7 +584,7 @@ func TestAssess_SanitizesTheEventMessage(t *testing.T) {
 			got := Assess(
 				[]corev1.PersistentVolumeClaim{pendingPVC("shop", "data-pvc", "fast")},
 				[]corev1.Event{pvcEvent("shop", "data-pvc", reason, hostileText)},
-				[]storagev1.StorageClass{scClass("fast")}, nil)
+				[]storagev1.StorageClass{scClass("fast")}, nil, 10*time.Minute, time.Time{})
 			if len(got) != 1 {
 				t.Fatalf("want 1 issue, got %d", len(got))
 			}

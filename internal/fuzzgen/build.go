@@ -183,7 +183,7 @@ func (c *Cursor) Events(pod *corev1.Pod, max int) []corev1.Event {
 // TLSSecret wraps crt in a kubernetes.io/tls Secret. Deliberately NO tls.key
 // entry: certhealth.Assess parses only the public certificate and must never
 // depend on the private key. A nil or empty crt leaves tls.crt absent, which is
-// the shape that reaches the "missing tls.crt" branch.
+// the shape that reaches the "empty tls.crt" branch.
 func (c *Cursor) TLSSecret(crt []byte) corev1.Secret {
 	s := corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Namespace: c.Name(20), Name: c.Name(30)},

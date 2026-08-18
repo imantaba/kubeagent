@@ -284,6 +284,39 @@ func TestEvaluate_StaleHeartbeatDegrades(t *testing.T) {
 	}
 }
 
+// A refused Lease read must surface as a named blind spot and must not make
+// kubeagent claim every Ready node's kubelet has stopped heartbeating — that
+// would be reading a failed read as a fact about the cluster. Without the
+// guard, a Ready node with no lease entry (because the whole list failed)
+// would be misreported as "no kubelet lease" in Health.DownNodes, which is
+// exactly the assertion internal/rootcause depends on staying empty here.
+func TestEvaluate_LeasesForbiddenNoHeartbeatClaim(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "w1"},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}}
+	client := fake.NewSimpleClientset(node)
+	client.Fake.PrependReactor("list", "leases", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewForbidden(schema.GroupResource{Group: "coordination.k8s.io", Resource: "leases"}, "", nil)
+	})
+
+	res, err := Evaluate(context.Background(), client, Options{NodeHeartbeatThreshold: 40 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var found *ReadFailure
+	for i := range res.PartialReads {
+		if res.PartialReads[i].Resource == "leases" {
+			found = &res.PartialReads[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("PartialReads = %v, want an entry for leases", res.PartialReads)
+	}
+	if len(res.Health.DownNodes) != 0 {
+		t.Errorf("Health.DownNodes = %+v, want none — a refused Lease read must not be read as every kubelet down", res.Health.DownNodes)
+	}
+}
+
 func TestEvaluate_ExpectedNodeAbsentDegrades(t *testing.T) {
 	client := fake.NewSimpleClientset(
 		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "a"}, Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}},
@@ -306,7 +339,8 @@ func TestEvaluate_LogsEnrichCrashFindings(t *testing.T) {
 	crashPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "web-1", Namespace: "shop", Labels: map[string]string{"app": "web"}},
 		Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
-			Name: "web", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+			Name: "web", RestartCount: 6,
+			State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
 		}}},
 	}
 	client := fake.NewSimpleClientset(crashPod)
@@ -348,6 +382,129 @@ func TestEvaluate_LogsDedupPerContainer(t *testing.T) {
 	}
 }
 
+// TestEvaluate_LogsTargetsTheFindingThatExplainsTheExit pins R185: a container
+// that trips two detectors still gets one log fetch, but the block goes to
+// whichever finding names the container's own last termination reason, not
+// simply the first one diagnose.Run happened to emit. CrashLoopDetector runs
+// before OOMKilledDetector in diagnose.DefaultDetectors, so "first wins" would
+// always have kept the CrashLoopBackOff finding here — this fixture pins the
+// retarget to OOMKilled instead, because that is the finding that actually
+// explains why the container exited.
+func TestEvaluate_LogsTargetsTheFindingThatExplainsTheExit(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "web-1", Namespace: "shop", Labels: map[string]string{"app": "web"}},
+		Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
+			Name:                 "web",
+			State:                corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+			LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "OOMKilled", ExitCode: 137}},
+		}}},
+	}
+	client := fake.NewSimpleClientset(pod)
+	res, err := Evaluate(context.Background(), client, Options{Logs: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var oomCause, crashCause string
+	for _, w := range res.Inventory.Workloads {
+		for _, f := range w.Findings {
+			if f.Pod != "shop/web-1" {
+				continue
+			}
+			switch f.Issue {
+			case "OOMKilled":
+				oomCause = f.LogCause
+			case "CrashLoopBackOff":
+				crashCause = f.LogCause
+			}
+		}
+	}
+	if oomCause == "" {
+		t.Error("OOMKilled finding should carry a LogCause, got none")
+	}
+	if crashCause != "" {
+		t.Errorf("CrashLoopBackOff finding should carry no LogCause once OOMKilled explains the exit, got %q", crashCause)
+	}
+	if n := countPodsLogReads(client); n != 1 {
+		t.Errorf("pods/log reads = %d, want 1 (one fetch per container, regardless of how many findings it trips)", n)
+	}
+}
+
+// TestEvaluate_LogsFirstFindingWinsWithoutAMatchingTerminationReason pins the
+// sibling path: when the container's last termination reason names neither
+// competing finding's Issue, the retarget never fires and the first finding
+// diagnose.Run emitted keeps the log block — proving the retarget is
+// conditional on the container's own reason, not unconditional on any
+// duplicate key. RestartLoop and ProbeFailure are the pair used here because
+// they are the only other two detectors that can both name the same running
+// container at once (RestartLoop needs Running + a durable restart history;
+// ProbeFailure needs Running + an Unhealthy event; RestartLoopDetector runs
+// before ProbeFailureDetector in diagnose.DefaultDetectors), and neither
+// Issue string ("RestartLoop", "ProbeFailure") ever equals a termination
+// reason of "Error" — so an implementation that retargeted on any duplicate
+// key, instead of checking the reason, would wrongly move the block here.
+func TestEvaluate_LogsFirstFindingWinsWithoutAMatchingTerminationReason(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web-1", Labels: map[string]string{"app": "web"}},
+		Status: corev1.PodStatus{
+			Phase:      corev1.PodRunning,
+			Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionFalse}},
+			ContainerStatuses: []corev1.ContainerStatus{{
+				Name:         "web",
+				RestartCount: 3,
+				State:        corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: metav1.NewTime(time.Now().Add(-1 * time.Minute))}},
+				LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+					ExitCode: 1, Reason: "Error", FinishedAt: metav1.NewTime(time.Now().Add(-2 * time.Minute)),
+				}},
+			}},
+		},
+	}
+	event := &corev1.Event{
+		ObjectMeta:     metav1.ObjectMeta{Namespace: "shop", Name: "web-1.unhealthy"},
+		Reason:         "Unhealthy",
+		Type:           "Warning",
+		Message:        "Readiness probe failed: HTTP probe failed with statuscode: 503",
+		LastTimestamp:  metav1.Now(),
+		InvolvedObject: corev1.ObjectReference{Kind: "Pod", Namespace: "shop", Name: "web-1", FieldPath: "spec.containers{web}"},
+	}
+	client := fake.NewSimpleClientset(pod, event)
+	res, err := Evaluate(context.Background(), client, Options{Logs: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	seen := map[string]bool{}
+	var restartCause, probeCause string
+	for _, w := range res.Inventory.Workloads {
+		for _, f := range w.Findings {
+			if f.Pod != "shop/web-1" {
+				continue
+			}
+			seen[f.Issue] = true
+			switch f.Issue {
+			case "RestartLoop":
+				restartCause = f.LogCause
+			case "ProbeFailure":
+				probeCause = f.LogCause
+			}
+		}
+	}
+	for _, want := range []string{"RestartLoop", "ProbeFailure"} {
+		if !seen[want] {
+			t.Fatalf("fixture did not produce the expected %q finding (findings seen: %v) — the test setup is broken, not the retarget under test", want, seen)
+		}
+	}
+	if restartCause == "" {
+		t.Error("RestartLoop (the first finding diagnose.Run emitted) should still carry the LogCause: first-wins")
+	}
+	if probeCause != "" {
+		t.Errorf("ProbeFailure should not carry a LogCause — its Issue does not match the container's Error termination reason, so the retarget must not fire, got %q", probeCause)
+	}
+	if n := countPodsLogReads(client); n != 1 {
+		t.Errorf("pods/log reads = %d, want 1 (one fetch per container, regardless of how many findings it trips)", n)
+	}
+}
+
 // findLogCause returns the first finding's LogCause for the given "ns/pod".
 func findLogCause(r Result, pod string) string {
 	for _, w := range r.Inventory.Workloads {
@@ -371,6 +528,90 @@ func countLogCause(r Result, pod string) int {
 		}
 	}
 	return n
+}
+
+// countPodsLogReads counts the fake clientset's GetLogs actions. client-go's
+// fake GetLogs records a "get" on resource "pods" with subresource "log" — its
+// resource string is never the literal "pods/log" (that string is kubeagent's
+// own blind-spot vocabulary, a different axis entirely) — so a check against
+// that literal would never match and any negative assertion built on it would
+// pass vacuously whether or not a filter actually ran.
+func countPodsLogReads(client kubernetes.Interface) int {
+	n := 0
+	for _, a := range client.(interface {
+		Actions() []k8stesting.Action
+	}).Actions() {
+		if a.GetVerb() == "get" && a.GetResource().Resource == "pods" && a.GetSubresource() == "log" {
+			n++
+		}
+	}
+	return n
+}
+
+// TestEvaluate_LogsFiltersToContainersWithAPreviousInstance pins R181: only a
+// finding whose container has actually exited once already is worth a
+// --previous log read. The pod carries three findings on three distinct
+// containers so a filter that merely allowlists a finding *kind* — or that
+// reads only Status.ContainerStatuses — cannot pass by accident: web has
+// restarted and is probed, sidecar has never restarted and is not, and migrate
+// is an init container. internal/diagnose/initcontainer.go names its Container
+// from Status.InitContainerStatuses, a slice no other detector reads, so a
+// lookup that misses it would silently drop this finding's probe too — the
+// same loss a container-kind allowlist would have produced.
+func TestEvaluate_LogsFiltersToContainersWithAPreviousInstance(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "web-1", Namespace: "shop", Labels: map[string]string{"app": "web"}},
+		Spec: corev1.PodSpec{
+			InitContainers: []corev1.Container{{Name: "migrate"}},
+			Containers:     []corev1.Container{{Name: "web"}, {Name: "sidecar"}},
+		},
+		Status: corev1.PodStatus{
+			InitContainerStatuses: []corev1.ContainerStatus{{
+				Name: "migrate", RestartCount: 6,
+				State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+			}},
+			ContainerStatuses: []corev1.ContainerStatus{
+				{
+					Name: "web", RestartCount: 6,
+					State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+				},
+				{
+					Name:  "sidecar",
+					State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+				},
+			},
+		},
+	}
+	event := &corev1.Event{
+		ObjectMeta:     metav1.ObjectMeta{Name: "web-1.unhealthy", Namespace: "shop"},
+		InvolvedObject: corev1.ObjectReference{Kind: "Pod", Namespace: "shop", Name: "web-1", FieldPath: "spec.containers{sidecar}"},
+		Reason:         "Unhealthy",
+		Message:        "Readiness probe failed: dial tcp 10.0.0.5:8080: connect: connection refused",
+		LastTimestamp:  metav1.Now(),
+	}
+	client := fake.NewSimpleClientset(pod, event)
+	res, err := Evaluate(context.Background(), client, Options{Logs: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	seen := map[string]bool{}
+	for _, w := range res.Inventory.Workloads {
+		for _, f := range w.Findings {
+			if f.Pod == "shop/web-1" {
+				seen[f.Issue] = true
+			}
+		}
+	}
+	for _, want := range []string{"CrashLoopBackOff", "Init:CrashLoopBackOff", "ProbeFailure"} {
+		if !seen[want] {
+			t.Fatalf("fixture did not produce the expected %q finding (findings seen: %v) — the test setup is broken, not the filter under test", want, seen)
+		}
+	}
+
+	if n := countPodsLogReads(client); n != 2 {
+		t.Errorf("pods/log reads = %d, want 2 (web and migrate, both restarted; not sidecar, which never has)", n)
+	}
 }
 
 func p32(i int32) *int32 { return &i }
@@ -970,6 +1211,10 @@ func downWebhookObjects() []runtime.Object {
 			Name:          "validate.policy.io",
 			FailurePolicy: &fail,
 			ClientConfig:  admissionv1.WebhookClientConfig{Service: &admissionv1.ServiceReference{Namespace: "kube-system", Name: "policy-svc"}},
+			Rules: []admissionv1.RuleWithOperations{{
+				Operations: []admissionv1.OperationType{admissionv1.Create},
+				Rule:       admissionv1.Rule{APIGroups: []string{"apps"}, APIVersions: []string{"v1"}, Resources: []string{"deployments"}},
+			}},
 		}},
 	}
 	svc := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: "kube-system", Name: "policy-svc"}}
@@ -986,8 +1231,8 @@ func TestEvaluate_FlagsDownWebhook(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(res.WebhookIssues) != 1 || res.WebhookIssues[0].Problem != "no-endpoints" {
-		t.Fatalf("expected one no-endpoints webhook issue, got %+v", res.WebhookIssues)
+	if len(res.WebhookIssues) != 1 || res.WebhookIssues[0].Problem != "NoEndpoints" {
+		t.Fatalf("expected one NoEndpoints webhook issue, got %+v", res.WebhookIssues)
 	}
 }
 
@@ -1222,6 +1467,10 @@ func TestEvaluate_FlagsSlowWebhook(t *testing.T) {
 			FailurePolicy:  &fail,
 			ClientConfig:   admissionv1.WebhookClientConfig{URL: &url},
 			TimeoutSeconds: p32(20),
+			Rules: []admissionv1.RuleWithOperations{{
+				Operations: []admissionv1.OperationType{admissionv1.Create},
+				Rule:       admissionv1.Rule{APIGroups: []string{"apps"}, APIVersions: []string{"v1"}, Resources: []string{"deployments"}},
+			}},
 		}},
 	}
 	cli := fake.NewSimpleClientset(node, vwc)
@@ -1231,12 +1480,22 @@ func TestEvaluate_FlagsSlowWebhook(t *testing.T) {
 	}
 	found := false
 	for _, is := range res.WebhookIssues {
-		if is.Problem == "high-timeout" {
+		if is.Problem == "HighTimeout" {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("expected a high-timeout webhook issue, got %+v", res.WebhookIssues)
+		t.Errorf("expected a HighTimeout webhook issue, got %+v", res.WebhookIssues)
+	}
+	// Regression: this fixture's webhook is URL-backed, so webhookhealth.Assess
+	// also counts it as one in-scope, unchecked URL backend. Evaluate's Result{...}
+	// literal must carry that count through to res.WebhookURLBackends — a silent
+	// zero here (webhookURLBackends never assigned from Assess's second return)
+	// compiles cleanly and is exactly what
+	// TestResultInput_CarriesWebhookURLBackends guards one hop downstream, but
+	// nothing before this assertion guarded the hop here.
+	if res.WebhookURLBackends != 1 {
+		t.Errorf("res.WebhookURLBackends = %d, want 1", res.WebhookURLBackends)
 	}
 }
 
@@ -1522,6 +1781,307 @@ func TestForbiddenDiskUsageRecordsOneBlindSpot(t *testing.T) {
 	}
 }
 
+// readyzServer starts an httptest server that answers every request with the
+// given status code and body, for driving controlplane.ParseReadyz's "ok" and
+// "unhealthy" branches through a real HTTP round trip via ControlPlaneReadyz.
+// Content-Type must be set explicitly: net/http sniffs a plain-text body and
+// stamps "text/plain", and client-go's serializer negotiator has no decoder
+// for that media type — on a non-2xx status that negotiation failure hits a
+// client-go response path that returns without ever setting Result.statusCode,
+// so the caller reads back code 0 ("unreachable") no matter what status this
+// handler wrote.
+func readyzServer(t *testing.T, code int, body string) rest.Interface {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(code)
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(server.Close)
+	real, err := kubernetes.NewForConfig(&rest.Config{Host: server.URL})
+	if err != nil {
+		t.Fatalf("building a client for the fake readyz server: %v", err)
+	}
+	return real.CoreV1().RESTClient()
+}
+
+// unreachableServer returns a REST client pointed at a server that has already
+// been closed, so a request against it fails at the transport layer with no
+// HTTP response at all — the same shape ControlPlaneReadyz's code == 0 path
+// (and nodehealth's identical kubelet /healthz path) classifies as
+// "unreachable": the endpoint never answered, rather than refused the request.
+func unreachableServer(t *testing.T) rest.Interface {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	url := server.URL
+	server.Close()
+	real, err := kubernetes.NewForConfig(&rest.Config{Host: url})
+	if err != nil {
+		t.Fatalf("building a client for the closed server: %v", err)
+	}
+	return real.CoreV1().RESTClient()
+}
+
+// TestEvaluate_ReadyzBlindSpotsByStatus is R81's regression fixture: a probe
+// of each of the four /readyz statuses produces exactly the expected
+// blind-spot set — ok and unhealthy record none, forbidden and unreachable
+// each record exactly one entry with distinct reasons, and the forbidden
+// reason is unchanged from before R81.
+func TestEvaluate_ReadyzBlindSpotsByStatus(t *testing.T) {
+	cases := []struct {
+		name       string
+		rest       func(t *testing.T) rest.Interface
+		wantBlind  bool
+		wantReason string
+	}{
+		{"ok", func(t *testing.T) rest.Interface { return readyzServer(t, 200, "ok") }, false, ""},
+		{"unhealthy", func(t *testing.T) rest.Interface { return readyzServer(t, 500, "[-]etcd failed\n") }, false, ""},
+		{"forbidden", forbiddenNodeProxyServer, true, blindReason("get /readyz")},
+		{"unreachable", unreachableServer, true, "kubeagent could not reach the apiserver /readyz endpoint"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			client := nodeStatsFailingClient{Interface: fake.NewSimpleClientset(), rest: c.rest(t)}
+			res, err := Evaluate(context.Background(), client, Options{ControlPlaneHealth: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var found *ReadFailure
+			for i := range res.PartialReads {
+				if res.PartialReads[i].Resource == "/readyz" {
+					found = &res.PartialReads[i]
+				}
+			}
+			if c.wantBlind && found == nil {
+				t.Fatalf("PartialReads = %+v, want a /readyz entry", res.PartialReads)
+			}
+			if !c.wantBlind && found != nil {
+				t.Fatalf("PartialReads = %+v, want no /readyz entry", res.PartialReads)
+			}
+			if c.wantBlind && found.Reason != c.wantReason {
+				t.Errorf("Reason = %q, want %q", found.Reason, c.wantReason)
+			}
+		})
+	}
+}
+
+// TestEvaluate_ReadyzBlindSpotFlagOff proves the /readyz blind spot never
+// fires when --health is off, regardless of what the endpoint would have
+// answered — the probe never runs, so none of the four statuses is reachable.
+func TestEvaluate_ReadyzBlindSpotFlagOff(t *testing.T) {
+	cases := []struct {
+		name string
+		rest func(t *testing.T) rest.Interface
+	}{
+		{"ok", func(t *testing.T) rest.Interface { return readyzServer(t, 200, "ok") }},
+		{"unhealthy", func(t *testing.T) rest.Interface { return readyzServer(t, 500, "[-]etcd failed\n") }},
+		{"forbidden", forbiddenNodeProxyServer},
+		{"unreachable", unreachableServer},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			client := nodeStatsFailingClient{Interface: fake.NewSimpleClientset(), rest: c.rest(t)}
+			res, err := Evaluate(context.Background(), client, Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, p := range res.PartialReads {
+				if p.Resource == "/readyz" {
+					t.Fatalf("PartialReads = %+v, want no /readyz entry with the flag off", res.PartialReads)
+				}
+			}
+		})
+	}
+}
+
+// dnsMetricsServer starts an httptest server that answers every request with
+// the given status code and body, for driving CoreDNSMetrics's "ok",
+// "degraded" and "forbidden" branches through a real HTTP round trip. Content-
+// Type must be set explicitly — see readyzServer's comment for why a bare
+// status write would misreport a non-2xx code as 0 ("unreachable").
+func dnsMetricsServer(t *testing.T, code int, body string) rest.Interface {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(code)
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(server.Close)
+	real, err := kubernetes.NewForConfig(&rest.Config{Host: server.URL})
+	if err != nil {
+		t.Fatalf("building a client for the fake DNS metrics server: %v", err)
+	}
+	return real.CoreV1().RESTClient()
+}
+
+// coreDNSPod returns a Running CoreDNS pod fixture in kube-system, the shape
+// coreDNSPods selects.
+func coreDNSPod(name string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "kube-system", Name: name, Labels: map[string]string{"k8s-app": "kube-dns"}},
+		Status:     corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+}
+
+// TestEvaluate_DNSBlindSpotsByStatus is R92's regression fixture: a probe of
+// each of the five dnshealth.Report statuses produces exactly the expected
+// pods/proxy blind-spot set — "" (no CoreDNS pods present), ok and degraded
+// record none, forbidden and unreachable each record exactly one entry with
+// distinct reasons, mirroring R81's identical shape for /readyz.
+func TestEvaluate_DNSBlindSpotsByStatus(t *testing.T) {
+	okBody := `coredns_dns_responses_total{server="dns://:53",zone=".",view="",rcode="NOERROR"} 50
+`
+	degradedBody := `coredns_dns_responses_total{server="dns://:53",zone=".",view="",rcode="NOERROR"} 50
+coredns_dns_responses_total{server="dns://:53",zone=".",view="",rcode="SERVFAIL"} 50
+`
+	cases := []struct {
+		name       string
+		pod        bool
+		rest       func(t *testing.T) rest.Interface
+		wantBlind  bool
+		wantReason string
+	}{
+		{"empty", false, nil, false, ""},
+		{"ok", true, func(t *testing.T) rest.Interface { return dnsMetricsServer(t, 200, okBody) }, false, ""},
+		{"degraded", true, func(t *testing.T) rest.Interface { return dnsMetricsServer(t, 200, degradedBody) }, false, ""},
+		{"forbidden", true, forbiddenNodeProxyServer, true, blindReason("get pods/proxy")},
+		{"unreachable", true, unreachableServer, true, "kubeagent could not reach the CoreDNS :9153/metrics endpoint"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var objs []runtime.Object
+			if c.pod {
+				objs = append(objs, coreDNSPod("coredns-1"))
+			}
+			var client kubernetes.Interface = fake.NewSimpleClientset(objs...)
+			if c.rest != nil {
+				client = nodeStatsFailingClient{Interface: fake.NewSimpleClientset(objs...), rest: c.rest(t)}
+			}
+			res, err := Evaluate(context.Background(), client, Options{DNSHealth: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var found *ReadFailure
+			for i := range res.PartialReads {
+				if res.PartialReads[i].Resource == "pods/proxy" {
+					found = &res.PartialReads[i]
+				}
+			}
+			if c.wantBlind && found == nil {
+				t.Fatalf("PartialReads = %+v, want a pods/proxy entry", res.PartialReads)
+			}
+			if !c.wantBlind && found != nil {
+				t.Fatalf("PartialReads = %+v, want no pods/proxy entry", res.PartialReads)
+			}
+			if c.wantBlind && found.Reason != c.wantReason {
+				t.Errorf("Reason = %q, want %q", found.Reason, c.wantReason)
+			}
+		})
+	}
+}
+
+// TestEvaluate_DNSBlindSpotFlagOff proves the pods/proxy DNS blind spot never
+// fires when --dns-health is off, regardless of what CoreDNS's metrics
+// endpoint would have answered — the probe never runs, so none of the four
+// non-empty statuses is reachable.
+func TestEvaluate_DNSBlindSpotFlagOff(t *testing.T) {
+	okBody := `coredns_dns_responses_total{server="dns://:53",zone=".",view="",rcode="NOERROR"} 50
+`
+	degradedBody := `coredns_dns_responses_total{server="dns://:53",zone=".",view="",rcode="NOERROR"} 50
+coredns_dns_responses_total{server="dns://:53",zone=".",view="",rcode="SERVFAIL"} 50
+`
+	cases := []struct {
+		name string
+		rest func(t *testing.T) rest.Interface
+	}{
+		{"ok", func(t *testing.T) rest.Interface { return dnsMetricsServer(t, 200, okBody) }},
+		{"degraded", func(t *testing.T) rest.Interface { return dnsMetricsServer(t, 200, degradedBody) }},
+		{"forbidden", forbiddenNodeProxyServer},
+		{"unreachable", unreachableServer},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			client := nodeStatsFailingClient{
+				Interface: fake.NewSimpleClientset(coreDNSPod("coredns-1")),
+				rest:      c.rest(t),
+			}
+			res, err := Evaluate(context.Background(), client, Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, p := range res.PartialReads {
+				if p.Resource == "pods/proxy" {
+					t.Fatalf("PartialReads = %+v, want no pods/proxy entry with the flag off", res.PartialReads)
+				}
+			}
+		})
+	}
+}
+
+// perPodDNSMetricsServer starts an httptest server that answers a request
+// differently depending on which CoreDNS pod it is for, unlike
+// dnsMetricsServer, which answers every request identically and so cannot
+// produce podsAnswered != podsProbed. collect.CoreDNSMetrics's AbsPath embeds
+// the pod name literally ("/api/v1/namespaces/<ns>/pods/<pod>:9153/proxy/
+// metrics"), so a handler can tell pods apart by substring-matching the
+// request path: any pod named in forbiddenPods gets a genuine Forbidden
+// Status object, every other pod gets 200 with okBody.
+func perPodDNSMetricsServer(t *testing.T, forbiddenPods map[string]bool, okBody string) rest.Interface {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		for name := range forbiddenPods {
+			if strings.Contains(r.URL.Path, "/pods/"+name+":9153/") {
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = w.Write([]byte(`{"kind":"Status","apiVersion":"v1","status":"Failure","reason":"Forbidden","code":403,"message":"forbidden"}`))
+				return
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(okBody))
+	}))
+	t.Cleanup(server.Close)
+	real, err := kubernetes.NewForConfig(&rest.Config{Host: server.URL})
+	if err != nil {
+		t.Fatalf("building a client for the fake per-pod DNS metrics server: %v", err)
+	}
+	return real.CoreV1().RESTClient()
+}
+
+// TestEvaluate_DNSPodsAnsweredWiring pins scan.go's wiring of the per-pod
+// answered/forbidden counters into the dnshealth.Assess call: three CoreDNS
+// pods, two answering with a parseable body and one refused, must produce
+// PodsProbed == 3 and PodsAnswered == 2 end to end through Evaluate. This is
+// the one place in the suite that exercises the real values scan.go counts
+// and passes to Assess — dnshealth's and report's own tests call Assess and
+// printDNSHealth directly with hand-built Reports, so neither can catch a
+// wiring mistake at the scan.go call site itself (e.g. passing podsProbed's
+// own value for podsAnswered, or swapping the answered and forbidden
+// arguments).
+func TestEvaluate_DNSPodsAnsweredWiring(t *testing.T) {
+	okBody := `coredns_dns_responses_total{server="dns://:53",zone=".",view="",rcode="NOERROR"} 50
+`
+	client := nodeStatsFailingClient{
+		Interface: fake.NewSimpleClientset(
+			coreDNSPod("coredns-1"), coreDNSPod("coredns-2"), coreDNSPod("coredns-3"),
+		),
+		rest: perPodDNSMetricsServer(t, map[string]bool{"coredns-3": true}, okBody),
+	}
+	res, err := Evaluate(context.Background(), client, Options{DNSHealth: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.DNS.PodsProbed != 3 {
+		t.Fatalf("PodsProbed = %d, want 3 (all three CoreDNS pods were selected)", res.DNS.PodsProbed)
+	}
+	if res.DNS.PodsAnswered != 2 {
+		t.Errorf("PodsAnswered = %d, want 2 (coredns-1 and coredns-2 answered 200; coredns-3 was forbidden)", res.DNS.PodsAnswered)
+	}
+	if res.DNS.Status != "ok" {
+		t.Errorf("Status = %q, want ok (100 total NOERROR responses at the 100-response floor, 0%% errors)", res.DNS.Status)
+	}
+}
+
 // podLogsFailingClient wraps a kubernetes.Interface so CoreV1().Pods(ns).GetLogs
 // resolves to a real, working REST client instead of the fake clientset's own
 // GetLogs, which always succeeds and never lets a test drive a real HTTP error
@@ -1576,13 +2136,21 @@ func previousLogNotFoundServer(t *testing.T) rest.Interface {
 }
 
 // TestEvaluate_LogsPreviousContainerAbsentIsNotABlindSpot proves that --logs
-// against a container that has never terminated — a routine 400, not a
-// permission denial — records no pods/log blind spot.
+// against a container whose previous instance is not there to fetch — the
+// kubelet had already garbage-collected it by the time the read landed, a
+// routine 400 — records no pods/log blind spot. The container still has to
+// clear scan.go's own "has a previous instance" filter (a restart, or a
+// LastTerminationState still visible) to reach this server at all — a
+// container that has never restarted is filtered before any read is issued,
+// which is a different guarantee (TestEvaluate_LogsFiltersToContainersWithAPreviousInstance)
+// and would make this fixture's own read never happen.
 func TestEvaluate_LogsPreviousContainerAbsentIsNotABlindSpot(t *testing.T) {
 	crashPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "web-1", Namespace: "shop", Labels: map[string]string{"app": "web"}},
 		Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
-			Name: "web", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+			Name: "web", RestartCount: 1,
+			State:                corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+			LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 1, Reason: "Error"}},
 		}}},
 	}
 	client := podLogsFailingClient{

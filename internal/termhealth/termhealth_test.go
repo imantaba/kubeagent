@@ -20,7 +20,7 @@ func TestAssess_StuckNamespaceNamesCondition(t *testing.T) {
 		Status: corev1.NamespaceStatus{Conditions: []corev1.NamespaceCondition{
 			{Type: "NamespaceFinalizersRemaining", Status: corev1.ConditionTrue, Message: "Some content in the namespace has finalizers remaining: kubernetes."}}},
 	}
-	got := Assess([]corev1.Namespace{ns}, nil, nil, 2*time.Minute, now)
+	got := Assess([]corev1.Namespace{ns}, nil, nil, nil, 2*time.Minute, now)
 	if len(got) != 1 || got[0].Kind != "Namespace" || got[0].Namespace != "" || got[0].Name != "legacy-ns" {
 		t.Fatalf("want one Namespace issue, got %+v", got)
 	}
@@ -35,7 +35,7 @@ func TestAssess_StuckNamespaceNamesCondition(t *testing.T) {
 func TestAssess_PodPastGraceWithFinalizer(t *testing.T) {
 	pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "api-7c9d5",
 		DeletionTimestamp: delTime(8 * time.Minute), Finalizers: []string{"example.com/cleanup-hook"}}}
-	got := Assess(nil, []corev1.Pod{pod}, nil, 2*time.Minute, now)
+	got := Assess(nil, []corev1.Pod{pod}, nil, nil, 2*time.Minute, now)
 	if len(got) != 1 || got[0].Kind != "Pod" || !got[0].PastGrace {
 		t.Fatalf("want one PastGrace Pod issue, got %+v", got)
 	}
@@ -46,9 +46,79 @@ func TestAssess_PodPastGraceWithFinalizer(t *testing.T) {
 
 func TestAssess_PodPastGraceNoFinalizer(t *testing.T) {
 	pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "orphan", DeletionTimestamp: delTime(10 * time.Minute)}}
-	got := Assess(nil, []corev1.Pod{pod}, nil, 2*time.Minute, now)
+	got := Assess(nil, []corev1.Pod{pod}, nil, nil, 2*time.Minute, now)
 	if len(got) != 1 || !contains(got[0].Reason, "deletion not confirmed") {
 		t.Fatalf("want the node/kubelet reason, got %+v", got)
+	}
+}
+
+func notReadyNode(name string) corev1.Node {
+	return corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: name},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionFalse}}}}
+}
+
+func readyNode(name string) corev1.Node {
+	return corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: name},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}}
+}
+
+func TestAssess_PodNodeNotReadyNamesNode(t *testing.T) {
+	pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "orphan", DeletionTimestamp: delTime(10 * time.Minute)},
+		Spec: corev1.PodSpec{NodeName: "worker-1"}}
+	got := Assess(nil, []corev1.Pod{pod}, nil, []corev1.Node{notReadyNode("worker-1")}, 2*time.Minute, now)
+	want := "deletion not confirmed — node worker-1 is NotReady"
+	if len(got) != 1 || got[0].Reason != want {
+		t.Fatalf("Reason = %q, want %q", got[0].Reason, want)
+	}
+}
+
+func TestAssess_PodNodeAbsentFromSlice(t *testing.T) {
+	pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "orphan", DeletionTimestamp: delTime(10 * time.Minute)},
+		Spec: corev1.PodSpec{NodeName: "worker-9"}}
+	got := Assess(nil, []corev1.Pod{pod}, nil, []corev1.Node{readyNode("worker-1")}, 2*time.Minute, now)
+	want := "deletion not confirmed — node worker-9 no longer exists"
+	if len(got) != 1 || got[0].Reason != want {
+		t.Fatalf("Reason = %q, want %q", got[0].Reason, want)
+	}
+}
+
+func TestAssess_PodNodeReadyKeepsTodaysString(t *testing.T) {
+	pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "orphan", DeletionTimestamp: delTime(10 * time.Minute)},
+		Spec: corev1.PodSpec{NodeName: "worker-1"}}
+	got := Assess(nil, []corev1.Pod{pod}, nil, []corev1.Node{readyNode("worker-1")}, 2*time.Minute, now)
+	want := "deletion not confirmed (node gone or kubelet not reporting)"
+	if len(got) != 1 || got[0].Reason != want {
+		t.Fatalf("a Ready node must not change the message: Reason = %q, want %q", got[0].Reason, want)
+	}
+}
+
+func TestAssess_PodFinalizerIgnoresNode(t *testing.T) {
+	pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "api",
+		DeletionTimestamp: delTime(10 * time.Minute), Finalizers: []string{"example.com/cleanup-hook"}},
+		Spec: corev1.PodSpec{NodeName: "worker-1"}}
+	got := Assess(nil, []corev1.Pod{pod}, nil, []corev1.Node{notReadyNode("worker-1")}, 2*time.Minute, now)
+	want := "finalizer example.com/cleanup-hook"
+	if len(got) != 1 || got[0].Reason != want {
+		t.Fatalf("a pod with finalizers must not consult the node: Reason = %q, want %q", got[0].Reason, want)
+	}
+}
+
+func TestAssess_PodEmptyNodeSliceKeepsTodaysString(t *testing.T) {
+	pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "orphan", DeletionTimestamp: delTime(10 * time.Minute)},
+		Spec: corev1.PodSpec{NodeName: "worker-1"}}
+	got := Assess(nil, []corev1.Pod{pod}, nil, nil, 2*time.Minute, now)
+	want := "deletion not confirmed (node gone or kubelet not reporting)"
+	if len(got) != 1 || got[0].Reason != want {
+		t.Fatalf("an empty node slice must keep today's string: Reason = %q, want %q", got[0].Reason, want)
+	}
+}
+
+func TestAssess_PodEmptyNodeNameKeepsTodaysString(t *testing.T) {
+	pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "orphan", DeletionTimestamp: delTime(10 * time.Minute)}}
+	got := Assess(nil, []corev1.Pod{pod}, nil, []corev1.Node{notReadyNode("worker-1")}, 2*time.Minute, now)
+	want := "deletion not confirmed (node gone or kubelet not reporting)"
+	if len(got) != 1 || got[0].Reason != want {
+		t.Fatalf("an empty spec.nodeName must keep today's string: Reason = %q, want %q", got[0].Reason, want)
 	}
 }
 
@@ -58,16 +128,73 @@ func TestAssess_PVCProtectionNamesMountingPod(t *testing.T) {
 	pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "db-0"},
 		Spec: corev1.PodSpec{Volumes: []corev1.Volume{{Name: "d", VolumeSource: corev1.VolumeSource{
 			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "data"}}}}}}
-	got := Assess(nil, []corev1.Pod{pod}, []corev1.PersistentVolumeClaim{pvc}, 2*time.Minute, now)
+	got := Assess(nil, []corev1.Pod{pod}, []corev1.PersistentVolumeClaim{pvc}, nil, 2*time.Minute, now)
 	if len(got) != 1 || got[0].Kind != "PersistentVolumeClaim" || !contains(got[0].Reason, "still mounted by pod shop/db-0") {
 		t.Fatalf("want the mounting-pod reason, got %+v", got)
+	}
+}
+
+// mountingPodFixture is a pod mounting claim via a PersistentVolumeClaim volume.
+func mountingPodFixture(ns, name, claim string) corev1.Pod {
+	return corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name},
+		Spec: corev1.PodSpec{Volumes: []corev1.Volume{{Name: "d", VolumeSource: corev1.VolumeSource{
+			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: claim}}}}}}
+}
+
+func TestAssess_PVCProtectionNamesTwoMountingPods(t *testing.T) {
+	pvc := corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "data",
+		DeletionTimestamp: delTime(20 * time.Minute), Finalizers: []string{"kubernetes.io/pvc-protection"}}}
+	pods := []corev1.Pod{
+		mountingPodFixture("shop", "db-0", "data"),
+		mountingPodFixture("shop", "db-1", "data"),
+	}
+	got := Assess(nil, pods, []corev1.PersistentVolumeClaim{pvc}, nil, 2*time.Minute, now)
+	want := "pvc-protection — still mounted by pods shop/db-0, shop/db-1"
+	if len(got) != 1 || got[0].Reason != want {
+		t.Fatalf("Reason = %q, want %q", got[0].Reason, want)
+	}
+}
+
+func TestAssess_PVCProtectionCapsAtThreeMountingPods(t *testing.T) {
+	pvc := corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "data",
+		DeletionTimestamp: delTime(20 * time.Minute), Finalizers: []string{"kubernetes.io/pvc-protection"}}}
+	pods := []corev1.Pod{
+		mountingPodFixture("shop", "db-0", "data"),
+		mountingPodFixture("shop", "db-1", "data"),
+		mountingPodFixture("shop", "db-2", "data"),
+		mountingPodFixture("shop", "db-3", "data"),
+		mountingPodFixture("shop", "db-4", "data"),
+	}
+	got := Assess(nil, pods, []corev1.PersistentVolumeClaim{pvc}, nil, 2*time.Minute, now)
+	want := "pvc-protection — still mounted by pods shop/db-0, shop/db-1, shop/db-2 +2 more"
+	if len(got) != 1 || got[0].Reason != want {
+		t.Fatalf("Reason = %q, want %q", got[0].Reason, want)
+	}
+}
+
+func TestAssess_PVCProtectionIgnoresOtherNamespaceMounter(t *testing.T) {
+	pvc := corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "data",
+		DeletionTimestamp: delTime(20 * time.Minute), Finalizers: []string{"kubernetes.io/pvc-protection"}}}
+	pod := mountingPodFixture("other", "db-0", "data")
+	got := Assess(nil, []corev1.Pod{pod}, []corev1.PersistentVolumeClaim{pvc}, nil, 2*time.Minute, now)
+	if len(got) != 1 || got[0].Reason != "pvc-protection" {
+		t.Fatalf("a cross-namespace mounter must not be named, got %+v", got)
+	}
+}
+
+func TestAssess_PVCProtectionNoMountingPod(t *testing.T) {
+	pvc := corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "data",
+		DeletionTimestamp: delTime(20 * time.Minute), Finalizers: []string{"kubernetes.io/pvc-protection"}}}
+	got := Assess(nil, nil, []corev1.PersistentVolumeClaim{pvc}, nil, 2*time.Minute, now)
+	if len(got) != 1 || got[0].Reason != "pvc-protection" {
+		t.Fatalf("zero mounters must render the bare string, got %+v", got)
 	}
 }
 
 func TestAssess_BelowThresholdAndNoDeletionSkipped(t *testing.T) {
 	recent := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "recent", DeletionTimestamp: delTime(30 * time.Second)}}
 	alive := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "alive"}}
-	if got := Assess(nil, []corev1.Pod{recent, alive}, nil, 2*time.Minute, now); len(got) != 0 {
+	if got := Assess(nil, []corev1.Pod{recent, alive}, nil, nil, 2*time.Minute, now); len(got) != 0 {
 		t.Errorf("a <threshold deletion and a non-deleting pod must not be flagged, got %+v", got)
 	}
 }
@@ -75,36 +202,193 @@ func TestAssess_BelowThresholdAndNoDeletionSkipped(t *testing.T) {
 func TestAssess_SortedByKindNamespaceName(t *testing.T) {
 	ns := corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "z-ns", DeletionTimestamp: delTime(1 * time.Hour)}}
 	pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "a", Name: "p", DeletionTimestamp: delTime(1 * time.Hour)}}
-	got := Assess([]corev1.Namespace{ns}, []corev1.Pod{pod}, nil, 2*time.Minute, now)
+	got := Assess([]corev1.Namespace{ns}, []corev1.Pod{pod}, nil, nil, 2*time.Minute, now)
 	if len(got) != 2 || got[0].Kind != "Namespace" || got[1].Kind != "Pod" {
 		t.Errorf("want Namespace before Pod (sorted by Kind), got %+v", got)
 	}
 }
 
 func TestAssess_NamespaceIgnoresResolvedCondition(t *testing.T) {
-	// A ConditionFalse (resolved) condition must NOT be reported; fall back to spec.finalizers.
+	// A ConditionFalse (resolved) condition must NOT be reported; the only
+	// spec finalizer is "kubernetes", which the fall-through drops, and there
+	// is no stuck pod or PVC in the namespace for the second pass to name.
 	ns := corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{Name: "ns", DeletionTimestamp: delTime(1 * time.Hour)},
 		Spec:       corev1.NamespaceSpec{Finalizers: []corev1.FinalizerName{"kubernetes"}},
 		Status: corev1.NamespaceStatus{Conditions: []corev1.NamespaceCondition{
 			{Type: "NamespaceFinalizersRemaining", Status: corev1.ConditionFalse, Message: "resolved"}}},
 	}
-	got := Assess([]corev1.Namespace{ns}, nil, nil, 2*time.Minute, now)
+	got := Assess([]corev1.Namespace{ns}, nil, nil, nil, 2*time.Minute, now)
 	if len(got) != 1 {
 		t.Fatalf("want one issue, got %+v", got)
 	}
 	if contains(got[0].Reason, "NamespaceFinalizersRemaining") {
 		t.Errorf("a ConditionFalse condition must not be reported as the blocker, got %q", got[0].Reason)
 	}
-	if !contains(got[0].Reason, "finalizers kubernetes") {
-		t.Errorf("want the spec.finalizers fallback, got %q", got[0].Reason)
+	want := "deletion pending — no namespace finalizer names the blocker"
+	if got[0].Reason != want {
+		t.Errorf("Reason = %q, want %q", got[0].Reason, want)
+	}
+}
+
+func TestAssess_NamespaceNamesStuckPodBlocker(t *testing.T) {
+	ns := corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "wedged", DeletionTimestamp: delTime(3 * time.Hour)}}
+	pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "wedged", Name: "api",
+		DeletionTimestamp: delTime(10 * time.Minute), Finalizers: []string{"example.com/cleanup"}}}
+	got := Assess([]corev1.Namespace{ns}, []corev1.Pod{pod}, nil, nil, 2*time.Minute, now)
+	if len(got) != 2 {
+		t.Fatalf("want a Namespace issue and a Pod issue, got %+v", got)
+	}
+	nsIssue := got[0]
+	if nsIssue.Kind != "Namespace" {
+		t.Fatalf("got[0] = %+v, want the Namespace issue first", nsIssue)
+	}
+	if !contains(nsIssue.Reason, "blocked by wedged/api (Pod, finalizer example.com/cleanup)") {
+		t.Errorf("Reason = %q, want it to name the stuck pod", nsIssue.Reason)
+	}
+}
+
+func TestAssess_NamespaceCapsBlockersAtThree(t *testing.T) {
+	ns := corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "wedged", DeletionTimestamp: delTime(3 * time.Hour)}}
+	var pods []corev1.Pod
+	for _, name := range []string{"api-a", "api-b", "api-c", "api-d"} {
+		pods = append(pods, corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "wedged", Name: name,
+			DeletionTimestamp: delTime(10 * time.Minute), Finalizers: []string{"example.com/cleanup"}}})
+	}
+	got := Assess([]corev1.Namespace{ns}, pods, nil, nil, 2*time.Minute, now)
+	if len(got) != 5 {
+		t.Fatalf("want a Namespace issue and four Pod issues, got %+v", got)
+	}
+	nsIssue := got[0]
+	if !contains(nsIssue.Reason, "+1 more") {
+		t.Errorf("Reason = %q, want a +1 more tail past three blockers", nsIssue.Reason)
+	}
+	if !(contains(nsIssue.Reason, "api-a") && contains(nsIssue.Reason, "api-b") && contains(nsIssue.Reason, "api-c")) {
+		t.Errorf("Reason = %q, want the first three blockers named", nsIssue.Reason)
+	}
+	if contains(nsIssue.Reason, "api-d") {
+		t.Errorf("Reason = %q, want the fourth blocker folded into +1 more, not named", nsIssue.Reason)
+	}
+}
+
+func TestAssess_NamespaceFallThroughFinalizerWithoutStuckChild(t *testing.T) {
+	ns := corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: "wedged", DeletionTimestamp: delTime(3 * time.Hour)},
+		Spec:       corev1.NamespaceSpec{Finalizers: []corev1.FinalizerName{"example.com/ns-cleanup"}},
+	}
+	got := Assess([]corev1.Namespace{ns}, nil, nil, nil, 2*time.Minute, now)
+	if len(got) != 1 {
+		t.Fatalf("want one issue, got %+v", got)
+	}
+	want := "finalizers example.com/ns-cleanup"
+	if got[0].Reason != want {
+		t.Errorf("Reason = %q, want %q", got[0].Reason, want)
+	}
+}
+
+func TestAssess_NamespaceConditionUnaffectedBySecondPass(t *testing.T) {
+	ns := corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: "legacy-ns", DeletionTimestamp: delTime(3 * time.Hour)},
+		Status: corev1.NamespaceStatus{Conditions: []corev1.NamespaceCondition{
+			{Type: "NamespaceFinalizersRemaining", Status: corev1.ConditionTrue, Message: "Some content in the namespace has finalizers remaining: kubernetes."}}},
+	}
+	pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "legacy-ns", Name: "api",
+		DeletionTimestamp: delTime(10 * time.Minute), Finalizers: []string{"example.com/cleanup"}}}
+	got := Assess([]corev1.Namespace{ns}, []corev1.Pod{pod}, nil, nil, 2*time.Minute, now)
+	if len(got) != 2 {
+		t.Fatalf("want a Namespace issue and a Pod issue, got %+v", got)
+	}
+	nsIssue := got[0]
+	if contains(nsIssue.Reason, "blocked by") {
+		t.Errorf("a condition-derived Reason must not gain a blocked-by clause, got %q", nsIssue.Reason)
+	}
+	if !contains(nsIssue.Reason, "NamespaceFinalizersRemaining") {
+		t.Errorf("Reason = %q, want the condition text unchanged", nsIssue.Reason)
+	}
+}
+
+func TestAssess_NamespaceFinalizersRemainingOutranksContentRemaining(t *testing.T) {
+	ns := corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: "ns", DeletionTimestamp: delTime(1 * time.Hour)},
+		Status: corev1.NamespaceStatus{Conditions: []corev1.NamespaceCondition{
+			{Type: "NamespaceContentRemaining", Status: corev1.ConditionTrue, Message: "some resources remain"},
+			{Type: "NamespaceFinalizersRemaining", Status: corev1.ConditionTrue, Message: "some content has finalizers remaining: example.com/cleanup"},
+		}},
+	}
+	got := Assess([]corev1.Namespace{ns}, nil, nil, nil, 2*time.Minute, now)
+	if len(got) != 1 {
+		t.Fatalf("want one issue, got %+v", got)
+	}
+	if !contains(got[0].Reason, "NamespaceFinalizersRemaining") {
+		t.Errorf("Reason = %q, want FinalizersRemaining to outrank ContentRemaining", got[0].Reason)
+	}
+}
+
+func TestAssess_NamespaceDeletionContentFailureOutranksFinalizersRemaining(t *testing.T) {
+	ns := corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: "ns", DeletionTimestamp: delTime(1 * time.Hour)},
+		Status: corev1.NamespaceStatus{Conditions: []corev1.NamespaceCondition{
+			{Type: "NamespaceContentRemaining", Status: corev1.ConditionTrue, Message: "some resources remain"},
+			{Type: "NamespaceFinalizersRemaining", Status: corev1.ConditionTrue, Message: "some content has finalizers remaining: example.com/cleanup"},
+			{Type: "NamespaceDeletionContentFailure", Status: corev1.ConditionTrue, Message: "discovery failed"},
+		}},
+	}
+	got := Assess([]corev1.Namespace{ns}, nil, nil, nil, 2*time.Minute, now)
+	if len(got) != 1 {
+		t.Fatalf("want one issue, got %+v", got)
+	}
+	if !contains(got[0].Reason, "NamespaceDeletionContentFailure") {
+		t.Errorf("Reason = %q, want DeletionContentFailure to outrank both others", got[0].Reason)
+	}
+}
+
+func TestAssess_NamespaceContentRemainingAloneUnchanged(t *testing.T) {
+	ns := corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: "ns", DeletionTimestamp: delTime(1 * time.Hour)},
+		Status: corev1.NamespaceStatus{Conditions: []corev1.NamespaceCondition{
+			{Type: "NamespaceContentRemaining", Status: corev1.ConditionTrue, Message: "some resources remain"},
+		}},
+	}
+	got := Assess([]corev1.Namespace{ns}, nil, nil, nil, 2*time.Minute, now)
+	if len(got) != 1 {
+		t.Fatalf("want one issue, got %+v", got)
+	}
+	if !contains(got[0].Reason, "NamespaceContentRemaining") {
+		t.Errorf("Reason = %q, want ContentRemaining reported when it is the only True condition", got[0].Reason)
+	}
+}
+
+func TestAssess_SubMinuteThresholdRendersUnderOneMinute(t *testing.T) {
+	pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "quick", DeletionTimestamp: delTime(45 * time.Second)}}
+	got := Assess(nil, []corev1.Pod{pod}, nil, nil, 30*time.Second, now)
+	if len(got) != 1 || got[0].Age != "<1m" {
+		t.Fatalf("want a <1m age at a 30s threshold, got %+v", got)
 	}
 }
 
 func TestAssess_ExactlyAtThresholdNotFlagged(t *testing.T) {
 	pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "edge", DeletionTimestamp: delTime(2 * time.Minute)}}
-	if got := Assess(nil, []corev1.Pod{pod}, nil, 2*time.Minute, now); len(got) != 0 {
+	if got := Assess(nil, []corev1.Pod{pod}, nil, nil, 2*time.Minute, now); len(got) != 0 {
 		t.Errorf("a deletion exactly at the threshold must not be flagged, got %+v", got)
+	}
+}
+
+func TestCompactDur(t *testing.T) {
+	cases := []struct {
+		d    time.Duration
+		want string
+	}{
+		{31 * time.Second, "<1m"},
+		{59 * time.Second, "<1m"},
+		{60 * time.Second, "1m"},
+		{90 * time.Second, "1m"},
+		{61 * time.Minute, "1h"},
+		{25 * time.Hour, "1d"},
+	}
+	for _, c := range cases {
+		if got := compactDur(c.d); got != c.want {
+			t.Errorf("compactDur(%v) = %q, want %q", c.d, got, c.want)
+		}
 	}
 }
 
@@ -134,7 +418,7 @@ func TestAssess_SanitizesANamespaceConditionMessage(t *testing.T) {
 		Status: corev1.NamespaceStatus{Conditions: []corev1.NamespaceCondition{
 			{Type: "NamespaceFinalizersRemaining", Status: corev1.ConditionTrue, Message: hostileMsg}}},
 	}
-	got := Assess([]corev1.Namespace{ns}, nil, nil, 2*time.Minute, now)
+	got := Assess([]corev1.Namespace{ns}, nil, nil, nil, 2*time.Minute, now)
 	if len(got) != 1 {
 		t.Fatalf("want one issue, got %d", len(got))
 	}

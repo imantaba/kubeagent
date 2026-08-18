@@ -76,8 +76,8 @@ func sampleResult() *scan.Result {
 		PDBIssues:        []pdbhealth.Issue{{Namespace: "shop", Name: "api", Category: "blocking"}},
 		HPAIssues:        []hpahealth.Issue{{Namespace: "shop", Name: "api-hpa", Category: "capped"}},
 		WebhookIssues: []webhookhealth.Issue{
-			{Kind: "ValidatingWebhookConfiguration", Config: "policy-webhook", Webhook: "w", Problem: "no-endpoints", Reason: "backend missing"},
-			{Kind: "ValidatingWebhookConfiguration", Config: "slow-webhook", Webhook: "s.io", Problem: "high-timeout", Reason: "timeoutSeconds too high"},
+			{Kind: "ValidatingWebhookConfiguration", Config: "policy-webhook", Webhook: "w", Problem: "NoEndpoints", Reason: "backend missing"},
+			{Kind: "ValidatingWebhookConfiguration", Config: "slow-webhook", Webhook: "s.io", Problem: "HighTimeout", Reason: "timeoutSeconds too high"},
 		},
 		QuotaIssues:   []quotahealth.Issue{{Namespace: "shop", Quota: "compute", Resource: "pods", Severity: "near"}},
 		KubeletHealth: nodehealth.Report{Probed: 2, Unhealthy: []nodehealth.Issue{{Node: "w"}}},
@@ -125,6 +125,93 @@ func TestMetrics_RenderReflectsResult(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("metrics missing %q in:\n%s", want, out)
 		}
+	}
+}
+
+// TestMetrics_ControlPlaneCheckedGauge pins kubeagent_control_plane_checked,
+// the companion gauge for kubeagent_control_plane_unhealthy. Before this
+// gauge existed, kubeagent_control_plane_unhealthy read 0 both when the
+// check ran and passed and when --control-plane-health was never asked for
+// (or the endpoint was forbidden/unreachable) — those cases are
+// indistinguishable from that gauge alone. "flag off" and "ok" are the rows
+// that prove the ambiguity is resolved: both read
+// kubeagent_control_plane_unhealthy=0, but only "ok" reads
+// kubeagent_control_plane_checked=1.
+func TestMetrics_ControlPlaneCheckedGauge(t *testing.T) {
+	cases := []struct {
+		name          string
+		status        string
+		wantChecked   string
+		wantUnhealthy string
+	}{
+		{"flag off (empty status)", "", "0", "0"},
+		{"ok", "ok", "1", "0"},
+		{"unhealthy", "unhealthy", "1", "1"},
+		{"forbidden", "forbidden", "0", "0"},
+		{"unreachable", "unreachable", "0", "0"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res := sampleResult()
+			res.ControlPlane = controlplane.Probe{Status: tc.status}
+			m := newMetrics([]string{"local"})
+			m.update("local", res, time.Millisecond, time.Unix(1000, 0), nil)
+			out := m.render()
+			wantChecked := `kubeagent_control_plane_checked{cluster="local"} ` + tc.wantChecked
+			if !strings.Contains(out, wantChecked) {
+				t.Errorf("missing %q in:\n%s", wantChecked, out)
+			}
+			wantUnhealthy := `kubeagent_control_plane_unhealthy{cluster="local"} ` + tc.wantUnhealthy
+			if !strings.Contains(out, wantUnhealthy) {
+				t.Errorf("missing %q in:\n%s", wantUnhealthy, out)
+			}
+		})
+	}
+}
+
+// TestMetrics_DNSServfailRatioClampsBelowFloor pins R94: a below-floor
+// dnshealth.Report (Status "") since R88 carries a real ServfailRatio for the
+// scan JSON to surface, but the gauge that feeds alert rules must not publish
+// it — a ratio computed from too few responses is noise an alert tuned for a
+// real degradation would fire on. Every other status publishes what it
+// measured, including an above-floor "ok" report with a nonzero
+// sub-threshold ratio: the clamp is on the empty status, not on "not
+// degraded".
+func TestMetrics_DNSServfailRatioClampsBelowFloor(t *testing.T) {
+	cases := []struct {
+		name string
+		dns  dnshealth.Report
+		want string
+	}{
+		{"below floor abstains, gauge clamps to 0", dnshealth.Report{Status: "", ServfailRatio: 1}, "0"},
+		{"degraded publishes the real ratio", dnshealth.Report{Status: "degraded", ServfailRatio: 0.12}, "0.12"},
+		{"above-floor ok publishes a nonzero sub-threshold ratio", dnshealth.Report{Status: "ok", ServfailRatio: 0.02}, "0.02"},
+		{"forbidden carries no ratio", dnshealth.Report{Status: "forbidden"}, "0"},
+		{"unreachable carries no ratio", dnshealth.Report{Status: "unreachable"}, "0"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res := sampleResult()
+			res.DNS = tc.dns
+			m := newMetrics([]string{"local"})
+			m.update("local", res, time.Millisecond, time.Unix(1000, 0), nil)
+			out := m.render()
+			want := `kubeagent_dns_servfail_ratio{cluster="local"} ` + tc.want
+			if !strings.Contains(out, want) {
+				t.Errorf("missing %q in:\n%s", want, out)
+			}
+		})
+	}
+}
+
+// TestMetrics_DNSServfailRatioHelpNamesTheFloor pins R94's reworded help
+// string, which names the below-floor case alongside the two the gauge
+// already covered.
+func TestMetrics_DNSServfailRatioHelpNamesTheFloor(t *testing.T) {
+	out := newMetrics([]string{"local"}).render()
+	want := "# HELP kubeagent_dns_servfail_ratio CoreDNS SERVFAIL+REFUSED response ratio (0 when healthy, not probed, or below the 100-response floor)\n"
+	if !strings.Contains(out, want) {
+		t.Errorf("missing help text %q in:\n%s", want, out)
 	}
 }
 

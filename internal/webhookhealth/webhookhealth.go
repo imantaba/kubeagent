@@ -1,9 +1,11 @@
 // Package webhookhealth flags admission webhooks whose failurePolicy is Fail and
 // whose backing Service is missing or has no ready endpoints, or has a high
 // timeoutSeconds (a latency landmine) — such a webhook rejects every create/update
-// it intercepts, cluster-wide. Pure and read-only: the caller supplies the webhook
-// configs and the collected Services/EndpointSlices. Advisory (never affects the
-// cluster verdict).
+// it intercepts. What a webhook actually intercepts is governed by its rules and
+// selectors, which this package does not read, so the blast radius may be the
+// whole cluster or a single namespace. Pure and read-only: the caller supplies
+// the webhook configs and the collected Services/EndpointSlices. Advisory (never
+// affects the cluster verdict).
 package webhookhealth
 
 import (
@@ -18,54 +20,79 @@ import (
 )
 
 // Issue is one Fail-policy admission webhook that is a problem: its backend is
-// down (missing-service / no-endpoints) or its timeoutSeconds is a latency risk
-// (high-timeout).
+// down (MissingService / NoEndpoints) or its timeoutSeconds is a latency risk
+// (HighTimeout).
 type Issue struct {
 	Kind    string `json:"kind"`    // "ValidatingWebhookConfiguration" | "MutatingWebhookConfiguration"
 	Config  string `json:"config"`  // the configuration object's name
 	Webhook string `json:"webhook"` // the individual webhook's .name
 	Service string `json:"service"` // "ns/name" of the backend ("" for a URL webhook)
-	Problem string `json:"problem"` // "missing-service" | "no-endpoints" | "high-timeout"
+	Problem string `json:"problem"` // "MissingService" | "NoEndpoints" | "HighTimeout"
 	Reason  string `json:"reason"`
 }
 
 // hook is a normalized view of a Validating/Mutating webhook entry so one routine
 // handles both (they share these fields but are distinct Go types).
 type hook struct {
-	kind    string
-	config  string
-	name    string
-	fp      *admissionv1.FailurePolicyType
-	service *admissionv1.ServiceReference
-	timeout *int32
+	kind     string
+	config   string
+	name     string
+	fp       *admissionv1.FailurePolicyType
+	service  *admissionv1.ServiceReference
+	url      *string
+	timeout  *int32
+	hasRules bool
 }
 
 // Assess flags Fail-policy webhooks whose backend Service is missing or has no
-// ready endpoints, or whose timeoutSeconds is >= timeoutThreshold, sorted by
-// (Kind, Config, Webhook).
+// ready endpoints, or — only when the same webhook has no backend problem —
+// whose timeoutSeconds is >= timeoutThreshold, sorted by (Kind, Config,
+// Webhook). A webhook with both problems still produces one Issue (the down
+// backend dominates a slow one), with the timeout condition named as a suffix
+// on that Issue's reason rather than dropped.
+//
+// The second return value counts the in-scope (failsClosed, non-empty Rules)
+// webhooks backed by a clientConfig.url instead of a Service — a backend this
+// package cannot check the reachability of, so it is disclosed as an unchecked
+// count rather than guessed at as an Issue.
 func Assess(
 	validating []admissionv1.ValidatingWebhookConfiguration,
 	mutating []admissionv1.MutatingWebhookConfiguration,
 	services []corev1.Service,
 	slices []discoveryv1.EndpointSlice,
 	timeoutThreshold int32,
-) []Issue {
+) ([]Issue, int) {
 	var hooks []hook
 	for _, c := range validating {
 		for _, w := range c.Webhooks {
-			hooks = append(hooks, hook{"ValidatingWebhookConfiguration", c.Name, w.Name, w.FailurePolicy, w.ClientConfig.Service, w.TimeoutSeconds})
+			hooks = append(hooks, hook{
+				kind: "ValidatingWebhookConfiguration", config: c.Name, name: w.Name,
+				fp: w.FailurePolicy, service: w.ClientConfig.Service, url: w.ClientConfig.URL, timeout: w.TimeoutSeconds,
+				hasRules: len(w.Rules) > 0,
+			})
 		}
 	}
 	for _, c := range mutating {
 		for _, w := range c.Webhooks {
-			hooks = append(hooks, hook{"MutatingWebhookConfiguration", c.Name, w.Name, w.FailurePolicy, w.ClientConfig.Service, w.TimeoutSeconds})
+			hooks = append(hooks, hook{
+				kind: "MutatingWebhookConfiguration", config: c.Name, name: w.Name,
+				fp: w.FailurePolicy, service: w.ClientConfig.Service, url: w.ClientConfig.URL, timeout: w.TimeoutSeconds,
+				hasRules: len(w.Rules) > 0,
+			})
 		}
 	}
 
 	var out []Issue
+	var urlBackends int
 	for _, h := range hooks {
 		if !failsClosed(h.fp) {
 			continue // Ignore policy
+		}
+		if !h.hasRules {
+			continue // a webhook that intercepts nothing cannot have rejected anything
+		}
+		if h.service == nil && h.url != nil {
+			urlBackends++
 		}
 		backendFlagged := false
 		if h.service != nil {
@@ -73,12 +100,18 @@ func Assess(
 			svc, found := findService(services, h.service.Namespace, h.service.Name)
 			switch {
 			case !found:
-				out = append(out, Issue{Kind: h.kind, Config: h.config, Webhook: h.name, Service: id, Problem: "missing-service",
-					Reason: fmt.Sprintf("backend Service %s does not exist — failurePolicy Fail rejects every intercepted create/update", id)})
+				out = append(out, Issue{Kind: h.kind, Config: h.config, Webhook: h.name, Service: id, Problem: "MissingService",
+					Reason: fmt.Sprintf("backend Service %s does not exist — failurePolicy Fail rejects every intercepted create/update", id) + timeoutSuffix(h.timeout, timeoutThreshold)})
 				backendFlagged = true
+			case svc.Spec.Type == corev1.ServiceTypeExternalName:
+				// Mirrors svchealth.go:39-41: an ExternalName Service is a DNS CNAME, not
+				// endpoint-backed, so ReadyEndpoints reading 0 on it is not evidence of a
+				// down backend. Deliberately inside the found branch only — an
+				// ExternalName-intended Service that does not exist at all still falls
+				// into the !found case above and is still MissingService.
 			case svchealth.ReadyEndpoints(svc, slices) == 0:
-				out = append(out, Issue{Kind: h.kind, Config: h.config, Webhook: h.name, Service: id, Problem: "no-endpoints",
-					Reason: fmt.Sprintf("backend Service %s has no ready endpoints — failurePolicy Fail rejects every intercepted create/update", id)})
+				out = append(out, Issue{Kind: h.kind, Config: h.config, Webhook: h.name, Service: id, Problem: "NoEndpoints",
+					Reason: fmt.Sprintf("backend Service %s has no ready endpoints — failurePolicy Fail rejects every intercepted create/update", id) + timeoutSuffix(h.timeout, timeoutThreshold)})
 				backendFlagged = true
 			}
 		}
@@ -87,7 +120,7 @@ func Assess(
 			if h.service != nil {
 				id = h.service.Namespace + "/" + h.service.Name
 			}
-			out = append(out, Issue{Kind: h.kind, Config: h.config, Webhook: h.name, Service: id, Problem: "high-timeout",
+			out = append(out, Issue{Kind: h.kind, Config: h.config, Webhook: h.name, Service: id, Problem: "HighTimeout",
 				Reason: fmt.Sprintf("timeoutSeconds %d ≥ %ds under failurePolicy Fail — a slow webhook blocks every intercepted create/update for up to %ds, then rejects it", *h.timeout, timeoutThreshold, *h.timeout)})
 		}
 	}
@@ -101,13 +134,26 @@ func Assess(
 		}
 		return out[i].Webhook < out[j].Webhook
 	})
-	return out
+	return out, urlBackends
 }
 
 // failsClosed reports whether a webhook blocks on backend failure. A nil
 // failurePolicy defaults to Fail in admissionregistration.k8s.io/v1.
 func failsClosed(fp *admissionv1.FailurePolicyType) bool {
 	return fp == nil || *fp == admissionv1.Fail
+}
+
+// timeoutSuffix names a co-occurring high timeout on a backend Issue's reason.
+// The backendFlagged guard in Assess reports only one Issue for a webhook with
+// both problems — a down backend dominates a slow one — but a timeoutSeconds
+// that also clears threshold is worth disclosing rather than silently dropped.
+// Both backend arms (MissingService and NoEndpoints) call this one helper so
+// the two reason strings cannot drift apart.
+func timeoutSuffix(timeout *int32, threshold int32) string {
+	if timeout == nil || *timeout < threshold {
+		return ""
+	}
+	return fmt.Sprintf(" (and timeoutSeconds %d ≥ %ds)", *timeout, threshold)
 }
 
 // findService returns the collected Service matching ns/name, or ok=false.

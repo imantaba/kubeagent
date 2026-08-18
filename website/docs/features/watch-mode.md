@@ -49,6 +49,8 @@ in this table also carries a `cluster` label (default `local`); see
 | `kubeagent_nodes_stale_heartbeat` | Number of Ready nodes whose kubelet lease is stale (kubelet not heartbeating) |
 | `kubeagent_nodes_expected_absent` | Number of declared expected nodes that are absent from the cluster (opt-in; requires `--expected-nodes` / `KUBEAGENT_EXPECTED_NODES`) |
 | `kubeagent_kubelet_unhealthy` | Number of nodes whose kubelet /healthz reported unhealthy (opt-in; requires `--kubelet-health` / `KUBEAGENT_KUBELET_HEALTH` and the `nodes/proxy` add-on) |
+| `kubeagent_control_plane_checked` | 1 if apiserver `/readyz` returned a health verdict this cycle, else 0 (opt-in; requires `KUBEAGENT_CONTROL_PLANE_HEALTH`) |
+| `kubeagent_control_plane_unhealthy` | 1 if apiserver `/readyz` reported the control plane not ready, else 0 (opt-in; requires `KUBEAGENT_CONTROL_PLANE_HEALTH`) |
 | `kubeagent_certificates_expired` | Number of expired TLS certificates (opt-in; requires `--certs` / `KUBEAGENT_CERTS` and the secrets add-on) |
 | `kubeagent_certificates_expiring` | Number of TLS certificates expiring within the warn window (opt-in; requires `--certs` / `KUBEAGENT_CERTS` and the secrets add-on) |
 | `kubeagent_resources_stuck_terminating` | Number of Namespaces, Pods, and PVCs wedged in Terminating past two minutes |
@@ -781,23 +783,30 @@ kubectl apply -f deploy/
 curl localhost:8080/metrics
 ```
 
-Flags (each with a `KUBEAGENT_*` env fallback, except `--context`, which is
-repeatable and has none): `--context` (repeatable; default: current-context),
+The flags below each have a `KUBEAGENT_*` env fallback, except `--context`,
+`--include-cron` and `--include-restarts`, which have none (`--context` is
+also repeatable): `--context` (repeatable; default: current-context),
 `--cluster-name` / `KUBEAGENT_CLUSTER_NAME` (`local`; see
 [Watching several clusters](#watching-several-clusters)), `--include-local` /
-`KUBEAGENT_INCLUDE_LOCAL` (off by default), `--metrics-addr` (`:8080`),
-`--heartbeat` (`60s`), `--debounce` (`2s`), `--namespace`/`-n` (default all
-namespaces), `--node-heartbeat-threshold` / `KUBEAGENT_NODE_HEARTBEAT_THRESHOLD`
+`KUBEAGENT_INCLUDE_LOCAL` (off by default), `--metrics-addr` /
+`KUBEAGENT_METRICS_ADDR` (`:8080`), `--heartbeat` / `KUBEAGENT_HEARTBEAT`
+(`60s`), `--debounce` / `KUBEAGENT_DEBOUNCE` (`2s`), `--include-cron` (off by
+default), `--include-restarts` (off by default), `--namespace`/`-n` /
+`KUBEAGENT_NAMESPACE` (default all namespaces).
+
+Settings with **no flag** — the daemon reads these from the environment only,
+so set them in the container's `env:`: `KUBEAGENT_NODE_HEARTBEAT_THRESHOLD`
 (`40s`; `0` disables the kubelet-lease staleness check),
-`--expected-nodes` / `KUBEAGENT_EXPECTED_NODES` (comma-separated node names;
-unset by default — declares which nodes must be present),
-`--kubelet-health` / `KUBEAGENT_KUBELET_HEALTH` (off by default — probes each
-node's kubelet `/healthz` via the `nodes/proxy` add-on, the same grant
-`--disk-usage` uses; see [Disk-usage check](#disk-usage-check-opt-in)),
-`--certs` / `KUBEAGENT_CERTS` (off by default — enables the certificate-expiry
-check; requires the secrets add-on `deploy/rbac-certs.yaml` or Helm
-`certs.enabled=true`), `--cert-warn-days` / `KUBEAGENT_CERT_WARN_DAYS` (default
-`30` — warn window in days).
+`KUBEAGENT_EXPECTED_NODES` (comma-separated node names; unset by default —
+declares which nodes must be present), `KUBEAGENT_KUBELET_HEALTH` (off by
+default — probes each node's kubelet `/healthz` via the `nodes/proxy` add-on,
+the same grant the disk-usage check uses; see
+[Disk-usage check](#disk-usage-check-opt-in)), `KUBEAGENT_CERTS` (off by
+default — enables the certificate-expiry check; requires the secrets add-on
+`deploy/rbac-certs.yaml` or Helm `certs.enabled=true`),
+`KUBEAGENT_CERT_WARN_DAYS` (default `30` — warn window in days),
+`KUBEAGENT_CONTROL_PLANE_HEALTH`, `KUBEAGENT_DNS_HEALTH`,
+`KUBEAGENT_DISK_USAGE` and `KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS` (default `15`).
 
 ### Disk-usage check (opt-in)
 

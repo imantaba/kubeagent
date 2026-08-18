@@ -46,7 +46,9 @@ type Input struct {
 	Blind []scan.ReadFailure
 	// Namespace is the -n value; "" means all namespaces. report.Input carries
 	// no namespace, and ClusterHealth.ScopeNote is not a substitute: it names no
-	// namespace and is empty for -n kube-system.
+	// namespace, and it is empty only for a cluster-wide scan — even -n
+	// kube-system carries a caveat (the admission-webhook check is skipped
+	// under any -n, unconditionally).
 	Namespace string
 	// Version is the kubeagent version stamped into the header.
 	Version string
@@ -76,9 +78,20 @@ type view struct {
 	Cluster     clusterhealth.ClusterHealth
 	Workloads   []inventory.Workload
 	Explanation string
+	// SecurityRequested mirrors report.Input.SecurityRequested: true when
+	// --security was passed, so the template can say the section was omitted
+	// from this document rather than stay silent about it.
+	SecurityRequested bool
 	// Policy is nil unless --policy was given, so a scan without it renders the
 	// same bytes it rendered before the flag existed.
 	Policy *policyView
+	// Certificates is nil unless there is something to flag — the same
+	// suppression rule printCertificates applies in internal/report: Forbidden,
+	// or a non-empty Expired/Expiring/Invalid. A --certs run that found nothing
+	// renders no section here either; the text renderer's answer for that case
+	// is a NOTES bullet, and this document has no NOTES section to duplicate it
+	// into. A scan without --certs renders the same bytes it always did.
+	Certificates *certificatesView
 }
 
 // counts is the header tally, and also labels the severity filter controls.
@@ -119,6 +132,35 @@ type policyView struct {
 // and empty for an unevaluated rule, which examined no object at all.
 type policyRow struct {
 	RuleID, Level, Kind, Target, Message, Evidence string
+}
+
+// certificatesView is the CERTIFICATES section (opt-in --certs), mirroring
+// printCertificates in internal/report: the same three categories, the same
+// ingress route lines, the same Forbidden denial line, and the same footer.
+type certificatesView struct {
+	Forbidden bool
+	Expired   []certRow
+	Expiring  []certRow
+	Invalid   []certInvalidRow
+	Checked   int
+	WarnDays  int
+}
+
+// certRow is one Expired or Expiring row. Days already carries the sign the
+// template prints — "N days ago" for Expired, "in N days" for Expiring — so
+// the template does no arithmetic. CommonName is sanitized at ingress, in
+// certhealth.Assess, and is not re-sanitized here; contextual auto-escaping
+// is this package's only defense for cluster-controlled text.
+type certRow struct {
+	Namespace, Name, CommonName string
+	Days                        int
+	Ingresses                   []string
+}
+
+// certInvalidRow is one Invalid row: a kubernetes.io/tls Secret whose
+// certificate could not be parsed.
+type certInvalidRow struct {
+	Namespace, Name, Detail string
 }
 
 // The blind-spots block prints one of these three phrases and never the cluster's own
@@ -196,13 +238,14 @@ func newView(in Input) view {
 		blind = append(blind, blindSpot{Resource: b.Resource, Reason: safeReason(b.Reason)})
 	}
 	v := view{
-		Version:     in.Version,
-		Scope:       scope,
-		Generated:   now.UTC().Format("2006-01-02 15:04:05 UTC"),
-		Blind:       blind,
-		Cluster:     in.Report.Cluster,
-		Workloads:   in.Report.Result.Workloads,
-		Explanation: in.Report.Explanation,
+		Version:           in.Version,
+		Scope:             scope,
+		Generated:         now.UTC().Format("2006-01-02 15:04:05 UTC"),
+		Blind:             blind,
+		Cluster:           in.Report.Cluster,
+		Workloads:         in.Report.Result.Workloads,
+		Explanation:       in.Report.Explanation,
+		SecurityRequested: in.Report.SecurityRequested,
 	}
 	if p := in.Report.Policy; p != nil {
 		pv := &policyView{Rules: p.Rules}
@@ -222,6 +265,25 @@ func newView(in Input) view {
 			})
 		}
 		v.Policy = pv
+	}
+	if rep := in.Report.Certificates; rep != nil && (rep.Forbidden || len(rep.Expired) > 0 || len(rep.Expiring) > 0 || len(rep.Invalid) > 0) {
+		cv := &certificatesView{Forbidden: rep.Forbidden, Checked: rep.Checked, WarnDays: rep.WarnDays}
+		for _, c := range rep.Expired {
+			cv.Expired = append(cv.Expired, certRow{
+				Namespace: c.Namespace, Name: c.Name, CommonName: c.CommonName,
+				Days: -c.Days, Ingresses: c.Ingresses,
+			})
+		}
+		for _, c := range rep.Expiring {
+			cv.Expiring = append(cv.Expiring, certRow{
+				Namespace: c.Namespace, Name: c.Name, CommonName: c.CommonName,
+				Days: c.Days, Ingresses: c.Ingresses,
+			})
+		}
+		for _, iv := range rep.Invalid {
+			cv.Invalid = append(cv.Invalid, certInvalidRow{Namespace: iv.Namespace, Name: iv.Name, Detail: iv.Detail})
+		}
+		v.Certificates = cv
 	}
 	for _, f := range in.Findings {
 		v.Findings = append(v.Findings, findingRow{

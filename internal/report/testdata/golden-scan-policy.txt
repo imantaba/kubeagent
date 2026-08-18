@@ -1,10 +1,10 @@
-Cluster: Degraded — 2/4 nodes Ready
+Cluster: Degraded — 2/5 nodes Ready
   ✗ node worker-2 NotReady: KubeletNotReady — container runtime is down
   ✗ node worker-3 SchedulingDisabled
   ✗ node worker-1 kubelet not heartbeating (lease 95s stale)
   ✗ node db-01 expected but absent from the cluster
   ✗ system kube-system/coredns Degraded 1/2
-  Needs attention: 16 workloads failing (7 ⇐ 4 root causes) · 2 services without endpoints · 1 ingress route broken · 1 PVC failing to provision · 2 resources stuck terminating · 1 PodDisruptionBudget blocking drains · 1 HPA can't scale · 1 admission webhook failing · 1 slow admission webhook · 1 ResourceQuota entry near/over quota
+  Needs attention: 16 workloads failing (7 ⇐ 4 root causes) · 2 services without endpoints · 1 ingress route broken · 1 PVC failing to provision · 2 resources stuck terminating · 1 PodDisruptionBudget issue · 1 HPA can't scale · 1 admission webhook failing · 1 slow admission webhook · 1 ResourceQuota entry near/over quota
 
 NEEDS ATTENTION
 ✗ shop/web  Deployment  0/1 Degraded  · 8 restarts, last 205d ago
@@ -103,9 +103,9 @@ NEEDS ATTENTION
   ✗ shop/api-hpa  HorizontalPodAutoscaler  targets Deployment/api
       ⚠ HPAStuck: can't fetch metrics — unable to get resource metric cpu: no metrics returned
   ✗ policy-webhook  ValidatingWebhookConfiguration  webhook validate.policy.io
-      ⚠ WebhookDown: backend Service kube-system/policy-svc has no ready endpoints — failurePolicy Fail rejects every intercepted create/update
+      ⚠ NoEndpoints: backend Service kube-system/policy-svc has no ready endpoints — failurePolicy Fail rejects every intercepted create/update
   ✗ slow-validator  ValidatingWebhookConfiguration  webhook policy.example.com
-      ⚠ WebhookSlow: timeoutSeconds 30 ≥ 15s under failurePolicy Fail — a slow webhook blocks every intercepted create/update for up to 30s, then rejects it
+      ⚠ HighTimeout: timeoutSeconds 30 ≥ 15s under failurePolicy Fail — a slow webhook blocks every intercepted create/update for up to 30s, then rejects it
   ✗ shop/compute  ResourceQuota  requests.cpu
       ⚠ QuotaExhausted: used 4 / hard 4 (100%)
 
@@ -118,17 +118,19 @@ SECURITY  (advisory — does not affect the cluster verdict)
   ✗ shop/payments  Service
       [kubeagent] ExposedService — type NodePort exposes port(s) 80 externally
 
-  restricted (hardening gaps, near-universal): 18 across 6 workloads
+  restricted (hardening gaps, near-universal): 18 across 6 of 7 workloads
     RunAsRoot ×6 · AllowPrivilegeEscalation ×6 · CapabilitiesNotDropped ×6
     → run with --security-verbose to list every finding per workload
 
 KUBELET HEALTH  (opt-in)
   ✗ node worker-2 kubelet /healthz unhealthy: [-]syncloop failed
+
 CERTIFICATES  (advisory — public certificate metadata only)
   ✗ shop/shop-tls  EXPIRED 3d ago  (CN shop.example.com)
       — fronts ingress shop/storefront (shop.example.com)
   ⚠ infra/api-tls  expires in 12d  (CN api.example.com)
   · 3 certificates checked (warn window 30d)
+
 OPERATORS  (advisory — operator-reported state; no CR spec content)
   cert-manager (cert-manager.io/v1)
     Certificate     12 healthy, 1 unhealthy

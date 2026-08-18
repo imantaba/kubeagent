@@ -3,13 +3,18 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/imantaba/kubeagent/internal/diagnose"
+	"github.com/imantaba/kubeagent/internal/hpahealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/pdbhealth"
 	"github.com/imantaba/kubeagent/internal/pvchealth"
 	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/svchealth"
+	"github.com/imantaba/kubeagent/internal/termhealth"
+	"github.com/imantaba/kubeagent/internal/webhookhealth"
 )
 
 func TestFindingsFromResult_DetectorFindingIsCriticalWithARemediationHint(t *testing.T) {
@@ -113,6 +118,66 @@ func TestFindingsFromResult_CoversEveryAttentionClassNotJustWorkloads(t *testing
 	}
 }
 
+// TestFindingsFromResult_UsesCamelCaseFindingVocabulary asserts that
+// stuck-terminating, PDB and HPA issues surface in the MCP tool result's
+// Reason field with the CamelCase spelling shared by gate JSON and the watch
+// daemon's /issues — not the raw lowercase reason/category the source
+// packages carry.
+func TestFindingsFromResult_UsesCamelCaseFindingVocabulary(t *testing.T) {
+	res := scan.Result{
+		StuckTerminating: []termhealth.Issue{
+			{Kind: "Namespace", Name: "legacy-ns", Age: "2h", Reason: "stuck in Terminating"},
+		},
+		PDBIssues: []pdbhealth.Issue{
+			{Namespace: "shop", Name: "unsat", Category: "unsatisfiable", Reason: "r1"},
+			{Namespace: "shop", Name: "stl", Category: "stale", Reason: "r2"},
+			{Namespace: "shop", Name: "blk", Category: "blocking", Reason: "r3"},
+			{Namespace: "shop", Name: "sgl", Category: "singleton", Reason: "r4"},
+		},
+		HPAIssues: []hpahealth.Issue{
+			{Namespace: "shop", Name: "unable-hpa", Category: "unable", Reason: "r5"},
+			{Namespace: "shop", Name: "metrics-hpa", Category: "metrics", Reason: "r6"},
+			{Namespace: "shop", Name: "capped-hpa", Category: "capped", Reason: "r7"},
+			{Namespace: "shop", Name: "disabled-hpa", Category: "disabled", Reason: "r8"},
+			{Namespace: "shop", Name: "ambiguous-hpa", Category: "ambiguous", Reason: "r9"},
+		},
+	}
+
+	got := findingsFromResult(res)
+	want := map[string]string{
+		"legacy-ns":     "StuckTerminating",
+		"unsat":         "PDBUnsatisfiable",
+		"stl":           "PDBStale",
+		"blk":           "PDBBlocked",
+		"sgl":           "PDBSingleton",
+		"unable-hpa":    "HPAUnableToScale",
+		"metrics-hpa":   "HPAMetricsFailed",
+		"capped-hpa":    "HPACapped",
+		"disabled-hpa":  "HPAScalingDisabled",
+		"ambiguous-hpa": "HPAAmbiguousSelector",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("findingsFromResult() = %d findings, want %d: %+v", len(got), len(want), got)
+	}
+	seen := make(map[string]bool, len(got))
+	for _, f := range got {
+		wantReason, ok := want[f.Name]
+		if !ok {
+			t.Errorf("unexpected finding for %s: %+v", f.Name, f)
+			continue
+		}
+		if f.Reason != wantReason {
+			t.Errorf("%s: Reason = %q, want %q", f.Name, f.Reason, wantReason)
+		}
+		seen[f.Name] = true
+	}
+	for name := range want {
+		if !seen[name] {
+			t.Errorf("missing finding for %s", name)
+		}
+	}
+}
+
 func TestFindingsFromResult_ExpectedServiceIssuesAreNotFindings(t *testing.T) {
 	res := scan.Result{
 		ServiceIssues: []svchealth.Issue{{
@@ -122,6 +187,39 @@ func TestFindingsFromResult_ExpectedServiceIssuesAreNotFindings(t *testing.T) {
 
 	if got := findingsFromResult(res); len(got) != 0 {
 		t.Errorf("findingsFromResult() = %v, want none — the CLI does not treat expected issues as attention", got)
+	}
+}
+
+// TestFindingsFromResult_WebhookFindingNameCarriesTheWebhookNotJustTheConfig
+// pins R167 on the MCP tool result: a webhook finding's Name is
+// "config/webhook", matching gate and the watch daemon's /issues, so two
+// distinct webhooks in one ValidatingWebhookConfiguration produce two
+// distinguishable rows rather than colliding on the config name alone.
+func TestFindingsFromResult_WebhookFindingNameCarriesTheWebhookNotJustTheConfig(t *testing.T) {
+	res := scan.Result{
+		WebhookIssues: []webhookhealth.Issue{
+			{Kind: "ValidatingWebhookConfiguration", Config: "vwc-multi", Webhook: "a-slow.multi.example.com",
+				Problem: "HighTimeout", Reason: "timeoutSeconds 30 >= 15s under failurePolicy Fail"},
+			{Kind: "ValidatingWebhookConfiguration", Config: "vwc-multi", Webhook: "b-slow.multi.example.com",
+				Problem: "HighTimeout", Reason: "timeoutSeconds 45 >= 15s under failurePolicy Fail"},
+		},
+	}
+	got := findingsFromResult(res)
+	if len(got) != 2 {
+		t.Fatalf("findingsFromResult returned %d findings, want 2: %+v", len(got), got)
+	}
+	names := map[string]bool{}
+	for _, f := range got {
+		names[f.Name] = true
+	}
+	want := []string{"vwc-multi/a-slow.multi.example.com", "vwc-multi/b-slow.multi.example.com"}
+	for _, w := range want {
+		if !names[w] {
+			t.Errorf("findingsFromResult rows %+v missing Name %q", got, w)
+		}
+	}
+	if len(names) != 2 {
+		t.Errorf("the two webhook findings must be distinguishable by Name, got names %v", names)
 	}
 }
 
@@ -182,6 +280,47 @@ func TestCapFindings_SortedCriticalsSurviveTruncationAheadOfWarnings(t *testing.
 			t.Errorf("got a %q finding in the surviving set: %+v; sorted criticals must survive "+
 				"truncation ahead of warnings", f.Severity, f)
 		}
+	}
+}
+
+// TestFromDiagnose_CarriesLogCauseButNeverLogExcerpt pins R182: fromDiagnose
+// copies a detector finding's LogCause into the tool result, but LogExcerpt —
+// raw container output — never crosses into an MCP tool result, the same
+// split the --explain egress test already pins for the model prompt path.
+// Asserted on the marshalled JSON bytes, not the struct: a missing json tag
+// on a new field would still pass a struct comparison.
+func TestFromDiagnose_CarriesLogCauseButNeverLogExcerpt(t *testing.T) {
+	f := diagnose.Finding{
+		Pod: "payments/api-abc", Issue: "CrashLoopBackOff",
+		Reason: "container exits immediately", Container: "api",
+		LogCause:   "application panic (code bug)",
+		LogExcerpt: "panic: runtime error: invalid memory address",
+	}
+	blob, err := json.Marshal(fromDiagnose(f))
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if !strings.Contains(string(blob), `"logCause":"application panic (code bug)"`) {
+		t.Errorf("Marshal() = %s, want a logCause key carrying the finding's LogCause", blob)
+	}
+	if strings.Contains(string(blob), "logExcerpt") {
+		t.Errorf("Marshal() = %s, must not carry a logExcerpt key — raw container output must never reach an MCP tool result", blob)
+	}
+}
+
+// TestFromDiagnose_EmptyLogCauseOmitsTheKey pins the other half: a finding no
+// log fetch touched (a server run without --logs, or a finding --logs never
+// probed) has an empty LogCause, and omitempty drops the key entirely — a
+// tool result from a server without --logs stays byte-identical to what it
+// was before this field existed.
+func TestFromDiagnose_EmptyLogCauseOmitsTheKey(t *testing.T) {
+	f := diagnose.Finding{Pod: "payments/api-abc", Issue: "CrashLoopBackOff", Reason: "container exits immediately"}
+	blob, err := json.Marshal(fromDiagnose(f))
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if strings.Contains(string(blob), "logCause") {
+		t.Errorf("Marshal() = %s, must carry no logCause key when LogCause is empty", blob)
 	}
 }
 

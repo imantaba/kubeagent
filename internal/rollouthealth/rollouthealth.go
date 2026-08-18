@@ -82,7 +82,9 @@ func Annotate(workloads []inventory.Workload, deployments []appsv1.Deployment, s
 			// needs no grace period of its own.
 			evidence, stuck = stuckCondition(dep)
 			if stuck {
-				w.Findings = append(w.Findings, finding(w, evidence))
+				// A controller-set condition is Kubernetes itself asserting the
+				// state, not a kubeagent inference: high confidence.
+				w.Findings = append(w.Findings, finding(w, evidence, "high"))
 			}
 			continue
 		case "StatefulSet":
@@ -105,20 +107,26 @@ func Annotate(workloads []inventory.Workload, deployments []appsv1.Deployment, s
 		if !stuck || !settled(w, created, pods, now) {
 			continue
 		}
-		w.Findings = append(w.Findings, finding(w, evidence))
+		// The StatefulSet and DaemonSet arms only compare counters and wait out
+		// a grace period — an inference, not a direct read: medium confidence.
+		w.Findings = append(w.Findings, finding(w, evidence, "medium"))
 	}
 }
 
 // finding builds the RolloutStuck finding for a workload. The reason names the
 // workload's own kind — a value from the closed set the switch above admits, so
 // it is not cluster text — and renders byte-identically to the long-standing
-// wording for a Deployment.
-func finding(w *inventory.Workload, evidence string) diagnose.Finding {
+// wording for a Deployment. confidence is supplied by the caller rather than
+// decided here, because the two levels track which arm produced the finding
+// (a controller-set condition vs. counters and a grace period), not the
+// RolloutStuck issue string, which is the same for both.
+func finding(w *inventory.Workload, evidence, confidence string) diagnose.Finding {
 	return diagnose.Finding{
-		Pod:      w.Namespace + "/" + w.Name,
-		Issue:    "RolloutStuck",
-		Reason:   "the " + w.Kind + "'s rollout cannot complete — the new pods are not becoming available",
-		Evidence: evidence,
+		Pod:        w.Namespace + "/" + w.Name,
+		Issue:      "RolloutStuck",
+		Reason:     "the " + w.Kind + "'s rollout cannot complete — the new pods are not becoming available",
+		Evidence:   evidence,
+		Confidence: confidence,
 	}
 }
 

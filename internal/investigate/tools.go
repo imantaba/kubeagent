@@ -18,13 +18,13 @@ func toolSpecs() []toolSpec {
 	return []toolSpec{
 		{
 			Name:        "describe",
-			Description: "Read structured status of one in-scope object (pod, deployment, replicaset, statefulset, daemonset, job, node, or pvc). Returns phase/conditions/container states — never logs, IPs, env, or secrets.",
+			Description: "Read structured status of one in-scope object (pod, deployment, replicaset, statefulset, daemonset, job, node, or pvc). Returns phase/conditions/container states — never logs, env, or secrets, and never an address kubeagent chose (pod/host/cluster IP); quoted API text may still contain a URL the cluster wrote.",
 			Properties: map[string]any{
 				"kind":      prop("one of: pod, deployment, replicaset, statefulset, daemonset, job, node, pvc"),
 				"namespace": prop("the object's namespace (empty for a node)"),
 				"name":      prop("the object's name"),
 			},
-			Required: []string{"kind", "name"},
+			Required: []string{"kind", "namespace", "name"},
 		},
 		{
 			Name:        "get_events",
@@ -37,7 +37,7 @@ func toolSpecs() []toolSpec {
 		},
 		{
 			Name:        "get_related",
-			Description: "From an in-scope pod, resolve a related object and bring it into scope: its owner (ReplicaSet/Deployment/Job), its node, or its PersistentVolumeClaims.",
+			Description: "From an in-scope pod, resolve a related object and bring it into scope: the owners its ownerReferences name, its node, or its PersistentVolumeClaims.",
 			Properties: map[string]any{
 				"namespace": prop("the pod's namespace"),
 				"name":      prop("the pod's name"),

@@ -62,7 +62,7 @@ type scanOptions struct {
 	baselineFloor          float64
 	logs                   bool
 	nodeHeartbeatThreshold time.Duration
-	expectedNodes          string
+	expectedNodes          []string
 	security               bool
 	securityVerbose        bool
 	suggest                bool
@@ -90,7 +90,7 @@ func bindScanFlags(cmd *cobra.Command, o *scanOptions) {
 	f.StringVar(&o.output, "output", "text", "output format: text | json | html")
 	f.BoolVar(&o.explain, "explain", false, "summarize findings via one LLM call (needs ANTHROPIC_API_KEY, or KUBEAGENT_EXPLAIN_ENDPOINT for a local OpenAI-compatible model)")
 	f.BoolVar(&o.investigate, "investigate", false, "agentic read-only investigation of findings via a bounded tool-use loop (needs ANTHROPIC_API_KEY; supersedes --explain)")
-	f.StringVar(&o.model, "model", "", "model for --explain / --investigate (default: $KUBEAGENT_MODEL or claude-opus-4-8; the local model name when KUBEAGENT_EXPLAIN_ENDPOINT is set)")
+	f.StringVar(&o.model, "model", "", "model for --explain / --investigate (default: $KUBEAGENT_MODEL, else claude-opus-4-8). --explain with KUBEAGENT_EXPLAIN_ENDPOINT set takes the local model name here instead; --investigate is Anthropic-only and always sends this value to the Anthropic API.")
 	f.BoolVar(&o.includeCron, "include-cron", false, "include CronJobs in the report")
 	f.BoolVar(&o.includeRestarts, "include-restarts", false, "include workloads that are healthy now but have restarted")
 	f.BoolVar(&o.lintSecrets, "lint-secrets", false, "scan ConfigMaps and pod env for credentials stored in the clear (never prints values)")
@@ -115,7 +115,7 @@ func bindScanFlags(cmd *cobra.Command, o *scanOptions) {
 		"with --baseline: also require this absolute rise in restarts/hour (KUBEAGENT_BASELINE_FLOOR)")
 	f.BoolVar(&o.logs, "logs", false, "read each crashing container's previous logs and classify the failure (needs the pods/log grant)")
 	f.DurationVar(&o.nodeHeartbeatThreshold, "node-heartbeat-threshold", 40*time.Second, "flag a Ready node whose kubelet lease is stale beyond this (0 disables)")
-	f.StringVar(&o.expectedNodes, "expected-nodes", "", "names of nodes expected in the cluster; a declared name with no Node object is flagged Degraded (comma-separated)")
+	f.StringSliceVar(&o.expectedNodes, "expected-nodes", nil, "names of nodes expected in the cluster; a declared name with no Node object is flagged Degraded (comma-separated)")
 	f.BoolVar(&o.security, "security", false, "flag insecure workloads and exposed Services (read-only, advisory)")
 	f.BoolVar(&o.securityVerbose, "security-verbose", false, "with --security: list every finding per workload (default: dangerous findings in full, restricted gaps aggregated)")
 	f.BoolVar(&o.suggest, "suggest", false, "print a deterministic next-step suggestion (and a read-only kubectl command) under each finding")
@@ -148,9 +148,46 @@ func runScan(o scanOptions) error {
 	if o.output != "text" && o.output != "json" && o.output != "html" {
 		return fmt.Errorf("unknown output format %q (want text, json or html)", o.output)
 	}
-	// --explain needs Anthropic, or a local OpenAI-compatible endpoint; check before scanning.
+	// diskThreshold gates diskusage.Assess's r >= threshold test, a ratio in
+	// (0, 1]. 1.0 is valid ("warn only at full"); 0 is not — "warn on
+	// everything" is not a threshold — and this is also the check that
+	// catches "80" typed as a percent instead of a fraction.
+	if o.diskThreshold <= 0 || o.diskThreshold > 1 {
+		return fmt.Errorf("--disk-threshold must be a fraction in (0, 1], got %v", o.diskThreshold)
+	}
+	// 0 keeps meaning "disabled" — internal/clusterhealth's own Threshold <= 0
+	// guard is what stays correct at the package boundary. A negative value is
+	// never intentional, and left unchecked it silently disables the check the
+	// same way 0 does, only without saying so.
+	if o.nodeHeartbeatThreshold < 0 {
+		return fmt.Errorf("--node-heartbeat-threshold cannot be negative (got %s; use 0 to disable the check)", o.nodeHeartbeatThreshold)
+	}
+	// 0 keeps meaning "expired only" — a real, deliberately narrow warn
+	// window, not "disabled" and not "use the 30-day default" — so only a
+	// negative value is refused here.
+	if o.certWarnDays < 0 {
+		return fmt.Errorf("--cert-warn-days must not be negative (got %d)", o.certWarnDays)
+	}
+	// Every declared expected-node name must be a real node-name shape: a
+	// name that could never match a Node object describes nothing real.
+	// cleanExpected's trim/dedup/sort runs after this, not instead of it.
+	// pflag's StringSliceVar has already comma-split and accumulated every
+	// --expected-nodes occurrence into o.expectedNodes.
+	if err := validateExpectedNodes(o.expectedNodes, "--expected-nodes"); err != nil {
+		return err
+	}
+	// --security-verbose only changes how a security finding is rendered; with
+	// no --security there is no security section for it to change, so the flag
+	// on its own is a mistake worth naming rather than a silent no-op.
+	if o.securityVerbose && !o.security {
+		return fmt.Errorf("--security-verbose requires --security")
+	}
+	// --explain needs Anthropic, or a local OpenAI-compatible endpoint; check
+	// before scanning. --investigate supersedes --explain (checked below,
+	// separately), so this guard is --explain's alone: with both flags set,
+	// the --investigate guard is what must fire, not this one.
 	explainEndpoint := os.Getenv("KUBEAGENT_EXPLAIN_ENDPOINT")
-	if o.explain && explainEndpoint == "" && os.Getenv("ANTHROPIC_API_KEY") == "" {
+	if !o.investigate && o.explain && explainEndpoint == "" && os.Getenv("ANTHROPIC_API_KEY") == "" {
 		return fmt.Errorf("--explain needs ANTHROPIC_API_KEY, or set KUBEAGENT_EXPLAIN_ENDPOINT for a local OpenAI-compatible model")
 	}
 	// --investigate requires the Anthropic API key directly; local endpoints do not
@@ -167,7 +204,11 @@ func runScan(o scanOptions) error {
 	var explainModel string
 	if explainEndpoint != "" {
 		explainModel = firstNonEmpty(o.model, os.Getenv("KUBEAGENT_MODEL")) // no Anthropic default for a local model
-		if o.explain && explainModel == "" {
+		// Same reasoning as the guard above: --investigate never reads
+		// explainModel (the tool-use loop is Anthropic-only), so this
+		// requirement is --explain's alone and must not fire when
+		// --investigate is what actually selected the model path.
+		if !o.investigate && o.explain && explainModel == "" {
 			return fmt.Errorf("--explain with KUBEAGENT_EXPLAIN_ENDPOINT needs --model (or KUBEAGENT_MODEL) set to the local model name")
 		}
 	} else {
@@ -178,6 +219,14 @@ func runScan(o scanOptions) error {
 	// input, and nothing about the cluster should have been attempted when the
 	// run fails on it.
 	baselineDoc, err := loadBaseline(o.baselinePath)
+	if err != nil {
+		return err
+	}
+
+	// The API server itself refuses a webhook timeoutSeconds above 30, so a
+	// threshold above 30 could only ever match nothing; refuse it here
+	// rather than report a clean posture that was never actually checked.
+	webhookTimeout, err := envIntRange("KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS", 15, 1, 30)
 	if err != nil {
 		return err
 	}
@@ -195,16 +244,16 @@ func runScan(o scanOptions) error {
 		DiskThreshold:           o.diskThreshold,
 		Security:                o.security,
 		NodeHeartbeatThreshold:  o.nodeHeartbeatThreshold,
-		ExpectedNodes:           splitCSV(o.expectedNodes),
+		ExpectedNodes:           o.expectedNodes,
 		KubeletHealth:           o.kubeletHealth,
 		ControlPlaneHealth:      o.controlPlaneHealth,
 		DNSHealth:               o.dnsHealth,
-		DNSServfailRatio:        envFloat("KUBEAGENT_DNS_SERVFAIL_RATIO", 0.05),
+		DNSServfailRatio:        dnsRatioFromEnv(os.Stderr),
 		Certs:                   o.certs,
 		CertWarnDays:            o.certWarnDays,
 		Logs:                    o.logs,
 		QuotaThreshold:          quotaThresholdFromEnv(os.Stderr),
-		WebhookTimeoutThreshold: int32(envInt("KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS", 15)),
+		WebhookTimeoutThreshold: int32(webhookTimeout),
 	})
 	if err != nil {
 		if diag, ok := connectivity.Diagnose(err); ok {
@@ -272,26 +321,33 @@ func runScan(o scanOptions) error {
 	gitopsRep := advRes.GitOps
 	capacityRep := advRes.Capacity
 
-	var explanation string
-	var investigationReport investigate.Report
-	switch {
-	case o.investigate:
-		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-		defer cancel()
-		investigationReport, err = investigate.New(explain.ResolveModel(o.model, os.Getenv("KUBEAGENT_MODEL"))).
-			Investigate(ctx, health, &summary, &facts, serviceIssues, result.Workloads, client)
-		if err != nil {
-			return err
-		}
-	case o.explain:
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		explanation, err = explain.NewFromConfig(explainModel, explainEndpoint, os.Getenv("KUBEAGENT_EXPLAIN_API_KEY")).
-			ExplainInventory(ctx, health, &summary, &facts, serviceIssues, result.Workloads)
-		if err != nil {
-			return err
-		}
+	// An --investigate or --explain failure is never fatal to the scan (R223):
+	// the deterministic report below still renders on stdout with exit 0, and
+	// runModelPath reduces the failure to one stderr notice naming which flag
+	// failed and why (via enrichmentFailure, R227) instead of returning an
+	// error. This also covers R220: a narrative-less investigation reaches
+	// runModelPath as just another error and gets the same notice-not-failure
+	// treatment, so the report renders with no Investigation section rather
+	// than nothing at all.
+	modelRes := runModelPath(o,
+		func() (investigate.Report, error) {
+			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+			defer cancel()
+			return investigate.New(explain.ResolveModel(o.model, os.Getenv("KUBEAGENT_MODEL"))).
+				Investigate(ctx, health, &summary, &facts, serviceIssues, result.Workloads, client)
+		},
+		func() (string, error) {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			return explain.NewFromConfig(explainModel, explainEndpoint, os.Getenv("KUBEAGENT_EXPLAIN_API_KEY")).
+				ExplainInventory(ctx, health, &summary, &facts, serviceIssues, result.Workloads)
+		},
+	)
+	if modelRes.notice != "" {
+		warnf(os.Stderr, "%s", modelRes.notice)
 	}
+	explanation := modelRes.explanation
+	investigationReport := modelRes.investigation
 
 	var credWarnings []credlint.Finding
 	if o.lintSecrets {
@@ -344,10 +400,21 @@ func runScan(o scanOptions) error {
 	in.Policy = policyView
 	in.Baseline = baselineRep
 	in.SecurityVerbose = o.securityVerbose
+	in.SecurityRequested = o.security
 	in.Suggest = o.suggest
 	in.Explanation = explanation
 	in.Investigation = investigationReport.Narrative
 	in.InvestigationConsulted = investigationReport.Consulted
+	in.InvestigationTruncated = investigationReport.Truncated
+	// InvestigationSkipped names the one case that is otherwise
+	// indistinguishable from --investigate never having been passed: with
+	// o.investigate set, runModelPath always enters the investigate arm
+	// above; a failure sets modelRes.notice (handled above, and leaves
+	// investigationReport zero); and a success with an empty narrative is
+	// impossible because Investigate itself returns an error rather than an
+	// empty report for that case. So this conjunction is exactly the skip
+	// and nothing else.
+	in.InvestigationSkipped = o.investigate && modelRes.notice == "" && investigationReport.Narrative == ""
 	in.RemediationPlan = fixPlan
 	if err := renderScan(os.Stdout, o.output, in, res, o.namespace); err != nil {
 		return err

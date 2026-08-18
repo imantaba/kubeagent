@@ -277,9 +277,18 @@ func runFleetOpts(o fleetOptions) error {
 		return err
 	}
 
+	// Same env-tunable thresholds a single-cluster gate uses — including the
+	// KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS bound — resolved once for the whole
+	// sweep, not once per cluster, the same reason KUBEAGENT_QUOTA_THRESHOLD
+	// already is.
+	scanOpts, err := gateScanOptions(o.namespace, os.Stderr)
+	if err != nil {
+		return &exitError{code: gate.CodeUsage, msg: err.Error()}
+	}
+
 	rep := fleet.Sweep(context.Background(), targets, fleet.Options{
 		FailOn:         level,
-		Scan:           gateScanOptions(o.namespace, os.Stderr),
+		Scan:           scanOpts,
 		Workers:        o.workers,
 		ClusterTimeout: o.clusterTimeout,
 	})

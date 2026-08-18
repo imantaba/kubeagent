@@ -303,12 +303,109 @@ func TestBuildInventoryPrompt_InjectsDeterministicSuggestion(t *testing.T) {
 	}
 }
 
+// TestBuildInventoryPrompt_CollapsesIdenticalFindingsAfterRedaction proves the
+// collapse half of R232: two findings whose Issue, Reason, Evidence, Container,
+// LogCause and Resources all match — differing only by Pod — render as one
+// block once the <pod> substitution in the suggested fix line has run, with
+// "(×2)" appended to the issue: line.
+func TestBuildInventoryPrompt_CollapsesIdenticalFindingsAfterRedaction(t *testing.T) {
+	ws := []inventory.Workload{{
+		Namespace: "shop", Name: "web", Kind: "Deployment", Ready: 1, Desired: 2, Status: "Degraded",
+		Findings: []diagnose.Finding{
+			{Pod: "shop/web-1", Issue: "CrashLoopBackOff", Reason: "crashes", Evidence: "restartCount=8", Container: "web"},
+			{Pod: "shop/web-2", Issue: "CrashLoopBackOff", Reason: "crashes", Evidence: "restartCount=8", Container: "web"},
+		},
+	}}
+	got := BuildInventoryPrompt(clusterhealth.ClusterHealth{}, nil, nil, nil, ws)
+	if !strings.Contains(got, "    issue: CrashLoopBackOff — crashes (restartCount=8) (×2)\n") {
+		t.Errorf("expected the two identical-after-redaction findings collapsed to one block with (×2):\n%s", got)
+	}
+	if n := strings.Count(got, "issue:"); n != 1 {
+		t.Errorf("expected exactly one issue: line, got %d:\n%s", n, got)
+	}
+}
+
+// TestBuildInventoryPrompt_CapsFindingBlocksPerWorkload proves the cap half of
+// R232: a workload with five distinct findings renders at most three blocks,
+// then one "… and N more of the same kind" line for the rest.
+func TestBuildInventoryPrompt_CapsFindingBlocksPerWorkload(t *testing.T) {
+	ws := []inventory.Workload{{
+		Namespace: "shop", Name: "web", Kind: "Deployment", Ready: 0, Desired: 5, Status: "Degraded",
+		Findings: []diagnose.Finding{
+			{Issue: "CrashLoopBackOff", Reason: "crashes 1", Evidence: "restartCount=1"},
+			{Issue: "CrashLoopBackOff", Reason: "crashes 2", Evidence: "restartCount=2"},
+			{Issue: "CrashLoopBackOff", Reason: "crashes 3", Evidence: "restartCount=3"},
+			{Issue: "CrashLoopBackOff", Reason: "crashes 4", Evidence: "restartCount=4"},
+			{Issue: "CrashLoopBackOff", Reason: "crashes 5", Evidence: "restartCount=5"},
+		},
+	}}
+	got := BuildInventoryPrompt(clusterhealth.ClusterHealth{}, nil, nil, nil, ws)
+	if n := strings.Count(got, "issue:"); n != 3 {
+		t.Errorf("expected exactly 3 issue: lines under the cap, got %d:\n%s", n, got)
+	}
+	if !strings.Contains(got, "… and 2 more of the same kind\n") {
+		t.Errorf("expected the overflow line naming the 2 findings not shown:\n%s", got)
+	}
+}
+
+// TestBuildInventoryPrompt_SingleFindingRendersUnchanged is the regression
+// guard against overreach: a workload with exactly one finding must render
+// byte-identically to the pre-R232 prompt — no "(×1)" suffix and no cap line.
+func TestBuildInventoryPrompt_SingleFindingRendersUnchanged(t *testing.T) {
+	ws := []inventory.Workload{{
+		Namespace: "shop", Name: "web", Kind: "Deployment", Ready: 0, Desired: 1, Status: "Degraded",
+		Findings: []diagnose.Finding{{Pod: "shop/web-abc", Issue: "CrashLoopBackOff", Reason: "crashes", Evidence: "restartCount=8", Container: "web"}},
+	}}
+	got := BuildInventoryPrompt(clusterhealth.ClusterHealth{}, nil, nil, nil, ws)
+	if !strings.Contains(got, "    issue: CrashLoopBackOff — crashes (restartCount=8)\n") {
+		t.Errorf("single-finding issue: line must render unchanged:\n%s", got)
+	}
+	if strings.Contains(got, "(×") {
+		t.Errorf("a single finding must never get a count suffix:\n%s", got)
+	}
+	if strings.Contains(got, "more of the same kind") {
+		t.Errorf("a single finding must never trigger the overflow line:\n%s", got)
+	}
+}
+
+// TestBuildInventoryPrompt_DoesNotCollapseFindingsThatDifferAfterRedaction
+// proves the collapse is exact: two findings that differ before redaction and
+// still differ after it (different Issue) render as two separate blocks, not
+// one with a count.
+func TestBuildInventoryPrompt_DoesNotCollapseFindingsThatDifferAfterRedaction(t *testing.T) {
+	ws := []inventory.Workload{{
+		Namespace: "shop", Name: "web", Kind: "Deployment", Ready: 0, Desired: 2, Status: "Degraded",
+		Findings: []diagnose.Finding{
+			{Pod: "shop/web-1", Issue: "CrashLoopBackOff", Reason: "crashes", Evidence: "restartCount=8", Container: "web"},
+			{Pod: "shop/web-2", Issue: "OOMKilled", Reason: "killed", Evidence: "restartCount=1"},
+		},
+	}}
+	got := BuildInventoryPrompt(clusterhealth.ClusterHealth{}, nil, nil, nil, ws)
+	if n := strings.Count(got, "issue:"); n != 2 {
+		t.Errorf("expected two separate issue: lines, got %d:\n%s", n, got)
+	}
+	if strings.Contains(got, "(×") {
+		t.Errorf("findings that differ after redaction must not be collapsed:\n%s", got)
+	}
+}
+
 func TestSystemPrompt_RanksAndGrounds(t *testing.T) {
 	if !strings.Contains(SystemPrompt, "Fix first:") {
 		t.Error("SystemPrompt must instruct a leading Fix first ranked list")
 	}
 	if !strings.Contains(SystemPrompt, "verbatim") || !strings.Contains(SystemPrompt, "never substitute or invent") {
 		t.Error("SystemPrompt must ground the Fix on the deterministic command (verbatim / never substitute or invent)")
+	}
+}
+
+// TestSystemPrompt_NoMarkdown proves R224: the prompt must not demonstrate the
+// markdown emphasis, fenced code, headings or horizontal rules it forbids the
+// model from using.
+func TestSystemPrompt_NoMarkdown(t *testing.T) {
+	for _, bad := range []string{"**", "```", "\n# ", "\n---\n"} {
+		if strings.Contains(SystemPrompt, bad) {
+			t.Errorf("SystemPrompt must be plain text; found markdown marker %q", bad)
+		}
 	}
 }
 

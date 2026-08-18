@@ -25,9 +25,11 @@ var goldenNow = time.Date(2026, 7, 28, 9, 30, 0, 0, time.UTC)
 
 const goldenPath = "testdata/golden-report.html"
 
-// goldenInput exercises every rendered part of the document: all three severity
-// levels, partial reads, cluster health with both issue lists, a workload table,
-// and an --explain narrative.
+// goldenInput exercises every rendered part of the document except the opt-in
+// CERTIFICATES section (left nil: --certs is opt-in, populating it would move
+// golden-report.html, and this repository's goldens are hand-edited, never
+// regenerated): all three severity levels, partial reads, cluster health with
+// both issue lists, a workload table, and an --explain narrative.
 func goldenInput() Input {
 	return Input{
 		Version:   "v0.66.0",
@@ -115,13 +117,17 @@ func TestGoldenHTMLReport(t *testing.T) {
 }
 
 // TestGoldenInputCoversEverySection guards against the fixture silently losing a
-// part, which would leave the golden a partial snapshot that still passes.
+// part, which would leave the golden a partial snapshot that still passes. The
+// opt-in CERTIFICATES section is a deliberate exception to that guarantee, not
+// an oversight in it: the last assertion below pins Certificates nil rather than
+// checking it populated, because populating it would move golden-report.html,
+// and this repository's goldens are hand-edited rather than regenerated.
 func TestGoldenInputCoversEverySection(t *testing.T) {
 	in := goldenInput()
 	if len(in.Blind) == 0 || len(in.Report.Cluster.NodeIssues) == 0 ||
 		len(in.Report.Cluster.SystemIssues) == 0 || in.Report.Cluster.ScopeNote == "" ||
 		len(in.Report.Result.Workloads) == 0 || in.Report.Explanation == "" {
-		t.Fatal("goldenInput must populate every section so the golden stays comprehensive")
+		t.Fatal("goldenInput must populate every section other than the opt-in CERTIFICATES one, so the golden stays comprehensive over that set")
 	}
 	if in.Report.Policy == nil || len(in.Report.Policy.Violations) == 0 ||
 		len(in.Report.Policy.NotEvaluated) == 0 {
@@ -133,6 +139,14 @@ func TestGoldenInputCoversEverySection(t *testing.T) {
 	}
 	if !levels[findings.Critical] || !levels[findings.Warning] || !levels[findings.Info] {
 		t.Fatalf("goldenInput must exercise all three severity levels, got %v", levels)
+	}
+	// Certificates is the one section goldenInput deliberately leaves nil.
+	// Populating it is a golden-moving change and must be made on purpose,
+	// not slipped in by a future fixture edit that half-adds it: pin the
+	// omission here so that edit fails this test instead of quietly shipping
+	// a stale golden.
+	if in.Report.Certificates != nil {
+		t.Fatal("goldenInput must leave Certificates nil -- populating it moves golden-report.html, which is a decision to make on purpose, not here")
 	}
 }
 

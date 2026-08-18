@@ -113,7 +113,7 @@ var features = []Feature{
 	{
 		Name:          "diskusage",
 		Flag:          "--disk-usage",
-		Summary:       "node filesystem and inode pressure, read from the kubelet summary API",
+		Summary:       "node root filesystem and PersistentVolumeClaim usage, read from the kubelet summary API",
 		Manifest:      "rbac-diskusage.yaml",
 		RoleName:      "kubeagent-nodes-proxy",
 		HelmCondition: "if or .Values.diskUsage.enabled .Values.kubeletHealth.enabled",
@@ -245,11 +245,12 @@ into the Helm chart. list only — kubeagent never writes to a CRD.`,
 	// `kubeagent rbac` should answer "what does --capacity cost me?" with
 	// "nothing", not with silence.
 	{Name: "capacity", Flag: "--capacity", Summary: "node headroom and scheduling capacity — no grant beyond core"},
-	{Name: "security", Flag: "--security", Summary: "workload security posture (privileged, hostPath, hostNetwork) — no grant beyond core"},
-	{Name: "pvcreclaim", Flag: "--pvc-reclaim", Summary: "released PersistentVolumes left behind by deleted claims — no grant beyond core"},
+	{Name: "security", Flag: "--security", Summary: "workload and Service security posture (privileged and host access, restricted-profile gaps, externally exposed Services) — no grant beyond core"},
+	{Name: "pvcreclaim", Flag: "--pvc-reclaim", Summary: "PersistentVolumeClaims whose bound volume is destroyed when the claim is deleted — no grant beyond core"},
 	{Name: "credlint", Flag: "--lint-secrets", Summary: "credentials visible in workload env vars — no grant beyond core"},
 	{Name: "cronjobs", Flag: "--include-cron", Summary: "CronJob and Job history in the inventory — no grant beyond core"},
 	{Name: "restarts", Flag: "--include-restarts", Summary: "containers restarting without crash-looping — no grant beyond core"},
+	{Name: "investigate", Flag: "--investigate", Summary: "read-only agentic investigation of findings via a model tool-use loop — no grant beyond core"},
 }
 
 // Features returns the table. The slice and its rules are copies: a caller that

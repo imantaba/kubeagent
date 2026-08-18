@@ -71,6 +71,17 @@ func check(ns, ingName, host, path string, be networkingv1.IngressServiceBackend
 		r.Detail = fmt.Sprintf("backend Service %s not found", be.Name)
 		return r, true
 	}
+	// Mirror svchealth.Assess's two guards: an ExternalName Service has no
+	// endpoints to check, and a selectorless Service (typically manually
+	// managed, e.g. backed by a headless-service-style manual Endpoints
+	// object) is not svchealth's business either. A route to either kind is
+	// silent, exactly as the bare Service finding is silent today.
+	if svc.Spec.Type == corev1.ServiceTypeExternalName {
+		return RouteIssue{}, false
+	}
+	if len(svc.Spec.Selector) == 0 {
+		return RouteIssue{}, false
+	}
 	if svchealth.ReadyEndpoints(svc, slices) == 0 {
 		r.Problem = "NoEndpoints"
 		if reason, ok := svchealth.ExpectedEmpty(svc, backends); ok {
@@ -79,7 +90,7 @@ func check(ns, ingName, host, path string, be networkingv1.IngressServiceBackend
 			return r, true
 		}
 		base := fmt.Sprintf("backend Service %s has no ready endpoints (likely 502/503)", be.Name)
-		if port != "" {
+		if port != "" && portMatches(be.Port, svc) {
 			base = fmt.Sprintf("backend Service %s:%s has no ready endpoints (likely 502/503)", be.Name, port)
 		}
 		if cause := svchealth.EndpointCause(svc, pods, downNodes); cause != "" {

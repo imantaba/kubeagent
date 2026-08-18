@@ -21,12 +21,20 @@ import (
 // before the TUI takes the screen: a line written from inside the refresh
 // closure would land underneath the alternate screen and repeat on every
 // refresh.
-func tuiScanOptions(namespace string, w io.Writer) scan.Options {
+//
+// An error means KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS is unparseable or outside
+// [1, 30] — the API server's own cap — and the caller must refuse to start
+// rather than browse a clean webhook posture that was never checked.
+func tuiScanOptions(namespace string, w io.Writer) (scan.Options, error) {
+	webhookTimeout, err := envIntRange("KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS", 15, 1, 30)
+	if err != nil {
+		return scan.Options{}, err
+	}
 	return scan.Options{
 		Namespace:               namespace,
 		QuotaThreshold:          quotaThresholdFromEnv(w),
-		WebhookTimeoutThreshold: int32(envInt("KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS", 15)),
-	}
+		WebhookTimeoutThreshold: int32(webhookTimeout),
+	}, nil
 }
 
 // tuiOptions is `kubeagent tui`'s parsed command line. One field per flag, in
@@ -80,7 +88,10 @@ func runTUIOpts(o tuiOptions) error {
 	// Resolved once, here, rather than per refresh: the environment does not
 	// change while the TUI runs, and this is the last point at which a warning
 	// line is still visible on the terminal.
-	scanOpts := tuiScanOptions(o.namespace, os.Stderr)
+	scanOpts, err := tuiScanOptions(o.namespace, os.Stderr)
+	if err != nil {
+		return err
+	}
 
 	return tui.Run(context.Background(), tui.Options{
 		Version: version,

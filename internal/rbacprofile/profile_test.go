@@ -51,6 +51,64 @@ func TestEveryFeatureIsWellFormed(t *testing.T) {
 	}
 }
 
+// pvcreclaim's summary once described a released-PV audit that does not
+// exist; diskusage's once claimed to read inode pressure it never decodes.
+// Both summaries must name the check that actually runs.
+func TestPvcReclaimAndDiskUsageSummariesAreAccurate(t *testing.T) {
+	pvcreclaim, ok := Lookup("pvcreclaim")
+	if !ok {
+		t.Fatal("no pvcreclaim feature in the table")
+	}
+	if !strings.Contains(pvcreclaim.Summary, "PersistentVolumeClaim") {
+		t.Errorf("pvcreclaim Summary %q does not name PersistentVolumeClaim", pvcreclaim.Summary)
+	}
+	if strings.Contains(pvcreclaim.Summary, "released") {
+		t.Errorf("pvcreclaim Summary %q still describes the released-PV audit that does not exist", pvcreclaim.Summary)
+	}
+
+	diskusage, ok := Lookup("diskusage")
+	if !ok {
+		t.Fatal("no diskusage feature in the table")
+	}
+	if !strings.Contains(diskusage.Summary, "PersistentVolumeClaim") {
+		t.Errorf("diskusage Summary %q does not name PersistentVolumeClaim", diskusage.Summary)
+	}
+	if strings.Contains(diskusage.Summary, "inode") {
+		t.Errorf("diskusage Summary %q still claims to read inode pressure, which parseNodeSummary never decodes", diskusage.Summary)
+	}
+}
+
+// security's summary once listed individual checks (privileged, hostPath,
+// hostNetwork), so a tenth check made it stale again. It now names
+// categories, which a new check within an existing category does not.
+func TestSecuritySummaryNamesCategories(t *testing.T) {
+	f, ok := Lookup("security")
+	if !ok {
+		t.Fatal("no security feature in the table")
+	}
+	want := "workload and Service security posture (privileged and host access, restricted-profile gaps, externally exposed Services) — no grant beyond core"
+	if f.Summary != want {
+		t.Errorf("security Summary = %q, want %q", f.Summary, want)
+	}
+}
+
+// --investigate makes a model call but reads nothing beyond what core
+// already grants. The row exists so an operator can see that cost is zero
+// before enabling a model path against production, not because the feature
+// needs a grant.
+func TestInvestigateFeatureNeedsNoGrant(t *testing.T) {
+	f, ok := Lookup("investigate")
+	if !ok {
+		t.Fatal("no investigate feature in the table")
+	}
+	if f.Flag != "--investigate" {
+		t.Errorf("investigate Flag = %q, want --investigate", f.Flag)
+	}
+	if len(f.Rules) != 0 {
+		t.Errorf("investigate declares %d rules; it needs no grant beyond core", len(f.Rules))
+	}
+}
+
 // Where a feature's grant lives is not a comment, it is data: either the feature
 // ships its own manifest, or another feature's manifest already covers it.
 func TestEveryGrantHasExactlyOneHome(t *testing.T) {

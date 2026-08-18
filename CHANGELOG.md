@@ -7,6 +7,524 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`scan --investigate` and `scan --explain` now say more about their own
+  output.** A run with `--investigate` set that found nothing to chase — no
+  workload findings, no service findings, and a cluster verdict that is not
+  Degraded — used to print nothing at all; it now prints an
+  `── Investigation ──` section with one line: `Investigation skipped — no
+  workload findings, no service findings, and the cluster verdict is not
+  Degraded.` Every rendered Investigation narrative now also carries a
+  provenance line, `(model-generated; verify commands before running)`,
+  between the `consulted:` trail and the narrative — a reminder that the
+  narrative is model-written even where it references kubeagent's own
+  deterministic commands. The `── Explanation ──` heading gains a matching
+  parenthetical, `(model-written, not pre-reviewed; verify every command
+  before running)`, so both surfaces name their own authorship at the point a
+  reader sees them. None of this changes `--fix`'s allowlist or the
+  read-only invariant, and no `schemaVersion` moves — this is text-report
+  rendering only.
+
+- **`scan` now discloses two things it used to skip silently, both under
+  admission-webhook health.** A `clientConfig.url` backend on a `Fail`-policy
+  webhook is not a `Service` kubeagent can check the endpoints of; `scan` now
+  counts these and, when the count is non-zero, prints one NOTES line —
+  `"N Fail-policy admission webhook(s) not checked: clientConfig.url
+  backend"` — naming that they exist without guessing at their health. No
+  `Issue` is added and no gauge moves; the count is carried on `scan.Result`
+  and `report.Input` as untagged fields, so nothing about the published JSON
+  changes and no `schemaVersion` moves. Separately, `-n <namespace>` already
+  skipped the admission-webhook check entirely (for every namespace,
+  including `kube-system`) without saying so; the `-n` header note now
+  carries a second sentence — "cluster-wide checks skipped under -n:
+  admission webhooks" — alongside the existing system-rollup caveat, joined
+  by `\n` and rendered as its own line.
+
+- **`kubeagent mcp`'s tool results now carry the classified log cause of a
+  crashed container.** A finding that `scan --logs` enriched already carried
+  its plain-language cause into the text and JSON reports, but the MCP view
+  dropped it, so a client that flagged a `CrashLoopBackOff` could not see what
+  the previous container's own output said about the exit. `logCause` is now a
+  field on the finding the MCP server returns, `omitempty`, carrying the same
+  derived one-line label — never the raw log text, which stays out of the tool
+  result entirely. An MCP tool result is not one of kubeagent's versioned JSON
+  documents, so no `schemaVersion` moves.
+
+### Fixed
+
+- **The admission-webhook health docs named category labels kubeagent no
+  longer prints.** `website/docs/features/diagnostics.md`, `README.md` and
+  `website/docs/roadmap.md` described the webhook-failure and
+  webhook-latency findings as rendering `missing-service`, `no-endpoints`,
+  `WebhookDown` or `WebhookSlow`; the renderer has printed `MissingService`,
+  `NoEndpoints` and `HighTimeout` since the underlying category values were
+  CamelCased, so every quoted example was stale. All three files now quote
+  the labels kubeagent actually prints.
+
+- **Root-cause registry grouping could key on the wrong container's image.**
+  A workload's image-pull failure is attributed to a shared registry outage
+  by grouping workloads whose failing pull shares a host, but the grouping
+  read the workload's own summary image field rather than the image the
+  failing container actually reported — so on a multi-container workload
+  where the pull failure wasn't on the first or display container, the
+  wrong reference was hashed into the group, silently mis-grouping or
+  dropping that workload's contribution. Grouping now reads the image
+  straight off the finding that recorded the pull failure. A workload whose
+  pull finding carries no determinable image is excluded from grouping
+  entirely, rather than grouped under a guessed host. The image kubeagent
+  now matches on is carried internally only and is never written to any
+  published document, so no report schema gains a field.
+
+- **A rollout's reported image change could name the wrong container on a
+  multi-container workload.** The "changed: rollout to revision N" line
+  always described the pod template's first container's image delta, even
+  when the container that actually failed was a different one — so the
+  line could read as unrelated to the failure it sat next to. The delta is
+  now reported for whichever container the workload's active finding
+  names, falling back to the previous first-container behavior whenever
+  kubeagent cannot read a changed image for that container out of both
+  revisions. The line now also names that container whenever it isn't the
+  template's first, so a single-container workload's line is unchanged. The
+  container name is carried internally and rendered into text only; it is
+  not added to any published document, so no report schema gains a field.
+
+- **`scan --investigate`'s text report silently omitted the `consulted:` line
+  when the model made no reads.** A narrative with an empty read trail printed
+  no `consulted:` line at all, which reads as "the model read something and
+  isn't saying what" rather than "the model read nothing" — the case where the
+  omission is most misleading, since the whole argument for `--investigate`
+  over `--explain` is that the narrative is grounded in reads that actually
+  happened. The text report now always prints the line, with an explicit
+  empty state — `consulted: (no reads — the model answered from the scan
+  alone)` — when the trail is empty. This is text-report rendering only: the
+  JSON document's `consulted` field is unchanged, so nothing is added to or
+  removed from any published schema.
+
+- **A webhook backed by an `ExternalName` Service was reported as having no
+  ready endpoints.** `ExternalName` is a DNS CNAME and never carries an
+  `EndpointSlice`, the same reasoning `internal/svchealth` already applies to
+  its own check; `internal/webhookhealth.Assess` now mirrors that guard, so a
+  found `ExternalName` backend produces no issue and does not suppress a
+  co-occurring high-timeout finding. A backend that is missing outright is
+  still reported, whatever its intended type.
+
+- **A webhook with an empty `rules` list was flagged as if it intercepted
+  requests.** A `Validating`/`MutatingWebhook` with no rules intercepts
+  nothing, so a down or slow backend behind it can never have rejected or
+  delayed a real request; `Assess` now skips it before either check. The
+  package doc's "cluster-wide" claim is also narrowed: blast radius depends
+  on rules and selectors this package does not read, so a flagged webhook's
+  effect may be the whole cluster or a single namespace.
+
+- **A webhook with both a down backend and a high `timeoutSeconds` reported
+  only the backend problem, with the timeout silently dropped.** The
+  precedence itself was correct — a dead backend dominates a report about
+  latency — but the co-occurring timeout was invisible until the backend came
+  back up. The backend issue's reason string now gains a suffix, `" (and
+  timeoutSeconds %d ≥ %ds)"`, when the same webhook also clears the latency
+  threshold. No `Issue` is added or removed; row count and both gauges are
+  unchanged.
+
+- **A pod sharing all three host namespaces was reported as sharing "the host
+  network/PID/IPC namespace" — singular.** `internal/secscan`'s
+  `HostNamespaces` finding now pluralizes the trailing noun on the count of
+  shared namespaces: `"pod shares the host PID namespace"` for one,
+  `"pod shares the host network/PID/IPC namespaces"` for more than one. The
+  join order, the one-finding-per-pod shape, and the `HostNamespaces` check
+  name are unchanged; `detail` carries no `enum` in the published scan
+  schema, so this is a content change, not a shape change.
+
+- **A `hostPath` volume mounted read-only everywhere was still reported as
+  "writable host filesystem".** `internal/secscan`'s `HostPath` finding now
+  walks the mounting containers' `VolumeMounts` for that volume name: when
+  every mount sets `readOnly: true` the detail reads "(read-only host
+  filesystem)"; a volume mounted read-only by one container and writable by
+  another is writable — the union is the answer — and a `hostPath` volume no
+  container mounts also renders "writable", the safe default when nothing
+  constrains it. The finding still fires for every `hostPath` volume
+  regardless of `readOnly` — PSS `baseline` forbids the volume, not the
+  write — so this only changes the parenthetical, never whether the finding
+  fires. No `schemaVersion` moves: `detail` is a free-form string.
+
+- **`externalIPs` on an `ExternalName` Service was reported as an exposure it
+  cannot cause.** `ExternalName` is a DNS CNAME, not a proxied Service — it
+  carries no NodePort or LoadBalancer ingress, and the API server itself
+  warns `spec.externalIPs is ignored when spec.type is "ExternalName"` on
+  admission. `exposedService` now returns early for
+  `ServiceTypeExternalName`, before the `LoadBalancer`/`NodePort` switch and
+  before the `externalIPs` arm. `LoadBalancer`, `NodePort` and
+  `externalIPs`-on-a-`ClusterIP` keep firing exactly as before; the tier
+  summary's workload and finding counts drop by one only on a fixture that
+  had an `ExternalName` false positive. No `schemaVersion` moves: `detail` is a
+  free-form string and no `Finding` field changes shape.
+
+- **A comment claimed `servicePorts`' empty-ports branch was unreachable
+  against an API-server-validated cluster.** It is reachable: a headless
+  Service (`clusterIP: None`) is exempt from the API server's ports-required
+  rule, so a portless headless `ClusterIP` with `externalIPs` set is a valid
+  object, and `exposedService`'s `externalIPs` arm brings it to
+  `servicePorts`. The comment now says which shape reaches the branch and
+  which shapes the API server refuses; `"no ports"` was always the honest
+  answer for that Service and its behaviour is unchanged. A new test pins the
+  case. No `schemaVersion` moves: no field changes shape and `detail` is a
+  free-form string.
+
+- **The four control-plane static pods in `kube-system` merged into one
+  anonymous `Node` block in the SECURITY section.** A static (mirror) pod's
+  controller owner is its `Node`, and `resolveWorkload` fell through to that
+  owner's `Kind`/`Name` — so `etcd`, `kube-apiserver`, `kube-scheduler` and
+  `kube-controller-manager` all attributed to the same node-named row.
+  `resolveWorkload` now treats a `Node` controller owner the same as no
+  owner at all: the pod attributes to itself. Static pod names are already
+  qualified per component and per node by Kubernetes (`etcd-<node>`,
+  `kube-apiserver-<node>`, ...), so the four components now separate into
+  four attributable rows instead of one. No finding is added, removed or
+  reworded — only the `kind` and `workload` fields on mirror-pod findings,
+  and therefore the grouping. Every other owner kind is unaffected, and this
+  is visible only under `-n kube-system`: a cluster-wide scan already drops
+  system pods before `Assess` sees them. The workload column already named
+  the node — a static pod's own name usually ends in it — so this changes
+  which node-derived string is printed, not whether one is. No
+  `schemaVersion` moves: `kind` carries no `enum` in the published scan
+  schema.
+
+- **A CronJob's pods churned through the SECURITY section as a new,
+  unattributed `Job` row every tick.** A CronJob's Job children carry a
+  ticked name (`report-29780988`, then `report-29780989`, ...), and
+  `resolveWorkload` used to leave a Job-owned pod attributed to that Job
+  directly, so each tick's findings looked like a new, unrelated workload.
+  `secscan.Assess` now takes a fourth argument, `jobs []batchv1.Job`, and
+  `resolveWorkload` folds a pod whose controller owner is a Job present in
+  that slice, and whose Job's own controller owner is a CronJob, up to
+  `CronJob/<name>` — mirroring the existing ReplicaSet-to-Deployment fold. A
+  bare Job (or one absent from the slice) still resolves to `Job/<name>`:
+  its name is stable and is the object the operator created, so there is
+  nothing above it to fold to. No new cluster read and no RBAC change —
+  Jobs are already collected unconditionally and carried on `scan`'s
+  inventory inputs regardless of `--security`; the sole production call
+  site now passes `inputs.Jobs` alongside the already-unfiltered
+  `inputs.ReplicaSets`. No `schemaVersion` moves: `kind` and `workload` are
+  free-form strings.
+
+- **The `connection refused` log cause no longer repeats the address the
+  container dialed.** The cause is now a fixed sentence with no submatch
+  interpolated into it. A container that logged a failure to reach a URL
+  carrying an embedded credential had that credential copied verbatim into
+  `logCause`, a field every rendering of a finding carries — the text report,
+  the JSON document, and now an MCP tool result. The raw line still reaches the
+  log excerpt, sanitized and truncated, which is where an operator reads it. `logCause` is a free-form string in every published
+  schema, so no `schemaVersion` moves.
+
+- **A log body whose only content is the kubelet's own log-unavailable
+  placeholder is now refused instead of classified.** `unable to retrieve
+  container logs for <runtime>://<id>: …` is text the container runtime wrote,
+  never the crashed container's own output, so classifying it reported the
+  control plane's message as if it were the workload's behaviour — and a
+  placeholder whose tail reads `permission denied` matched the `perm-denied`
+  signature outright. Such a body now yields no cause and no excerpt at all. A
+  body that mixes the placeholder with genuine output still classifies
+  normally, on the genuine line, and an unanchored mid-line mention is left
+  alone.
+
+- **The fallback log cause now names the window it searched instead of claiming
+  no signature exists.** It reads `last output before exit (no signature in the
+  last 25 lines)`. kubeagent asks the API server for only the last 25 lines of
+  the previous container, so a signature earlier in that container's output is
+  invisible to the classifier rather than absent from the log — the old wording
+  asserted the stronger claim. The 25 is now named by a comment at each of the
+  two sites that depend on it, each pointing at the other, so the tail length
+  and the sentence describing it cannot drift apart silently. `logCause` is a
+  free-form string in every published schema, so no `schemaVersion` moves.
+
+- **`scan --logs` no longer issues a previous-container log read that cannot
+  succeed.** It probed any finding that named a container, including one still
+  on its first attempt, which has no previous instance — a guaranteed `400`
+  from the API server on every scan of a pod that had not yet restarted. The
+  probe is now gated on the container having exited at least once (a restart,
+  or a still-visible last termination), read from the pod objects the scan had
+  already collected, so the gate costs a map build rather than a new cluster
+  read. Both `ContainerStatuses` and `InitContainerStatuses` are searched,
+  because an init-container finding names its container from the init slice
+  that no other detector reads.
+
+- **When two findings name the same container, the log block now goes to the
+  finding that explains the exit.** A container that trips both
+  `CrashLoopBackOff` and `OOMKilled` produced two findings and one log fetch,
+  and the block landed on whichever finding reached the enrichment loop first.
+  If a later finding's issue matches the container's own last termination
+  reason, the block now moves to it. The fetch count is unchanged — still one
+  per container — and the reason is read from the same two status slices the
+  probe gate searches, for the same reason.
+
+- **A `RolloutStuck` finding no longer carries one confidence level for two
+  different kinds of evidence.** A Deployment's stuck rollout is read from a
+  controller-set condition — Kubernetes itself asserting the state — while a
+  StatefulSet's or DaemonSet's is inferred from comparing revision and ready
+  counters across a grace period. `internal/rollouthealth` now sets
+  `Confidence` on its own findings — `"high"` for the Deployment arm,
+  `"medium"` for the StatefulSet and DaemonSet arms — and
+  `confidence.Annotate` no longer stamps every finding unconditionally; it now
+  fills `Confidence` only where a producer left it empty, so a producer that
+  knows better than the issue string wins. A StatefulSet's or DaemonSet's
+  stuck-rollout line in the text report now carries a trailing `[medium]` tag;
+  the long-standing Deployment case is unchanged. A new `internal/diagnose`
+  table test has a row for every issue kind `internal/knownissues` knows —
+  the sixteen pod-detector kinds it documents plus the three workload-level
+  kinds it names — and asserts the level of every kind whose level comes
+  from `confidence.ForIssue`. `RolloutStuck`'s row instead records only that
+  a producer supplies its level; the per-arm values — `"high"` for the
+  Deployment arm, `"medium"` for the StatefulSet and DaemonSet arms — are
+  pinned in `internal/rollouthealth`'s own `TestAnnotate_ConfidenceByArm`. A
+  future kind cannot arrive without someone writing down which level it is
+  and why. `confidence` carries no `enum` in any published schema, so a
+  producer setting its own value moves no
+  `schemaVersion`.
+
+- **A failed `--explain` or `--investigate` call used to discard an entire
+  scan.** The model-path error aborted the run before the deterministic report
+  ever rendered, so a working scan produced zero bytes on stdout and a
+  non-zero exit — the empty-narrative case (an investigation that concluded
+  with no text) hit the same fate. A failure on either path is now reduced to
+  one stderr notice naming the flag and the reason, and the report renders on
+  stdout at exit 0, the same as an unflagged run. The URL an API error
+  carries, and the URL a failed request carries, are both reduced to
+  `scheme://host`. This does not close every gap: the notice can still carry
+  the resolved dial target inside a transport failure's wrapped cause, and,
+  when `--explain` targets a local endpoint that answers with a non-2xx
+  status, it quotes the start of that endpoint's own response body verbatim,
+  up to a truncation bound — text the endpoint chose, not kubeagent's, that
+  can carry a URL with its path intact — a known residual no decision in this
+  change covers. Nothing is added to or removed from any published schema: a
+  run with no successful enrichment simply omits that key, exactly as an
+  unflagged run already does.
+
+- **An investigation landing on its tool-call budget could send the model a
+  malformed request.** When `--investigate`'s bounded tool-use loop reached
+  its call limit mid-turn, it dropped the model's remaining requested tool
+  calls instead of answering them, so the next request carried fewer
+  results than the prior message's tool-use count — a shape the API
+  rejects. Every tool call is now answered: a call past the budget receives
+  a fixed refusal message instead of a read, so the budget is enforced
+  exactly as before but the request stays well-formed.
+
+- **Free-text fields reaching a tool result during `--investigate` were
+  not sanitized or redacted.** A condition, container waiting/terminated,
+  or event Reason and Message is text the kubelet or a controller wrote,
+  not validated by the API server. It now passes through the same ingress
+  sanitizer used elsewhere before reaching a tool result, and a network
+  address embedded in that text is now redacted. This does not close every
+  gap: an arbitrary URL the cluster's own text carries — a registry address
+  quoted inside an image-pull failure, for example — still reaches the
+  model with its path intact, a known residual no decision in this change
+  covers.
+
+- **`--explain`'s own requirement checks could refuse a run that had
+  already satisfied `--investigate`'s.** With both flags set, `--explain`'s
+  checks for an API key or a local model name fired on the flag alone, so
+  `--investigate --explain` together could be rejected by an error naming
+  `--explain`'s requirements even though `--investigate` supersedes
+  `--explain` and its own, separate check is the one that should run. Both
+  checks are now `--explain`'s alone; `--investigate` is unaffected. The
+  `--model` flag's help text now says what `--investigate` does with the
+  value it is given: it always sends `--model`'s value to the Anthropic
+  API, never a configured local endpoint. That is a separate fact from
+  `--investigate`'s own read-only-toward-the-cluster promise — the help
+  text does not say that part, but the promise still holds, and the two
+  are worth keeping apart rather than blurring one into the other. The
+  tool-use loop's `describe` tool now requires a namespace
+  argument: its executor already dereferenced that field whether or not
+  the model supplied it, so an omitted value used to reach client-go as an
+  empty string instead of being refused up front.
+
+- **Both model-path system prompts modeled the markdown they told the model
+  not to use.** `explain.SystemPrompt` demonstrated a bold `**<namespace/name>
+  — <the issue>**` header and bulleted lines while asking the model to
+  explain a plain-text report, and `--investigate` builds its own system
+  prompt by appending onto that same constant, so the markdown reached both
+  `--explain` and `--investigate`. The prompt now states the constraint once
+  — no markdown emphasis, no headings, no horizontal rules, no fenced code
+  blocks — and its own template follows it: a bare header line, then
+  two-space indented lines beneath it. This is a prompt-only change; a model
+  can still choose to disobey it.
+
+- **A `--investigate` narrative cut off at the model's own output limit said
+  nothing about it.** The stop reason was already read, but only to decide
+  whether the tool-use loop had finished — never to notice it had hit the
+  output limit, so no truncation signal reached the report. A narrative
+  that stopped mid-sentence — in the worst observed case, five of sixteen
+  issues covered and no `Fix first:` list at all — rendered as if it were
+  complete. The report now appends one line under the investigation section,
+  `(narrative truncated at the model's output limit)`, whenever the model's
+  final reply stopped there. The output ceiling on that call is also raised,
+  and the prompt now tells the model to rank findings by severity, cover the
+  most severe ones, and say how many it left unexamined when there are more
+  — narratives are truncated less often now, not never, and the notice
+  appears under the investigation section only; `--explain`'s own narrative
+  has no equivalent check and gained none here. Nothing is added to or
+  removed from any published schema: the flag lives on the report input the
+  text renderer reads, not on the exported JSON view.
+
+- **The `--explain`/`--investigate` prompt could repeat the same finding once
+  per pod and grow without bound.** A workload with many crashing replicas
+  sent one full block per pod even when every field but the pod name was
+  identical, and a workload with many distinct findings sent all of them
+  regardless of count. Consecutive finding blocks that are byte-identical
+  after redaction now collapse into one, with a `(×N)` count appended to its
+  `issue:` line, and each workload's prompt now stops after three blocks with
+  one line naming how many more were left out. This narrows the request the
+  same way the raised output ceiling above widens the response — the two act
+  on opposite sides of the same model call. It converges with, without
+  duplicating, the equivalent collapse `internal/report`'s text renderer
+  already does on its own, narrower key. No `schemaVersion` moves and no
+  golden file changes: this reshapes the prompt, not the report.
+
+- **A pod both `Failed` and stuck-terminating rendered twice.** `scan`'s
+  NEEDS ATTENTION block printed the workload's own `Failed` row and a
+  separate `StuckTerminating` row for the same pod, saying the same thing
+  twice under two headings — the terminating row already names *why* the
+  pod is `Failed` (a finalizer, a grace period, or a `pvc-protection`
+  block). The workload row is now suppressed when a `StuckTerminating`
+  issue names the same kind (`Pod`), namespace and name, and the workload's
+  own status is `Failed`; the terminating row survives, since it carries
+  the reason the workload row would not. This is the same zero-redundancy
+  pattern `RolloutStuck` already follows when a pod-level finding names the
+  cause, applied to a new overlap rather than a new rule. The
+  failing-workload count in the summary line drops by one per suppression
+  without a separate patch — `Status == "Failed"` is one of the conditions
+  that count was already keying on — and the stuck-terminating count is
+  untouched. A third quantity in that same line can move too: a suppressed
+  workload that already carried a root-cause node attribution is no longer
+  counted toward the summary's `(N ⇐ ...)` parenthetical either, since that
+  count is folded from the same filtered list — shrinking a multi-cause
+  count, collapsing it to the single-node form, or dropping the
+  parenthetical outright. That is the consistent choice: counting a
+  workload toward an attribution whose row the reader can no longer see
+  would be worse. No detector runs differently, and `gate`'s verdict is
+  unaffected — not because the two rows share a severity, but because
+  `internal/findings` builds its finding set from `scan.Result` directly
+  and never calls into `internal/report`, so `gate` cannot observe this
+  suppression at all, regardless of severity. JSON output only loses an
+  array element, so no `schemaVersion` moves.
+
+### Changed
+
+- **`KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS` is now validated instead of silently
+  clamped.** An unparseable or out-of-range value used to fall back to the
+  default of 15 without warning; kubeagent now refuses to run, naming the
+  variable, the offending value and the valid range. Valid values are 1–30,
+  matching the API server's own cap on a webhook's `timeoutSeconds`.
+
+- **Four finding-vocabulary groups are now CamelCase**, matching every other
+  issue kind in the tree: `stuck terminating` → `StuckTerminating`; the PDB
+  categories `unsatisfiable` → `PDBUnsatisfiable`, `stale` → `PDBStale`,
+  `blocking` → `PDBBlocked`, `singleton` → `PDBSingleton`; the HPA categories
+  `unable` → `HPAUnableToScale`, `metrics` → `HPAMetricsFailed`, `capped` →
+  `HPACapped`; and the admission-webhook problems `missing-service` →
+  `MissingService`, `no-endpoints` → `NoEndpoints`, `high-timeout` →
+  `HighTimeout`. This changes the string content of `gate`'s JSON `issue`
+  field, the watch daemon's `/issues` endpoint, and the MCP tool result's
+  `reason` field — a consumer matching any of the old lowercase or hyphenated
+  literals in those three surfaces breaks. No `schemaVersion` moves: none of
+  the affected fields carry an `enum` in the published schemas, so this is a
+  content change, not a shape change. A `pdbhealth.Issue`/`hpahealth.Issue`'s own
+  `category` field, and therefore `scan --output json`'s `pdbIssues[].category`
+  and `hpaIssues[].category`, stay lowercase — that field belongs to a typed
+  document, not the finding vocabulary. The text renderer's `NoEndpoints:` and
+  `HighTimeout:` lines replace the old `WebhookDown:`/`WebhookSlow:` labels it
+  used to synthesize; its `PDBBlocked:` and `HPAStuck:` lines were already the
+  target spelling and are unchanged.
+
+- **`pdbhealth.Assess` now flags two PDB shapes that used to pass silently, and
+  reworks three reason strings.** A PDB with neither `minAvailable` nor
+  `maxUnavailable` set used to be skipped by the loop entirely; it is the
+  strictest rule a PDB can express — the API server allows no voluntary
+  eviction at all — and is now classified `unsatisfiable`. A PDB guarding a
+  single-replica workload with no disruption headroom used to be treated as
+  benign by falling outside every guard; it is now its own category,
+  `singleton`, with a reason that names the trade-off ("often deliberate, but
+  no voluntary eviction is possible"). This is separate from the CamelCase
+  rename above: that entry covers the finding-vocabulary string `singleton` →
+  `PDBSingleton` that the map already carried; this is `Assess` emitting the
+  `singleton` category at all, for an input it used to pass over without
+  flagging. Three existing reasons are reworded to say only what was measured:
+  the `unsatisfiable` reason now names the over-ask count separately from the
+  exact-cover count instead of using one string for both; the `blocking`
+  reason now quotes the PDB's own status counters ("PDB status reports N/M
+  guarded pods healthy") instead of asserting a fact about pod readiness
+  kubeagent never measured; the `stale` reason drops its hedged "(stale?)" for
+  "selector currently matches no pods", which is what the status actually
+  shows. Separately, `scan`'s text-format summary line for these PDBs now
+  reads "N PodDisruptionBudget issue(s)" instead of "N PodDisruptionBudget(s)
+  blocking drains" — "blocking" was never a property every category had, and
+  is less true now that there are two more categories that do not block
+  anything until their shape changes. A consumer parsing that summary line for
+  "blocking drains" breaks; the JSON `pdbIssues` array, its `category` values,
+  and the text report's `PDBBlocked:` row label are unaffected. No
+  `schemaVersion` moves: `pdbhealth.Issue`'s `category` and `reason` fields
+  carry no `enum` in the published scan schema, so a new category value and
+  reworded reason text are content changes, not shape changes.
+
+- **`hpahealth.Assess` now distinguishes a disabled or ambiguous HPA from an
+  ordinary metrics failure, and names the observed replica count when one is
+  capped.** The `ScalingActive` arm used to collapse every `False` reason into
+  category `metrics` with the prefix "can't fetch metrics"; an HPA whose
+  scaling the upstream HPA controller reports disabled under `ScalingDisabled`,
+  and one whose selector it reports overlapping another HPA's under
+  `AmbiguousSelector`, were reported identically to one that simply could not
+  read a metric. Those two reasons now classify as `disabled` ("scaling is
+  disabled") and `ambiguous` ("two HPAs target the same pods"); every other
+  `ScalingActive` reason keeps falling through to `metrics`, unchanged.
+  Separately, the `ScalingLimited`/`capped` arm used to always render "pinned
+  at maxReplicas N — desired exceeds the cap", even once the HPA's current
+  replica count had already fallen back below the cap; it now reads
+  `status.currentReplicas` and renders "at N of maxReplicas M — desired
+  exceeds the cap" when current is below max, keeping the pinned-at-cap
+  sentence when it is not. No new cluster read and no RBAC change:
+  `status.currentReplicas` is already on the object `Assess` receives. The
+  finding vocabulary grows from three HPA categories to five; `disabled` →
+  `HPAScalingDisabled` and `ambiguous` → `HPAAmbiguousSelector` join the three
+  duplicated `hpaCategoryToIssue` maps (`internal/findings`, `internal/mcp`,
+  the watch daemon's `/issues`), so gate JSON, the MCP tool result and
+  `/issues` all render the CamelCase spelling instead of falling back to the
+  raw category. No `schemaVersion` moves: `hpahealth.Issue`'s `category` and
+  `reason` fields carry no `enum` in the published scan schema, so a new
+  category value and a reworded capped-arm reason are content changes, not
+  shape changes. Both comparisons that decide the new behavior — the
+  `ScalingActive` reason switch and the existing `TooManyReplicas` match — run
+  on the raw condition `Reason`, unchanged from before.
+
+- **`gate`'s text output for a cluster-scoped finding no longer carries a
+  leading slash before the name.** The identity column built `"Kind
+  %s/%s"` unconditionally from `Namespace` and `Name`; a finding with no
+  namespace — a `ValidatingWebhookConfiguration`, for example — rendered as
+  `"ValidatingWebhookConfiguration /vwc-missing"` instead of
+  `"ValidatingWebhookConfiguration vwc-missing"`. `gate --output json` is
+  unaffected (`namespace` still encodes as `""`), so no `schemaVersion`
+  moves.
+
+- **A webhook finding's name now carries the webhook alongside the
+  configuration.** `gate`'s JSON `name`, SARIF's
+  `artifactLocation.uri`, and the MCP tool result's `name` used to read the
+  configuration name alone, so two Fail-policy webhooks at or above the
+  timeout threshold in the same `ValidatingWebhookConfiguration` produced two
+  findings indistinguishable from each other — same `kind`, same empty
+  `namespace`, same `name`. All three now read `"config/webhook"`, matching
+  the watch daemon's `/issues`, which already did. `gate`'s text output
+  changes the same way. No `schemaVersion` moves: `name` is a free-form
+  string with no `enum` and no pattern in the published schemas.
+
+- **The SECURITY section's restricted aggregate read as if hardening
+  coverage were total.** `"restricted (hardening gaps, near-universal): N
+  across M workloads"` counted only the restricted-profile workloads in both
+  the numerator and the denominator, so a section that also carried clean
+  baseline/exposed workloads understated the population the aggregate speaks
+  for. The line now reads `"N across M of T workloads"`, where `T` is every
+  workload in the SECURITY section; the verbose view, which omits the
+  aggregate entirely, is unchanged. No `schemaVersion` moves: this is
+  `scan`'s text renderer only, and the aggregate line was never part of the
+  JSON output.
+
 ## [1.16.1] - 2026-08-13
 
 ### Changed

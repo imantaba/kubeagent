@@ -211,6 +211,25 @@ func runWatchOpts(o watchOptions) error {
 		sloRatio = exact
 	}
 
+	// Every declared expected-node name must be a real node-name shape: a
+	// name that could never match a Node object describes nothing real, and
+	// a daemon should not start having silently narrowed the check it was
+	// configured to perform. cleanExpected's trim/dedup/sort runs after
+	// this, not instead of it.
+	expectedNodes := splitCSV(envOr("KUBEAGENT_EXPECTED_NODES", ""))
+	if err := validateExpectedNodes(expectedNodes, "KUBEAGENT_EXPECTED_NODES"); err != nil {
+		return err
+	}
+
+	// The API server itself refuses a webhook timeoutSeconds above 30, so a
+	// threshold above 30 could only ever match nothing; refuse it here
+	// rather than start a daemon reporting a clean posture that was never
+	// actually checked.
+	webhookTimeout, err := envIntRange("KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS", 15, 1, 30)
+	if err != nil {
+		return err
+	}
+
 	targets, err := buildTargets(o.kubeconfig, o.clusterName, o.contexts, o.includeLocal)
 	if err != nil {
 		return err
@@ -229,14 +248,14 @@ func runWatchOpts(o watchOptions) error {
 		DiskThreshold:           envFloat("KUBEAGENT_DISK_THRESHOLD", 0.80),
 		QuotaThreshold:          quotaThresholdFromEnv(os.Stderr),
 		NodeHeartbeatThreshold:  envDur("KUBEAGENT_NODE_HEARTBEAT_THRESHOLD", 40*time.Second),
-		ExpectedNodes:           splitCSV(envOr("KUBEAGENT_EXPECTED_NODES", "")),
+		ExpectedNodes:           expectedNodes,
 		KubeletHealth:           envBool("KUBEAGENT_KUBELET_HEALTH", false),
 		ControlPlaneHealth:      envBool("KUBEAGENT_CONTROL_PLANE_HEALTH", false),
 		DNSHealth:               envBool("KUBEAGENT_DNS_HEALTH", false),
-		DNSServfailRatio:        envFloat("KUBEAGENT_DNS_SERVFAIL_RATIO", 0.05),
+		DNSServfailRatio:        dnsRatioFromEnv(os.Stderr),
 		Certs:                   envBool("KUBEAGENT_CERTS", false),
 		CertWarnDays:            envInt("KUBEAGENT_CERT_WARN_DAYS", 30),
-		WebhookTimeoutThreshold: int32(envInt("KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS", 15)),
+		WebhookTimeoutThreshold: int32(webhookTimeout),
 		AlertURL:                alertURL,
 		AlertFormat:             o.alertFormat,
 		AlertRoutingKey:         routingKey,

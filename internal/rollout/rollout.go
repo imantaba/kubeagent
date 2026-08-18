@@ -62,8 +62,16 @@ func Annotate(workloads []inventory.Workload, replicaSets []appsv1.ReplicaSet, n
 			Since:    inventory.HumanSince(cur.CreationTimestamp.Time.UTC().Format(time.RFC3339), now),
 		}
 		if prev != nil {
-			if o, n := firstImage(*prev), firstImage(*cur); o != n && o != "" && n != "" {
+			o, n := firstImage(*prev), firstImage(*cur)
+			container := ""
+			if oi, ni, name, matched := changedContainer(w, *prev, *cur); matched {
+				o, n, container = oi, ni, name
+			}
+			if o != n && o != "" && n != "" {
 				rc.OldImage, rc.NewImage = o, n
+				if container != "" && container != firstContainerName(*cur) {
+					rc.Container = container
+				}
 			}
 		}
 		workloads[i].Rollout = rc
@@ -114,4 +122,75 @@ func firstImage(rs appsv1.ReplicaSet) string {
 		return ""
 	}
 	return cs[0].Image
+}
+
+// firstContainerName is firstImage's sibling for the container's name rather
+// than its image — used to decide whether a matched container is the one the
+// unqualified delta already names.
+func firstContainerName(rs appsv1.ReplicaSet) string {
+	cs := rs.Spec.Template.Spec.Containers
+	if len(cs) == 0 {
+		return ""
+	}
+	return cs[0].Name
+}
+
+// findingImage returns the first non-empty Image among the workload's
+// findings (diagnose.Finding.Image, R228's carrier), and whether one was
+// found — the failing container's image, in finding order.
+func findingImage(w inventory.Workload) (string, bool) {
+	for _, f := range w.Findings {
+		if f.Image != "" {
+			return f.Image, true
+		}
+	}
+	return "", false
+}
+
+// containerByImage returns the name of the ReplicaSet's container whose
+// image matches, and whether one was found.
+func containerByImage(rs appsv1.ReplicaSet, image string) (string, bool) {
+	for _, c := range rs.Spec.Template.Spec.Containers {
+		if c.Image == image {
+			return c.Name, true
+		}
+	}
+	return "", false
+}
+
+// imageByName returns the named container's image in the ReplicaSet, and
+// whether it was found.
+func imageByName(rs appsv1.ReplicaSet, name string) (string, bool) {
+	for _, c := range rs.Spec.Template.Spec.Containers {
+		if c.Name == name {
+			return c.Image, true
+		}
+	}
+	return "", false
+}
+
+// changedContainer locates the container the workload's failing finding
+// names and returns that container's own image change: it looks up the
+// finding's image in cur's template to get a container name, then reads
+// that same name's image out of prev. matched is true — and the other three
+// returns meaningful — only when every step of that succeeds and prev
+// records a different, non-empty image for that container, i.e. only when
+// there is a real delta to describe for the finding's own container.
+// Whenever there is not, the other three returns are zero and the caller
+// falls back to firstImage's unqualified delta exactly as before this
+// helper existed.
+func changedContainer(w inventory.Workload, prev, cur appsv1.ReplicaSet) (oldImage, newImage, container string, matched bool) {
+	img, ok := findingImage(w)
+	if !ok {
+		return "", "", "", false
+	}
+	name, ok := containerByImage(cur, img)
+	if !ok {
+		return "", "", "", false
+	}
+	old, ok := imageByName(prev, name)
+	if !ok || old == "" || old == img {
+		return "", "", "", false
+	}
+	return old, img, name, true
 }

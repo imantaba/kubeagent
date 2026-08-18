@@ -26,6 +26,46 @@ func TestRunKnownIssuesListsEveryKind(t *testing.T) {
 	if !strings.Contains(out, "known-issues <kind>") {
 		t.Error("list output does not tell the reader how to print one")
 	}
+	// The watch daemon reports issue kinds of its own — cluster-level and
+	// certificate — that this reference does not document at all. The
+	// footer discloses that gap in general terms rather than naming a
+	// single kind, since the daemon's out-of-closure kinds span more than
+	// one feature.
+	for _, want := range []string{"watch", "cluster-level", "certificate", "does not document"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("list output does not disclose the watch daemon's out-of-closure kinds: missing %q", want)
+		}
+	}
+	if strings.Contains(out, "DNSDegraded") {
+		t.Error("footer names a single kind rather than describing the daemon's kinds generally")
+	}
+	if strings.Contains(out, "--explain") {
+		t.Error("footer must not suggest a relationship to --explain")
+	}
+}
+
+// The list names what it covers before listing it, so a reader learns the
+// reference's scope is pod and workload detectors, not every check kubeagent
+// runs, before reading the rows.
+func TestRunKnownIssuesListingNamesItsScope(t *testing.T) {
+	var buf bytes.Buffer
+	if err := runKnownIssues(nil, &buf); err != nil {
+		t.Fatalf("runKnownIssues() error = %v", err)
+	}
+	out := buf.String()
+	const header = "pod and workload detectors"
+	headerIdx := strings.Index(out, header)
+	if headerIdx == -1 {
+		t.Fatalf("list output does not name its scope: %q", out)
+	}
+	first := knownissues.All()[0]
+	firstRowIdx := strings.Index(out, first.Kind)
+	if firstRowIdx == -1 {
+		t.Fatalf("list output is missing the first kind %q", first.Kind)
+	}
+	if headerIdx > firstRowIdx {
+		t.Errorf("scope header (at byte %d) comes after the first kind row (at byte %d)", headerIdx, firstRowIdx)
+	}
 }
 
 // The list is sorted, so a reader can find a kind by scanning.

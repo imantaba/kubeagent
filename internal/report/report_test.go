@@ -30,6 +30,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/pvcreclaim"
 	"github.com/imantaba/kubeagent/internal/quotahealth"
 	"github.com/imantaba/kubeagent/internal/remediate"
+	"github.com/imantaba/kubeagent/internal/remediation"
 	"github.com/imantaba/kubeagent/internal/resources"
 	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/secscan"
@@ -119,6 +120,41 @@ func TestPrintInventory_JSONIncludesExplanation(t *testing.T) {
 	}
 }
 
+// TestPrintInventory_TextExplanationHeadingHasProvenanceParenthetical proves
+// R233(C): the Explanation heading names its own authorship, and adding it
+// changes no byte before the heading -- the standing promise that the
+// deterministic core is untouched by --explain.
+func TestPrintInventory_TextExplanationHeadingHasProvenanceParenthetical(t *testing.T) {
+	base := Input{Cluster: sampleCluster(), Result: inventory.Result{Workloads: sampleWorkloads()}}
+
+	var withoutBuf bytes.Buffer
+	if err := PrintInventory(base, "text", &withoutBuf); err != nil {
+		t.Fatal(err)
+	}
+
+	withExplanation := base
+	withExplanation.Explanation = "rancher is fine"
+	var withBuf bytes.Buffer
+	if err := PrintInventory(withExplanation, "text", &withBuf); err != nil {
+		t.Fatal(err)
+	}
+	out := withBuf.String()
+
+	const heading = "── Explanation ── (model-written, not pre-reviewed; verify every command before running)"
+	if !strings.Contains(out, heading+"\nrancher is fine\n") {
+		t.Errorf("expected the Explanation heading with its provenance parenthetical, followed by the narrative:\n%s", out)
+	}
+
+	sep := "\n── Explanation ──"
+	idx := strings.Index(out, sep)
+	if idx == -1 {
+		t.Fatalf("Explanation section separator not found:\n%s", out)
+	}
+	if got, want := out[:idx], withoutBuf.String(); got != want {
+		t.Errorf("bytes before the Explanation heading changed -- the deterministic core must be untouched by --explain:\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
 func TestPrintInventory_UnknownFormatErrors(t *testing.T) {
 	var buf bytes.Buffer
 	if err := PrintInventory(Input{}, "xml", &buf); err == nil {
@@ -155,6 +191,42 @@ func TestPrintInventory_TextHealthyClusterSingleLine(t *testing.T) {
 	}
 }
 
+// TestPrintInventory_HeaderDenominatorCountsExpectedAbsentNodes pins the header
+// denominator to NodesTotal + NodesExpectedAbsent, so a node that dropped out of
+// the cluster (and is declared expected) no longer shrinks the number it is
+// measured against. The zero-absentee case is the one that matters most: it
+// proves every run that declares no expected nodes renders identical bytes to
+// before this fix.
+func TestPrintInventory_HeaderDenominatorCountsExpectedAbsentNodes(t *testing.T) {
+	cases := []struct {
+		name   string
+		ready  int
+		total  int
+		absent int
+		want   string
+	}{
+		{"noExpectedAbsentees", 6, 6, 0, "6/6"},
+		{"oneExpectedAbsentee", 5, 5, 1, "5/6"},
+		{"twoExpectedAbsentees", 5, 5, 2, "5/7"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			ch := clusterhealth.ClusterHealth{
+				Verdict: "Healthy", NodesReady: tc.ready, NodesTotal: tc.total, NodesExpectedAbsent: tc.absent,
+			}
+			if err := PrintInventory(Input{Cluster: ch}, "text", &buf); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			out := buf.String()
+			want := fmt.Sprintf("Cluster: Healthy — %s nodes Ready", tc.want)
+			if !strings.Contains(out, want) {
+				t.Errorf("expected header %q in:\n%s", want, out)
+			}
+		})
+	}
+}
+
 func TestPrintInventory_TextShowsScopeNote(t *testing.T) {
 	var buf bytes.Buffer
 	ch := clusterhealth.ClusterHealth{Verdict: "Healthy", NodesTotal: 3, NodesReady: 3, ScopeNote: "node health only — re-run without -n"}
@@ -163,6 +235,27 @@ func TestPrintInventory_TextShowsScopeNote(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "node health only") {
 		t.Errorf("expected the scope note in output:\n%s", buf.String())
+	}
+}
+
+// TestPrintInventory_TextShowsTwoLineScopeNote proves a two-sentence
+// ScopeNote (R156: system-rollup sentence + admission-webhook sentence,
+// joined by "\n") renders as two separate "  · " lines, not one line with an
+// embedded newline — the two sentences are about different things and either
+// can appear without the other.
+func TestPrintInventory_TextShowsTwoLineScopeNote(t *testing.T) {
+	var buf bytes.Buffer
+	ch := clusterhealth.ClusterHealth{Verdict: "Healthy", NodesTotal: 3, NodesReady: 3,
+		ScopeNote: "node health only — re-run without -n\ncluster-wide checks skipped under -n: admission webhooks"}
+	if err := PrintInventory(Input{Cluster: ch, Result: inventory.Result{Workloads: sampleWorkloads()}}, "text", &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "  · node health only — re-run without -n\n") {
+		t.Errorf("expected the first sentence on its own · line:\n%s", out)
+	}
+	if !strings.Contains(out, "  · cluster-wide checks skipped under -n: admission webhooks\n") {
+		t.Errorf("expected the second sentence on its own · line:\n%s", out)
 	}
 }
 
@@ -600,6 +693,28 @@ func TestPrintInventory_TextShowsRolloutChange(t *testing.T) {
 	if !strings.Contains(out, "image nginx:1.27 → nginx:bad") {
 		t.Errorf("missing image delta:\n%s", out)
 	}
+	if strings.Contains(out, "container ") {
+		t.Errorf("Rollout.Container is empty; the delta line must not carry a container suffix:\n%s", out)
+	}
+}
+
+// R235: when the matched container is not the pod template's first,
+// Rollout.Container names it and the delta line grows a `(container %q)`
+// suffix.
+func TestPrintInventory_TextShowsRolloutContainerSuffix(t *testing.T) {
+	wl := inventory.Workload{Namespace: "shop", Name: "web", Kind: "Deployment", Desired: 1, Ready: 0, Status: "Degraded",
+		Findings: []diagnose.Finding{{Issue: "ImagePullBackOff", Reason: "bad image"}},
+		Rollout: &inventory.RolloutChange{Revision: "6", Since: "4d ago",
+			OldImage: "example.com/shop/sidecar:ok", NewImage: "example.com/shop/sidecar:bad", Container: "sidecar"}}
+	var buf bytes.Buffer
+	result := inventory.Result{Workloads: []inventory.Workload{wl}}
+	if err := PrintInventory(Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1}, Result: result}, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "image example.com/shop/sidecar:ok → example.com/shop/sidecar:bad (container \"sidecar\")") {
+		t.Errorf("missing container suffix on the image delta:\n%s", out)
+	}
 }
 
 func TestPrintInventory_JSONIncludesCredentialWarnings(t *testing.T) {
@@ -635,7 +750,7 @@ func TestPrintInventory_TextShowsNodeReservations(t *testing.T) {
 	out := buf.String()
 	// Warning node named in NOTES zone.
 	notes := strings.Index(out, "NOTES")
-	if notes < 0 || !strings.Contains(out, "reserve no memory") || !strings.Contains(out, "w1") {
+	if notes < 0 || !strings.Contains(out, "reserves no memory") || !strings.Contains(out, "w1") {
 		t.Errorf("expected NOTES warning naming w1 in:\n%s", out)
 	}
 	// CONTEXT shows the per-resource reservation block.
@@ -802,11 +917,41 @@ func TestPrintInventory_NodeReservationsWarningIsNote(t *testing.T) {
 	}
 	out := buf.String()
 	notes := strings.Index(out, "NOTES")
-	if notes < 0 || !strings.Contains(out, "reserve no memory") || !strings.Contains(out, "bad") {
+	if notes < 0 || !strings.Contains(out, "reserves no memory") || !strings.Contains(out, "bad") {
 		t.Errorf("expected a NOTES warning naming the bad node:\n%s", out)
 	}
 	if !strings.Contains(out, "memory pressure can destabilize the node") {
 		t.Errorf("expected the memory consequence line in:\n%s", out)
+	}
+}
+
+func TestPrintInventory_ReservationsSingularMemoryBulletAgreesInNumber(t *testing.T) {
+	var buf bytes.Buffer
+	rep := &nodereserve.Report{WarnCount: 1, Nodes: []nodereserve.NodeReservation{
+		{Name: "solo", CPUReserved: "0", MemReserved: "0", Warning: true},
+	}}
+	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1}, NodeReserve: rep}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "1 node reserves no memory") {
+		t.Errorf("expected singular verb agreement 'reserves' in:\n%s", out)
+	}
+}
+
+func TestPrintInventory_ReservationsSingularEphemeralBulletAgreesInNumber(t *testing.T) {
+	var buf bytes.Buffer
+	rep := &nodereserve.Report{EphemeralNone: 1, EphemeralReporting: 1, Nodes: []nodereserve.NodeReservation{
+		{Name: "solo", CPUReserved: "200m", MemReserved: "1Gi", EphemeralReserved: "0", NoEphemeral: true},
+	}}
+	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1}, NodeReserve: rep}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "1 node reserves no ephemeral-storage") {
+		t.Errorf("expected singular verb agreement 'reserves' in:\n%s", out)
 	}
 }
 
@@ -845,6 +990,34 @@ func TestPrintInventory_PVCReclaimFullWhenFlagged(t *testing.T) {
 	out := buf.String()
 	if !strings.Contains(out, "a/p1") || !strings.Contains(out, "pv pv1") {
 		t.Errorf("full list expected under --pvc-reclaim:\n%s", out)
+	}
+}
+
+func TestPrintInventory_PVCReclaimFullHasLabelledParentBullet(t *testing.T) {
+	var buf bytes.Buffer
+	rep := &pvcreclaim.Report{Count: 2, PVCs: []pvcreclaim.PVCReclaim{
+		{Namespace: "storage-ns", Name: "vol-a", PV: "pv-vol-a", StorageClass: "delete-static", Capacity: "3Gi"},
+		{Namespace: "storage-ns", Name: "vol-b", PV: "pv-vol-b", Capacity: "4Gi"},
+	}}
+	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1}, PVCReclaim: rep, PVCReclaimFull: true}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "  • 2 PVCs on Delete reclaim policy —") {
+		t.Errorf("expected a labelled parent bullet naming the count:\n%s", out)
+	}
+	if !strings.Contains(out, "      storage-ns/vol-a  pv pv-vol-a  class delete-static  3Gi") {
+		t.Errorf("expected the first row at the six-space continuation indent:\n%s", out)
+	}
+	if !strings.Contains(out, "      storage-ns/vol-b  pv pv-vol-b  4Gi") {
+		t.Errorf("expected the second row at the six-space continuation indent:\n%s", out)
+	}
+	if strings.Contains(out, "  • storage-ns/vol-a") || strings.Contains(out, "  • storage-ns/vol-b") {
+		t.Errorf("rows must not render as their own bullets:\n%s", out)
+	}
+	if strings.Contains(out, "[--pvc-reclaim]") {
+		t.Errorf("the expanded rendering must not carry the --pvc-reclaim hint:\n%s", out)
 	}
 }
 
@@ -1065,6 +1238,80 @@ func TestPrintInventory_TextCollapsesIdenticalFindings(t *testing.T) {
 	}
 }
 
+// Six is not two: every earlier collapse test in this file uses a pair. One
+// head line must stand for all six identical findings, and the collapse must
+// not grow a second evidence line where the six agree.
+func TestPrintInventory_TextCollapsesSixIdenticalFindingsToOneHeadAndOneEvidence(t *testing.T) {
+	ev := `container "app", restartCount=1`
+	out := renderFindings(t, false,
+		crashFinding("web-a", ev), crashFinding("web-b", ev), crashFinding("web-c", ev),
+		crashFinding("web-d", ev), crashFinding("web-e", ev), crashFinding("web-f", ev),
+	)
+	if got := strings.Count(out, "⚠ CrashLoopBackOff"); got != 1 {
+		t.Errorf("want exactly one head line for six identical findings, got %d:\n%s", got, out)
+	}
+	if !strings.Contains(out, "⚠ CrashLoopBackOff: Container repeatedly crashes after starting ×6") {
+		t.Errorf("want the count of six on the head line:\n%s", out)
+	}
+	if got := strings.Count(out, "↳ "+ev); got != 1 {
+		t.Errorf("want exactly one evidence line for six identical findings, got %d:\n%s", got, out)
+	}
+}
+
+// A collapsed group prints its shared tail once, below the evidence, so a
+// block is 1+len(distinct evidence) lines only when that tail is empty: a
+// pair carrying a resources block prints three. That is the resources-tail
+// case the groupFindings comment names.
+func TestPrintInventory_TextCollapsedPairPrintsItsResourcesTailOnce(t *testing.T) {
+	res := &diagnose.ContainerResources{
+		Container: "app", CPURequest: "100m", CPULimit: "200m",
+		MemRequest: "64Mi", MemLimit: "128Mi",
+	}
+	oom := func(pod string) diagnose.Finding {
+		return diagnose.Finding{
+			Pod: "shop/" + pod, Issue: "OOMKilled", Container: "app",
+			Reason:    "Container was killed for exceeding its memory limit",
+			Evidence:  `container "app", exitCode=137`,
+			Resources: res,
+		}
+	}
+	out := renderFindings(t, false, oom("web-abc"), oom("web-def"))
+	if got := strings.Count(out, "⚠ OOMKilled"); got != 1 {
+		t.Errorf("want one head line for two identical findings, got %d:\n%s", got, out)
+	}
+	if !strings.Contains(out, "⚠ OOMKilled: Container was killed for exceeding its memory limit ×2") {
+		t.Errorf("want the count of two on the head line:\n%s", out)
+	}
+	if got := strings.Count(out, "resources: memory"); got != 1 {
+		t.Errorf("want exactly one resources line for the collapsed pair, got %d:\n%s", got, out)
+	}
+	if got := strings.Count(out, "↳ "); got != 1 {
+		t.Errorf("want exactly one evidence line, got %d:\n%s", got, out)
+	}
+}
+
+// Three distinct evidence values print one head carrying the count and one
+// ↳ line per distinct value: four lines where rendering the three findings
+// separately took six. Shorter than the uncollapsed rendering — not shorter
+// than the finding count, which this case exceeds. The Six test above is
+// where a block comes out shorter than the count as well.
+func TestPrintInventory_TextThreeDistinctEvidenceLinesUnderOneHead(t *testing.T) {
+	out := renderFindings(t, false,
+		crashFinding("web-a", `container "app", restartCount=1`),
+		crashFinding("web-b", `container "app", restartCount=2`),
+		crashFinding("web-c", `container "app", restartCount=3`),
+	)
+	if got := strings.Count(out, "⚠ CrashLoopBackOff"); got != 1 {
+		t.Errorf("want exactly one head line for three findings, got %d:\n%s", got, out)
+	}
+	if !strings.Contains(out, "⚠ CrashLoopBackOff: Container repeatedly crashes after starting ×3") {
+		t.Errorf("want the count of three on the head line:\n%s", out)
+	}
+	if got := strings.Count(out, "↳ "); got != 3 {
+		t.Errorf("want exactly three evidence lines for three distinct findings, got %d:\n%s", got, out)
+	}
+}
+
 // The count is the point of the collapse, so a lone finding must not grow one.
 func TestPrintInventory_TextOmitsTheCountForOneFinding(t *testing.T) {
 	out := renderFindings(t, false, crashFinding("web-abc", `container "app", restartCount=1`))
@@ -1102,9 +1349,10 @@ func TestPrintInventory_TextDoesNotCollapseUnlikeFindings(t *testing.T) {
 	}
 }
 
-// A --suggest command names the pod, so two pods have two different commands.
-// The collapse keys on the whole block for exactly this reason: it may never
-// print fewer lines than the findings it stands for.
+// A --suggest command names the pod, so two pods have two different
+// commands. The collapse keys on the whole block, so two pods whose
+// --suggest commands differ do not collapse: each pod's own command
+// survives.
 func TestPrintInventory_TextSuggestKeepsEveryPodsCommand(t *testing.T) {
 	ev := `container "app", restartCount=1`
 	out := renderFindings(t, true, crashFinding("web-abc", ev), crashFinding("web-def", ev))
@@ -1166,6 +1414,34 @@ func TestPrintInventory_TextCapsALongEvidenceLine(t *testing.T) {
 	}
 }
 
+// maxEvidence bounds the evidence string, not the rendered line: renderFinding
+// prepends a six-space indent, the "↳" marker and a space -- eight runes --
+// so a cut line measures 508, not 500.
+func TestPrintInventory_TextCutLineMeasuresEightRunesMoreThanTheEvidenceCap(t *testing.T) {
+	out := renderFindings(t, false, crashFinding("web-abc", strings.Repeat("x", 600)))
+	const prefix = "      ↳ "
+	var raw string
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, prefix) {
+			raw = l
+			break
+		}
+	}
+	if raw == "" {
+		t.Fatalf("no evidence line in:\n%s", out)
+	}
+	if n := utf8.RuneCountInString(raw); n != 508 {
+		t.Errorf("want the rendered line at 508 runes, got %d", n)
+	}
+	ev := strings.TrimPrefix(raw, prefix)
+	if n := utf8.RuneCountInString(ev); n != maxEvidence {
+		t.Errorf("want the evidence portion at %d runes, got %d", maxEvidence, n)
+	}
+	if !strings.HasSuffix(ev, evidenceCut) {
+		t.Errorf("a cut line must say so; got the tail %q", ev[len(ev)-40:])
+	}
+}
+
 // The cap exists for pathological lines. Real pull errors run to a few hundred
 // characters and are the only place the true cause appears, so they must arrive
 // whole.
@@ -1192,8 +1468,10 @@ func TestPrintInventory_TextCutsEvidenceAtARuneBoundary(t *testing.T) {
 	}
 }
 
-// The cap is a terminal-layout decision. JSON is the machine surface and the
-// place an operator goes for the complete cause, so it carries the whole string.
+// The cap is a terminal-layout decision applied only in the text renderer.
+// JSON carries the evidence as stored, uncapped by capEvidence — which is not
+// the same as carrying an unbounded original, since every untrusted value is
+// already bounded at safetext.MaxLine runes on the way in.
 func TestPrintInventory_JSONKeepsTheFullEvidence(t *testing.T) {
 	ev := strings.Repeat("z", 600)
 	var buf bytes.Buffer
@@ -1299,7 +1577,7 @@ func TestPrintInventory_SecurityDefaultView(t *testing.T) {
 	if strings.Contains(out, "✗ shop/web") {
 		t.Errorf("a restricted-only workload must not get a detail block:\n%s", out)
 	}
-	if !strings.Contains(out, "restricted (hardening gaps, near-universal): 3 across 2 workloads") {
+	if !strings.Contains(out, "restricted (hardening gaps, near-universal): 3 across 2 of 2 workloads") {
 		t.Errorf("missing restricted aggregate:\n%s", out)
 	}
 	if !strings.Contains(out, "RunAsRoot ×1 · AllowPrivilegeEscalation ×1 · CapabilitiesNotDropped ×1") {
@@ -1355,11 +1633,36 @@ func TestPrintInventory_SecurityOnlyRestricted(t *testing.T) {
 	if strings.Contains(out, "✗ ") {
 		t.Errorf("restricted-only findings must produce no detail blocks:\n%s", out)
 	}
-	if !strings.Contains(out, "restricted (hardening gaps, near-universal): 2 across 1 workload") {
+	if !strings.Contains(out, "restricted (hardening gaps, near-universal): 2 across 1 of 1 workload") {
 		t.Errorf("missing restricted aggregate for restricted-only input:\n%s", out)
 	}
 	if strings.Contains(out, "No issues found") {
 		t.Errorf("all-clear must stay suppressed:\n%s", out)
+	}
+}
+
+// TestPrintInventory_SecurityAggregateDenominatorDisagreesWithNumerator covers
+// N=1 restricted workload out of M=3 total workloads: the only fixture where
+// the numerator and denominator disagree on singular/plural, so it is the
+// only observer that can catch the aggregate's plural argument being wired to
+// the wrong count (restrictedWorkloads instead of allWorkloads).
+func TestPrintInventory_SecurityAggregateDenominatorDisagreesWithNumerator(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		SecurityIssues: []secscan.Finding{
+			{Namespace: "shop", Workload: "svc-a", Kind: "Deployment", Container: "app", Profile: "baseline", Check: "Privileged", Detail: "p"},
+			{Namespace: "shop", Workload: "svc-b", Kind: "Deployment", Profile: "baseline", Check: "HostPath", Detail: "h"},
+			{Namespace: "shop", Workload: "web", Kind: "Deployment", Container: "web", Profile: "restricted", Check: "RunAsRoot", Detail: "r"},
+			{Namespace: "shop", Workload: "web", Kind: "Deployment", Container: "web", Profile: "restricted", Check: "CapabilitiesNotDropped", Detail: "c"},
+		},
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "restricted (hardening gaps, near-universal): 2 across 1 of 3 workloads") {
+		t.Errorf("want the denominator noun to agree with the total (3 workloads), not the restricted count (1 workload):\n%s", out)
 	}
 }
 
@@ -1500,6 +1803,45 @@ func TestPrintInventory_KubeletHealthJSON(t *testing.T) {
 	}
 }
 
+// TestPrintKubeletHealth_TrailingBlankLine pins the separator convention on
+// both of printKubeletHealth's exit paths: the unhealthy-node loop and the
+// wholly-forbidden grant hint.
+func TestPrintKubeletHealth_TrailingBlankLine(t *testing.T) {
+	cases := []*nodehealth.Report{
+		{Probed: 2, Unhealthy: []nodehealth.Issue{{Node: "worker-2", Detail: "[-]pleg failed"}}},
+		{Probed: 3, Forbidden: 3},
+	}
+	for _, rep := range cases {
+		var b bytes.Buffer
+		if err := printKubeletHealth(rep, &b); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasSuffix(b.String(), "\n\n") {
+			t.Errorf("printKubeletHealth(%+v) missing trailing blank line, got %q", rep, b.String())
+		}
+	}
+}
+
+// TestPrintKubeletHealth_EmptyDetailNoTrailingColon pins R74(B)'s
+// brief-mandated regression fixture: an Issue whose Detail is empty must
+// render the bare unhealthy line, with no trailing ":" and no trailing
+// ": " — printKubeletHealth's `if iss.Detail != ""` guard must not fire on
+// an empty Detail.
+func TestPrintKubeletHealth_EmptyDetailNoTrailingColon(t *testing.T) {
+	rep := &nodehealth.Report{Probed: 1, Unhealthy: []nodehealth.Issue{{Node: "n", Detail: ""}}}
+	var b bytes.Buffer
+	if err := printKubeletHealth(rep, &b); err != nil {
+		t.Fatal(err)
+	}
+	const want = "  ✗ node n kubelet /healthz unhealthy\n"
+	if !strings.Contains(b.String(), want) {
+		t.Fatalf("printKubeletHealth(%+v) = %q, want it to contain %q", rep, b.String(), want)
+	}
+	if strings.Contains(b.String(), want[:len(want)-1]+":") {
+		t.Errorf("printKubeletHealth(%+v) unhealthy line has a trailing colon: %q", rep, b.String())
+	}
+}
+
 func TestPrintInventory_NoEphemeralWarnsAndContext(t *testing.T) {
 	var buf bytes.Buffer
 	rep := &nodereserve.Report{
@@ -1514,7 +1856,7 @@ func TestPrintInventory_NoEphemeralWarnsAndContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "reserve no ephemeral-storage: diskless") || !strings.Contains(out, "disk pressure can destabilize the node") {
+	if !strings.Contains(out, "reserves no ephemeral-storage: diskless") || !strings.Contains(out, "disk pressure can destabilize the node") {
 		t.Errorf("expected ephemeral NOTES warning naming diskless in:\n%s", out)
 	}
 	// WarnCount==0 here, so memory reads "all ... reserve some"; the
@@ -1542,6 +1884,47 @@ func TestPrintInventory_ReservationsNotReportedEphemeral(t *testing.T) {
 	}
 	if strings.Contains(out, "reserve no ephemeral-storage") {
 		t.Errorf("must not warn on ephemeral when not reported:\n%s", out)
+	}
+}
+
+func TestPrintInventory_ReservationsEphemeralMixedReportingNamesExcluded(t *testing.T) {
+	var buf bytes.Buffer
+	rep := &nodereserve.Report{
+		WarnCount: 0, EphemeralNone: 1, EphemeralReporting: 2,
+		Nodes: []nodereserve.NodeReservation{
+			{Name: "e1", CPUReserved: "200m", MemReserved: "1Gi", EphemeralReserved: "0", NoEphemeral: true},
+			{Name: "e2", CPUReserved: "200m", MemReserved: "1Gi", EphemeralReserved: "5Gi"},
+			{Name: "e3", CPUReserved: "200m", MemReserved: "1Gi", EphemeralReserved: "—"},
+		},
+	}
+	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 3, NodesTotal: 3}, NodeReserve: rep}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "ephemeral-storage 1 of 2 nodes reserve none  ⚠  (1 node does not report it)") {
+		t.Errorf("expected mixed-reporting ephemeral-storage ratio with excluded-count suffix in:\n%s", out)
+	}
+}
+
+func TestPrintInventory_ReservationsEphemeralMixedReportingPluralNamesExcluded(t *testing.T) {
+	var buf bytes.Buffer
+	rep := &nodereserve.Report{
+		WarnCount: 0, EphemeralNone: 1, EphemeralReporting: 2,
+		Nodes: []nodereserve.NodeReservation{
+			{Name: "e1", CPUReserved: "200m", MemReserved: "1Gi", EphemeralReserved: "0", NoEphemeral: true},
+			{Name: "e2", CPUReserved: "200m", MemReserved: "1Gi", EphemeralReserved: "5Gi"},
+			{Name: "e3", CPUReserved: "200m", MemReserved: "1Gi", EphemeralReserved: "—"},
+			{Name: "e4", CPUReserved: "200m", MemReserved: "1Gi", EphemeralReserved: "—"},
+		},
+	}
+	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 4, NodesTotal: 4}, NodeReserve: rep}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "ephemeral-storage 1 of 2 nodes reserve none  ⚠  (2 nodes do not report it)") {
+		t.Errorf("expected mixed-reporting ephemeral-storage ratio with plural excluded-count suffix in:\n%s", out)
 	}
 }
 
@@ -1641,6 +2024,61 @@ func TestPrintInventory_ExpectedIngressGoesToNotes(t *testing.T) {
 	}
 	if strings.Contains(out, "✗ ingress shop/parked") {
 		t.Errorf("parked route must not appear under NEEDS ATTENTION:\n%s", out)
+	}
+}
+
+// TestPrintInventory_WebhookURLBackendsNote proves the NOTES line renders
+// exactly the count kubeagent could not check — never the URL itself, which
+// this Input never even carries.
+func TestPrintInventory_WebhookURLBackendsNote(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster:            clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		WebhookURLBackends: 1,
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "NOTES") {
+		t.Fatalf("expected a NOTES section, got:\n%s", out)
+	}
+	if !strings.Contains(out, "1 Fail-policy admission webhook not checked: clientConfig.url backend") {
+		t.Errorf("expected the URL-backend NOTES line, got:\n%s", out)
+	}
+}
+
+// TestPrintInventory_WebhookURLBackendsPlural proves the count pluralizes
+// "webhook" the same way every other NOTES bullet in this file does.
+func TestPrintInventory_WebhookURLBackendsPlural(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster:            clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		WebhookURLBackends: 3,
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "3 Fail-policy admission webhooks not checked: clientConfig.url backend") {
+		t.Errorf("expected the plural URL-backend NOTES line, got:\n%s", out)
+	}
+}
+
+// TestPrintInventory_WebhookURLBackendsAbsentAtZero proves a scan with no
+// URL-backed webhooks (the golden-scan fixture's shape, and every scan today)
+// renders no such line.
+func TestPrintInventory_WebhookURLBackendsAbsentAtZero(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "clientConfig.url") {
+		t.Errorf("count 0 must render no URL-backend note, got:\n%s", out)
 	}
 }
 
@@ -1763,6 +2201,27 @@ func TestPrintInventory_CertificatesForbiddenHint(t *testing.T) {
 	}
 }
 
+// TestPrintCertificates_TrailingBlankLine pins the separator convention on
+// both of printCertificates' exit paths: the forbidden early return and the
+// footer after the certificate rows.
+func TestPrintCertificates_TrailingBlankLine(t *testing.T) {
+	cases := []*certhealth.Report{
+		{WarnDays: 30, Forbidden: true},
+		{Checked: 1, WarnDays: 30, Expiring: []certhealth.Cert{
+			{Namespace: "shop", Name: "shop-tls", CommonName: "shop.example.com", Days: 5},
+		}},
+	}
+	for _, rep := range cases {
+		var b bytes.Buffer
+		if err := printCertificates(rep, &b); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasSuffix(b.String(), "\n\n") {
+			t.Errorf("printCertificates(%+v) missing trailing blank line, got %q", rep, b.String())
+		}
+	}
+}
+
 func TestPrintInventory_CertificatesAbsentWhenNilOrClean(t *testing.T) {
 	var buf bytes.Buffer
 	_ = PrintInventory(Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1}}, "text", &buf)
@@ -1777,17 +2236,91 @@ func TestPrintInventory_CertificatesAbsentWhenNilOrClean(t *testing.T) {
 	}
 }
 
+// TestPrintInventory_CertificatesNotesBullet covers R106's three-case table:
+// --certs with no findings gets a NOTES confirmation bullet and no
+// CERTIFICATES section; --certs with findings gets the section and no
+// bullet; no --certs at all (Certificates == nil) gets neither. The middle
+// case is the one internal/report/testdata/golden-scan.txt already embodies,
+// but the golden proves it only incidentally — this test asserts it directly.
+func TestPrintInventory_CertificatesNotesBullet(t *testing.T) {
+	cluster := clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1}
+
+	t.Run("certs ran, nothing to flag: note, no section", func(t *testing.T) {
+		var buf bytes.Buffer
+		if err := PrintInventory(Input{Cluster: cluster,
+			Certificates: &certhealth.Report{Checked: 5, WarnDays: 30}}, "text", &buf); err != nil {
+			t.Fatal(err)
+		}
+		out := buf.String()
+		if !strings.Contains(out, "NOTES") {
+			t.Errorf("want a NOTES section, got:\n%s", out)
+		}
+		if !strings.Contains(out, "5 certificates checked, none expired or expiring within 30d") {
+			t.Errorf("missing the certificates confirmation bullet, got:\n%s", out)
+		}
+		if strings.Contains(out, "CERTIFICATES") {
+			t.Errorf("must not render a CERTIFICATES section when nothing was flagged, got:\n%s", out)
+		}
+	})
+
+	t.Run("certs ran, something to flag: section, no note", func(t *testing.T) {
+		var buf bytes.Buffer
+		rep := &certhealth.Report{Checked: 3, WarnDays: 30,
+			Expiring: []certhealth.Cert{{Namespace: "infra", Name: "api-tls", CommonName: "api.example.com", Days: 12}},
+		}
+		if err := PrintInventory(Input{Cluster: cluster, Certificates: rep}, "text", &buf); err != nil {
+			t.Fatal(err)
+		}
+		out := buf.String()
+		if !strings.Contains(out, "CERTIFICATES") {
+			t.Errorf("want a CERTIFICATES section, got:\n%s", out)
+		}
+		if strings.Contains(out, "certificates checked, none expired or expiring") {
+			t.Errorf("must not duplicate the confirmation bullet when the section already rendered, got:\n%s", out)
+		}
+	})
+
+	t.Run("no --certs at all: neither", func(t *testing.T) {
+		var buf bytes.Buffer
+		if err := PrintInventory(Input{Cluster: cluster}, "text", &buf); err != nil {
+			t.Fatal(err)
+		}
+		out := buf.String()
+		if strings.Contains(out, "CERTIFICATES") {
+			t.Errorf("must not render a CERTIFICATES section when --certs was not given, got:\n%s", out)
+		}
+		if strings.Contains(out, "certificates checked") {
+			t.Errorf("must not render the confirmation bullet when --certs was not given, got:\n%s", out)
+		}
+	})
+}
+
 func TestPrintInventory_ConfidenceTags(t *testing.T) {
+	// RolloutStuck is one issue string rendered two different ways: internal/
+	// rollouthealth's Deployment arm sets "high" (a controller-set condition —
+	// a direct read) and its StatefulSet/DaemonSet arm sets "medium" (counters
+	// and a grace period — an inference). confidence.ForIssue does not know
+	// RolloutStuck and must not learn it (R189/R190; pinned by internal/
+	// confidence's own TestForIssue, whose high list names RolloutStuck —
+	// internal/diagnose's confidenceTable is not a second guard on that,
+	// because its test skips the ForIssue comparison for a producer-supplied
+	// kind), so the level is the producer's, not a table lookup — which is
+	// exactly why the same tag guard below must be observed rendering both
+	// ways from one Issue value.
 	ws := []inventory.Workload{
 		{Namespace: "shop", Name: "cache", Kind: "Deployment", Desired: 1, Ready: 0, Status: "Degraded",
 			RootCause: "registry ghcr.io (2 workloads failing to pull)",
 			Findings: []diagnose.Finding{
 				{Issue: "RestartLoop", Reason: "keeps erroring", Confidence: "medium"},
 				{Issue: "CrashLoopBackOff", Reason: "repeatedly crashes", Confidence: "high"},
+				{Issue: "RolloutStuck", Reason: "the Deployment's rollout cannot complete — the new pods are not becoming available", Confidence: "high"},
 			}},
 		{Namespace: "shop", Name: "db", Kind: "StatefulSet", Desired: 1, Ready: 0, Status: "Degraded",
 			RootCause: "node worker-2 (NotReady)",
-			Findings:  []diagnose.Finding{{Issue: "VolumeAttachError", Reason: "Multi-Attach", Confidence: "high"}}},
+			Findings: []diagnose.Finding{
+				{Issue: "VolumeAttachError", Reason: "Multi-Attach", Confidence: "high"},
+				{Issue: "RolloutStuck", Reason: "the StatefulSet's rollout cannot complete — the new pods are not becoming available", Confidence: "medium"},
+			}},
 	}
 	var buf bytes.Buffer
 	in := Input{Cluster: clusterhealth.ClusterHealth{Verdict: "Degraded", NodesReady: 2, NodesTotal: 3},
@@ -1807,6 +2340,13 @@ func TestPrintInventory_ConfidenceTags(t *testing.T) {
 	}
 	if strings.Contains(out, "node worker-2 (NotReady) [") {
 		t.Errorf("node attribution (high) must be unmarked:\n%s", out)
+	}
+	if !strings.Contains(out, "⚠ RolloutStuck [medium]: the StatefulSet's rollout cannot complete — the new pods are not becoming available") {
+		t.Errorf("StatefulSet's RolloutStuck (medium) should be tagged:\n%s", out)
+	}
+	if !strings.Contains(out, "⚠ RolloutStuck: the Deployment's rollout cannot complete — the new pods are not becoming available") ||
+		strings.Contains(out, "RolloutStuck [high]") {
+		t.Errorf("Deployment's RolloutStuck (high) must be unmarked:\n%s", out)
 	}
 }
 
@@ -1859,6 +2399,183 @@ func TestPrintInventory_StuckTerminatingAbsentWhenEmpty(t *testing.T) {
 	}
 }
 
+// TestPrintInventory_StuckTerminatingSuppressesFailedPodRow is regression
+// fixture 1 for R130: a pod both Failed and stuck-terminating renders one
+// row, the stuck-terminating one — the terminating row explains *why* the
+// pod is Failed, so the workload row duplicates the same fact under a
+// second heading.
+func TestPrintInventory_StuckTerminatingSuppressesFailedPodRow(t *testing.T) {
+	ws := []inventory.Workload{{
+		Namespace: "shop", Name: "orphan", Kind: "Pod",
+		Desired: 1, Ready: 0, Status: "Failed",
+	}}
+	in := Input{
+		Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		Result:  inventory.Result{Workloads: ws},
+		StuckTerminating: []termhealth.Issue{
+			{Kind: "Pod", Namespace: "shop", Name: "orphan", Age: "5m", PastGrace: true, Reason: "finalizer example.com/cleanup-hook"},
+		},
+	}
+	var buf bytes.Buffer
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "shop/orphan  Pod  0/1 Failed") {
+		t.Errorf("Failed Pod workload row must be suppressed when a StuckTerminating issue names the same pod:\n%s", out)
+	}
+	if !strings.Contains(out, "✗ shop/orphan  Pod  Terminating 5m (past grace)") {
+		t.Errorf("StuckTerminating row must survive as the sole mention:\n%s", out)
+	}
+	if strings.Contains(out, "workload failing") {
+		t.Errorf("summary must not count the suppressed row:\n%s", out)
+	}
+	if !strings.Contains(out, "1 resource stuck terminating") {
+		t.Errorf("summary must still count the StuckTerminating issue:\n%s", out)
+	}
+
+	var jbuf bytes.Buffer
+	if err := PrintInventory(in, "json", &jbuf); err != nil {
+		t.Fatal(err)
+	}
+	var got ScanReport
+	if err := json.Unmarshal(jbuf.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Workloads) != 0 {
+		t.Errorf("JSON workloads array must drop the suppressed row, got %+v", got.Workloads)
+	}
+	if len(got.StuckTerminating) != 1 {
+		t.Errorf("JSON stuckTerminating array must stay unfiltered, got %+v", got.StuckTerminating)
+	}
+}
+
+// TestPrintInventory_FailedPodNotTerminatingRowSurvives is regression
+// fixture 2 for R130: a Failed pod with no matching StuckTerminating issue
+// is unaffected.
+func TestPrintInventory_FailedPodNotTerminatingRowSurvives(t *testing.T) {
+	ws := []inventory.Workload{{
+		Namespace: "shop", Name: "solo", Kind: "Pod",
+		Desired: 1, Ready: 0, Status: "Failed",
+	}}
+	in := Input{
+		Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		Result:  inventory.Result{Workloads: ws},
+	}
+	var buf bytes.Buffer
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "shop/solo  Pod  0/1 Failed") {
+		t.Errorf("a Failed Pod with no StuckTerminating match must keep its row:\n%s", out)
+	}
+}
+
+// TestPrintInventory_TerminatingPodNotFailedRowSurvives is regression
+// fixture 3 for R130: a stuck-terminating pod that is not Failed is
+// unaffected — the third conjunct is wl.Status == "Failed", not
+// wl.Flagged(), so a non-Failed match must not be suppressed.
+func TestPrintInventory_TerminatingPodNotFailedRowSurvives(t *testing.T) {
+	ws := []inventory.Workload{{
+		Namespace: "shop", Name: "orphan", Kind: "Pod",
+		Desired: 1, Ready: 1, Status: "Running",
+	}}
+	in := Input{
+		Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		Result:  inventory.Result{Workloads: ws},
+		StuckTerminating: []termhealth.Issue{
+			{Kind: "Pod", Namespace: "shop", Name: "orphan", Age: "5m", Reason: "finalizer example.com/cleanup-hook"},
+		},
+	}
+	var buf bytes.Buffer
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "shop/orphan  Pod  1/1 Running") {
+		t.Errorf("a terminating pod that is not Failed must keep its workload row:\n%s", out)
+	}
+}
+
+// TestPrintInventory_StuckTerminatingDifferentNamespaceNotSuppressed is
+// regression fixture 4 for R130: a stuck-terminating pod in a different
+// namespace with the same name must not suppress the workload row.
+func TestPrintInventory_StuckTerminatingDifferentNamespaceNotSuppressed(t *testing.T) {
+	ws := []inventory.Workload{{
+		Namespace: "shop", Name: "orphan", Kind: "Pod",
+		Desired: 1, Ready: 0, Status: "Failed",
+	}}
+	in := Input{
+		Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		Result:  inventory.Result{Workloads: ws},
+		StuckTerminating: []termhealth.Issue{
+			{Kind: "Pod", Namespace: "other", Name: "orphan", Age: "5m", Reason: "finalizer example.com/cleanup-hook"},
+		},
+	}
+	var buf bytes.Buffer
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "shop/orphan  Pod  0/1 Failed") {
+		t.Errorf("a StuckTerminating issue in a different namespace must not suppress the workload row:\n%s", out)
+	}
+}
+
+// TestPrintInventory_StuckTerminatingPVCSameNameNotSuppressed is regression
+// fixture 5 for R130 (added by the anchor pre-verification, §3): a
+// stuck-terminating PersistentVolumeClaim sharing a Pod workload's
+// namespace and name must not suppress it — the predicate requires
+// issue.Kind == "Pod" too, not just a namespace+name match.
+func TestPrintInventory_StuckTerminatingPVCSameNameNotSuppressed(t *testing.T) {
+	ws := []inventory.Workload{{
+		Namespace: "shop", Name: "data", Kind: "Pod",
+		Desired: 1, Ready: 0, Status: "Failed",
+	}}
+	in := Input{
+		Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		Result:  inventory.Result{Workloads: ws},
+		StuckTerminating: []termhealth.Issue{
+			{Kind: "PersistentVolumeClaim", Namespace: "shop", Name: "data", Age: "20m", Reason: "pvc-protection — still mounted by pod shop/db-0"},
+		},
+	}
+	var buf bytes.Buffer
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "shop/data  Pod  0/1 Failed") {
+		t.Errorf("a stuck-terminating PVC sharing the pod's namespace+name must not suppress the Pod workload row:\n%s", out)
+	}
+}
+
+// TestPrintInventory_StuckTerminatingSuppressionDoesNotMutateCallerSlice
+// pins the aliasing ruling: PrintInventory must allocate a new slice rather
+// than filter in.Result.Workloads in place, because that slice shares the
+// caller's backing array and internal/cli still holds scan.Result after
+// rendering.
+func TestPrintInventory_StuckTerminatingSuppressionDoesNotMutateCallerSlice(t *testing.T) {
+	ws := []inventory.Workload{
+		{Namespace: "shop", Name: "orphan", Kind: "Pod", Desired: 1, Ready: 0, Status: "Failed"},
+		{Namespace: "shop", Name: "keep", Kind: "Deployment", Desired: 1, Ready: 1, Status: "Running"},
+	}
+	in := Input{
+		Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		Result:  inventory.Result{Workloads: ws},
+		StuckTerminating: []termhealth.Issue{
+			{Kind: "Pod", Namespace: "shop", Name: "orphan", Age: "5m", Reason: "finalizer example.com/cleanup-hook"},
+		},
+	}
+	var buf bytes.Buffer
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	if len(ws) != 2 || ws[0].Name != "orphan" || ws[1].Name != "keep" {
+		t.Fatalf("caller's Workloads slice must be untouched by the filter, got %+v", ws)
+	}
+}
+
 func TestPrintInventory_PDBIssues(t *testing.T) {
 	var buf bytes.Buffer
 	in := Input{
@@ -1878,8 +2595,28 @@ func TestPrintInventory_PDBIssues(t *testing.T) {
 	if !strings.Contains(out, "⚠ PDBBlocked: covers all 3 pods") {
 		t.Errorf("missing PDBBlocked reason line:\n%s", out)
 	}
-	if !strings.Contains(out, "1 PodDisruptionBudget blocking drains") {
+	if !strings.Contains(out, "1 PodDisruptionBudget issue") {
 		t.Errorf("missing attention-line fragment:\n%s", out)
+	}
+}
+
+func TestPrintInventory_PDBIssuesPlural(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy"},
+		PDBIssues: []pdbhealth.Issue{
+			{Namespace: "shop", Name: "api", Rule: "minAvailable: 3", Category: "unsatisfiable",
+				Reason: "covers all 3 pods — no voluntary eviction can ever proceed; every node drain will hang"},
+			{Namespace: "shop", Name: "solo", Rule: "minAvailable: 1", Category: "singleton",
+				Reason: "single-replica workload with no disruption headroom — often deliberate, but no voluntary eviction is possible; draining its node will hang"},
+		},
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "2 PodDisruptionBudget issues") {
+		t.Errorf("missing plural attention-line fragment:\n%s", out)
 	}
 }
 
@@ -1935,7 +2672,7 @@ func TestPrintInventory_WebhookIssues(t *testing.T) {
 		Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy"},
 		WebhookIssues: []webhookhealth.Issue{
 			{Kind: "ValidatingWebhookConfiguration", Config: "policy-webhook", Webhook: "validate.policy.io",
-				Service: "kube-system/policy-svc", Problem: "no-endpoints",
+				Service: "kube-system/policy-svc", Problem: "NoEndpoints",
 				Reason: "backend Service kube-system/policy-svc has no ready endpoints — failurePolicy Fail rejects every intercepted create/update"},
 		},
 	}
@@ -1946,8 +2683,8 @@ func TestPrintInventory_WebhookIssues(t *testing.T) {
 	if !strings.Contains(out, "✗ policy-webhook  ValidatingWebhookConfiguration  webhook validate.policy.io") {
 		t.Errorf("missing webhook header line:\n%s", out)
 	}
-	if !strings.Contains(out, "⚠ WebhookDown: backend Service kube-system/policy-svc has no ready endpoints") {
-		t.Errorf("missing WebhookDown reason line:\n%s", out)
+	if !strings.Contains(out, "⚠ NoEndpoints: backend Service kube-system/policy-svc has no ready endpoints") {
+		t.Errorf("missing NoEndpoints reason line:\n%s", out)
 	}
 	if !strings.Contains(out, "1 admission webhook failing") {
 		t.Errorf("missing attention-line fragment:\n%s", out)
@@ -1960,26 +2697,26 @@ func TestPrintInventory_NoWebhookSectionWhenEmpty(t *testing.T) {
 	if err := PrintInventory(in, "text", &buf); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(buf.String(), "WebhookDown") {
+	if strings.Contains(buf.String(), "NoEndpoints") {
 		t.Errorf("no webhook section expected when empty:\n%s", buf.String())
 	}
 }
 
 func TestPrintWebhookIssues_LatencyLabel(t *testing.T) {
 	in := Input{Result: inventory.Result{}, WebhookIssues: []webhookhealth.Issue{
-		{Kind: "ValidatingWebhookConfiguration", Config: "slow-validator", Webhook: "policy.example.com", Problem: "high-timeout", Reason: "timeoutSeconds 30 ≥ 15s under failurePolicy Fail — a slow webhook blocks every intercepted create/update for up to 30s, then rejects it"},
-		{Kind: "ValidatingWebhookConfiguration", Config: "down-validator", Webhook: "down.io", Service: "ns/svc", Problem: "no-endpoints", Reason: "backend Service ns/svc has no ready endpoints — failurePolicy Fail rejects every intercepted create/update"},
+		{Kind: "ValidatingWebhookConfiguration", Config: "slow-validator", Webhook: "policy.example.com", Problem: "HighTimeout", Reason: "timeoutSeconds 30 ≥ 15s under failurePolicy Fail — a slow webhook blocks every intercepted create/update for up to 30s, then rejects it"},
+		{Kind: "ValidatingWebhookConfiguration", Config: "down-validator", Webhook: "down.io", Service: "ns/svc", Problem: "NoEndpoints", Reason: "backend Service ns/svc has no ready endpoints — failurePolicy Fail rejects every intercepted create/update"},
 	}}
 	var b bytes.Buffer
 	if err := PrintInventory(in, "text", &b); err != nil {
 		t.Fatal(err)
 	}
 	out := b.String()
-	if !strings.Contains(out, "⚠ WebhookSlow: timeoutSeconds 30 ≥ 15s") {
-		t.Errorf("missing WebhookSlow line:\n%s", out)
+	if !strings.Contains(out, "⚠ HighTimeout: timeoutSeconds 30 ≥ 15s") {
+		t.Errorf("missing HighTimeout line:\n%s", out)
 	}
-	if !strings.Contains(out, "⚠ WebhookDown: backend Service ns/svc has no ready endpoints") {
-		t.Errorf("backend issue should still render WebhookDown:\n%s", out)
+	if !strings.Contains(out, "⚠ NoEndpoints: backend Service ns/svc has no ready endpoints") {
+		t.Errorf("backend issue should still render NoEndpoints:\n%s", out)
 	}
 }
 
@@ -2011,6 +2748,73 @@ func TestPrintInventory_SuggestLines(t *testing.T) {
 	off := build(false)
 	if strings.Contains(off, "next step:") || strings.Contains(off, "↳ try:") {
 		t.Errorf("no suggest lines expected by default:\n%s", off)
+	}
+}
+
+func TestPrintInventory_JSONOmitsSuggestionWhenFlagOff(t *testing.T) {
+	in := Input{
+		Result: inventory.Result{Workloads: []inventory.Workload{{
+			Namespace: "shop", Name: "web", Kind: "Deployment", Desired: 2, Ready: 0, Status: "Degraded",
+			Findings: []diagnose.Finding{{Pod: "shop/web-abc", Issue: "CrashLoopBackOff", Reason: "keeps crashing", Container: "web"}},
+		}}},
+		// Suggest left false.
+	}
+	var buf bytes.Buffer
+	if err := PrintInventory(in, "json", &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(buf.String(), `"suggestion"`) {
+		t.Errorf("no suggestion key expected when --suggest is off:\n%s", buf.String())
+	}
+}
+
+func TestPrintInventory_JSONIncludesSuggestionWhenFlagOn(t *testing.T) {
+	f := diagnose.Finding{Pod: "shop/web-abc", Issue: "CrashLoopBackOff", Reason: "keeps crashing", Container: "web"}
+	in := Input{
+		Result: inventory.Result{Workloads: []inventory.Workload{{
+			Namespace: "shop", Name: "web", Kind: "Deployment", Desired: 2, Ready: 0, Status: "Degraded",
+			Findings: []diagnose.Finding{f},
+		}}},
+		Suggest: true,
+	}
+	var buf bytes.Buffer
+	if err := PrintInventory(in, "json", &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var got struct {
+		Workloads []inventory.Workload `json:"workloads"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("not the workloads object: %v", err)
+	}
+	if len(got.Workloads) != 1 || len(got.Workloads[0].Findings) != 1 {
+		t.Fatalf("unexpected shape: %+v", got)
+	}
+	s := got.Workloads[0].Findings[0].Suggestion
+	want := remediation.For(f)
+	if s == nil {
+		t.Fatalf("expected a suggestion, got none")
+	}
+	if s.NextStep != want.NextStep || s.Command != want.Command {
+		t.Errorf("suggestion = %+v, want NextStep %q Command %q", s, want.NextStep, want.Command)
+	}
+}
+
+func TestPrintInventory_JSONSuggestDoesNotMutateInput(t *testing.T) {
+	in := Input{
+		Result: inventory.Result{Workloads: []inventory.Workload{{
+			Namespace: "shop", Name: "web", Kind: "Deployment", Desired: 2, Ready: 0, Status: "Degraded",
+			Findings: []diagnose.Finding{{Pod: "shop/web-abc", Issue: "CrashLoopBackOff", Reason: "keeps crashing", Container: "web"}},
+		}}},
+		Suggest: true,
+	}
+	var buf bytes.Buffer
+	if err := PrintInventory(in, "json", &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if in.Result.Workloads[0].Findings[0].Suggestion != nil {
+		t.Errorf("PrintInventory must not mutate the caller's Workloads in place, got Suggestion = %+v",
+			in.Result.Workloads[0].Findings[0].Suggestion)
 	}
 }
 
@@ -2164,7 +2968,7 @@ func TestPrintControlPlane(t *testing.T) {
 }
 
 func TestPrintDNSHealth(t *testing.T) {
-	degraded := &dnshealth.Report{Status: "degraded", ServfailRatio: 0.123, ErrorResponses: 1234, TotalResponses: 10000, PodsProbed: 2}
+	degraded := &dnshealth.Report{Status: "degraded", ServfailRatio: 0.123, ErrorResponses: 1234, TotalResponses: 10000, PodsProbed: 2, PodsAnswered: 2}
 	var b bytes.Buffer
 	if err := PrintInventory(Input{Result: inventory.Result{}, DNS: degraded}, "text", &b); err != nil {
 		t.Fatal(err)
@@ -2198,6 +3002,138 @@ func TestPrintDNSHealth(t *testing.T) {
 	}
 }
 
+// TestPrintDNSHealth_PodsAnsweredWording pins R89's two pod-count renderings:
+// "across N pods" when every probed pod answered, and "across N of M pods"
+// when only a subset did — regression coverage against a future refactor
+// collapsing the equal case to "across N of N pods".
+func TestPrintDNSHealth_PodsAnsweredWording(t *testing.T) {
+	cases := []struct {
+		name string
+		rep  *dnshealth.Report
+		want string
+	}{
+		{
+			name: "every probed pod answered",
+			rep:  &dnshealth.Report{Status: "degraded", ServfailRatio: 0.1, ErrorResponses: 100, TotalResponses: 1000, PodsProbed: 2, PodsAnswered: 2},
+			want: "responses across 2 pods",
+		},
+		{
+			name: "only a subset answered",
+			rep:  &dnshealth.Report{Status: "degraded", ServfailRatio: 0.1, ErrorResponses: 100, TotalResponses: 1000, PodsProbed: 2, PodsAnswered: 1},
+			want: "responses across 1 of 2 pods",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var b bytes.Buffer
+			if err := printDNSHealth(tc.rep, &b); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(b.String(), tc.want) {
+				t.Errorf("missing %q, got:\n%s", tc.want, b.String())
+			}
+		})
+	}
+}
+
+// TestPrintControlPlane_TrailingBlankLine pins the separator convention every
+// sibling optional-section printer follows: the section is followed by
+// exactly one blank line, on both the unhealthy and the forbidden path.
+func TestPrintControlPlane_TrailingBlankLine(t *testing.T) {
+	for _, p := range []*controlplane.Probe{
+		{Status: "unhealthy", Failed: []string{"etcd"}},
+		{Status: "forbidden"},
+	} {
+		var b bytes.Buffer
+		if err := printControlPlane(p, &b); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasSuffix(b.String(), "\n\n") {
+			t.Errorf("printControlPlane(%+v) missing trailing blank line, got %q", p, b.String())
+		}
+	}
+}
+
+// TestPrintControlPlane_ChecksFailingWording pins the "checks failing" line's
+// singular/plural wording and the truncation marker that appears once the
+// list exceeds controlplane.MaxFailedChecks. At or below the cap every byte
+// is unchanged from before R83/R84; a body with more failing checks than the
+// cap is worded as "more than <cap> checks failing" and lists only the first
+// <cap> names, joined with a trailing ", …" rather than a false exact count.
+func TestPrintControlPlane_ChecksFailingWording(t *testing.T) {
+	names := func(n int) []string {
+		out := make([]string, n)
+		for i := range out {
+			out[i] = fmt.Sprintf("check-%02d", i)
+		}
+		return out
+	}
+
+	cases := []struct {
+		name       string
+		failed     []string
+		wantSubstr string
+		notSubstr  string
+	}{
+		{
+			name:       "singular",
+			failed:     []string{"etcd"},
+			wantSubstr: "1 check failing: etcd",
+		},
+		{
+			name:       "plural",
+			failed:     []string{"etcd", "informer-sync"},
+			wantSubstr: "2 checks failing: etcd, informer-sync",
+		},
+		{
+			name:       "exactly at cap",
+			failed:     names(controlplane.MaxFailedChecks),
+			wantSubstr: fmt.Sprintf("%d checks failing: %s", controlplane.MaxFailedChecks, strings.Join(names(controlplane.MaxFailedChecks), ", ")),
+			notSubstr:  "…",
+		},
+		{
+			name:       "one past cap",
+			failed:     names(controlplane.MaxFailedChecks + 1),
+			wantSubstr: fmt.Sprintf("more than %d checks failing: %s, …", controlplane.MaxFailedChecks, strings.Join(names(controlplane.MaxFailedChecks), ", ")),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var b bytes.Buffer
+			p := &controlplane.Probe{Status: "unhealthy", Failed: tc.failed}
+			if err := printControlPlane(p, &b); err != nil {
+				t.Fatal(err)
+			}
+			out := b.String()
+			if !strings.Contains(out, tc.wantSubstr) {
+				t.Errorf("output missing %q, got:\n%s", tc.wantSubstr, out)
+			}
+			if tc.notSubstr != "" && strings.Contains(out, tc.notSubstr) {
+				t.Errorf("output should not contain %q, got:\n%s", tc.notSubstr, out)
+			}
+		})
+	}
+}
+
+// TestPrintDNSHealth_TrailingBlankLine mirrors
+// TestPrintControlPlane_TrailingBlankLine for the DNS section's two rendering
+// paths.
+func TestPrintDNSHealth_TrailingBlankLine(t *testing.T) {
+	for _, p := range []*dnshealth.Report{
+		{Status: "degraded", PodsProbed: 1},
+		{Status: "forbidden"},
+	} {
+		var b bytes.Buffer
+		if err := printDNSHealth(p, &b); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasSuffix(b.String(), "\n\n") {
+			t.Errorf("printDNSHealth(%+v) missing trailing blank line, got %q", p, b.String())
+		}
+	}
+}
+
 func TestPrintInventory_TextShowsInvestigation(t *testing.T) {
 	var buf bytes.Buffer
 	in := Input{
@@ -2216,6 +3152,169 @@ func TestPrintInventory_TextShowsInvestigation(t *testing.T) {
 	}
 }
 
+// TestPrintInventory_TextShowsInvestigationSkipped proves R214(B): a scan
+// where --investigate found nothing to chase — no workload findings, no
+// service findings, and a cluster verdict that is not Degraded — renders a
+// "── Investigation ──" section naming why, instead of staying silent.
+func TestPrintInventory_TextShowsInvestigationSkipped(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster:              clusterhealth.ClusterHealth{Verdict: "Healthy"},
+		InvestigationSkipped: true,
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	const want = "\n── Investigation ──\nInvestigation skipped — no workload findings, no service findings, and the cluster verdict is not Degraded.\n"
+	if !strings.Contains(out, want) {
+		t.Errorf("expected the exact skip sentence under its own heading:\ngot:  %q\nwant substring: %q", out, want)
+	}
+	if strings.Contains(out, "consulted:") {
+		t.Errorf("a skipped investigation has no trail and must not render a consulted: line:\n%s", out)
+	}
+}
+
+// TestPrintInventory_TextOmitsInvestigationSkippedWhenNarrativePresent is the
+// negative case: a run that did investigate renders its narrative, never the
+// skip sentence — Investigation != "" must take precedence even if
+// InvestigationSkipped were (wrongly) also set.
+func TestPrintInventory_TextOmitsInvestigationSkippedWhenNarrativePresent(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster:              clusterhealth.ClusterHealth{Verdict: "Healthy"},
+		Investigation:        "web — ImagePullBackOff\n- Root cause: bad tag",
+		InvestigationSkipped: true,
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "Investigation skipped") {
+		t.Errorf("a run with a narrative must never render the skip sentence:\n%s", out)
+	}
+	if !strings.Contains(out, "Root cause: bad tag") {
+		t.Errorf("expected the narrative to render:\n%s", out)
+	}
+}
+
+// A silent "consulted:" line when no reads happened reads as "the model read
+// something and I'm not telling you what" rather than "the model read
+// nothing" — the one case where the omission is most misleading, since the
+// whole argument for --investigate over --explain is that the narrative is
+// grounded in reads that actually happened.
+func TestPrintInventory_TextShowsEmptyConsultedState(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster:                clusterhealth.ClusterHealth{Verdict: "Healthy"},
+		Investigation:          "web — ImagePullBackOff\n- Root cause: bad tag",
+		InvestigationConsulted: nil,
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "consulted: (no reads — the model answered from the scan alone)") {
+		t.Errorf("empty consulted trail must render its own line:\n%s", out)
+	}
+}
+
+// A non-empty trail still joins on " · ", the same separator the render used
+// before the empty-state line existed.
+func TestPrintInventory_TextShowsConsultedTrailJoined(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster:                clusterhealth.ClusterHealth{Verdict: "Healthy"},
+		Investigation:          "web — ImagePullBackOff\n- Root cause: bad tag",
+		InvestigationConsulted: []string{"describe pod shop/web-abc", "events shop/web-abc"},
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "consulted: describe pod shop/web-abc · events shop/web-abc") {
+		t.Errorf("non-empty consulted trail must join on \" · \":\n%s", out)
+	}
+}
+
+// TestPrintInventory_TextShowsProvenanceLine proves R226's render half: the
+// provenance line renders whenever an Investigation section does, whether or
+// not the trail is empty, and it sits between the consulted: line and the
+// narrative — never above the heading, never after the narrative.
+func TestPrintInventory_TextShowsProvenanceLine(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		consulted []string
+	}{
+		{name: "empty trail", consulted: nil},
+		{name: "non-empty trail", consulted: []string{"describe pod shop/web-abc"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			in := Input{
+				Cluster:                clusterhealth.ClusterHealth{Verdict: "Healthy"},
+				Investigation:          "web — ImagePullBackOff\n- Root cause: bad tag",
+				InvestigationConsulted: tc.consulted,
+			}
+			if err := PrintInventory(in, "text", &buf); err != nil {
+				t.Fatal(err)
+			}
+			out := buf.String()
+			const provenance = "(model-generated; verify commands before running)"
+			consultedIdx := strings.Index(out, "consulted:")
+			provenanceIdx := strings.Index(out, provenance)
+			narrativeIdx := strings.Index(out, "Root cause: bad tag")
+			if consultedIdx == -1 || provenanceIdx == -1 || narrativeIdx == -1 {
+				t.Fatalf("expected consulted:, provenance line and narrative all present:\n%s", out)
+			}
+			if !(consultedIdx < provenanceIdx && provenanceIdx < narrativeIdx) {
+				t.Errorf("expected order consulted: -> provenance -> narrative, got indices %d, %d, %d:\n%s",
+					consultedIdx, provenanceIdx, narrativeIdx, out)
+			}
+		})
+	}
+}
+
+// TestPrintInventory_TextShowsTruncationNotice proves R225(A)'s renderer half:
+// a narrative whose truncation flag is set gets one extra line the renderer
+// writes itself.
+func TestPrintInventory_TextShowsTruncationNotice(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster:                clusterhealth.ClusterHealth{Verdict: "Healthy"},
+		Investigation:          "web — ImagePullBackOff\n- Root cause: bad tag",
+		InvestigationConsulted: []string{"describe pod shop/web-abc"},
+		InvestigationTruncated: true,
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "(narrative truncated at the model's output limit)") {
+		t.Errorf("expected the truncation notice line:\n%s", out)
+	}
+}
+
+// TestPrintInventory_TextOmitsTruncationNoticeWhenNotTruncated is the
+// negative case: an unset flag must render nothing extra. The golden files
+// depend on this — no golden fixture sets the flag, so a defect here would
+// move golden-scan.txt.
+func TestPrintInventory_TextOmitsTruncationNoticeWhenNotTruncated(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster:                clusterhealth.ClusterHealth{Verdict: "Healthy"},
+		Investigation:          "web — ImagePullBackOff\n- Root cause: bad tag",
+		InvestigationConsulted: []string{"describe pod shop/web-abc"},
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "truncated") {
+		t.Errorf("must not mention truncation when the flag is unset:\n%s", out)
+	}
+}
+
 func TestPrintInventory_JSONIncludesInvestigation(t *testing.T) {
 	var buf bytes.Buffer
 	in := Input{
@@ -2228,6 +3327,26 @@ func TestPrintInventory_JSONIncludesInvestigation(t *testing.T) {
 	out := buf.String()
 	if !strings.Contains(out, `"investigation"`) || !strings.Contains(out, `"narrative"`) || !strings.Contains(out, `"consulted"`) {
 		t.Errorf("investigation JSON missing: %s", out)
+	}
+}
+
+// TestPrintInventory_JSONOmitsTruncationFlag proves the binding ruling on
+// R225's placement clause: the truncation flag lands on Input and is
+// rendered, never exported. Even with the flag set, the JSON view carries no
+// trace of it — report.InvestigationView has no field for it.
+func TestPrintInventory_JSONOmitsTruncationFlag(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Investigation:          "narrative",
+		InvestigationConsulted: []string{"describe pod shop/web-abc"},
+		InvestigationTruncated: true,
+	}
+	if err := PrintInventory(in, "json", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if strings.Contains(strings.ToLower(out), "truncat") {
+		t.Errorf("JSON must never carry the truncation flag: %s", out)
 	}
 }
 

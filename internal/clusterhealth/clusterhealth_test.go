@@ -85,15 +85,22 @@ func TestAssess_HealthyClusterAndSystem(t *testing.T) {
 	}
 }
 
+// TestNamespaceScopeNote covers R156's two-sentence shape: the system-rollup
+// sentence and the admission-webhook sentence have different conditions and
+// cannot share one guard. "" has neither (cluster-wide, nothing skipped).
+// "kube-system" has the webhook sentence only (the system rollup ran there).
+// Any other namespace has both, joined by "\n".
 func TestNamespaceScopeNote(t *testing.T) {
-	if NamespaceScopeNote("") != "" {
-		t.Error("all-namespaces should have no caveat")
+	if got := NamespaceScopeNote(""); got != "" {
+		t.Errorf("all-namespaces should have no caveat, got %q", got)
 	}
-	if NamespaceScopeNote("kube-system") != "" {
-		t.Error("-n kube-system should have no caveat")
+	const webhookSentence = "cluster-wide checks skipped under -n: admission webhooks"
+	if got := NamespaceScopeNote("kube-system"); got != webhookSentence {
+		t.Errorf("-n kube-system should produce the webhook-only caveat, got %q", got)
 	}
-	if NamespaceScopeNote("cattle-system") == "" {
-		t.Error("-n cattle-system should produce a caveat")
+	const rollupSentence = "node health only — re-run without -n (or with -n kube-system) for the system workload check"
+	if got := NamespaceScopeNote("cattle-system"); got != rollupSentence+"\n"+webhookSentence {
+		t.Errorf("-n cattle-system should produce both sentences joined by \\n, got %q", got)
 	}
 }
 
@@ -231,6 +238,12 @@ func TestAssess_StaleHeartbeatDegrades(t *testing.T) {
 	if len(ch.NodeIssues) != 1 || !strings.Contains(ch.NodeIssues[0], "kubelet not heartbeating") {
 		t.Errorf("want a heartbeat issue, got %+v", ch.NodeIssues)
 	}
+	// Pins the stale-lease arm's DownNode reason apart from the missing-lease
+	// arm's: a stale lease is evidence the kubelet stopped, not the absence of
+	// evidence a missing lease is.
+	if len(ch.DownNodes) != 1 || ch.DownNodes[0] != (DownNode{Name: "w1", Reason: "kubelet not heartbeating"}) {
+		t.Errorf("DownNodes = %+v, want [{w1 kubelet not heartbeating}]", ch.DownNodes)
+	}
 }
 
 func TestAssess_FreshHeartbeatClean(t *testing.T) {
@@ -250,6 +263,38 @@ func TestAssess_MissingLeaseFlagged(t *testing.T) {
 	}
 	if ch.Verdict != "Degraded" {
 		t.Errorf("a missing lease on a Ready node must degrade the verdict, got %q", ch.Verdict)
+	}
+}
+
+// A Ready node with no Lease in the map must produce a DownNode reason that
+// matches its NodeIssues text — before this, DownNode.Reason was hard-coded
+// to "kubelet not heartbeating" regardless of which arm of staleHeartbeat
+// fired, so this node's issue string and its DownNode reason disagreed about
+// why it was flagged.
+func TestAssess_MissingLeaseDownNodeReasonMatchesIssue(t *testing.T) {
+	now := time.Now()
+	ch := Assess([]corev1.Node{hbReadyNode("w1")}, Heartbeat{Leases: nil, Now: now, Threshold: 40 * time.Second}, nil, nil)
+	if len(ch.NodeIssues) != 1 || ch.NodeIssues[0] != "w1 no kubelet lease" {
+		t.Fatalf("NodeIssues = %v, want [w1 no kubelet lease]", ch.NodeIssues)
+	}
+	if len(ch.DownNodes) != 1 || ch.DownNodes[0] != (DownNode{Name: "w1", Reason: "no kubelet lease"}) {
+		t.Errorf("DownNodes = %+v, want [{w1 no kubelet lease}]", ch.DownNodes)
+	}
+}
+
+// A Lease that exists but has never been renewed (RenewTime nil) takes the
+// same "no kubelet lease" arm as a wholly-missing Lease — there is no
+// timestamp to measure staleness against, so it is absence of evidence, not
+// evidence of a stopped kubelet.
+func TestAssess_NilRenewTimeTakesTheMissingLeaseArm(t *testing.T) {
+	now := time.Now()
+	lease := coordinationv1.Lease{ObjectMeta: metav1.ObjectMeta{Namespace: "kube-node-lease", Name: "w1"}}
+	ch := Assess([]corev1.Node{hbReadyNode("w1")}, Heartbeat{Leases: []coordinationv1.Lease{lease}, Now: now, Threshold: 40 * time.Second}, nil, nil)
+	if len(ch.NodeIssues) != 1 || ch.NodeIssues[0] != "w1 no kubelet lease" {
+		t.Fatalf("NodeIssues = %v, want [w1 no kubelet lease]", ch.NodeIssues)
+	}
+	if len(ch.DownNodes) != 1 || ch.DownNodes[0] != (DownNode{Name: "w1", Reason: "no kubelet lease"}) {
+		t.Errorf("DownNodes = %+v, want [{w1 no kubelet lease}]", ch.DownNodes)
 	}
 }
 
@@ -276,6 +321,42 @@ func TestAssess_HeartbeatThresholdDisabled(t *testing.T) {
 	ch := Assess([]corev1.Node{hbReadyNode("w1")}, Heartbeat{Leases: nil, Now: now, Threshold: 0}, nil, nil)
 	if ch.NodesStaleHeartbeat != 0 || ch.Verdict != "Healthy" {
 		t.Errorf("threshold 0 disables the check: %+v", ch)
+	}
+}
+
+// A refused or failed Lease read must silence the heartbeat check entirely —
+// kubeagent did not look, so it must claim nothing about any kubelet's
+// heartbeat, rather than reading the empty Leases slice as every node having
+// no lease. Paired with the inverted case (Unavailable: false) on the same
+// three nodes, which must still flag all three as "no kubelet lease": the
+// only difference between the two cases is the new field, so it alone
+// decides the outcome.
+func TestAssess_HeartbeatUnavailableDisablesCheck(t *testing.T) {
+	now := time.Now()
+	nodes := []corev1.Node{hbReadyNode("w1"), hbReadyNode("w2"), hbReadyNode("w3")}
+
+	unavailable := Assess(nodes, Heartbeat{Leases: nil, Now: now, Threshold: 40 * time.Second, Unavailable: true}, nil, nil)
+	if unavailable.Verdict != "Healthy" {
+		t.Errorf("verdict = %q, want Healthy when the Lease read was unavailable", unavailable.Verdict)
+	}
+	if len(unavailable.NodeIssues) != 0 {
+		t.Errorf("NodeIssues = %v, want none when the Lease read was unavailable", unavailable.NodeIssues)
+	}
+	if len(unavailable.DownNodes) != 0 {
+		t.Errorf("DownNodes = %+v, want none when the Lease read was unavailable", unavailable.DownNodes)
+	}
+	if unavailable.NodesStaleHeartbeat != 0 {
+		t.Errorf("NodesStaleHeartbeat = %d, want 0 when the Lease read was unavailable", unavailable.NodesStaleHeartbeat)
+	}
+
+	available := Assess(nodes, Heartbeat{Leases: nil, Now: now, Threshold: 40 * time.Second, Unavailable: false}, nil, nil)
+	if available.NodesStaleHeartbeat != 3 {
+		t.Errorf("NodesStaleHeartbeat = %d, want 3 when the Lease read succeeded but returned no leases", available.NodesStaleHeartbeat)
+	}
+	for _, iss := range available.NodeIssues {
+		if !strings.Contains(iss, "no kubelet lease") {
+			t.Errorf("NodeIssues = %v, want every issue to be \"no kubelet lease\"", available.NodeIssues)
+		}
 	}
 }
 

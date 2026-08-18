@@ -8,11 +8,21 @@ import (
 
 	"github.com/imantaba/kubeagent/internal/baseline"
 	"github.com/imantaba/kubeagent/internal/diagnose"
+	"github.com/imantaba/kubeagent/internal/hpahealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/pdbhealth"
 	"github.com/imantaba/kubeagent/internal/policy"
 	"github.com/imantaba/kubeagent/internal/pvchealth"
 	"github.com/imantaba/kubeagent/internal/scan"
 	"github.com/imantaba/kubeagent/internal/svchealth"
+	"github.com/imantaba/kubeagent/internal/termhealth"
+	"github.com/imantaba/kubeagent/internal/webhookhealth"
+
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 func TestLevelOrdering(t *testing.T) {
@@ -161,6 +171,178 @@ func TestFlattenIncludesHealthIssuesAsWarnings(t *testing.T) {
 	for _, f := range got {
 		if f.Level != Warning {
 			t.Errorf("%s %s/%s: Level = %v, want Warning", f.Kind, f.Namespace, f.Name, f.Level)
+		}
+	}
+}
+
+// TestFlattenUsesCamelCaseFindingVocabulary asserts that stuck-terminating,
+// PDB and HPA issues land in the flattened findings with the CamelCase Issue
+// spelling shared by gate JSON, the watch daemon's /issues and the MCP tool
+// result — not the raw lowercase reason/category the source packages carry.
+func TestFlattenUsesCamelCaseFindingVocabulary(t *testing.T) {
+	res := scan.Result{
+		StuckTerminating: []termhealth.Issue{
+			{Kind: "Namespace", Name: "legacy-ns", Age: "2h", Reason: "stuck in Terminating"},
+		},
+		PDBIssues: []pdbhealth.Issue{
+			{Namespace: "shop", Name: "unsat", Category: "unsatisfiable", Reason: "r1"},
+			{Namespace: "shop", Name: "stl", Category: "stale", Reason: "r2"},
+			{Namespace: "shop", Name: "blk", Category: "blocking", Reason: "r3"},
+			{Namespace: "shop", Name: "sgl", Category: "singleton", Reason: "r4"},
+		},
+		HPAIssues: []hpahealth.Issue{
+			{Namespace: "shop", Name: "unable-hpa", Category: "unable", Reason: "r5"},
+			{Namespace: "shop", Name: "metrics-hpa", Category: "metrics", Reason: "r6"},
+			{Namespace: "shop", Name: "capped-hpa", Category: "capped", Reason: "r7"},
+			{Namespace: "shop", Name: "disabled-hpa", Category: "disabled", Reason: "r8"},
+			{Namespace: "shop", Name: "ambiguous-hpa", Category: "ambiguous", Reason: "r9"},
+		},
+	}
+
+	got := Flatten(res)
+	want := map[string]string{
+		"legacy-ns":     "StuckTerminating",
+		"unsat":         "PDBUnsatisfiable",
+		"stl":           "PDBStale",
+		"blk":           "PDBBlocked",
+		"sgl":           "PDBSingleton",
+		"unable-hpa":    "HPAUnableToScale",
+		"metrics-hpa":   "HPAMetricsFailed",
+		"capped-hpa":    "HPACapped",
+		"disabled-hpa":  "HPAScalingDisabled",
+		"ambiguous-hpa": "HPAAmbiguousSelector",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("Flatten returned %d findings, want %d: %+v", len(got), len(want), got)
+	}
+	seen := make(map[string]bool, len(got))
+	for _, f := range got {
+		wantIssue, ok := want[f.Name]
+		if !ok {
+			t.Errorf("unexpected finding for %s: %+v", f.Name, f)
+			continue
+		}
+		if f.Issue != wantIssue {
+			t.Errorf("%s: Issue = %q, want %q", f.Name, f.Issue, wantIssue)
+		}
+		seen[f.Name] = true
+	}
+	for name := range want {
+		if !seen[name] {
+			t.Errorf("missing finding for %s", name)
+		}
+	}
+}
+
+// TestFlattenPDBSingletonFromAssess composes pdbhealth.Assess with Flatten
+// over a real PDB object, rather than a hand-built pdbhealth.Issue: it proves
+// Assess actually emits the literal "singleton" that pdbCategoryToIssue keys
+// on, not just that the map has the entry.
+// TestFlattenWebhookIssueNameCarriesTheWebhookNotJustTheConfig pins R167: a
+// finding's Name for a webhook issue is "config/webhook", not just "config" —
+// the old shape collapsed two distinct webhooks in one
+// ValidatingWebhookConfiguration into byte-identical findings. vwc-multi
+// carries two Fail-policy webhooks at/above the timeout threshold, matching
+// the shape this decision was written against.
+func TestFlattenWebhookIssueNameCarriesTheWebhookNotJustTheConfig(t *testing.T) {
+	res := scan.Result{
+		WebhookIssues: []webhookhealth.Issue{
+			{Kind: "ValidatingWebhookConfiguration", Config: "vwc-multi", Webhook: "a-slow.multi.example.com",
+				Problem: "HighTimeout", Reason: "timeoutSeconds 30 >= 15s under failurePolicy Fail"},
+			{Kind: "ValidatingWebhookConfiguration", Config: "vwc-multi", Webhook: "b-slow.multi.example.com",
+				Problem: "HighTimeout", Reason: "timeoutSeconds 45 >= 15s under failurePolicy Fail"},
+		},
+	}
+	got := Flatten(res)
+	if len(got) != 2 {
+		t.Fatalf("Flatten returned %d findings, want 2: %+v", len(got), got)
+	}
+	names := map[string]bool{}
+	for _, f := range got {
+		if f.Namespace != "" {
+			t.Errorf("webhook finding Namespace = %q, want empty (unchanged by this decision)", f.Namespace)
+		}
+		names[f.Name] = true
+	}
+	want := []string{"vwc-multi/a-slow.multi.example.com", "vwc-multi/b-slow.multi.example.com"}
+	for _, w := range want {
+		if !names[w] {
+			t.Errorf("Flatten findings %+v missing Name %q", got, w)
+		}
+	}
+	if len(names) != 2 {
+		t.Errorf("the two webhook findings must be distinguishable by Name, got names %v", names)
+	}
+}
+
+func TestFlattenPDBSingletonFromAssess(t *testing.T) {
+	minAvail := intstr.FromInt(1)
+	pdb := policyv1.PodDisruptionBudget{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "solo"},
+		Spec:       policyv1.PodDisruptionBudgetSpec{MinAvailable: &minAvail},
+		Status: policyv1.PodDisruptionBudgetStatus{
+			ExpectedPods: 1, DesiredHealthy: 1, CurrentHealthy: 1, DisruptionsAllowed: 0,
+		},
+	}
+
+	res := scan.Result{PDBIssues: pdbhealth.Assess([]policyv1.PodDisruptionBudget{pdb})}
+	got := Flatten(res)
+	if len(got) != 1 {
+		t.Fatalf("Flatten returned %d findings, want 1: %+v", len(got), got)
+	}
+	if got[0].Issue != "PDBSingleton" {
+		t.Errorf("Issue = %q, want PDBSingleton", got[0].Issue)
+	}
+}
+
+// TestFlattenScalingDisabledAndAmbiguousSelectorFromAssess composes
+// hpahealth.Assess with Flatten over two real HorizontalPodAutoscaler
+// objects, rather than hand-built hpahealth.Issue values: it proves Assess
+// actually emits the literals "disabled" and "ambiguous" that
+// hpaCategoryToIssue keys on, not just that the map has the entries.
+func TestFlattenScalingDisabledAndAmbiguousSelectorFromAssess(t *testing.T) {
+	disabled := autoscalingv2.HorizontalPodAutoscaler{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "batch-hpa"},
+		Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
+			ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{Kind: "Deployment", Name: "batch"},
+			MaxReplicas:    6,
+		},
+		Status: autoscalingv2.HorizontalPodAutoscalerStatus{Conditions: []autoscalingv2.HorizontalPodAutoscalerCondition{
+			{Type: autoscalingv2.ScalingActive, Status: corev1.ConditionFalse, Reason: "ScalingDisabled", Message: "scaling is disabled"},
+		}},
+	}
+	ambiguous := autoscalingv2.HorizontalPodAutoscaler{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "dup-hpa"},
+		Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
+			ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{Kind: "Deployment", Name: "dup"},
+			MaxReplicas:    6,
+		},
+		Status: autoscalingv2.HorizontalPodAutoscalerStatus{Conditions: []autoscalingv2.HorizontalPodAutoscalerCondition{
+			{Type: autoscalingv2.ScalingActive, Status: corev1.ConditionFalse, Reason: "AmbiguousSelector", Message: "selector overlaps with another HPA"},
+		}},
+	}
+
+	res := scan.Result{HPAIssues: hpahealth.Assess([]autoscalingv2.HorizontalPodAutoscaler{disabled, ambiguous})}
+	got := Flatten(res)
+	if len(got) != 2 {
+		t.Fatalf("Flatten returned %d findings, want 2: %+v", len(got), got)
+	}
+	want := map[string]string{"batch-hpa": "HPAScalingDisabled", "dup-hpa": "HPAAmbiguousSelector"}
+	seen := make(map[string]bool, len(got))
+	for _, f := range got {
+		wantIssue, ok := want[f.Name]
+		if !ok {
+			t.Errorf("unexpected finding for %s: %+v", f.Name, f)
+			continue
+		}
+		if f.Issue != wantIssue {
+			t.Errorf("%s: Issue = %q, want %q", f.Name, f.Issue, wantIssue)
+		}
+		seen[f.Name] = true
+	}
+	for name := range want {
+		if !seen[name] {
+			t.Errorf("missing finding for %s", name)
 		}
 	}
 }

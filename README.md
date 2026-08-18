@@ -105,16 +105,18 @@ kubeagent scan
   collected StorageClasses and PVs. Advisory and read-only; no new RBAC.
 - **Stuck-terminating** — a Namespace, Pod, or PVC wedged in Terminating past two minutes, with the blocking finalizer/condition named.
 - **PodDisruptionBudget-blocked drains** — flags a PDB that will block a node
-  drain: one that can never allow a voluntary eviction (unsatisfiable), whose
-  selector matches no pods (stale), or that is blocking evictions on an
-  already-degraded workload. Advisory and read-only; the daemon exposes
-  `kubeagent_pdb_blocking_issues`. Adds a base `policy/poddisruptionbudgets`
-  read grant.
+  drain: one that can never allow a voluntary eviction (unsatisfiable), a
+  single-replica workload with no disruption headroom and often deliberate
+  (singleton), whose selector matches no pods (stale), or that is blocking
+  evictions on an already-degraded workload. Advisory and read-only; the
+  daemon exposes `kubeagent_pdb_blocking_issues`. Adds a base
+  `policy/poddisruptionbudgets` read grant.
 - **HPA-can't-scale detection** — `scan` flags a HorizontalPodAutoscaler that
-  is stuck: can't fetch metrics (broken autoscaling), can't scale because its
-  target is missing or the scale subresource errors, or is pinned at
-  `maxReplicas` while demand exceeds the cap. Advisory and read-only; the daemon
-  exposes `kubeagent_hpa_scaling_issues`. Adds a base
+  is stuck: can't fetch metrics (broken autoscaling), has scaling disabled or
+  targets pods another HPA already claims, can't scale because its target is
+  missing or the scale subresource errors, or is pinned at `maxReplicas`
+  while demand exceeds the cap. Advisory and read-only; the daemon exposes
+  `kubeagent_hpa_scaling_issues`. Adds a base
   `autoscaling/horizontalpodautoscalers` read grant.
 - **Admission-webhook-failure detection** — `scan` flags a Validating/Mutating
   webhook whose `failurePolicy` is `Fail` and whose backing Service is missing
@@ -126,7 +128,7 @@ kubeagent scan
   whose `timeoutSeconds` is at or above 15 (tunable via
   `KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS` / Helm `webhookLatency.timeoutThreshold`)
   — a latency landmine that blocks every intercepted create/update for up to
-  that long, then rejects it. Rendered `WebhookSlow`; always-on, advisory, and
+  that long, then rejects it. Rendered `HighTimeout`; always-on, advisory, and
   cluster-wide only; the daemon exposes
   `kubeagent_admission_webhook_latency_risks`. No new RBAC.
 - **ResourceQuota near-exhaustion** — `scan` flags a namespace's ResourceQuota

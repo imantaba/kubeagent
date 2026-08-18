@@ -422,7 +422,7 @@ node attribution. Docker Hub images (`nginx:...`) group under `docker.io`.
 A **broken PersistentVolumeClaim** is joined the same way: when a workload's pod
 mounts a PVC that the [Pending-PVC check](#pending-pvc-storage-provisioning) has
 diagnosed as failing to provision or bind, the workload is attributed
-`↳ likely caused by PVC <name> (MissingStorageClass)` — the parenthetical is the PVC's failure reason and can be `MissingStorageClass`, `NoMatchingPV`, `ProvisioningFailed`, or `FailedBinding` depending on what the cluster reports — connecting a pod stuck in
+`↳ likely caused by PVC <name> (MissingStorageClass)` — the parenthetical is the PVC's failure reason and can be `ProvisioningFailed`, `FailedBinding`, `MissingStorageClass`, `NoMatchingPV`, `PVSelectorMismatch`, or `ProvisionerNotResponding` depending on what the cluster reports — connecting a pod stuck in
 `Pending`/`ContainerCreating` to the storage cause kubeagent already reports. The
 pod normally carries a finding of its own as well: one that cannot be scheduled
 because its claim is unbound is reported `Unschedulable` at **high** confidence,
@@ -442,31 +442,53 @@ cannot split kube- from system-reserved). A per-resource summary appears under
 `CONTEXT` — one line each for memory, CPU, and ephemeral-storage, reading `N of M nodes
 reserve none` or `all M nodes reserve some` (with `⚠`/`✓` on the memory and
 ephemeral-storage lines). A node that reserves no
-**memory** or no **ephemeral-storage** is flagged with a **WARNING** in `NOTES` —
+**memory** or no **ephemeral-storage** is named in `NOTES`, with the line
+saying why it matters —
 both let OS/kubelet memory or disk pressure destabilise the node. CPU reservation
 is shown but not warned, since it is compressible and many clusters intentionally
-leave it unset; a resource a node does not report is shown as `not reported`. The
+leave it unset. `not reported` is a whole-row state: it is shown only when **no**
+node in the cluster reports `ephemeral-storage`. On a mixed cluster, where some
+nodes report it and some do not, the line instead prints the ratio over the
+reporting nodes, with the excluded count named beside it — `N of M nodes reserve
+none  (K nodes do not report it)`. The
 check reads only the Node objects already listed during a scan, so it needs no
-extra permissions, and it is advisory: it never changes the cluster verdict.
+extra permissions, and it is advisory: no `--fail-on` level selects on it, and it
+never changes the cluster verdict.
 
 ### PVC reclaim policy
 
-`scan` lists Bound PersistentVolumeClaims whose bound PersistentVolume has
-`reclaimPolicy: Delete`. For those volumes, deleting the PVC (or the PV) tells
+`scan` reports Bound PersistentVolumeClaims whose bound PersistentVolume has
+`reclaimPolicy: Delete` — by default as one summary line grouped by
+StorageClass (`classA ×N, classB ×M`); the full per-claim list is available
+with `--pvc-reclaim`. For those volumes, deleting the PVC (or the PV) tells
 the provisioner to destroy the underlying storage — so the section is a
-data-loss audit: which claims are *not* protected by `Retain`. The reclaim
+data-loss audit for that reclaim policy: which `Delete`-reclaiming claims are
+*not* protected by `Retain`. `Recycle` is out of scope: it is deprecated (the
+API server warns on create) and supported only by the HostPath and NFS
+plugins, so a Bound PVC on a `Recycle` volume is not reported here. The reclaim
 policy is read from the bound PV (the authoritative value), so only Bound PVCs
 appear. `Delete` is the common default for dynamic provisioners, so the list can
 be long; it is informational and never changes the cluster verdict. Reading PVCs
-and PVs needs only `get`/`list`/`watch`.
+and PVs needs only `get`/`list` — see `kubeagent rbac print --profile scan` for
+the exact rule.
 
 ### Disk usage (opt-in)
 
-`scan --disk-usage` reads each node's kubelet `/stats/summary` and warns when a
-node's root filesystem or a PersistentVolumeClaim is at or over
-`--disk-threshold` (default `0.80`) — an early warning that fires before the
-kubelet's `DiskPressure` eviction signal. Over-threshold volumes appear in
-**NEEDS ATTENTION**; the full detail is in JSON `diskUsage`.
+`scan --disk-usage` reads each node's kubelet `/stats/summary` and warns when
+the filesystem the kubelet reports as `nodefs` — the one holding the kubelet
+root directory, configurable via `--root-dir` — or a PersistentVolumeClaim
+whose volume driver reports usage statistics to the kubelet, is at or over
+`--disk-threshold` (default `0.80`). hostPath-backed volumes — including what
+the `local-path` provisioner that kind and k3s default to creates — report no
+usage statistics, so those claims are not assessed and the section will not
+mention them. At the default `0.80` this warns earlier than a kubelet left on
+upstream default eviction thresholds, but not on every cluster: a custom
+`evictionHard` (`nodefs.available: 25%` evicts at 75%, before kubeagent's
+`80%`) can cross first, and kubeagent compares **used** against capacity while
+the kubelet's `DiskPressure` signal compares **available** against capacity,
+so on a filesystem with reserved blocks the two numbers differ by the reserve
+(5.09 percentage points on the cluster this was measured on). Over-threshold
+volumes appear in **NEEDS ATTENTION**; the full detail is in JSON `diskUsage`.
 
 It is **off by default**: it needs the `nodes/proxy` subresource (a broader grant
 than kubeagent's usual `get`/`list`/`watch`), so you opt in explicitly with the
@@ -476,14 +498,22 @@ cluster verdict.
 ### Ingress route health
 
 `scan` walks every Ingress rule (and default backend) and follows the route to
-its backend Service. It flags a route when the Service is missing, has no ready
-endpoints (the usual cause of a 502/503), or does not expose the referenced
-port — so a broken public route reads as, e.g., `ingress shop/web
-example.com/api backend Service api-svc:8080 has no ready endpoints (likely
-502/503)`. Only Service backends are checked (Resource backends are skipped), and
-routes resolve within the Ingress's own namespace. It is read-only and advisory:
-it appears in **NEEDS ATTENTION** and JSON `ingressIssues` but does not change
-the cluster verdict.
+its backend Service, in one of three forms:
+
+- **missing Service** — `backend Service api-svc not found`
+- **no ready endpoints** (the usual cause of a 502/503) — `backend Service
+  api-svc:8080 has no ready endpoints (likely 502/503)`. The `:8080` appears
+  only when the Ingress's requested port actually resolves on the Service;
+  when it does not, the Detail names the Service alone rather than
+  misattributing a port the Service never exposed.
+- **port not exposed** — `backend Service api-svc does not expose port 8080`
+
+Only Service backends are checked (Resource backends are skipped), and routes
+resolve within the Ingress's own namespace. It is read-only and advisory: it
+appears in **NEEDS ATTENTION** and JSON `ingressIssues` but does not change
+the cluster verdict. The check does not consider whether an ingress controller
+implements the route's `ingressClassName`, so an Ingress left behind by a
+removed or replaced controller is still reported.
 
 When a broken route's backend Service has no ready endpoints, the Detail also
 names *why* — the same root cause the [Service check](service-health.md) reports,
@@ -493,7 +523,9 @@ one hop up the graph:
   endpoints (likely 502/503) — the selector matches no pods`
 - **matching pods are on a down node** — `backend Service payments:80 has no
   ready endpoints (likely 502/503) — matching pods on down node worker-2
-  (NotReady)`
+  (NotReady)`, or, when the matching pods span more than one down node,
+  `backend Service payments:80 has no ready endpoints (likely 502/503) —
+  matching pods on 2 down nodes`
 - **matching pods exist but none are Ready** — `backend Service payments:80 has
   no ready endpoints (likely 502/503) — 3 matching pods, 0 ready`
 
@@ -530,19 +562,31 @@ events for an event-based reason.
 no failure event and have a schedulable StorageClass — are never flagged. It is the
 provision-time complement to `VolumeAttachError` (attach-time). It appears in **NEEDS
 ATTENTION** and JSON `pvcIssues` but is advisory (it does not change the cluster verdict).
-Read-only; correlates against collected StorageClasses and PVs (no new flag or metric).
+Read-only; correlates against collected StorageClasses and PVs. It needs no
+flag of its own, and the watch daemon exports it as the gauge
+`kubeagent_pvc_pending_issues`.
 
 ### Node heartbeat freshness
 
 Each node renews a `Lease` in `kube-node-lease` about every 10 seconds; the
-control plane only marks a node `NotReady` after ~40 seconds of missed renewals.
+control plane only marks a node `NotReady` after its own
+`--node-monitor-grace-period` of missed renewals (50 seconds by default on
+Kubernetes 1.32 and later, 40 before that).
 `scan` reads those Leases and flags a node that still reads **Ready** but whose
 lease has gone stale — `✗ node worker-2 kubelet not heartbeating (lease 48s
 stale)` — so a crashed, hung, or partitioned kubelet shows up *before* the node
-flips to `NotReady`. It degrades the cluster verdict, and the threshold is
-tunable with `--node-heartbeat-threshold` (default `40s`; `0` disables it).
-Compares against the scanner's clock, so run it in-cluster (the watch daemon) or
-on a clock-synced host. The count of flagged nodes is also exposed in JSON as `nodesStaleHeartbeat`.
+flips to `NotReady`. A node with no Lease at all (or one whose lease has never
+been renewed) is flagged the same way, rendered `✗ node worker-2 no kubelet
+lease` — that rendering does not consult the threshold, since there is no
+renewal timestamp to measure staleness against. It degrades the cluster verdict, and
+the threshold is tunable with `--node-heartbeat-threshold` (default `40s`;
+`0` disables it) — in the watch daemon, which takes no such flag, set
+`KUBEAGENT_NODE_HEARTBEAT_THRESHOLD` instead. At the default the warning
+arrives roughly ten seconds before the flip on a 50-second grace period; lower
+the threshold to widen that window, at the cost of flagging nodes whose
+renewals are merely slow. Compares against the scanner's clock, so run it
+in-cluster (the watch daemon) or on a clock-synced host. The count of flagged
+nodes is also exposed in JSON as `nodesStaleHeartbeat`.
 
 ### Expected-node list
 
@@ -562,9 +606,11 @@ also exposed in JSON as `nodesExpectedAbsent`.
 `scan --kubelet-health` actively probes each node's kubelet `/healthz` through
 the `nodes/proxy` subresource (the same add-on `--disk-usage` uses) and flags a
 kubelet that is **reachable but reporting unhealthy** — `✗ node worker-2 kubelet
-/healthz unhealthy: [-]pleg failed`. This is the "alive but sick" failure mode
-(a failing PLEG/runtime/syncloop subcheck) that the passive lease-heartbeat and
-`NotReady` checks miss, and it often shows *before* the node flips to `NotReady`.
+/healthz unhealthy: [-]syncloop failed`. The kubelet's `/healthz` covers a small
+fixed set of subchecks (`ping`, `log`, `syncloop`, `device-plugin`); a container
+runtime or PLEG failure is **not** among them and surfaces on the node's `Ready`
+condition instead, where the `NotReady` check catches it. This probe is for the
+narrower case where those subchecks fail while the node is still `Ready`.
 A dead/unreachable kubelet is skipped (already flagged by the node checks), and a
 missing `nodes/proxy` grant prints a one-line hint. It is read-only (a `GET`),
 opt-in, and **advisory** — it appears in the `KUBELET HEALTH` section and JSON
@@ -575,15 +621,17 @@ with `KUBEAGENT_KUBELET_HEALTH=true` and the `nodes/proxy` add-on
 ### Control-plane health (opt-in)
 
 `scan --control-plane-health` probes the apiserver `/readyz?verbose` endpoint
-and flags an unhealthy control plane — naming the individual checks that are
-failing (etcd, admission/controller poststarthooks, informer-sync). It covers
-**apiserver and etcd**; scheduler/controller-manager health is a documented
-follow-on.
+and flags a control plane that reports itself **not ready**. It covers
+**apiserver and etcd** — those are the checks `/readyz` runs; scheduler and
+controller-manager health is not covered.
 
-It is **opt-in**: off by default because it requires a `/readyz` grant not
-included in the base RBAC profile. Enable the add-on grant with the Helm value
-`controlPlaneHealth.enabled=true` or by applying
-`deploy/rbac-controlplane.yaml`. In the daemon, set
+It is **opt-in**: off by default because it costs an extra request per scan and
+is advisory. Most clusters already allow it — Kubernetes grants `get /readyz`
+to `system:authenticated` through the default `system:public-info-viewer` and
+`system:discovery` roles — but kubeagent still ships the grant explicitly, for
+clusters that have narrowed those defaults and so that `kubeagent rbac print`
+names every path the feature reads. Apply it with the Helm value
+`controlPlaneHealth.enabled=true` or `deploy/rbac-controlplane.yaml`. In the daemon, set
 `KUBEAGENT_CONTROL_PLANE_HEALTH=true`; the gauge
 `kubeagent_control_plane_unhealthy` is `1` when the check fires, `0`
 otherwise.
@@ -594,8 +642,13 @@ The check is **advisory** — it appears in a `CONTROL PLANE` section and JSON
 ```text
 CONTROL PLANE  (opt-in)
   ✗ control plane not ready
-      ⚠ 2 checks failing: etcd, poststarthook/start-kube-apiserver-admission-initializer
+      ⚠ apiserver /readyz reported not ready
 ```
+
+kubeagent reports *that* the control plane is not ready, not *which* readyz
+check failed: the apiserver returns the per-check detail as `text/plain`, and
+the Kubernetes client discards the body of a non-2xx response it cannot
+decode. Run `kubectl get --raw '/readyz?verbose'` for the per-check list.
 
 ### DNS / CoreDNS resolution health (opt-in)
 
@@ -606,9 +659,10 @@ CoreDNS-pod health check misses entirely.
 
 The check fires when the ratio of SERVFAIL + REFUSED responses to total responses
 is at or above **5%** (the default; set `KUBEAGENT_DNS_SERVFAIL_RATIO` to tune)
-over a minimum floor of **100 responses**. Below the floor the ratio is too
-noisy to be actionable and is skipped. Findings are aggregated across all CoreDNS
-pods so a single ratio and count appear in the output.
+over a minimum floor of **100 responses**. `KUBEAGENT_DNS_SERVFAIL_RATIO` takes
+a fraction in `(0, 1]`, so the default `0.05` is 5%. Below the floor the ratio is
+too noisy to be actionable and is skipped. Findings are aggregated across all
+CoreDNS pods so a single ratio and count appear in the output.
 
 It is **opt-in**: off by default because it requires the `pods/proxy` subresource
 — a broader grant than kubeagent's usual `get`/`list`/`watch`. Enable the add-on
@@ -631,27 +685,63 @@ DNS  (opt-in)
 `scan --certs` reads the cluster's `kubernetes.io/tls` Secrets and flags
 certificates that are **expired** or expiring within the warn window
 (`--cert-warn-days`, default 30) in an advisory `CERTIFICATES` section, with the
-Ingress routes each certificate fronts. Privacy by construction: only the
-**public** certificate (`tls.crt`) is parsed — the private key is never read —
-and only metadata (names and dates) is reported. Off by default: without the
-flag kubeagent makes no Secrets API calls at all. The in-cluster daemon needs
-the secrets add-on grant (`deploy/rbac-certs.yaml` or Helm
-`certs.enabled=true`) and enables the check with `KUBEAGENT_CERTS=true`.
+Ingress routes each certificate fronts. kubeagent's own code never reads,
+prints, or stores the private key: only the **public** certificate
+(`tls.crt`) is parsed, and only metadata (names and dates) is reported. That
+is a property of kubeagent's code, not of what crosses the network —
+`list secrets` is a whole-object read, so the API server returns `tls.key` in
+the response body alongside `tls.crt`, and the grant this feature needs is
+therefore the ability to receive private keys, not merely to receive
+certificates (see [least-privilege RBAC](rbac.md#the-feature-table) for what
+that costs). Off by default: without the flag kubeagent makes no Secrets API
+calls at all. The in-cluster daemon needs the secrets add-on grant
+(`deploy/rbac-certs.yaml` or Helm `certs.enabled=true`) and enables the check
+with `KUBEAGENT_CERTS=true`.
+
+The `Invalid` category names a `kubernetes.io/tls` Secret whose certificate
+could not be parsed: `detail` is `empty tls.crt` when `tls.crt` is missing or
+empty, `invalid certificate data` when every PEM block in it fails to parse —
+so a malformed secret is reported rather than silently skipped, and a JSON
+consumer can match on either `detail` value under the `invalid` key.
+
+A refused `secrets` read is visibly not a clean result: the section prints
+`certificates: secrets access denied — apply deploy/rbac-certs.yaml (or Helm
+certs.enabled=true)` in place of any findings, and the same refusal also
+names `secrets` in the [`BLIND SPOTS`](rbac.md#blind-spots) section — the
+read is refused once and reported in both places.
+
+Example output:
+
+```text
+CERTIFICATES  (advisory — public certificate metadata only)
+  ✗ web/tls-example  EXPIRED 4d ago  (CN example.com)
+      — fronts ingress web/example-ingress (example.com)
+  ⚠ api/tls-internal  expires in 12d  (CN api.example.org)
+  ⚠ payments/tls-broken  invalid certificate data
+  · 3 certificates checked (warn window 30d)
+```
 
 ### Next-step suggestions (opt-in)
 
 `scan --suggest` prints a deterministic, reviewed next-step suggestion and a
-read-only `kubectl` investigation command directly under each pod finding.
-It works **offline** (no API key required) and is **read-only** — kubeagent
-prints the command, it never runs it.
+read-only `kubectl` investigation command directly under each finding —
+including workload-level findings such as `RolloutStuck`, `JobFailed` and
+`FailedCreate`, which may have no pod row beneath them. It works **offline**
+(no API key required) and is **read-only** — kubeagent prints the command, it
+never runs it.
 
 ```text
-✗ shop/web  Deployment  0/2 Degraded
+✗ shop/web  Deployment  0/2 Degraded  · 8 restarts, last 1m ago
+    image shop/web:1.4.2
     ⚠ CrashLoopBackOff: Container repeatedly crashes after starting
-      ↳ container "web": restartCount=8
+      ↳ container "web", restartCount=8, last exit 1 (Error), 1m7s ago
       ↳ next step: starts then crashes — inspect the crash output
       ↳ try: kubectl -n shop logs web-abc -c web --previous
 ```
+
+Because a suggestion names the pod, `--suggest` also splits findings that would
+otherwise be grouped as `×N` — see [Grouping identical
+findings](#grouping-identical-findings) for why.
 
 Each finding maps to a single focused next step — for example,
 `CrashLoopBackOff` → check the previous logs; `ImagePullBackOff` → verify the
@@ -659,64 +749,136 @@ tag and credentials; `OOMKilled` → inspect the memory limits. The suggestions
 are deterministic and never model-decided: no finding is paraphrased or
 reordered by an LLM.
 
-This is the first **Theme C** (principled intelligence) slice — the
-deterministic remediation core that a later slice will hand to `--explain` for
-LLM ranking and phrasing (the LLM ranks; it never invents the remediation).
+A kind without its own next step — `ContainerStartError` is the current
+example — gets the generic `describe` command instead, as a property of the
+design rather than an omission: its cause is not knowable from the issue name
+alone, so the command that shows everything is the right one.
+
+A pod can carry more than one finding, and each gets its own next step, printed
+in finding order rather than in priority order — a container that both crash-loops
+and is OOM-killed shows the crash step first.
+
+This was the first **Theme C** (principled intelligence) slice — the
+deterministic remediation core that `--explain` now ranks and phrases: the LLM
+ranks and sequences these commands, and never invents or substitutes one. See
+[Explaining findings](#explaining-findings-opt-in) for how that grounding works.
+
+The same deterministic table is surfaced unconditionally by the MCP server as a
+finding's `remediationHint` — an MCP client has no flag to pass, so "opt-in"
+describes `scan`. The MCP server remains read-only toward the cluster;
+separately, it makes no LLM call.
 
 ### Stuck-terminating resources
 
 `scan` flags a resource wedged in `Terminating` — deletion pending longer than
-two minutes — and names the blocker: a **Namespace** stuck on a finalizer or a
-downstream condition (`NamespaceFinalizersRemaining` / `NamespaceContentRemaining`
-/ `NamespaceDeletionContentFailure`, message shown as-is), a **Pod** stuck past
-its grace period (its finalizers, or "deletion not confirmed" when the node is
-gone), or a **PVC** held by `pvc-protection` (cross-referenced to a pod still
-mounting it). Read-only and advisory — it never removes a finalizer (that is a
-`--fix` concern) and never changes the cluster verdict. The daemon exposes
-`kubeagent_resources_stuck_terminating`.
+two minutes by default (see `KUBEAGENT_TERMINATING_THRESHOLD`) — and names the
+blocker: a **Namespace** stuck on a finalizer or a downstream condition
+(`NamespaceDeletionContentFailure` / `NamespaceFinalizersRemaining` /
+`NamespaceContentRemaining`, message sanitized and trimmed), a **Pod** stuck
+past its grace period (its own finalizers, or the node named as NotReady or no
+longer existing when node data resolves `spec.nodeName` — an unset name, no
+node data, or a matched Ready node keeps the generic "deletion not confirmed"
+fallback), or a **PVC** held by `pvc-protection` (cross-referenced to the pod
+or pods still mounting it) or by any other finalizer. Read-only and advisory —
+it never removes a finalizer (removing one is a deliberate manual act, outside
+kubeagent's remediation allowlist) and never changes the cluster verdict. The
+daemon exposes `kubeagent_resources_stuck_terminating`.
 
 ### PodDisruptionBudget-blocked drains
 
-`scan` flags a PodDisruptionBudget that will block a node drain, covering three
+`scan` flags a PodDisruptionBudget that will block a node drain, covering four
 categories:
 
-- **unsatisfiable** — the budget requires more healthy pods than the workload has
-  (e.g. `minAvailable: 3` covering only 3 replicas), so no voluntary eviction can
-  ever be permitted; every `kubectl drain` will hang indefinitely.
 - **stale** — the PDB's selector matches no pods (the workload was renamed,
-  deleted, or the selector drifted), so the budget protects nothing but would
-  still block drain attempts.
+  deleted, scaled to zero, or the selector drifted). It protects nothing and
+  blocks nothing today, because eviction consults only the PDBs that match the
+  pod being evicted — but it will start constraining drains the moment a
+  workload matches it again.
+- **singleton** — a single-replica workload with `minAvailable: 1` (or an
+  equivalent `maxUnavailable: 0`) has no disruption headroom: no voluntary
+  eviction is possible, and draining its node will hang. Often deliberate — a
+  workload the operator never wants evicted — so treat it as a signal to
+  confirm intent, not automatically as a misconfiguration.
+- **unsatisfiable** — either the PDB sets neither `minAvailable` nor
+  `maxUnavailable` at all, or its rule requires at least as many healthy pods as
+  the workload has (e.g. `minAvailable: 3` covering only 3 replicas). Either
+  way, no voluntary eviction can ever be permitted; every `kubectl drain` will
+  hang indefinitely.
 - **blocking** — the workload is already degraded (fewer healthy pods than the PDB
   demands), so `DisruptionsAllowed == 0` and the node cannot be drained until the
   workload heals.
 
+Each PDB is evaluated independently. Two individually-benign budgets selecting
+the same pods make those pods un-evictable, because the eviction API refuses a
+pod covered by more than one PDB; kubeagent does not currently detect that.
+
+A PDB can match more than one of these; the first that applies is reported. A
+PDB with neither `minAvailable` nor `maxUnavailable` set is always
+`unsatisfiable`, regardless of its pod counts; for every PDB that does set one,
+the order is stale, singleton, unsatisfiable, blocking.
+
 Findings appear in **NEEDS ATTENTION** with the rule and the reason, e.g.:
 `✗ shop/api-pdb  PodDisruptionBudget  minAvailable: 3` / `⚠ PDBBlocked: covers
 all 3 pods — no voluntary eviction can ever proceed; every node drain will hang`.
-Read-only and advisory — it does not change the cluster verdict. The daemon
-exposes `kubeagent_pdb_blocking_issues`. Adds a base
+The text report prefixes every one of these findings with the constant label
+`PDBBlocked`, regardless of category — the example above is actually the
+`unsatisfiable` category, not `blocking`. `scan --output json` publishes the
+category itself, in a `category` field. Elsewhere the category is mapped onto
+kubeagent's finding vocabulary, which spells the four `PDBUnsatisfiable`,
+`PDBStale`, `PDBBlocked` and `PDBSingleton`. Read-only and advisory — it does
+not change the cluster verdict. The daemon exposes
+`kubeagent_pdb_blocking_issues`. Adds a base
 `policy/poddisruptionbudgets` read grant.
 
 ### HPA-can't-scale
 
 `scan` flags a HorizontalPodAutoscaler that is stuck and cannot scale as
-intended, covering three categories:
+intended, covering five categories:
 
 - **unable** — the HPA's `AbleToScale` condition is `False`, meaning the
-  controller can't act on the scale target at all (the target Deployment or
-  StatefulSet is missing, or the `scale` subresource returned an error).
-- **metrics** — the HPA's `ScalingActive` condition is `False`, meaning metric
-  collection has failed (a custom or external metrics adapter is down, or the
-  metrics server cannot return the resource metric), so the HPA's replica
-  calculation is stuck.
-- **capped** — the workload is pinned at `maxReplicas` while demand exceeds the
-  cap (`TooManyReplicas` reason on `ScalingLimited`), so the autoscaler has run
-  out of headroom and the workload is under-replicated.
+  controller can't act on the scale target at all: the target is missing, its
+  `scale` subresource returned an error, or the target's kind has no `scale`
+  subresource at all — a DaemonSet, for instance, whose message reads *the server
+  could not find the requested resource*.
+- **disabled** — the HPA's `ScalingActive` condition is `False` with reason
+  `ScalingDisabled`: the target's replica count is currently zero, so the
+  controller has nothing to scale.
+- **ambiguous** — the HPA's `ScalingActive` condition is `False` with reason
+  `AmbiguousSelector`: another HPA targets an overlapping set of pods through the
+  same label selector, so neither can compute a reliable metric.
+- **metrics** — the HPA's `ScalingActive` condition is `False` for any other
+  reason, meaning metric collection has failed (a custom or external metrics
+  adapter is down, or the metrics server cannot return the resource metric), so
+  the HPA's replica calculation is stuck. `disabled` and `ambiguous` above are
+  the two named sub-cases of this same condition, distinguished by its reason;
+  every other reason falls through to `metrics`.
+- **capped** — the workload is limited by `maxReplicas` while the HPA's
+  recommendation exceeds the cap (`TooManyReplicas` reason on `ScalingLimited`).
+  That recommendation is smoothed over the controller's stabilization window, so
+  the finding can persist for several minutes after demand itself has fallen.
+
+An HPA is left unflagged when it is healthy, when it is limited only at its floor
+(`TooFewReplicas` on `ScalingLimited`), when it is still rate-limited on the way
+up (`ScaleUpLimit`), and for the few seconds after creation before the controller
+has written any condition at all.
+
+An HPA can be in more than one of these states at once — a target that has gone
+missing while the HPA was already at its cap is both `unable` and `capped`. The
+finding names the first that applies, in the order listed above. `disabled`,
+`ambiguous` and `metrics` cannot co-occur with each other on the same HPA — they
+are mutually exclusive readings of one condition's reason, not three more
+precedence tiers.
 
 Each finding names the HPA, its scale target, and the reason — for example:
 `✗ shop/api-hpa  HorizontalPodAutoscaler  targets Deployment/api` /
-`⚠ HPAStuck: can't fetch metrics — unable to get resource metric cpu: no
-metrics returned`.
+`⚠ HPAStuck: can't fetch metrics — the HPA was unable to compute the replica
+count: unable to get external metric shop/queue_depth/nil: …`. The text report
+prefixes every one of these findings with the constant label `HPAStuck`,
+regardless of category — the example above is the `metrics` category.
+`scan --output json` publishes the category itself, in a `category` field.
+Elsewhere the category is mapped onto kubeagent's finding vocabulary, which
+spells the five `HPAUnableToScale`, `HPAMetricsFailed`,
+`HPAScalingDisabled`, `HPAAmbiguousSelector` and `HPACapped`.
 
 Read-only and advisory — it does not change the cluster verdict. The daemon
 exposes `kubeagent_hpa_scaling_issues`. Adds a base
@@ -725,21 +887,35 @@ exposes `kubeagent_hpa_scaling_issues`. Adds a base
 ### Admission-webhook failure
 
 `scan` flags a Validating or Mutating webhook whose `failurePolicy` is `Fail`
-and whose backing Service is **missing** (`missing-service`) or **has no ready
-endpoints** (`no-endpoints`). Either condition means the webhook will reject
+and whose backing Service is **missing** (`MissingService`) or **has no ready
+endpoints** (`NoEndpoints`). Either condition means the webhook will reject
 every `create`/`update` it intercepts — making the cluster effectively read-only
 for the affected resource kinds without any obvious error at the workload level.
 
 Two problems are detected:
 
-- **missing-service** — the Service referenced in the webhook's `clientConfig`
+- **MissingService** — the Service referenced in the webhook's `clientConfig`
   does not exist in the cluster.
-- **no-endpoints** — the Service exists but has no ready Pod endpoints behind it.
+- **NoEndpoints** — the Service exists but has no ready Pod endpoints behind it.
 
 The check only flags webhooks under `failurePolicy: Fail` (the default in
 `admissionregistration.k8s.io/v1` when the field is omitted). Webhooks with
 `failurePolicy: Ignore` are skipped — if their backend is down the API server
 falls through silently, which is by design.
+
+A webhook with empty `rules` is skipped too, for a different reason: one that
+intercepts no request can never reject one, so there is nothing to flag. A
+webhook backed by an **ExternalName** Service is treated differently rather
+than skipped — an ExternalName Service is a DNS CNAME, not endpoint-backed, so
+zero ready endpoints on one is not evidence the backend is down and does not
+produce a `NoEndpoints` finding. An ExternalName Service that does not exist
+at all is unaffected by that carve-out and still reports `MissingService`.
+
+A webhook backed by `clientConfig.url` instead of a Service is out of reach
+for a different reason again: this check has no way to verify the
+reachability of an arbitrary URL, so it does not guess at one as an Issue.
+`scan` counts these in-scope, Fail-policy, URL-backed webhooks instead, and
+reports the count in NOTES.
 
 The check is **cluster-wide only**: it is skipped when `--namespace`/`-n` is
 set, because the check cross-references each webhook's backend Service against
@@ -751,9 +927,8 @@ Findings appear in **NEEDS ATTENTION** with the configuration name, kind, and
 the webhook name, followed by the reason — for example:
 
 ```text
-✗ policy-webhook  ValidatingWebhookConfiguration  webhook validate.policy.io
-    ⚠ WebhookDown: backend Service kube-system/policy-svc has no ready
-      endpoints — failurePolicy Fail rejects every intercepted create/update
+  ✗ policy-webhook  ValidatingWebhookConfiguration  webhook validate.policy.io
+      ⚠ NoEndpoints: backend Service kube-system/policy-svc has no ready endpoints — failurePolicy Fail rejects every intercepted create/update
 ```
 
 Read-only and advisory — it never changes the cluster verdict. The daemon
@@ -772,25 +947,52 @@ every affected operation.
 The threshold defaults to 15 and is tunable via the environment variable
 `KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS` (e.g.
 `KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS=10` to warn earlier) or the Helm value
-`webhookLatency.timeoutThreshold`. Webhooks with `failurePolicy: Ignore` and
-those with a `nil` (unset) `timeoutSeconds` are never flagged.
+`webhookLatency.timeoutThreshold`.
 
-The check is **always-on**, **cluster-wide only** (skipped under
-`--namespace`), and **advisory** — it does not change the cluster verdict. The
-daemon exposes `kubeagent_admission_webhook_latency_risks`. No new RBAC is
-required (reuses the `admissionregistration.k8s.io` grant above). Example
-output:
+Webhooks with `failurePolicy: Ignore` are never flagged. This is deliberate,
+and it is not the same reason the failure check skips them: an `Ignore`
+webhook with a high `timeoutSeconds` still blocks every intercepted
+`create`/`update` for the full timeout — measured at 30 seconds — and only
+then falls through and allows it. That is a latency cost, not an availability
+failure, so kubeagent reports it as neither. Webhooks with a `nil` (unset)
+`timeoutSeconds` are never flagged either; see below for what a live API
+server actually stores.
+
+Omitting `timeoutSeconds` does not opt a webhook out: the API server defaults
+the field to 10 on write, so an omitted timeout is flagged at any threshold of
+10 or below. kubeagent still guards against a nil `timeoutSeconds`, for
+objects read from a manifest rather than from a live API server.
+
+Valid values are 1–30. The API server refuses a webhook `timeoutSeconds` above
+30 ("the timeout value must be between 1 and 30 seconds"), so a threshold above
+30 could only ever match nothing; kubeagent refuses it rather than reporting a
+clean posture.
+
+The check runs on every `Fail`-policy webhook that has at least one `rules`
+entry and whose backend is not already reported down. A webhook that is both
+backend-down and slow reports the backend problem only — that is the one that
+already rejects every request — with its timeout named in the same reason.
+Its latency finding, and its place in
+`kubeagent_admission_webhook_latency_risks`, appear on the next scan once the
+backend is healthy.
+
+The check is **cluster-wide only** (skipped under `--namespace`) and
+**advisory** — it does not change the cluster verdict. The daemon exposes
+`kubeagent_admission_webhook_latency_risks`. No new RBAC is required (reuses
+the `admissionregistration.k8s.io` grant above). Example output:
 
 ```text
-WEBHOOK
+NEEDS ATTENTION
   ✗ slow-validator  ValidatingWebhookConfiguration  webhook policy.example.com
-      ⚠ WebhookSlow: timeoutSeconds 30 ≥ 15s under failurePolicy Fail — a slow webhook blocks every intercepted create/update for up to 30s, then rejects it
+      ⚠ HighTimeout: timeoutSeconds 30 ≥ 15s under failurePolicy Fail — a slow webhook blocks every intercepted create/update for up to 30s, then rejects it
 ```
 
 ### Security posture (opt-in)
 
-`scan --security` walks every workload's pod template and each Service and flags
-high-signal, Pod Security Standards-aligned problems: privileged or
+A cluster-wide `scan --security` walks every pod and Service outside
+`kube-system`, `kube-node-lease` and `kube-public`; scoped with `-n` it walks
+every pod and Service in that namespace, system namespaces included — and
+flags high-signal, Pod Security Standards-aligned problems: privileged or
 over-privileged containers (privileged, host namespaces, `hostPath`, `hostPort`,
 dangerous added capabilities), insecure container defaults (runs as root,
 `allowPrivilegeEscalation` not disabled, capabilities not dropped), and Services
@@ -805,7 +1007,11 @@ pass `--security-verbose` to list every finding per workload instead. JSON
 curated subset aligned with the Pod Security Standards, not a conformance
 scanner. It is read-only and **advisory** — it does not change the cluster
 verdict — needs no extra RBAC, and skips
-`kube-system`/`kube-node-lease`/`kube-public` unless you target one with `-n`.
+`kube-system`/`kube-node-lease`/`kube-public` unless you target one with `-n`;
+those three are the only namespaces skipped, and an addon namespace is
+scanned like any other. A workload with no pods at all — a Deployment
+scaled to zero, a CronJob that has not yet fired — is not examined even when
+its pod template is unsafe.
 
 ### Crash log root-cause (opt-in)
 
@@ -819,20 +1025,35 @@ directly under the finding:
         → application panic (code bug)
 ```
 
-Recognised signatures include:
+kubeagent reads the **last 25 lines** of the previous instance and shows one line,
+truncated at 200 characters. A signature older than those 25 lines is not seen, and
+the finding falls back to the last line instead.
+
+Recognised signatures are:
 
 - `application panic (code bug)` — a Go/Python/JVM panic or unhandled exception
-- `cannot reach a dependency (…) — connection refused` — a dependency is not up yet, or the address is wrong
-- `bad command or entrypoint` — the container command / entrypoint does not exist in the image
+- `bad command or entrypoint` — the container's own output contains an `exec:` line, which is what a shell entrypoint prints when the command it wraps is missing or not executable. A container whose entrypoint is missing outright never starts and writes no log; that case is reported from the kubelet's message by the container-start detector, with no log block.
+- `cannot reach a dependency — connection refused` — a dependency is not up yet, or the address is wrong
+- `DNS resolution failed (name lookup)` — a name did not resolve
 - `ran out of memory in-process` — the process hit an allocation failure (distinct from a kernel OOM-kill, which the `OOMKilled` detector reports)
 - `configuration parse/validation error` — malformed YAML/JSON, a failed unmarshal, or an invalid config on startup
+- `port already in use` — the port the process binds is taken
+- `authentication/authorization failure to a dependency` — credentials rejected
+- `permission denied — check securityContext / file permissions` — a file or device the process needs is not readable/writable as the container's user
 
-Only the crash findings (**CrashLoopBackOff**, **RestartLoop**, **OOMKilled**) are
-probed — `--logs` is a no-op for ImagePullBackOff, Pending, and other non-crash
-detectors.
+When no signature matches, the last non-empty line is shown with the cause
+`last output before exit (no signature in the last 25 lines)` — kubeagent found
+the log but recognised nothing in it.
 
-It is **read-only**, **opt-in**, and **scan-only** (not available in the `watch`
-daemon). Running it in-cluster requires the `pods/log` RBAC add-on
+Every finding that names a container **and** whose container has a previous
+instance is probed — this includes **CrashLoopBackOff**, **RestartLoop**,
+**OOMKilled** and **Init:CrashLoopBackOff**. Findings that name no container
+(ImagePullBackOff, Pending, the cluster-level checks) are never probed, and
+neither is a container that has not yet restarted.
+
+It is **read-only** and **opt-in**. `--logs` is available on `scan` and on
+`kubeagent mcp`, and is not available in the `watch` daemon or in `gate`.
+Running it in-cluster requires the `pods/log` RBAC add-on
 (`deploy/rbac-logs.yaml`); most human kubeconfigs already allow `pods/log`. Without
 the grant, `--logs` reports no log cause and continues non-fatally.
 
@@ -846,12 +1067,16 @@ signal implies the diagnosis: **high** when Kubernetes itself asserts the state
 (CrashLoopBackOff, OOMKilled, Unschedulable, a controller event, …) and
 **medium** for a kubeagent heuristic (`RestartLoop`, `ProbeFailure`), a finding
 that reports a failure without claiming to know its cause
-(`ContainerStartError`), or a statistical correlation (a shared-registry
-attribution). High is the unmarked
+(`ContainerStartError`), or an inference from counters rather than a
+controller-set condition (a StatefulSet or DaemonSet's `RolloutStuck` finding —
+the same issue string is high on a Deployment, where the controller sets the
+condition itself). A correlation hint's own medium level is a different case,
+explained in the next paragraph rather than here. High is the unmarked
 default; the text report tags only the less-certain findings and hints
 (`⚠ RestartLoop [medium]: …`, `↳ likely caused by registry … [medium]`) so the
-tag draws the eye to exactly what to second-guess. JSON always carries
-`"confidence"` on every finding.
+tag draws the eye to exactly what to second-guess. `scan --output json`
+carries `"confidence"` on every finding; the gate's JSON and the watch
+daemon's `/issues` publish a narrower finding record that omits it.
 
 The tag on a **hint** works differently from the one on a finding, and only in the
 text report. A root-cause attribution is not a finding and has no `confidence`
@@ -859,7 +1084,13 @@ field: JSON carries it as the plain string `"rootCause"`. The `[medium]` the tex
 report prints beside one is derived from the *kind* of cause — node and PVC
 attributions are high (and so print unmarked), a shared-registry attribution is
 medium — so a JSON consumer reads the level from the cause type rather than from a
-field.
+field. The HTML report shows neither tag, on a finding or a hint.
+
+A `--baseline` deviation is a third case: its confidence is stated once, in
+the `BASELINE DEVIATIONS` heading, rather than per row, and it carries no
+`confidence` field in any JSON document — neither `baseline.Deviation`, which
+has none, nor the `findings.Finding`s `FromBaseline` produces. See
+[Baseline](baseline.md).
 
 Confidence is informational — it never changes a
 finding's priority or the cluster verdict.
@@ -869,28 +1100,55 @@ finding's priority or the cluster verdict.
 `scan --output text` groups findings by how urgently they need action:
 
 - **NEEDS ATTENTION** — failing workloads, Services with no ready endpoints,
-  credential warnings, volumes over the disk-usage threshold, and broken ingress
-  routes.
-- **NOTES** — advisories that rarely need immediate action: PersistentVolumeClaims
-  on a `Delete` reclaim policy (a grouped summary; pass `--pvc-reclaim` for the
-  full list), Services that are intentionally empty (scaled to zero or a CronJob
-  between runs), and counts of workloads hidden behind `--include-restarts` /
-  `--include-cron`.
-- **CONTEXT** — reference data: node readiness and kubelet reservations (collapsed
-  to one line when all nodes are fine), the cluster resource summary, and platform
+  credential warnings, volumes over the disk-usage threshold, broken ingress
+  routes, PersistentVolumeClaims that cannot provision, resources stuck
+  terminating, PodDisruptionBudgets blocking a drain, HorizontalPodAutoscalers
+  that cannot scale, failing or slow admission webhooks, and ResourceQuota
+  entries at or over their limit.
+- **NOTES** — advisories that rarely need immediate action, in the order they
+  print: nodes that reserve no memory or no ephemeral-storage for the OS and
+  kubelet, PersistentVolumeClaims on a `Delete` reclaim policy (a grouped
+  summary; pass `--pvc-reclaim` for the full list), Services and ingress routes
+  that are intentionally empty (scaled to zero or a CronJob between runs),
+  Fail-policy admission webhooks whose `clientConfig.url` backend could not be
+  checked, counts of workloads hidden behind `--include-restarts` /
+  `--include-cron`, and — only when `--certs` ran and found nothing to flag —
+  a line confirming how many certificates were checked.
+- **CONTEXT** — reference data: kubelet reservations (collapsed to one line
+  when all nodes reserve the same), the cluster resource summary, and platform
   facts.
 
-A "Needs attention" line under the cluster verdict summarizes how many workloads
-are failing and how many Services have no endpoints. `--output json` is
-unaffected and always contains the full detail.
+Node readiness prints in the **header**, above the three sections, not in
+CONTEXT — `Cluster: Degraded — 5/6 nodes Ready` followed by one `✗ node` row
+per unready node, because an unready node is the first thing a report should
+say rather than reference data.
 
-Each finding in **NEEDS ATTENTION** now shows its underlying signal on an
-indented `↳` line — for example, an unschedulable pod prints the scheduler's
-verbatim message (`0/5 nodes are available: 3 Insufficient memory, …`) directly
-in the text output, without needing `--output json` or `--explain`. Similarly,
-a `NotReady` node names its kubelet-reported cause (the `NodeReady` condition's
-reason and message) instead of a bare `NotReady`. The cluster verdict and JSON
-schema are unchanged.
+A "Needs attention" line under the cluster verdict summarizes the NEEDS
+ATTENTION categories that fired, joined by `·` — failing workloads first,
+then Services without endpoints, volumes low on disk, broken ingress routes,
+PVCs, stuck resources, PodDisruptionBudgets, HPAs, webhooks and quotas. It
+counts only *flagged* workloads and does not cover credential warnings, so
+the section can print with no "Needs attention:" line above it — for example
+when it was triggered only by credential warnings, or only by an unflagged
+workload surfaced by `--include-restarts` / `--include-cron`. When findings
+were attributed to a shared root cause the workload clause carries the rollup —
+`11 workloads failing (3 ⇐ 2 root causes)` means three of the eleven were
+traced to two underlying causes; see [Root-cause attribution](#root-cause-attribution).
+`--output json` is unaffected and always contains the full detail.
+
+Each **workload** finding in **NEEDS ATTENTION** shows its underlying signal on
+an indented `↳` line, when the finding has evidence distinct from its reason —
+for example, an unschedulable pod prints the scheduler's verbatim message
+(`0/5 nodes are available: 3 Insufficient memory, …`) directly in the text
+output, without needing `--output json` or `--explain`. Similarly, a
+`NotReady` node names its kubelet-reported cause (the `NodeReady` condition's
+reason and message) instead of a bare `NotReady`. The object rows in the same
+section — Services, PVCs, PodDisruptionBudgets, HPAs, webhooks, quotas,
+ingress routes and volumes low on disk — carry their signal inline on the row
+itself and print no `↳` line. The cluster verdict and JSON schema are
+unchanged.
+
+### Grouping identical findings
 
 Findings on the same workload that would print the same lines are collapsed into
 one block with a count, so a twenty-replica Deployment whose replicas all crash
@@ -903,12 +1161,17 @@ ones:
       ↳ container "web", restartCount=4
 ```
 
-A collapsed block never prints fewer lines than the findings it stands for.
-Anything that differs between pods keeps them apart — a `--suggest` command
-names the pod, a resources block names that container's limits — and the one
-part allowed to vary inside a block is the `↳` signal, where every distinct
-value is printed on its own line. That is what shows the restart counts when
-they differ:
+A collapse drops no distinct `↳` signal: each one is printed on its own line,
+and the `×N` on the head is the number of findings the block stands for. What
+it does not render is how many findings sit behind each individual `↳` line —
+three pods reporting one signal and one pod reporting another print as `×4`
+above two lines. It does print fewer lines than it would uncollapsed — that is
+the point — so read the count, not the line count, when you want to know how
+many pods are affected. Anything that differs between pods keeps them apart — a
+`--suggest` command names the pod, a resources block names that container's
+limits — and the one part allowed to vary inside a block is the `↳` signal,
+where every distinct value is printed on its own line. That is what shows the
+restart counts when they differ:
 
 ```text
     ⚠ CrashLoopBackOff: Container repeatedly crashes after starting ×2
@@ -919,26 +1182,36 @@ they differ:
 This is a text-rendering decision only. `--output json` still carries one
 finding per pod, each naming its own pod, and no count appears in it.
 
-A `↳` signal is capped at 500 characters in the text output, ending in
+A `↳` signal is capped at 500 characters in the text output — the line itself
+measures 508, the extra eight being the indent and the `↳` marker — ending in
 `… (truncated)` when the cap bites. A container runtime repeats every layer of a
 failure — the back-off preamble, the rpc error, the unpack failure, the resolve
 failure, the bare image reference — and on a long registry path that line runs
-past the screen and takes the alignment of the rows below it with it. Real ones
-measure a few hundred characters and arrive whole; the cap is set where it bites
-only on the pathological. The cut is on characters, not bytes, so a multi-byte
-character is never split, and it is marked because a silently shortened error
-reads as the whole error. `--output json` carries the full string — it is the
-machine surface and the place to go for the complete cause.
+past the screen. Real ones measure a few hundred characters and arrive whole;
+the cap is set where it bites only on the pathological. The cut is on
+characters, not bytes, so a multi-byte character is never split, and it is
+marked because a silently shortened error reads as the whole error.
+`--output json` is not subject to the 500-character text cap: it carries the
+evidence as kubeagent stored it. That is still not the runtime's whole
+message: the untrusted text inside it passed through a 512-character limit on
+the way in, ending in `…` when it bites, and kubeagent's own framing — the
+container name, for instance — sits around that. So an unusually long
+container-runtime message is shortened in every kubeagent surface. When the
+JSON evidence ends in `…` and you need the rest, `kubectl -n <ns> describe pod
+<pod>` has the untruncated original.
 
 ### Agentic investigation (`--investigate`)
 
-`kubeagent scan --investigate` runs the full scan, then — for each finding —
-launches a bounded, read-only, model-driven tool-use loop. The model can
-describe a flagged object, list its events, and hop to related resources
-(owner Deployment, node, PVC) to chase the root cause across the finding's
-resource graph. When the loop concludes it emits an **Investigation** section:
+`kubeagent scan --investigate` runs the full scan, then launches a single
+bounded, read-only, model-driven tool-use loop over everything the scan
+flagged. The model can describe a flagged object, list its events, and hop to
+related resources (the owners its `ownerReferences` name, its node, or its
+PVCs) to chase a root cause across the findings' resource graph. When the
+loop concludes it emits an **Investigation** section:
 an evidence trail (`consulted: ...` line) followed by a grounded Fix-first
-narrative.
+narrative. The **commands** are kubeagent's deterministic, pre-reviewed ones,
+and the narrative around them — the ranking, the sequencing, and any remedial
+step described in prose — is the model's and is **not** pre-reviewed.
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
@@ -948,12 +1221,49 @@ export ANTHROPIC_API_KEY=sk-ant-...
 Sample output for a CrashLoopBackOff pod:
 
 ```text
-Investigation  shop/api  Deployment
-  consulted: pod shop/api-7f9c-xr2kp (describe), events for shop/api-7f9c-xr2kp
-  Fix first: the pod exits immediately after the DB_HOST env var is resolved —
-  the ConfigMap "api-config" sets DB_HOST to "postgres.internal" which is not
-  reachable from this namespace. Update the ConfigMap or correct the hostname.
+── Investigation ──
+consulted: describe pod shop/api-7f9c-xr2kp · events shop/api-7f9c-xr2kp · related shop/api-7f9c-xr2kp→node
+(model-generated; verify commands before running)
+Fix first: the pod's readiness probe fails every attempt on the same GET
+/healthz timeout, and the node it is scheduled on shows no other pod
+failing the same way, which rules out a node-level cause. Raise the
+container's readinessProbe.timeoutSeconds or find why /healthz is slow to
+answer.
 ```
+
+**Reachable scope:**
+
+- The set of objects the loop may read is seeded from the flagged workloads
+  **alone** — each workload named in a finding, its pods, and each pod's
+  node. A run triggered only by a Service issue, or only by a Degraded
+  cluster verdict, begins with nothing reachable: the workload seed is
+  empty, so every tool call the model attempts on such a run is refused by
+  the closure guard.
+- Reachability follows the object's **kind**, and the three tools gate
+  differently. `describe` reads structured status only for `pod`,
+  `deployment`, `replicaset`, `statefulset`, `daemonset`, `job`, `node` and
+  `pvc`, and only when the scope already holds that object; any other kind is
+  refused. `get_related` sources only from an in-scope pod and grows the set
+  by `owner`, `node` or `pvc`. `get_events` is the exception: it gates on
+  namespace and name **alone**, ignoring kind, and queries the API by
+  `involvedObject.name` — so events for an object of any kind come back once
+  something of that namespace and name is in scope.
+- Applied to the object-level finding families a scan can flag: a
+  PersistentVolumeClaim finding is describable, one hop from an in-scope pod
+  that mounts the claim. Stuck-terminating is three kinds rather than one — a
+  Namespace, a Pod or a PersistentVolumeClaim — and its Pod and
+  PersistentVolumeClaim arms use those same paths. PodDisruptionBudget,
+  HorizontalPodAutoscaler, admission webhook, ResourceQuota, ingress route
+  and stuck-terminating's Namespace arm name kinds `describe` does not
+  accept, so their structured status is out of reach; their events are not,
+  whenever the object shares a namespace and name with something already in
+  scope — which is ordinary for an HPA, a PDB or an Ingress named after the
+  workload or Service it targets.
+- A scan with no workload findings, no Service findings, and a cluster
+  verdict that is not Degraded runs no investigation at all — the report
+  says so, printing `Investigation skipped — no workload findings, no
+  service findings, and the cluster verdict is not Degraded.` under the
+  `── Investigation ──` heading instead of staying silent.
 
 **Constraints and requirements:**
 
@@ -964,13 +1274,23 @@ Investigation  shop/api  Deployment
   Running both flags is unnecessary; `--investigate` includes the grounded
   narrative that `--explain` provides, plus the follow-up reads. When both
   flags are passed, `--investigate` runs and `--explain` is silently ignored.
-- **Capped** — the loop is bounded per finding: at most **8 reads** and **6
-  turns**, so the total API cost is predictable and the scan remains fast.
+- **Capped** — one loop per scan, bounded at **8 reads** and **6 turns** in
+  total, shared across every finding. The budget does not grow with the
+  number of findings: on a cluster with many problems the loop will
+  investigate a few of them in depth rather than all of them shallowly. That
+  bound is on the number of reads and turns, not on their size — a turn's
+  token cost still varies with how much a tool call's result contains.
 - **No logs** — `--investigate` does not fetch container logs. It uses
   structured Kubernetes object reads only (describe / events / get), so no
   raw container output leaves the process.
-- **Structured-only egress** — only object metadata, conditions, and events
-  are sent to the model. No pod specs, env values, or secrets.
+- **Bounded egress** — what leaves the process is the scan's own finding
+  inventory (each finding's reason and evidence, a redacted log cause when
+  one is present, container resource requests and limits, kubeagent's
+  suggested fix, and any rollout image change) plus, for each tool call, an
+  object's status, conditions and events together with the scheduling-relevant
+  spec fields: node name, taints, schedulability, storage class, PVC claim
+  names and the bound PersistentVolume name. Never sent: container env
+  values, args or command, Secret or ConfigMap data, and container logs.
 - **Never writes** — all tool calls are `get`/`list` only. The read-only
   invariant is not relaxed.
 - **Model selection** — reuses `--model` / `KUBEAGENT_MODEL` (default
@@ -978,22 +1298,38 @@ Investigation  shop/api  Deployment
 
 ## Status
 
-`kubeagent scan` performs a read-only, whole-cluster scan and reports
-CrashLoopBackOff, ImagePullBackOff/ErrImagePull, OOMKilled,
-Pending/Unschedulable, VolumeAttachError (Multi-Attach), VolumeMountError, RestartLoop, ProbeFailure, init-container failures, failed Jobs/CronJobs, controllers that cannot create pods (FailedCreate), containers blocked by a missing ConfigMap or Secret (CreateContainerConfigError), and Deployments, StatefulSets and DaemonSets whose rollout has wedged (RolloutStuck), in text or JSON.
+`kubeagent scan` performs a read-only, whole-cluster scan, in text or JSON.
+The `###` sections on this page are the inventory of what it checks, and
+cover more ground than `kubeagent known-issues`: that command documents the
+sixteen issue kinds `diagnose.DefaultDetectors` can emit, machine-checked
+against the detector set, while this page also covers advisory sections —
+webhooks, certificates, capacity and more — that sit outside that
+sixteen-kind vocabulary.
 
 The optional `--suggest` flag prints a deterministic next-step suggestion and
 a read-only `kubectl` investigation command under each finding — offline, no
 API key required.
 
+### Explaining findings (opt-in)
+
 The optional `--explain` flag makes a single API call to summarize findings
 in plain English. The explanation now **opens with a `Fix first:` ranked
 remediation list** — cluster/kube-system problems (P1) before workload issues
 (P2), most-blocking first — and each per-issue Fix is **grounded on
-kubeagent's deterministic, pre-reviewed `--suggest` command**: the model ranks,
-sequences, and phrases, but never invents or substitutes a command. The
+kubeagent's deterministic, pre-reviewed `--suggest` command**: the
+**commands** are kubeagent's deterministic, pre-reviewed ones, and the
+narrative around them — the ranking, the sequencing, and any remedial step
+described in prose — is the model's and is **not** pre-reviewed. The
 deterministic offline core (`scan`, `--suggest`) is unchanged; `--explain`
-remains opt-in.
+remains opt-in. The Fix command sent to the model has its pod name replaced
+with `<pod>` when the finding names a specific pod of a controller-owned
+workload and that pod's name differs from the workload's own identity — a
+generated per-replica name identifies one instance rather than the workload
+being explained. A finding diagnosed on the workload object itself
+(RolloutStuck) or on an ownerless
+pod keeps its real name. So a rendered `--explain` Fix line may read
+`kubectl -n shop describe pod <pod>` rather than the real name; run
+`--suggest` alongside `--explain` for the real command.
 
 By default `--explain` calls the Claude API and requires `ANTHROPIC_API_KEY`.
 To run **fully offline / on-network** against a local model instead, set
@@ -1020,13 +1356,13 @@ unchanged.
 ## Example output
 
 ```text
-P2 — Workload issues
-
-  NAMESPACE   NAME               KIND        READY   STATUS              RESTARTS
-  staging     api-server         Deployment  0/2     CrashLoopBackOff    47
-  staging     image-builder      Deployment  0/1     ImagePullBackOff    0
-  production  worker             Deployment  0/3     OOMKilled           12
-  production  batch-processor    Job         0/1     Pending             0
+NEEDS ATTENTION
+✗ shop/web  Deployment  0/1 Degraded
+    image nginx:bad
+    ⚠ ImagePullBackOff: Bad image reference or registry authentication
+      ↳ container "web": Back-off pulling image "nginx:bad": not found
+    ↳ changed: rollout to revision 6, 4d ago · image nginx:1.27 → nginx:bad
+    web-5b8-2wplt  0/1  ImagePullBackOff  restarts=0  worker-1  10.244.2.4  4d
 ```
 
 ## What changed
@@ -1036,7 +1372,7 @@ days), kubeagent adds a `changed:` line with the revision, its age, and the
 first-container image delta:
 
 ```text
-⚠ shop/web  Deployment  0/1 Degraded
+✗ shop/web  Deployment  0/1 Degraded
     ⚠ ImagePullBackOff: Bad image reference or registry authentication
     ↳ changed: rollout to revision 6, 4d ago · image nginx:1.27 → nginx:bad
 ```
@@ -1053,4 +1389,8 @@ ReplicaSet: a Deployment at revision 6 whose earlier ReplicaSets have been
 garbage-collected still gets its line, without the image delta. The rule holds
 for `--output json` too, where the `rollout` key is simply absent — it is an
 optional key, already absent for workloads that are not flagged Deployments and
-for rollouts older than the window.
+for rollouts older than the window, and that is a different absence from a
+healthy-quiet workload's: `inventory.Prioritize` drops those from the
+`workloads` array entirely, so a workload can be in the array without a
+`rollout` key, or missing from the array altogether, and the two mean
+different things.

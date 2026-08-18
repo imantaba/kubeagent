@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/imantaba/kubeagent/internal/certhealth"
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/findings"
 	"github.com/imantaba/kubeagent/internal/inventory"
@@ -451,6 +452,38 @@ func TestRenderDetailSections(t *testing.T) {
 	}
 }
 
+// TestRenderTwoSentenceScopeNoteRendersAsTwoLines guards R156's two-sentence
+// ScopeNote against collapsing into a run-on once it reaches HTML: the value
+// arrives as one string joined by "\n", html/template preserves that literal
+// newline as a text node, and HTML's default white-space: normal collapses a
+// literal newline to a single space — so without the .empty rule declaring
+// white-space: pre-line, the two independent claims read as one sentence with
+// no separator. Either half of the fix alone leaves the bug, so both are
+// asserted: the raw two-line body text (neither sentence contains an
+// HTML-special character, so no escaping is involved), and the CSS rule that
+// makes a browser honor the embedded newline — asserted as the whole rule
+// text, not a bare substring, so a "pre-line" landing on an unrelated
+// selector would not pass this test.
+func TestRenderTwoSentenceScopeNoteRendersAsTwoLines(t *testing.T) {
+	note := clusterhealth.NamespaceScopeNote("shop")
+	got := render(t, Input{
+		Report: report.Input{
+			Now:     fixedNow,
+			Cluster: clusterhealth.ClusterHealth{ScopeNote: note},
+		},
+		Version:   "v0.66.0",
+		Namespace: "shop",
+	})
+	wantBody := `<p class="empty">` + note + `</p>`
+	if !strings.Contains(got, wantBody) {
+		t.Errorf("want the two-sentence ScopeNote rendered verbatim (with its embedded \\n) inside <p class=\"empty\">...</p>, did not find %q", wantBody)
+	}
+	wantRule := `.empty { color: var(--muted); white-space: pre-line; }`
+	if !strings.Contains(got, wantRule) {
+		t.Errorf("want the .empty rule to declare white-space: pre-line, did not find %q in the stylesheet", wantRule)
+	}
+}
+
 // TestRenderExplanationOnlyWhenPresent: --explain produces one plain-English
 // paragraph worth carrying into a shared document. Without the flag there is no
 // narrative, and an empty section would read as a failure.
@@ -465,6 +498,34 @@ func TestRenderExplanationOnlyWhenPresent(t *testing.T) {
 	without := render(t, Input{Report: report.Input{Now: fixedNow}, Version: "v0.66.0"})
 	if strings.Contains(without, "Explanation") {
 		t.Error("a scan without --explain must not render an empty Explanation section")
+	}
+}
+
+// TestRenderSecurityRequestedNote pins R175(C). The HTML report is written to
+// be forwarded, so unlike --output text or --output json — where the reader
+// typed the flag themselves — a reader of the page has no other way to tell
+// "no security findings" from "--security was never passed". A length check
+// on SecurityIssues alone gets the requested-with-zero-findings case wrong,
+// which is why report.Input carries this field at all: the note must render
+// when SecurityRequested is true and must stay absent otherwise.
+func TestRenderSecurityRequestedNote(t *testing.T) {
+	const note = "Security posture was requested but is not part of the HTML report"
+	with := render(t, Input{
+		Report:  report.Input{Now: fixedNow, SecurityRequested: true},
+		Version: "v0.66.0",
+	})
+	if !strings.Contains(with, note) {
+		t.Error("--security was requested but the HTML report carries no note about it")
+	}
+	if !strings.Contains(with, "--output text or --output json") {
+		t.Error("the note must name the two formats that still carry the SECURITY section")
+	}
+	without := render(t, Input{
+		Report:  report.Input{Now: fixedNow},
+		Version: "v0.66.0",
+	})
+	if strings.Contains(without, note) {
+		t.Error("a scan without --security must not render the security note")
 	}
 }
 
@@ -559,6 +620,78 @@ func TestPolicySectionCarriesNoPath(t *testing.T) {
 	for _, needle := range []string{"/etc/", "/home/", "kubeconfig"} {
 		if strings.Contains(buf.String(), needle) {
 			t.Errorf("the document rendered %q", needle)
+		}
+	}
+}
+
+// certsInput builds an Input carrying one Expired, one Expiring, and one
+// Invalid certificate — the three categories printCertificates (the text
+// renderer) mirrors.
+func certsInput() Input {
+	in := Input{Version: "test", Namespace: "shop"}
+	in.Report.Now = time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
+	in.Report.Certificates = &certhealth.Report{
+		Checked: 4, WarnDays: 30,
+		Expired: []certhealth.Cert{
+			{Namespace: "shop", Name: "shop-tls", CommonName: "shop.example.com", Days: -3,
+				Ingresses: []string{"shop/storefront (shop.example.com)"}},
+		},
+		Expiring: []certhealth.Cert{
+			{Namespace: "infra", Name: "api-tls", CommonName: "api.example.com", Days: 12},
+		},
+		Invalid: []certhealth.Invalid{
+			{Namespace: "batch", Name: "worker-tls", Detail: "empty tls.crt"},
+		},
+	}
+	return in
+}
+
+// TestCertificatesSectionRendersExpiredExpiringAndInvalid pins R103: the
+// HTML report mirrors printCertificates's three categories, the ingress
+// route line, and the footer count.
+func TestCertificatesSectionRendersExpiredExpiringAndInvalid(t *testing.T) {
+	doc := render(t, certsInput())
+	for _, want := range []string{
+		"Certificates", "shop-tls", "shop.example.com", "EXPIRED", "3d ago",
+		"shop/storefront (shop.example.com)",
+		"api-tls", "api.example.com", "expires in", "12d",
+		"worker-tls", "empty tls.crt",
+		"4 certificates checked", "warn window 30d",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("the certificates section is missing %q", want)
+		}
+	}
+}
+
+// TestCertificatesForbiddenRendersDenialAndNoRows pins the Forbidden branch:
+// a denial line and nothing else — no footer count, no category headings.
+func TestCertificatesForbiddenRendersDenialAndNoRows(t *testing.T) {
+	in := Input{Version: "test", Namespace: "shop"}
+	in.Report.Certificates = &certhealth.Report{Forbidden: true}
+
+	doc := render(t, in)
+	if !strings.Contains(doc, "secrets access denied") {
+		t.Error("a forbidden certificates report did not render the denial line")
+	}
+	for _, absent := range []string{"certificates checked", "EXPIRED", "expires in"} {
+		if strings.Contains(doc, absent) {
+			t.Errorf("a forbidden certificates report rendered %q, want no rows or footer", absent)
+		}
+	}
+}
+
+// TestNilCertificatesRendersNoSection pins the opt-out default: a scan run
+// without --certs must render a document byte-for-byte as it did before this
+// section existed.
+func TestNilCertificatesRendersNoSection(t *testing.T) {
+	in := certsInput()
+	in.Report.Certificates = nil
+
+	doc := render(t, in)
+	for _, absent := range []string{`<section class="certs">`, "<h2>Certificates</h2>", ".certs {"} {
+		if strings.Contains(doc, absent) {
+			t.Errorf("a scan with no certificates data rendered %q", absent)
 		}
 	}
 }

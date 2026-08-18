@@ -65,6 +65,7 @@ func TestAssess_NoService(t *testing.T) {
 
 func TestAssess_NoEndpoints(t *testing.T) {
 	svcs := []corev1.Service{svc("shop", "api", 80)}
+	svcs[0].Spec.Selector = map[string]string{"app": "api"}                                                        // selector-based: R53 silences selectorless Services
 	got := Assess([]networkingv1.Ingress{ing("shop", "web", "x.io", "/api", "api", 80)}, svcs, nil, nil, nil, nil) // no slices -> 0 ready
 	if len(got) != 1 || got[0].Problem != "NoEndpoints" {
 		t.Fatalf("want one NoEndpoints, got %+v", got)
@@ -76,6 +77,7 @@ func TestAssess_NoEndpoints(t *testing.T) {
 
 func TestAssess_PortNotExposed(t *testing.T) {
 	svcs := []corev1.Service{svc("shop", "api", 80)}
+	svcs[0].Spec.Selector = map[string]string{"app": "api"} // selector-based: R53 silences selectorless Services
 	slices := []discoveryv1.EndpointSlice{sliceFor("shop", "api", 1)}
 	got := Assess([]networkingv1.Ingress{ing("shop", "web", "x.io", "/api", "api", 8080)}, svcs, slices, nil, nil, nil) // ready, but 8080 not exposed
 	if len(got) != 1 || got[0].Problem != "PortNotExposed" {
@@ -85,6 +87,7 @@ func TestAssess_PortNotExposed(t *testing.T) {
 
 func TestAssess_HealthyRouteNoIssue(t *testing.T) {
 	svcs := []corev1.Service{svc("shop", "api", 80)}
+	svcs[0].Spec.Selector = map[string]string{"app": "api"} // selector-based: R53 silences selectorless Services
 	slices := []discoveryv1.EndpointSlice{sliceFor("shop", "api", 2)}
 	got := Assess([]networkingv1.Ingress{ing("shop", "web", "x.io", "/api", "api", 80)}, svcs, slices, nil, nil, nil)
 	if len(got) != 0 {
@@ -93,7 +96,8 @@ func TestAssess_HealthyRouteNoIssue(t *testing.T) {
 }
 
 func TestAssess_NamedPortMatch(t *testing.T) {
-	s := corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "api"}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Name: "http", Port: 80}}}}
+	// selector-based: R53 silences selectorless Services
+	s := corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "api"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "api"}, Ports: []corev1.ServicePort{{Name: "http", Port: 80}}}}
 	slices := []discoveryv1.EndpointSlice{sliceFor("shop", "api", 1)}
 	in := networkingv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "web"},
@@ -141,6 +145,7 @@ func TestAssess_ResourceBackendSkipped(t *testing.T) {
 // the Service is otherwise healthy. ing(...,0) yields a zero-value backend port.
 func TestAssess_NoPortBackend_NotPortNotExposed(t *testing.T) {
 	svcs := []corev1.Service{svc("shop", "api", 80)}
+	svcs[0].Spec.Selector = map[string]string{"app": "api"} // selector-based: R53 silences selectorless Services
 	slices := []discoveryv1.EndpointSlice{sliceFor("shop", "api", 1)}
 	got := Assess([]networkingv1.Ingress{ing("shop", "web", "x.io", "/", "api", 0)}, svcs, slices, nil, nil, nil)
 	if len(got) != 0 {
@@ -305,5 +310,107 @@ func TestAssess_ParkedRoute_NotEnrichedEvenWithPods(t *testing.T) {
 	}
 	if strings.Contains(detail, "0 ready") {
 		t.Errorf("parked route must not be enriched with pod cause, got %q", detail)
+	}
+}
+
+// R53: check gains the two guards svchealth.Assess already has, so a route to
+// an ExternalName or selectorless Service is silent — exactly as the bare
+// Service is silent today in svchealth.Assess.
+
+func TestAssess_ExternalNameBackend_Silent(t *testing.T) {
+	s := svc("shop", "ext-api", 80)
+	s.Spec.Type = corev1.ServiceTypeExternalName
+	got := Assess([]networkingv1.Ingress{ing("shop", "web", "x.io", "/api", "ext-api", 80)}, []corev1.Service{s}, nil, nil, nil, nil) // no slices -> 0 ready
+	if len(got) != 0 {
+		t.Fatalf("ExternalName backend must be silent, got %+v", got)
+	}
+}
+
+func TestAssess_SelectorlessBackend_Silent(t *testing.T) {
+	s := svc("shop", "manual-api", 80)                                                                                                   // no Selector set
+	got := Assess([]networkingv1.Ingress{ing("shop", "web", "x.io", "/api", "manual-api", 80)}, []corev1.Service{s}, nil, nil, nil, nil) // no slices -> 0 ready
+	if len(got) != 0 {
+		t.Fatalf("selectorless backend must be silent, got %+v", got)
+	}
+}
+
+// TestAssess_SelectorlessBackend_WithEndpoints_StaysHealthy is R53's negative
+// control: a selectorless Service WITH a ready EndpointSlice yields no
+// RouteIssue, exactly as it did before this change — a healthy route stays
+// healthy rather than becoming a new finding.
+//
+// It does not show the guard is narrow, and the guard is not narrow: it
+// returns above the port test as well, so a selectorless Service whose ports
+// do not match the Ingress backend no longer reports PortNotExposed either.
+// That whole-Service silence is what svchealth.Assess already accepts, and
+// making the two agree is what R53 is for — but R53's own "still checked for
+// the port" sentence describes a narrower guard than the placement it
+// specifies. The placement governs; the sentence is corrected on the record.
+func TestAssess_SelectorlessBackend_WithEndpoints_StaysHealthy(t *testing.T) {
+	s := svc("shop", "manual-api", 80) // no Selector set
+	slices := []discoveryv1.EndpointSlice{sliceFor("shop", "manual-api", 1)}
+	got := Assess([]networkingv1.Ingress{ing("shop", "web", "x.io", "/api", "manual-api", 80)}, []corev1.Service{s}, slices, nil, nil, nil)
+	if len(got) != 0 {
+		t.Fatalf("selectorless backend with ready endpoints must not be flagged, got %+v", got)
+	}
+}
+
+// TestAssess_SelectorlessBackend_PortNotExposed_AlsoSilent pins the cost R53
+// actually accepts, as opposed to the narrower one its text described: a
+// selectorless Service with ready endpoints that does NOT expose the port the
+// Ingress asks for used to report PortNotExposed and no longer does, because
+// the guard returns above the port test. Reverting the guard makes this fail,
+// which is the point — the cost is checkable rather than merely written down.
+func TestAssess_SelectorlessBackend_PortNotExposed_AlsoSilent(t *testing.T) {
+	s := svc("shop", "manual-api", 80) // no Selector set; exposes 80 only
+	slices := []discoveryv1.EndpointSlice{sliceFor("shop", "manual-api", 1)}
+	got := Assess([]networkingv1.Ingress{ing("shop", "web", "x.io", "/api", "manual-api", 9999)}, []corev1.Service{s}, slices, nil, nil, nil)
+	if len(got) != 0 {
+		t.Fatalf("selectorless backend must be silent even on an unexposed port, got %+v", got)
+	}
+}
+
+// TestAssess_SelectorBasedNoEndpoints_StillReported is R53's true-positive
+// control: a selector-based Service (neither ExternalName nor selectorless)
+// with no ready endpoints still yields NoEndpoints with its cause, so the new
+// guards silence only the two kinds they target.
+func TestAssess_SelectorBasedNoEndpoints_StillReported(t *testing.T) {
+	in := ingressTo("shop", "api-ing", "api.example.com", "api", 80)
+	services := []corev1.Service{svcSel("shop", "api", map[string]string{"app": "api"}, 80)}
+	got := Assess([]networkingv1.Ingress{in}, services, nil, nil, nil, nil)
+	if len(got) != 1 || got[0].Problem != "NoEndpoints" {
+		t.Fatalf("selector-based Service with no endpoints must still be reported, got %+v", got)
+	}
+	if !strings.Contains(got[0].Detail, "the selector matches no pods") {
+		t.Errorf("expected cause 'the selector matches no pods' in detail, got %q", got[0].Detail)
+	}
+}
+
+// R52: the NoEndpoints Detail uses the "name:port" form only when the
+// Ingress-requested port actually resolves on the Service (portMatches);
+// otherwise it names the Service alone rather than claiming a port that was
+// never exposed in the first place.
+
+// TestAssess_NoEndpoints_PortNotResolved_NoPortForm is the fix: the Ingress
+// names port 9999, which the Service (port 80 only) does not expose, so the
+// Detail must not claim ":9999" — that port was never the Service's.
+func TestAssess_NoEndpoints_PortNotResolved_NoPortForm(t *testing.T) {
+	svcs := []corev1.Service{svcSel("shop", "api", map[string]string{"app": "api"}, 80)}
+	got := Assess([]networkingv1.Ingress{ing("shop", "web", "x.io", "/api", "api", 9999)}, svcs, nil, nil, nil, nil) // no slices -> 0 ready; 9999 not on the Service
+	want := "backend Service api has no ready endpoints (likely 502/503) — the selector matches no pods"
+	if got := firstDetail(t, got); got != want {
+		t.Fatalf("Detail = %q, want %q", got, want)
+	}
+}
+
+// TestAssess_NoEndpoints_PortResolved_UsesPortForm pins that the fix does not
+// simply drop the port form altogether: when the requested port does resolve
+// on the Service, the Detail still uses "name:port".
+func TestAssess_NoEndpoints_PortResolved_UsesPortForm(t *testing.T) {
+	svcs := []corev1.Service{svcSel("shop", "api", map[string]string{"app": "api"}, 80)}
+	got := Assess([]networkingv1.Ingress{ing("shop", "web", "x.io", "/api", "api", 80)}, svcs, nil, nil, nil, nil) // no slices -> 0 ready; 80 IS on the Service
+	want := "backend Service api:80 has no ready endpoints (likely 502/503) — the selector matches no pods"
+	if got := firstDetail(t, got); got != want {
+		t.Fatalf("Detail = %q, want %q", got, want)
 	}
 }

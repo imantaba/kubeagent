@@ -13,6 +13,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/pvchealth"
+	"github.com/imantaba/kubeagent/internal/safetext"
 )
 
 // Annotate sets w.RootCause on each flagged workload that has a pod on a hard-down
@@ -68,10 +69,11 @@ func AnnotateRegistry(workloads []inventory.Workload) {
 	groups := map[string][]int{}
 	for i := range workloads {
 		w := &workloads[i]
-		if !w.Flagged() || w.RootCause != "" || w.Image == "" || !hasPullFailure(*w) {
+		img, ok := pullImage(*w)
+		if !w.Flagged() || w.RootCause != "" || !ok {
 			continue
 		}
-		host := registryHost(w.Image)
+		host := registryHost(img)
 		groups[host] = append(groups[host], i)
 	}
 	hosts := make([]string, 0, len(groups))
@@ -84,21 +86,24 @@ func AnnotateRegistry(workloads []inventory.Workload) {
 		if len(members) < 2 {
 			continue
 		}
-		cause := fmt.Sprintf("registry %s (%d workloads failing to pull)", host, len(members))
+		cause := fmt.Sprintf("registry %s (%d workloads failing to pull)", safetext.Line(host), len(members))
 		for _, i := range members {
 			workloads[i].RootCause = cause
 		}
 	}
 }
 
-// hasPullFailure reports whether the workload carries an image-pull finding.
-func hasPullFailure(w inventory.Workload) bool {
+// pullImage returns the first pull finding's Image in w.Findings order, and
+// whether that image is determinable. A workload with no pull finding at all,
+// or whose first pull finding carries no image, reports ok=false — arm (B):
+// grouping under the wrong host is worse than not grouping.
+func pullImage(w inventory.Workload) (string, bool) {
 	for _, f := range w.Findings {
 		if f.Issue == "ImagePullBackOff" || f.Issue == "ErrImagePull" {
-			return true
+			return f.Image, f.Image != ""
 		}
 	}
-	return false
+	return "", false
 }
 
 // registryHost extracts the registry host from a container image reference using

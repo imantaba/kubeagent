@@ -59,7 +59,7 @@ func TestRenderTextPluralizesFindings(t *testing.T) {
 	}
 }
 
-func TestRenderTextNamesOutOfScopeFindingsAsNotCounted(t *testing.T) {
+func TestRenderTextNamesBelowThresholdFindingsAsNotCounted(t *testing.T) {
 	got := render(t, Verdict{
 		Verdict: "pass", Code: CodePass, FailOn: findings.Critical, Scope: "Deployment/api in prod",
 		Failing: []findings.Finding{},
@@ -69,8 +69,32 @@ func TestRenderTextNamesOutOfScopeFindingsAsNotCounted(t *testing.T) {
 		},
 		Inconclusive: []Blindspot{},
 	})
-	if !strings.Contains(got, "not counted (outside scope): 2 findings") {
+	if !strings.Contains(got, "not counted (below --fail-on): 2 findings") {
 		t.Errorf("want an explicit not-counted line; got:\n%s", got)
+	}
+}
+
+// TestRenderTextNotCountedLineIsIndependentOfTheHeaderScope pins that the
+// "not counted (below --fail-on)" line and the header's "(scope: …)" carry two
+// different meanings — the former about --fail-on, the latter about the
+// namespace/workload scope — and each renders on its own regardless of the
+// other's value.
+func TestRenderTextNotCountedLineIsIndependentOfTheHeaderScope(t *testing.T) {
+	got := render(t, Verdict{
+		Verdict: "pass", Code: CodePass, FailOn: findings.Critical, Scope: "cluster",
+		Failing: []findings.Finding{},
+		Reported: []findings.Finding{
+			{Level: findings.Warning, Kind: "Pod", Namespace: "staging", Name: "w-1", Issue: "OOMKilled"},
+		},
+		Inconclusive: []Blindspot{},
+	})
+	for _, want := range []string{
+		"(scope: cluster)",
+		"not counted (below --fail-on): 1 finding",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("RenderText output missing %q; got:\n%s", want, got)
+		}
 	}
 }
 
@@ -111,6 +135,45 @@ func TestRenderTextTimeoutShowsTheLastObservedState(t *testing.T) {
 		"  last observed: 1/3 replicas updated, 2 unavailable\n"
 	if got != want {
 		t.Errorf("RenderText =\n%q\nwant\n%q", got, want)
+	}
+}
+
+// TestRenderTextIdentityLineDropsLeadingSlashForClusterScoped pins R158: the
+// identity column reads "Kind Namespace/Name" for a namespaced finding, and
+// "Kind Name" — no leading slash — for a cluster-scoped one (a
+// ValidatingWebhookConfiguration finding has no namespace by design; see
+// findings.go). The two cases must render as exact lines, not merely absent a
+// slash, since a stray extra space would pass a substring check for "no slash"
+// just as wrongly.
+func TestRenderTextIdentityLineDropsLeadingSlashForClusterScoped(t *testing.T) {
+	cases := []struct {
+		name string
+		f    findings.Finding
+		want string
+	}{
+		{
+			name: "namespaced finding keeps Namespace/Name",
+			f: findings.Finding{Level: findings.Critical, Kind: "Deployment", Namespace: "shop",
+				Name: "api", Issue: "CrashLoopBackOff"},
+			want: "\n  critical  Deployment shop/api  CrashLoopBackOff\n",
+		},
+		{
+			name: "cluster-scoped finding has no leading slash",
+			f: findings.Finding{Level: findings.Warning, Kind: "ValidatingWebhookConfiguration", Namespace: "",
+				Name: "vwc-missing", Issue: "MissingService"},
+			want: "\n  warning  ValidatingWebhookConfiguration vwc-missing  MissingService\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := render(t, Verdict{
+				Verdict: "fail", Code: CodeFail, FailOn: findings.Critical, Scope: "cluster",
+				Failing: []findings.Finding{tc.f}, Reported: []findings.Finding{}, Inconclusive: []Blindspot{},
+			})
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("RenderText output missing exact line %q; got:\n%s", tc.want, got)
+			}
+		})
 	}
 }
 

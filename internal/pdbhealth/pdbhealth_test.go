@@ -45,14 +45,40 @@ func TestAssess_Unsatisfiable(t *testing.T) {
 	}
 }
 
+func TestAssess_UnsatisfiableOverAsk(t *testing.T) {
+	// minAvailable 5 over only 3 pods → over-ask, not the equal case: the
+	// budget demands more healthy pods than the workload even has.
+	got := Assess([]policyv1.PodDisruptionBudget{pdb("shop", "overask", 5, 3, 5, 3, 0)})
+	is, ok := find(got, "overask")
+	if !ok || is.Category != "unsatisfiable" {
+		t.Fatalf("want unsatisfiable, got %+v", got)
+	}
+	if is.Reason != "requires 5 healthy pods but only 3 exist — no voluntary eviction can ever proceed; every node drain will hang" {
+		t.Errorf("reason = %q", is.Reason)
+	}
+}
+
 func TestAssess_Blocking(t *testing.T) {
-	// disruptionsAllowed 0 with only 1/2 guarded pods healthy.
+	// disruptionsAllowed 0 with only 1/2 guarded pods healthy. The reason
+	// quotes the PDB's own status counters rather than asserting a fact
+	// about pods kubeagent never looked at.
 	got := Assess([]policyv1.PodDisruptionBudget{pdb("shop", "cache", 2, 3, 2, 1, 0)})
 	is, ok := find(got, "cache")
 	if !ok || is.Category != "blocking" {
 		t.Fatalf("want blocking, got %+v", got)
 	}
-	if is.Reason != "blocking evictions with only 1/2 guarded pods healthy" {
+	if is.Reason != "PDB status reports 1/2 guarded pods healthy" {
+		t.Errorf("reason = %q", is.Reason)
+	}
+
+	// Measured overlap shape: expectedPods (3) exceeds desiredHealthy (1), so
+	// the reason must not claim anything beyond the guarded-pod counters.
+	got = Assess([]policyv1.PodDisruptionBudget{pdb("shop", "overlap", 1, 3, 1, 0, 0)})
+	is, ok = find(got, "overlap")
+	if !ok || is.Category != "blocking" {
+		t.Fatalf("want blocking, got %+v", got)
+	}
+	if is.Reason != "PDB status reports 0/1 guarded pods healthy" {
 		t.Errorf("reason = %q", is.Reason)
 	}
 }
@@ -74,7 +100,44 @@ func TestAssess_Stale(t *testing.T) {
 	if !ok || is.Category != "stale" {
 		t.Fatalf("want stale, got %+v", got)
 	}
-	if is.Reason != "selector matches no pods (stale?)" {
+	if is.Reason != "selector currently matches no pods" {
+		t.Errorf("reason = %q", is.Reason)
+	}
+
+	// Scaled-to-zero-shaped status (a correct selector, no matching pods
+	// right now) produces the identical reason: kubeagent no longer claims
+	// to know which of "no workload selects these labels" and "the selected
+	// workload is scaled to zero" is true.
+	got = Assess([]policyv1.PodDisruptionBudget{pdb("a", "p", 1, 0, 1, 0, 0)})
+	is, ok = find(got, "p")
+	if !ok || is.Category != "stale" {
+		t.Fatalf("want stale, got %+v", got)
+	}
+	if is.Reason != "selector currently matches no pods" {
+		t.Errorf("reason = %q", is.Reason)
+	}
+}
+
+func TestAssess_NoRuleField(t *testing.T) {
+	// Neither minAvailable nor maxUnavailable is set. The API server
+	// accepts this without complaint, and it allows no voluntary eviction
+	// at all — the strictest possible rule, spelled by its absence rather
+	// than by a value. pdb() cannot build this fixture: it always sets
+	// MinAvailable, so this uses an inline literal instead.
+	p := policyv1.PodDisruptionBudget{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "ops", Name: "norule-pdb"},
+		Status: policyv1.PodDisruptionBudgetStatus{
+			ExpectedPods: 0, DesiredHealthy: 0, CurrentHealthy: 3, DisruptionsAllowed: 0,
+		},
+	}
+	is, ok := find(Assess([]policyv1.PodDisruptionBudget{p}), "norule-pdb")
+	if !ok || is.Category != "unsatisfiable" {
+		t.Fatalf("want unsatisfiable, got %+v", is)
+	}
+	if is.Rule != "(no rule set)" {
+		t.Errorf("rule = %q, want (no rule set)", is.Rule)
+	}
+	if is.Reason != "neither minAvailable nor maxUnavailable is set — the API server allows no voluntary eviction at all; every node drain will hang" {
 		t.Errorf("reason = %q", is.Reason)
 	}
 }
@@ -95,12 +158,33 @@ func TestAssess_MaxUnavailableZeroRuleString(t *testing.T) {
 
 func TestAssess_NotFlagged(t *testing.T) {
 	cases := []policyv1.PodDisruptionBudget{
-		pdb("a", "singleton", 1, 1, 1, 1, 0), // single replica → excluded by expectedPods>1 guard
 		pdb("a", "healthy23", 2, 3, 2, 3, 1), // minAvailable 2 of 3, disruptionsAllowed 1
 		pdb("a", "atfloor", 2, 3, 2, 2, 0),   // minAvailable 2 of 3, exactly at floor (current==desired, allowed 0) → benign
 	}
 	if got := Assess(cases); len(got) != 0 {
 		t.Fatalf("expected nothing flagged, got %+v", got)
+	}
+}
+
+func TestAssess_Singleton(t *testing.T) {
+	// Single replica, healthy, disruptionsAllowed 0 → flagged: no voluntary
+	// eviction is possible even though the shape is often deliberate.
+	got := Assess([]policyv1.PodDisruptionBudget{pdb("a", "singleton", 1, 1, 1, 1, 0)})
+	is, ok := find(got, "singleton")
+	if !ok || is.Category != "singleton" {
+		t.Fatalf("want singleton, got %+v", got)
+	}
+	if is.Reason != "single-replica workload with no disruption headroom — often deliberate, but no voluntary eviction is possible; draining its node will hang" {
+		t.Errorf("reason = %q", is.Reason)
+	}
+
+	// A single-replica PDB that currently permits a disruption must NOT
+	// over-fire: it fails the singleton guard's DesiredHealthy >= ExpectedPods
+	// (0 >= 1 is false), falls through to the blocking arm, and fails that
+	// arm's DisruptionsAllowed == 0 too.
+	got = Assess([]policyv1.PodDisruptionBudget{pdb("a", "permits", 1, 1, 0, 0, 1)})
+	if _, ok := find(got, "permits"); ok {
+		t.Errorf("single-replica PDB that currently allows a disruption must not be flagged, got %+v", got)
 	}
 }
 

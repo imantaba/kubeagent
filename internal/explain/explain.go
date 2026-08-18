@@ -25,23 +25,28 @@ const SystemPrompt = `You are a senior Kubernetes SRE reviewing a read-only clus
 is wrong and exactly how to fix it, using ONLY the facts provided — do not invent
 causes, resources, or values that are not given.
 
+Respond in plain text only: no markdown emphasis, no headings, no horizontal
+rules, no fenced code blocks.
+
 Begin your response with a "Fix first:" section — a numbered list ranking the
 issues in the order they should be remediated (most blocking / highest-impact
 first; cluster / kube-system P1 issues before workload P2 issues), each line
 "N. <namespace/name>: <one-phrase action>". Then give the per-issue detail below.
 
 Address issues in priority order: cluster / kube-system problems (P1) before
-workload problems (P2). For EACH issue use this structure:
+workload problems (P2). For EACH issue use this structure — a bare header line,
+then two-space indented lines beneath it:
 
-**<namespace/name> — <the issue>**
-- Root cause: one line, from the facts. If the facts are ambiguous, name the most
+<namespace/name> — <the issue>
+  Root cause: one line, from the facts. If the facts are ambiguous, name the most
   likely cause AND what to check — never present a guess as certain.
-- Check: 1–3 read-only commands to confirm (kubectl get/describe/logs).
-- Fix: use the provided deterministic, pre-reviewed command for this issue
+  Check: 1–3 read-only commands to confirm (kubectl get/describe/logs).
+  Fix: use the provided deterministic, pre-reviewed command for this issue
   verbatim — you may add a namespace or flag already shown, sequence multiple
   provided commands, and phrase it for on-call, but never substitute or invent a
-  different command. When the provided command is a generic describe, keep it and
-  say what to look for in the output.
+  different command. A Fix line may contain only a read-only command, or the
+  exact command supplied with the finding. When the provided command is a
+  generic describe, keep it and say what to look for in the output.
 
 Be tight — no preamble, no restating the input, no generic advice. If a finding
 is expected (e.g. a scaled-to-zero workload), say it needs no action. Prefer
@@ -170,22 +175,7 @@ func BuildInventoryPrompt(cluster clusterhealth.ClusterHealth, summary *resource
 		for _, w := range workloads {
 			fmt.Fprintf(&b, "- %s/%s (%s): %d/%d ready, status %s, %d restarts\n",
 				w.Namespace, w.Name, w.Kind, w.Ready, w.Desired, w.Status, w.Restarts)
-			for _, f := range w.Findings {
-				fmt.Fprintf(&b, "    issue: %s — %s (%s)\n", f.Issue, f.Reason, f.Evidence)
-				// LogCause is built from the container's own log, so it can
-				// carry an in-cluster address. The report may show it; a
-				// prompt leaves the process, so redact it here.
-				if f.LogCause != "" {
-					fmt.Fprintf(&b, "      log cause: %s\n", redact.Addresses(f.LogCause))
-				}
-				if f.Resources != nil {
-					r := f.Resources
-					fmt.Fprintf(&b, "      container resources: memory req=%s limit=%s, cpu req=%s limit=%s\n",
-						r.MemRequest, r.MemLimit, r.CPURequest, r.CPULimit)
-				}
-				s := suggestionFor(f, w)
-				fmt.Fprintf(&b, "      suggested fix (deterministic, pre-reviewed — do not substitute): %s | run: %s\n", s.NextStep, s.Command)
-			}
+			writeFindingBlocks(&b, w)
 			if len(w.NetworkPolicies) > 0 {
 				fmt.Fprintf(&b, "    network policy: pods selected by %s (possible cause)\n", strings.Join(w.NetworkPolicies, ", "))
 			}
@@ -208,6 +198,79 @@ func BuildInventoryPrompt(cluster clusterhealth.ClusterHealth, summary *resource
 
 	b.WriteString("\nExplain each problem and its fix using the required structure.")
 	return b.String()
+}
+
+// maxFindingBlocksPerWorkload caps how many finding blocks BuildInventoryPrompt
+// writes per workload, after collapsing. It bounds the request the same way
+// R225's raised MaxTokens bounds the model's response — the two act on
+// opposite sides of the same API call, and neither makes the other
+// unnecessary.
+const maxFindingBlocksPerWorkload = 3
+
+// writeFindingBlocks renders w.Findings as the prompt's per-finding blocks. It
+// first collapses consecutive blocks that are byte-identical — after
+// redaction and the <pod> substitution have already run — into one block with
+// a "(×N)" count appended to its issue: line, then caps the number of blocks
+// emitted to maxFindingBlocksPerWorkload, adding one "… and N more of the
+// same kind" line for the rest.
+//
+// This converges with internal/report's own text-output collapse
+// (groupFindings) without being the same rule: groupFindings keys on
+// head+tail and deliberately excludes evidence, so it collapses on a
+// narrower key than the byte-identical comparison here. A workload with
+// exactly one finding takes neither path and renders unchanged.
+func writeFindingBlocks(b *strings.Builder, w inventory.Workload) {
+	type findingGroup struct {
+		block string
+		count int
+	}
+	var groups []findingGroup
+	for _, f := range w.Findings {
+		block := findingBlock(f, w)
+		if n := len(groups); n > 0 && groups[n-1].block == block {
+			groups[n-1].count++
+			continue
+		}
+		groups = append(groups, findingGroup{block: block, count: 1})
+	}
+	shown := groups
+	if len(groups) > maxFindingBlocksPerWorkload {
+		shown = groups[:maxFindingBlocksPerWorkload]
+	}
+	for _, g := range shown {
+		if g.count == 1 {
+			b.WriteString(g.block)
+			continue
+		}
+		// The count belongs on the block's first line (the issue: line).
+		nl := strings.IndexByte(g.block, '\n')
+		fmt.Fprintf(b, "%s (×%d)%s", g.block[:nl], g.count, g.block[nl:])
+	}
+	if more := len(groups) - len(shown); more > 0 {
+		fmt.Fprintf(b, "    … and %d more of the same kind\n", more)
+	}
+}
+
+// findingBlock renders one finding's prompt block — the issue: line, the
+// optional log cause and container resources lines, and the suggested fix
+// line. It is the unit writeFindingBlocks compares, collapses and caps.
+func findingBlock(f diagnose.Finding, w inventory.Workload) string {
+	var blk strings.Builder
+	fmt.Fprintf(&blk, "    issue: %s — %s (%s)\n", f.Issue, f.Reason, f.Evidence)
+	// LogCause is built from the container's own log, so it can carry an
+	// in-cluster address. The report may show it; a prompt leaves the
+	// process, so redact it here.
+	if f.LogCause != "" {
+		fmt.Fprintf(&blk, "      log cause: %s\n", redact.Addresses(f.LogCause))
+	}
+	if f.Resources != nil {
+		r := f.Resources
+		fmt.Fprintf(&blk, "      container resources: memory req=%s limit=%s, cpu req=%s limit=%s\n",
+			r.MemRequest, r.MemLimit, r.CPURequest, r.CPULimit)
+	}
+	s := suggestionFor(f, w)
+	fmt.Fprintf(&blk, "      suggested fix (deterministic, pre-reviewed — do not substitute): %s | run: %s\n", s.NextStep, s.Command)
+	return blk.String()
 }
 
 func writeResLine(b *strings.Builder, label string, l resources.Line, unit string, metrics bool) {

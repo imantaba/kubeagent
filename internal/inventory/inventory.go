@@ -59,10 +59,11 @@ type Workload struct {
 // changed (revision, image) and when. Set by rollout.Annotate; nil when there is
 // no recent rollout to report.
 type RolloutChange struct {
-	Revision string `json:"revision"`
-	Since    string `json:"since"`
-	OldImage string `json:"oldImage,omitempty"`
-	NewImage string `json:"newImage,omitempty"`
+	Revision  string `json:"revision"`
+	Since     string `json:"since"`
+	OldImage  string `json:"oldImage,omitempty"`
+	NewImage  string `json:"newImage,omitempty"`
+	Container string `json:"-"` // set by rollout.Annotate only when the matched container is not the template's first (matching/render only, not serialized)
 }
 
 // Flagged reports whether the workload needs attention.

@@ -2,7 +2,7 @@
 // security-posture problems — privileged/over-privileged containers, insecure
 // container defaults, and exposed Services. It is a curated subset of PSS
 // (baseline + restricted), not a conformance implementation. Pure and
-// read-only: the caller supplies the pods, services, and replicasets.
+// read-only: the caller supplies the pods, services, replicasets, and jobs.
 package secscan
 
 import (
@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -35,12 +36,17 @@ type Finding struct {
 
 // Assess flags PSS-aligned security-posture problems in the given pods and
 // services. replicaSets is used only to fold a Deployment's pods up to the
-// Deployment for display. Pure; the caller supplies already-namespace-filtered
+// Deployment for display; jobs is used the same way, to fold a CronJob's
+// pods up to the CronJob. Pure; the caller supplies already-namespace-filtered
 // inputs.
-func Assess(pods []corev1.Pod, services []corev1.Service, replicaSets []appsv1.ReplicaSet) []Finding {
+func Assess(pods []corev1.Pod, services []corev1.Service, replicaSets []appsv1.ReplicaSet, jobs []batchv1.Job) []Finding {
 	rsByKey := make(map[string]appsv1.ReplicaSet, len(replicaSets))
 	for _, rs := range replicaSets {
 		rsByKey[rs.Namespace+"/"+rs.Name] = rs
+	}
+	jobsByKey := make(map[string]batchv1.Job, len(jobs))
+	for _, job := range jobs {
+		jobsByKey[job.Namespace+"/"+job.Name] = job
 	}
 	seen := make(map[string]bool)
 	var out []Finding
@@ -53,7 +59,7 @@ func Assess(pods []corev1.Pod, services []corev1.Service, replicaSets []appsv1.R
 		out = append(out, f)
 	}
 	for _, pod := range pods {
-		wl := resolveWorkload(pod, rsByKey)
+		wl := resolveWorkload(pod, rsByKey, jobsByKey)
 		for _, f := range podFindings(pod, wl) {
 			add(f)
 		}
@@ -71,10 +77,18 @@ func Assess(pods []corev1.Pod, services []corev1.Service, replicaSets []appsv1.R
 type workloadRef struct{ Kind, Name string }
 
 // resolveWorkload maps a pod to its top-level workload: its controlling owner,
-// folded up one level when that owner is a ReplicaSet (→ its Deployment).
-func resolveWorkload(pod corev1.Pod, rsByKey map[string]appsv1.ReplicaSet) workloadRef {
+// folded up one level when that owner is a ReplicaSet (→ its Deployment) or a
+// Job whose own controller owner is a CronJob (→ the CronJob).
+func resolveWorkload(pod corev1.Pod, rsByKey map[string]appsv1.ReplicaSet, jobsByKey map[string]batchv1.Job) workloadRef {
 	owner := controllerOf(pod.OwnerReferences)
 	if owner == nil {
+		return workloadRef{Kind: "Pod", Name: pod.Name}
+	}
+	if owner.Kind == "Node" {
+		// A static (mirror) pod's controller owner is the Node running it —
+		// there is no workload above it to attribute to. Kubernetes already
+		// qualifies its name per component and per node (etcd-<node>,
+		// kube-apiserver-<node>, ...), so the pod owns itself.
 		return workloadRef{Kind: "Pod", Name: pod.Name}
 	}
 	if owner.Kind == "ReplicaSet" {
@@ -84,6 +98,17 @@ func resolveWorkload(pod corev1.Pod, rsByKey map[string]appsv1.ReplicaSet) workl
 			}
 		}
 		return workloadRef{Kind: "ReplicaSet", Name: owner.Name}
+	}
+	if owner.Kind == "Job" {
+		if job, ok := jobsByKey[pod.Namespace+"/"+owner.Name]; ok {
+			if cj := controllerOf(job.OwnerReferences); cj != nil && cj.Kind == "CronJob" {
+				return workloadRef{Kind: "CronJob", Name: cj.Name}
+			}
+		}
+		// A bare Job (or one absent from the slice) stays Job/<name>: its
+		// name is stable and is the object the operator created — there is
+		// nothing above it to fold to.
+		return workloadRef{Kind: "Job", Name: owner.Name}
 	}
 	return workloadRef{Kind: owner.Kind, Name: owner.Name}
 }
@@ -114,11 +139,36 @@ func baselinePodChecks(pod corev1.Pod, wl workloadRef) []Finding {
 	}
 	for _, v := range pod.Spec.Volumes {
 		if v.HostPath != nil {
+			wording := "writable host filesystem"
+			if hostPathIsReadOnly(pod, v.Name) {
+				wording = "read-only host filesystem"
+			}
 			out = append(out, finding(pod, wl, profileBaseline, "HostPath", "",
-				fmt.Sprintf("mounts hostPath %s (writable host filesystem)", v.HostPath.Path)))
+				fmt.Sprintf("mounts hostPath %s (%s)", v.HostPath.Path, wording)))
 		}
 	}
 	return out
+}
+
+// hostPathIsReadOnly reports whether every mount of the named volume, across
+// every container that mounts it, sets ReadOnly. A volume mounted read-only
+// by one container and writable by another is writable — the union is the
+// answer. A volume no container mounts is also writable: nothing constrains
+// it, so the safe (more alarming) default applies.
+func hostPathIsReadOnly(pod corev1.Pod, volumeName string) bool {
+	mounted := false
+	for _, c := range allContainers(pod) {
+		for _, m := range c.VolumeMounts {
+			if m.Name != volumeName {
+				continue
+			}
+			mounted = true
+			if !m.ReadOnly {
+				return false
+			}
+		}
+	}
+	return mounted
 }
 
 // containerChecks covers per-container baseline controls.
@@ -211,6 +261,14 @@ func dropsAll(c corev1.Container) bool {
 
 // exposedService flags Services reachable from outside the cluster.
 func exposedService(svc corev1.Service) (Finding, bool) {
+	// An ExternalName Service is a DNS CNAME, not a proxied Service: the API
+	// server itself warns "spec.externalIPs is ignored when spec.type is
+	// \"ExternalName\"" on admission, and it carries no NodePort or
+	// LoadBalancer ingress either. Flagging it would report an exposure that
+	// cannot exist.
+	if svc.Spec.Type == corev1.ServiceTypeExternalName {
+		return Finding{}, false
+	}
 	var reason string
 	switch {
 	case svc.Spec.Type == corev1.ServiceTypeLoadBalancer:
@@ -235,6 +293,15 @@ func servicePorts(svc corev1.Service) string {
 		ps = append(ps, strconv.Itoa(int(p.Port)))
 	}
 	if len(ps) == 0 {
+		// Reachable in production, for one shape: a headless Service
+		// (clusterIP: None) is exempt from the API server's ports-required
+		// rule, so a portless headless ClusterIP with externalIPs set is a
+		// valid object, and exposedService's externalIPs arm brings it here.
+		// Every other path is refused before kubeagent could see it — a
+		// portless LoadBalancer, NodePort or non-headless ClusterIP all fail
+		// validation with "spec.ports: Required value". "no ports" is the
+		// honest answer for the headless case, not a placeholder for an
+		// unreachable one.
 		return "no ports"
 	}
 	return "port(s) " + strings.Join(ps, ",")
@@ -288,7 +355,10 @@ func hostNamespaces(pod corev1.Pod) string {
 	if len(s) == 0 {
 		return ""
 	}
-	return strings.Join(s, "/") + " namespace"
+	if len(s) == 1 {
+		return s[0] + " namespace"
+	}
+	return strings.Join(s, "/") + " namespaces"
 }
 
 // sortFindings orders most-dangerous first, then namespace/workload/container/check.

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -49,7 +50,7 @@ func TestCommandSurfaceScan(t *testing.T) {
 		{"baseline-floor", []string{"--baseline-floor", "0.25"}, func(o scanOptions) bool { return o.baselineFloor == 0.25 }},
 		{"logs", []string{"--logs"}, func(o scanOptions) bool { return o.logs }},
 		{"node-heartbeat-threshold", []string{"--node-heartbeat-threshold", "90s"}, func(o scanOptions) bool { return o.nodeHeartbeatThreshold == 90*time.Second }},
-		{"expected-nodes", []string{"--expected-nodes", "node-a,node-b"}, func(o scanOptions) bool { return o.expectedNodes == "node-a,node-b" }},
+		{"expected-nodes", []string{"--expected-nodes", "node-a,node-b"}, func(o scanOptions) bool { return slices.Equal(o.expectedNodes, []string{"node-a", "node-b"}) }},
 		{"security", []string{"--security"}, func(o scanOptions) bool { return o.security }},
 		{"security-verbose", []string{"--security-verbose"}, func(o scanOptions) bool { return o.securityVerbose }},
 		{"suggest", []string{"--suggest"}, func(o scanOptions) bool { return o.suggest }},

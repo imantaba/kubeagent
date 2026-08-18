@@ -24,11 +24,14 @@ const (
 )
 
 // reply is one model turn: text and/or tool-use requests. Done is true when the
-// model finished its turn without requesting tools.
+// model finished its turn without requesting tools. Truncated is true when the
+// model's turn ended because it hit its own output-length ceiling rather than
+// because it chose to stop.
 type reply struct {
-	Text  string
-	Calls []toolCall
-	Done  bool
+	Text      string
+	Calls     []toolCall
+	Done      bool
+	Truncated bool
 }
 
 // conversation is a live tool-use session. Only the Anthropic backend implements
@@ -47,22 +50,30 @@ type executor interface {
 }
 
 // runLoop drives the conversation until the model concludes or a bound is hit,
-// returning the final narrative and the evidence trail of executed calls.
-func runLoop(ctx context.Context, conv conversation, exec executor, scope *Scope) (string, []string, error) {
+// returning the final narrative, the evidence trail of executed calls, and
+// whether the reply that produced the narrative was cut short at the model's
+// own output-length ceiling.
+func runLoop(ctx context.Context, conv conversation, exec executor, scope *Scope) (string, []string, bool, error) {
 	rep, err := conv.start(ctx)
 	if err != nil {
-		return "", nil, err
+		return "", nil, false, err
 	}
 	var trail []string
 	calls := 0
 	for turn := 1; ; turn++ {
 		if rep.Done || len(rep.Calls) == 0 {
-			return strings.TrimSpace(rep.Text), trail, nil
+			return strings.TrimSpace(rep.Text), trail, rep.Truncated, nil
 		}
 		var results []toolResult
 		for _, c := range rep.Calls {
 			if calls >= maxToolCalls {
-				break
+				// Refuse rather than drop: the model's own prior message
+				// requested this tool_use, and the API rejects a request
+				// whose tool_result count does not match it. No read
+				// happens for a refused call -- the budget is still
+				// enforced -- but the request stays well-formed.
+				results = append(results, errResult(c.ID, "tool-call budget exhausted for this investigation"))
+				continue
 			}
 			calls++
 			trail = append(trail, label(c))
@@ -71,13 +82,13 @@ func runLoop(ctx context.Context, conv conversation, exec executor, scope *Scope
 		if calls >= maxToolCalls || turn >= maxTurns {
 			rep, err = conv.conclude(ctx, results)
 			if err != nil {
-				return "", nil, err
+				return "", nil, false, err
 			}
-			return strings.TrimSpace(rep.Text), trail, nil
+			return strings.TrimSpace(rep.Text), trail, rep.Truncated, nil
 		}
 		rep, err = conv.next(ctx, results)
 		if err != nil {
-			return "", nil, err
+			return "", nil, false, err
 		}
 	}
 }
@@ -106,12 +117,21 @@ You may call the provided read-only tools to gather more evidence about a findin
 before you conclude — describe an object, list its events, or resolve a related
 object (owner, node, PVC). Investigate only what the findings point to. Use only
 the facts you observe. When you have enough, stop calling tools and give the
-explanation in the required structure.`
+explanation in the required structure.
+
+Your explanation has a fixed budget: rank the findings by severity and cover the
+10 most severe in the required structure. If there are more than that, do not
+try to cover them all — state at the end how many findings you did not examine.`
 
 // Report is the investigation result for the report layer.
 type Report struct {
 	Consulted []string // evidence trail: the reads that were made
 	Narrative string   // the Fix-first explanation, grounded in the evidence
+	// Truncated is true when Narrative was cut short at the model's own
+	// output-length ceiling rather than because the model chose to stop.
+	// Text-only: it renders, it is never marshalled to JSON (report.Input
+	// carries it the same way).
+	Truncated bool
 }
 
 // Client runs a bounded, read-only investigation via a tool-use loop.
@@ -146,14 +166,14 @@ func (c *Client) Investigate(ctx context.Context, cluster clusterhealth.ClusterH
 	firstUser := explain.BuildInventoryPrompt(cluster, summary, facts, serviceIssues, workloads) +
 		"\n\nInvestigate the findings with the read-only tools, then explain."
 	conv := c.newConversation(system, firstUser, toolSpecs())
-	narrative, trail, err := runLoop(ctx, conv, Reader{client: client}, NewScope(workloads))
+	narrative, trail, truncated, err := runLoop(ctx, conv, Reader{client: client}, NewScope(workloads))
 	if err != nil {
 		return Report{}, fmt.Errorf("investigating: %w", err)
 	}
 	if narrative == "" {
 		return Report{}, fmt.Errorf("investigating: model returned no text")
 	}
-	return Report{Consulted: trail, Narrative: narrative}, nil
+	return Report{Consulted: trail, Narrative: narrative, Truncated: truncated}, nil
 }
 
 // anthropicConversation is the real tool-use session, backed by the Anthropic SDK.
@@ -185,7 +205,7 @@ func (a *anthropicConversation) conclude(ctx context.Context, results []toolResu
 func (a *anthropicConversation) roundtrip(ctx context.Context, tools []anthropic.ToolUnionParam) (reply, error) {
 	resp, err := a.client.Messages.New(ctx, anthropic.MessageNewParams{
 		Model:     anthropic.Model(a.model),
-		MaxTokens: 2048,
+		MaxTokens: 8192,
 		System:    []anthropic.TextBlockParam{{Text: a.system}},
 		Messages:  a.msgs,
 		Tools:     tools,
@@ -208,6 +228,7 @@ func toReply(resp *anthropic.Message) reply {
 		}
 	}
 	r.Done = resp.StopReason != anthropic.StopReasonToolUse
+	r.Truncated = resp.StopReason == anthropic.StopReasonMaxTokens
 	return r
 }
 

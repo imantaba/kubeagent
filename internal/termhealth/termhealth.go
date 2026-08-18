@@ -1,8 +1,8 @@
 // Package termhealth flags resources wedged in Terminating — a Namespace stuck on
 // a finalizer or a downstream condition, a Pod stuck past its grace period, a PVC
 // held by pvc-protection — and names the blocker. Pure and read-only: the caller
-// supplies the namespaces, pods, PVCs, threshold, and clock. Advisory (never
-// affects the cluster verdict).
+// supplies the namespaces, pods, PVCs, nodes, threshold, and clock. Advisory
+// (never affects the cluster verdict).
 package termhealth
 
 import (
@@ -29,12 +29,12 @@ type Issue struct {
 
 // nsConditionOrder lists the blocking namespace conditions in the order to report.
 var nsConditionOrder = []corev1.NamespaceConditionType{
-	"NamespaceDeletionContentFailure", "NamespaceContentRemaining", "NamespaceFinalizersRemaining",
+	"NamespaceDeletionContentFailure", "NamespaceFinalizersRemaining", "NamespaceContentRemaining",
 }
 
 // Assess flags every resource whose deletion has been pending longer than
 // threshold, sorted by (Kind, Namespace, Name).
-func Assess(namespaces []corev1.Namespace, pods []corev1.Pod, pvcs []corev1.PersistentVolumeClaim, threshold time.Duration, now time.Time) []Issue {
+func Assess(namespaces []corev1.Namespace, pods []corev1.Pod, pvcs []corev1.PersistentVolumeClaim, nodes []corev1.Node, threshold time.Duration, now time.Time) []Issue {
 	var out []Issue
 	for _, ns := range namespaces {
 		if age, ok := stuckFor(ns.DeletionTimestamp, threshold, now); ok {
@@ -43,7 +43,7 @@ func Assess(namespaces []corev1.Namespace, pods []corev1.Pod, pvcs []corev1.Pers
 	}
 	for _, p := range pods {
 		if age, ok := stuckFor(p.DeletionTimestamp, threshold, now); ok {
-			out = append(out, Issue{Kind: "Pod", Namespace: p.Namespace, Name: p.Name, Age: age, PastGrace: true, Reason: podReason(p)})
+			out = append(out, Issue{Kind: "Pod", Namespace: p.Namespace, Name: p.Name, Age: age, PastGrace: true, Reason: podReason(p, nodes)})
 		}
 	}
 	for _, c := range pvcs {
@@ -60,7 +60,41 @@ func Assess(namespaces []corev1.Namespace, pods []corev1.Pod, pvcs []corev1.Pers
 		}
 		return out[i].Name < out[j].Name
 	})
+	// Second pass: a Namespace issue whose Reason came from nsReason's
+	// fall-through (no blocking condition was found) may still be explained
+	// by a stuck Pod or PVC already in out. This reads out, never the raw
+	// pods/pvcs slices, and never namespaces or resource kinds Assess was not
+	// given — so a blocker that is not itself past threshold, or that belongs
+	// to a kind Assess does not receive, is never named. blocked by … is a
+	// naming, not a census.
+	for i := range out {
+		if out[i].Kind != "Namespace" || !fallThrough(out[i].Reason) {
+			continue
+		}
+		var blockers []string
+		for _, iss := range out {
+			if iss.Namespace == out[i].Name {
+				blockers = append(blockers, iss.Namespace+"/"+iss.Name+" ("+iss.Kind+", "+iss.Reason+")")
+			}
+		}
+		if len(blockers) > 0 {
+			out[i].Reason += " — blocked by " + capList(blockers, 3)
+		}
+	}
 	return out
+}
+
+// fallThrough reports whether a Namespace issue's reason came from
+// nsReason's fall-through (spec.finalizers, or the "no namespace finalizer"
+// message) rather than a blocking condition in nsConditionOrder — the only
+// case the second pass above may act on.
+func fallThrough(reason string) bool {
+	for _, t := range nsConditionOrder {
+		if strings.HasPrefix(reason, string(t)+" — ") {
+			return false
+		}
+	}
+	return true
 }
 
 // stuckFor reports the compact age and whether dt is set and older than threshold.
@@ -75,7 +109,7 @@ func stuckFor(dt *metav1.Time, threshold time.Duration, now time.Time) (string, 
 	return compactDur(d), true
 }
 
-// compactDur renders a duration as the largest whole unit: Nd / Nh / Nm (min "1m").
+// compactDur renders a duration as the largest whole unit: Nd / Nh / Nm (min "<1m").
 func compactDur(d time.Duration) string {
 	switch {
 	case d >= 24*time.Hour:
@@ -85,15 +119,48 @@ func compactDur(d time.Duration) string {
 	case d >= time.Minute:
 		return strconv.Itoa(int(d/time.Minute)) + "m"
 	default:
-		return "1m"
+		return "<1m"
 	}
 }
 
-func podReason(p corev1.Pod) string {
+// podReason explains why a Pod's deletion has not been confirmed. A pod with
+// its own finalizers is never attributed to a node — the finalizer is the
+// blocker regardless of what the node is doing. Otherwise, when the pod names
+// a node and nodes has data for it, a NotReady node is named as the likely
+// cause; an unknown node name (spec.nodeName unset) or no node data at all
+// (nodes empty — a blind spot, not evidence of anything) keeps the
+// unattributed fallback rather than guessing.
+func podReason(p corev1.Pod, nodes []corev1.Node) string {
 	if len(p.Finalizers) > 0 {
 		return "finalizer " + strings.Join(p.Finalizers, ", ")
 	}
-	return "deletion not confirmed (node gone or kubelet not reporting)"
+	const fallback = "deletion not confirmed (node gone or kubelet not reporting)"
+	name := p.Spec.NodeName
+	if name == "" || len(nodes) == 0 {
+		return fallback
+	}
+	for _, n := range nodes {
+		if n.Name != name {
+			continue
+		}
+		if nodeNotReady(n) {
+			return "deletion not confirmed — node " + name + " is NotReady"
+		}
+		return fallback
+	}
+	return "deletion not confirmed — node " + name + " no longer exists"
+}
+
+// nodeNotReady reports whether n's NodeReady condition is anything but True.
+// A node with no NodeReady condition at all is treated as not ready, matching
+// the convention internal/clusterhealth already uses.
+func nodeNotReady(n corev1.Node) bool {
+	for _, c := range n.Status.Conditions {
+		if c.Type == corev1.NodeReady {
+			return c.Status != corev1.ConditionTrue
+		}
+	}
+	return true
 }
 
 func pvcReason(c corev1.PersistentVolumeClaim, pods []corev1.Pod) string {
@@ -105,8 +172,12 @@ func pvcReason(c corev1.PersistentVolumeClaim, pods []corev1.Pod) string {
 		}
 	}
 	if hasProtection {
-		if mp := mountingPod(c, pods); mp != "" {
-			return "pvc-protection — still mounted by pod " + mp
+		if mp := mountingPods(c, pods); len(mp) > 0 {
+			noun := "pod"
+			if len(mp) > 1 {
+				noun = "pods"
+			}
+			return "pvc-protection — still mounted by " + noun + " " + capList(mp, 3)
 		}
 		return "pvc-protection"
 	}
@@ -116,19 +187,33 @@ func pvcReason(c corev1.PersistentVolumeClaim, pods []corev1.Pod) string {
 	return "deletion pending"
 }
 
-// mountingPod returns "ns/name" of the first same-namespace pod mounting the PVC.
-func mountingPod(c corev1.PersistentVolumeClaim, pods []corev1.Pod) string {
+// mountingPods returns "ns/name" for every same-namespace pod mounting the
+// PVC, in the order pods were given.
+func mountingPods(c corev1.PersistentVolumeClaim, pods []corev1.Pod) []string {
+	var out []string
 	for _, p := range pods {
 		if p.Namespace != c.Namespace {
 			continue
 		}
 		for _, v := range p.Spec.Volumes {
 			if v.PersistentVolumeClaim != nil && v.PersistentVolumeClaim.ClaimName == c.Name {
-				return p.Namespace + "/" + p.Name
+				out = append(out, p.Namespace+"/"+p.Name)
+				break
 			}
 		}
 	}
-	return ""
+	return out
+}
+
+// capList joins the first n items of items with ", ", appending " +N more"
+// for the rest. items is never re-sorted — the order is whatever the caller
+// handed in, so a deterministic list requires a deterministically ordered
+// input.
+func capList(items []string, n int) string {
+	if len(items) <= n {
+		return strings.Join(items, ", ")
+	}
+	return strings.Join(items[:n], ", ") + " +" + strconv.Itoa(len(items)-n) + " more"
 }
 
 func nsReason(ns corev1.Namespace) string {
@@ -146,14 +231,19 @@ func nsReason(ns corev1.Namespace) string {
 			return string(t) + " — " + trimMsg(safetext.Line(c.Message))
 		}
 	}
-	if len(ns.Spec.Finalizers) > 0 {
-		fs := make([]string, len(ns.Spec.Finalizers))
-		for i, f := range ns.Spec.Finalizers {
-			fs[i] = string(f)
+	var fs []string
+	for _, f := range ns.Spec.Finalizers {
+		// "kubernetes" is the built-in finalizer every namespace carries; it
+		// never names a blocker, so the fall-through drops it from the list.
+		if f == "kubernetes" {
+			continue
 		}
+		fs = append(fs, string(f))
+	}
+	if len(fs) > 0 {
 		return "finalizers " + strings.Join(fs, ", ")
 	}
-	return "deletion pending"
+	return "deletion pending — no namespace finalizer names the blocker"
 }
 
 func trimMsg(s string) string { return strings.TrimRight(strings.TrimSpace(s), ".") }

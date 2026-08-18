@@ -112,7 +112,13 @@ type Result struct {
 	PDBIssues        []pdbhealth.Issue
 	HPAIssues        []hpahealth.Issue
 	WebhookIssues    []webhookhealth.Issue
-	QuotaIssues      []quotahealth.Issue
+	// WebhookURLBackends counts the in-scope Fail-policy webhooks backed by a
+	// clientConfig.url rather than a Service — a backend this scan cannot check
+	// the reachability of, disclosed as a count rather than guessed at as an
+	// Issue. Only ever non-zero cluster-wide: it is computed inside the same
+	// opts.Namespace == "" guard as WebhookIssues.
+	WebhookURLBackends int
+	QuotaIssues        []quotahealth.Issue
 
 	// PartialReads names the collector calls that failed. Empty means every
 	// list this scan attempted answered successfully.
@@ -138,6 +144,51 @@ func splitNamespacedName(s string) (ns, name string, ok bool) {
 		return s[:i], s[i+1:], true
 	}
 	return "", "", false
+}
+
+// hasPreviousInstance reports whether the named container has exited at least
+// once — a restart, or a still-visible last termination — which is what makes
+// a --previous log read meaningful rather than a guaranteed 400. It searches
+// both Status.ContainerStatuses and Status.InitContainerStatuses:
+// internal/diagnose/initcontainer.go names its Container from the init slice,
+// which no other detector reads, so a lookup that skipped it would silently
+// stop probing every init-container finding.
+func hasPreviousInstance(pod *corev1.Pod, container string) bool {
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.Name == container {
+			return cs.RestartCount > 0 || cs.LastTerminationState.Terminated != nil
+		}
+	}
+	for _, cs := range pod.Status.InitContainerStatuses {
+		if cs.Name == container {
+			return cs.RestartCount > 0 || cs.LastTerminationState.Terminated != nil
+		}
+	}
+	return false
+}
+
+// lastTerminationReason returns the named container's LastTerminationState
+// reason, or "" when it has none. It searches both status slices, the same
+// two hasPreviousInstance does, for the same reason: initcontainer.go names
+// its Container from the init slice.
+func lastTerminationReason(pod *corev1.Pod, container string) string {
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.Name == container {
+			if t := cs.LastTerminationState.Terminated; t != nil {
+				return t.Reason
+			}
+			return ""
+		}
+	}
+	for _, cs := range pod.Status.InitContainerStatuses {
+		if cs.Name == container {
+			if t := cs.LastTerminationState.Terminated; t != nil {
+				return t.Reason
+			}
+			return ""
+		}
+	}
+	return ""
 }
 
 // coreDNSPods returns the Running CoreDNS pods (kube-system, k8s-app=kube-dns).
@@ -190,6 +241,18 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 		}
 		blindSeen[resource] = true
 		partialReads = append(partialReads, ReadFailure{Resource: resource, Reason: blindReason(action)})
+	}
+
+	// blindWith records a blind spot whose cause is not a permission refusal —
+	// an endpoint that did not answer. It shares blindSeen with blind so a
+	// resource is still named once, and it deliberately does not go through
+	// blindReason, whose "forbidden" prefix would be a false claim here.
+	blindWith := func(resource, reason string) {
+		if blindSeen[resource] {
+			return
+		}
+		blindSeen[resource] = true
+		partialReads = append(partialReads, ReadFailure{Resource: resource, Reason: reason})
 	}
 
 	// A refusal is reported in kubeagent's own words. The API server's message
@@ -437,20 +500,41 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	}
 	var logTargets []logTarget
 	if opts.Logs {
-		enriched := map[string]bool{} // one log fetch + one enriched finding per pod/container
+		// inputs.Pods is already in scope (built above, and diagnose.Run just
+		// consumed it) so this costs a map build and a lookup, not a new
+		// cluster read.
+		podByKey := make(map[string]*corev1.Pod, len(inputs.Pods))
+		for i := range inputs.Pods {
+			p := &inputs.Pods[i]
+			podByKey[p.Namespace+"/"+p.Name] = p
+		}
+		enrichedIdx := map[string]int{} // one log fetch per pod/container; the value is the logTargets index, so a later duplicate can retarget it
 		for i := range findings {
 			if findings[i].Container == "" {
 				continue
 			}
+			pod := podByKey[findings[i].Pod]
+			if pod == nil || !hasPreviousInstance(pod, findings[i].Container) {
+				continue // never restarted: there is no previous instance to fetch
+			}
 			key := findings[i].Pod + "/" + findings[i].Container
-			if enriched[key] {
-				continue // a container that trips two detectors (e.g. CrashLoop + OOM) is enriched once
+			if idx, ok := enrichedIdx[key]; ok {
+				// Still one fetch per container (e.g. a container that trips
+				// both CrashLoop and OOMKilled). If this finding's Issue names
+				// the container's own last termination reason, it explains the
+				// exit better than whichever finding claimed the slot first, so
+				// the block moves to it — the finding that explains the exit is
+				// the one an operator reads.
+				if reason := lastTerminationReason(pod, findings[i].Container); reason != "" && findings[i].Issue == reason {
+					logTargets[idx].finding = i
+				}
+				continue
 			}
 			ns, name, ok := splitNamespacedName(findings[i].Pod) // "ns/pod"
 			if !ok {
 				continue
 			}
-			enriched[key] = true
+			enrichedIdx[key] = len(logTargets)
 			logTargets = append(logTargets, logTarget{finding: i, namespace: ns, pod: name, container: findings[i].Container})
 		}
 	}
@@ -559,7 +643,12 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	var certReport *certhealth.Report // 8
 	if opts.Certs {
 		warn := opts.CertWarnDays
-		if warn <= 0 {
+		if warn < 0 {
+			// Defence-in-depth only: internal/cli/scan.go refuses a negative
+			// --cert-warn-days before Evaluate is ever called, so the CLI can
+			// no longer reach this branch. 0 is a real window meaning
+			// "expired only" and is passed through unchanged, not clamped to
+			// the 30-day default.
 			warn = 30
 		}
 		rep := certhealth.Assess(tlsSecrets, ings, warn, now)
@@ -607,6 +696,10 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	var kubeletHealth nodehealth.Report // 22
 	if opts.KubeletHealth {
 		kubeletHealth = nodehealth.Assess(probes)
+		// NOTE: the blind spot fires on any refusal while report.printKubeletHealth
+		// prints its grant hint only when every probe was refused. nodes/proxy is
+		// cluster-scoped, so a partial refusal has not been observed; if one ever is,
+		// gate both on Forbidden > 0 and say how many nodes were refused.
 		if kubeletHealth.Forbidden > 0 {
 			blind("nodes/proxy", "get nodes/proxy")
 		}
@@ -614,6 +707,9 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 
 	if opts.ControlPlaneHealth && readyz.Status == "forbidden" { // 23
 		blind("/readyz", "get /readyz")
+	}
+	if opts.ControlPlaneHealth && readyz.Status == "unreachable" {
+		blindWith("/readyz", "kubeagent could not reach the apiserver /readyz endpoint")
 	}
 
 	var dnsReport dnshealth.Report // 24
@@ -623,12 +719,13 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 			ratio = 0.05
 		}
 		agg := map[string]int64{}
-		forbidden, unreachable := 0, 0
+		answered, forbidden, unreachable := 0, 0, 0
 		for k := range cdns {
 			switch {
 			case dnsCode[k] == 401 || dnsCode[k] == 403:
 				forbidden++
 			case dnsCode[k] == 200:
+				answered++
 				for rc, n := range dnshealth.ParseResponses(dnsBody[k]) {
 					agg[rc] += n
 				}
@@ -639,14 +736,17 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 		if forbidden > 0 {
 			blind("pods/proxy", "get pods/proxy")
 		}
-		dnsReport = dnshealth.Assess(agg, len(cdns), forbidden, unreachable, ratio, 100)
+		dnsReport = dnshealth.Assess(agg, len(cdns), answered, forbidden, unreachable, ratio, 100)
+		if dnsReport.Status == "unreachable" {
+			blindWith("pods/proxy", "kubeagent could not reach the CoreDNS :9153/metrics endpoint")
+		}
 	}
 
 	// ------------------------------------------------ pure: no reads past here
 	workloads := inventory.Assemble(inputs, findings)
 	batchhealth.Annotate(workloads, inputs.Jobs)
 
-	health := clusterhealth.Assess(nodes, clusterhealth.Heartbeat{Leases: leases, Now: now, Threshold: opts.NodeHeartbeatThreshold}, opts.ExpectedNodes, workloads)
+	health := clusterhealth.Assess(nodes, clusterhealth.Heartbeat{Leases: leases, Now: now, Threshold: opts.NodeHeartbeatThreshold, Unavailable: errs[iLeases] != nil}, opts.ExpectedNodes, workloads)
 	health.ScopeNote = clusterhealth.NamespaceScopeNote(opts.Namespace)
 
 	backends := svchealth.BackendsFrom(inputs.Deployments, inputs.StatefulSets, inputs.DaemonSets, inputs.Jobs, inputs.CronJobs)
@@ -661,24 +761,25 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 			p = nonSystemPods(p)
 			s = nonSystemServices(s)
 		}
-		securityIssues = secscan.Assess(p, s, inputs.ReplicaSets)
+		securityIssues = secscan.Assess(p, s, inputs.ReplicaSets, inputs.Jobs)
 	}
 
-	stuckTerminating := termhealth.Assess(namespaces, inputs.Pods, pvcs, 2*time.Minute, now)
+	stuckTerminating := termhealth.Assess(namespaces, inputs.Pods, pvcs, nodes, terminatingThreshold(), now)
 	pdbIssues := pdbhealth.Assess(pdbs)
 	hpaIssues := hpahealth.Assess(hpas)
 
 	var webhookIssues []webhookhealth.Issue
+	var webhookURLBackends int
 	if opts.Namespace == "" {
 		webhookThreshold := opts.WebhookTimeoutThreshold
 		if webhookThreshold <= 0 {
 			webhookThreshold = 15
 		}
-		webhookIssues = webhookhealth.Assess(vwc, mwc, svcs, slices, webhookThreshold)
+		webhookIssues, webhookURLBackends = webhookhealth.Assess(vwc, mwc, svcs, slices, webhookThreshold)
 	}
 
 	pvcReclaim := pvcreclaim.Assess(pvcs, pvs)
-	pvcIssues := pvchealth.Assess(pvcs, pvcEvents, storageClasses, pvs)
+	pvcIssues := pvchealth.Assess(pvcs, pvcEvents, storageClasses, pvs, 10*time.Minute, now)
 
 	// The CLI already refuses an out-of-range KUBEAGENT_QUOTA_THRESHOLD and
 	// says so. This clamp is for every other caller: Evaluate must stay safe
@@ -716,5 +817,5 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 	rootcause.AnnotateRegistry(result.Workloads)
 	confidence.Annotate(result.Workloads)
 
-	return Result{Inputs: inputs, Nodes: nodes, NodeReserve: nodereserve.Assess(nodes), PVCReclaim: pvcReclaim, DiskUsage: diskReport, Health: health, Inventory: result, ServiceIssues: serviceIssues, IngressIssues: ingressIssues, PVCIssues: pvcIssues, SecurityIssues: securityIssues, KubeletHealth: kubeletHealth, ControlPlane: readyz, DNS: dnsReport, Certificates: certReport, StuckTerminating: stuckTerminating, PDBIssues: pdbIssues, HPAIssues: hpaIssues, WebhookIssues: webhookIssues, QuotaIssues: quotaIssues, PartialReads: partialReads}, nil
+	return Result{Inputs: inputs, Nodes: nodes, NodeReserve: nodereserve.Assess(nodes), PVCReclaim: pvcReclaim, DiskUsage: diskReport, Health: health, Inventory: result, ServiceIssues: serviceIssues, IngressIssues: ingressIssues, PVCIssues: pvcIssues, SecurityIssues: securityIssues, KubeletHealth: kubeletHealth, ControlPlane: readyz, DNS: dnsReport, Certificates: certReport, StuckTerminating: stuckTerminating, PDBIssues: pdbIssues, HPAIssues: hpaIssues, WebhookIssues: webhookIssues, WebhookURLBackends: webhookURLBackends, QuotaIssues: quotaIssues, PartialReads: partialReads}, nil
 }

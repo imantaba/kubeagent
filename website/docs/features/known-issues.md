@@ -12,6 +12,7 @@ kubeagent known-issues OOMKilled  # one kind in full
 
 ```text
 $ kubeagent known-issues
+Failure kinds kubeagent's pod and workload detectors report:
   ContainerStartError          the container was created but could not be started
   CrashLoopBackOff             a container starts, exits, and is restarted on a widening backoff
   CreateContainerConfigError   the kubelet cannot build the container from its spec
@@ -31,6 +32,9 @@ $ kubeagent known-issues
 
 Print one:
   kubeagent known-issues <kind>
+
+The kubeagent watch daemon additionally reports cluster-level and certificate
+issue kinds that this reference does not document.
 ```
 
 ```text
@@ -205,6 +209,13 @@ Deliberately absent:
   the cluster-pass kinds are not, because they are not statically enumerable
   the way the other two lists are, so a list of them could not carry the same
   guarantee.
+- **The watch daemon's own issue kinds.** `kubeagent watch` additionally
+  reports cluster-level and certificate issue kinds of its own — an
+  unhealthy control plane, a degraded DNS check, an expired, expiring or
+  invalid certificate among them — that this reference does not document
+  and does not name, unlike the three workload kinds above. The daemon's
+  vocabulary is a candidate for its own closure test, in its own slice; for
+  now the listing discloses the gap rather than leaving it unsaid.
 - **A link from `scan` output to an entry.** `scan`'s rendering is unchanged.
 - **JSON output.** This is a reference for a person, not a document to
   forward, so it adds no ninth [versioned document](json-schema.md).

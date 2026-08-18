@@ -21,6 +21,15 @@ type ContainerResources struct {
 	MemLimit   string `json:"memLimit"`
 }
 
+// Suggestion is the deterministic next step attached to a finding when the
+// operator asked for one. It mirrors remediation.Suggestion and is declared
+// here because internal/remediation imports internal/diagnose — the
+// dependency cannot run the other way.
+type Suggestion struct {
+	NextStep string `json:"nextStep"`
+	Command  string `json:"command,omitempty"`
+}
+
 // Finding is one diagnosis: what's wrong with a pod and why.
 type Finding struct {
 	Pod        string              `json:"pod"`                  // "namespace/name"
@@ -29,9 +38,11 @@ type Finding struct {
 	Evidence   string              `json:"evidence"`             // the exact signal observed
 	Resources  *ContainerResources `json:"resources,omitempty"`  // set by OOMKilled
 	Container  string              `json:"container,omitempty"`  // crashing container, set by crash detectors
-	Confidence string              `json:"confidence,omitempty"` // "high" (direct k8s state) | "medium" (heuristic); set by confidence.Annotate
+	Image      string              `json:"-"`                    // raw image reference of the failing container (matching only, not serialized); set by ImagePullDetector and the init-container image-pull arm, consumed by internal/rootcause and internal/rollout
+	Confidence string              `json:"confidence,omitempty"` // "high" (direct k8s state) | "medium" (heuristic); set by the producer where it knows better, else filled by confidence.Annotate
 	LogCause   string              `json:"logCause,omitempty"`   // set by scan --logs enrichment
 	LogExcerpt string              `json:"logExcerpt,omitempty"` // set by scan --logs enrichment (text output only)
+	Suggestion *Suggestion         `json:"suggestion,omitempty"` // set by scan --suggest JSON output
 }
 
 // Detector inspects one pod's facts and returns a Finding if it matches,

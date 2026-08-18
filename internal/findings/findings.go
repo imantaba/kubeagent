@@ -89,8 +89,12 @@ func splitNamespacedName(s string) (namespace, name string) {
 	return "", s
 }
 
-// fromDiagnose maps a detector match. Every diagnose.Finding is Critical: a
-// detector fires only on a concrete, named failure mode, never on a heuristic.
+// fromDiagnose maps a detector match. Every diagnose.Finding is Critical,
+// including the heuristics (RestartLoop, ProbeFailure, and the RolloutStuck
+// counter arms): a heuristic here still names a failure that was observed,
+// not one that was predicted, so it fails a gate like any other. What
+// separates them is confidence, which internal/confidence carries and this
+// record does not — see R192.
 func fromDiagnose(f diagnose.Finding, owner string) Finding {
 	ns, name := splitNamespacedName(f.Pod)
 	reason := f.Reason
@@ -112,6 +116,48 @@ func fromWorkload(w inventory.Workload) Finding {
 		Reason: fmt.Sprintf("%d/%d ready", w.Ready, w.Desired),
 		Owner:  w.Kind + "/" + w.Name,
 	}
+}
+
+// pdbCategoryToIssue maps a pdbhealth.Issue's lowercase Category onto the
+// finding vocabulary's CamelCase spelling shared by gate JSON, the watch
+// daemon's /issues and the MCP tool result. A category this map does not
+// recognise falls back to the raw value instead of vanishing, so a category
+// landing out of order (WP14 teaches pdbhealth.Assess to emit "singleton"
+// after this map already carries it) still renders rather than disappearing
+// silently.
+var pdbCategoryToIssue = map[string]string{
+	"unsatisfiable": "PDBUnsatisfiable",
+	"stale":         "PDBStale",
+	"blocking":      "PDBBlocked",
+	"singleton":     "PDBSingleton",
+}
+
+// pdbIssue applies pdbCategoryToIssue, falling back to the raw category on a
+// miss.
+func pdbIssue(category string) string {
+	if v, ok := pdbCategoryToIssue[category]; ok {
+		return v
+	}
+	return category
+}
+
+// hpaCategoryToIssue is pdbCategoryToIssue's HPA counterpart, same
+// fallback-on-miss rule.
+var hpaCategoryToIssue = map[string]string{
+	"unable":    "HPAUnableToScale",
+	"metrics":   "HPAMetricsFailed",
+	"disabled":  "HPAScalingDisabled",
+	"ambiguous": "HPAAmbiguousSelector",
+	"capped":    "HPACapped",
+}
+
+// hpaIssue applies hpaCategoryToIssue, falling back to the raw category on a
+// miss.
+func hpaIssue(category string) string {
+	if v, ok := hpaCategoryToIssue[category]; ok {
+		return v
+	}
+	return category
 }
 
 // Flatten projects every attention-worthy class scan.Result carries into one
@@ -155,19 +201,19 @@ func Flatten(res scan.Result) []Finding {
 	}
 	for _, i := range res.StuckTerminating {
 		out = append(out, Finding{Level: Warning, Kind: i.Kind, Namespace: i.Namespace,
-			Name: i.Name, Issue: "stuck terminating", Reason: i.Reason})
+			Name: i.Name, Issue: "StuckTerminating", Reason: i.Reason})
 	}
 	for _, i := range res.PDBIssues {
 		out = append(out, Finding{Level: Warning, Kind: "PodDisruptionBudget", Namespace: i.Namespace,
-			Name: i.Name, Issue: i.Category, Reason: i.Reason})
+			Name: i.Name, Issue: pdbIssue(i.Category), Reason: i.Reason})
 	}
 	for _, i := range res.HPAIssues {
 		out = append(out, Finding{Level: Warning, Kind: "HorizontalPodAutoscaler", Namespace: i.Namespace,
-			Name: i.Name, Issue: i.Category, Reason: i.Reason})
+			Name: i.Name, Issue: hpaIssue(i.Category), Reason: i.Reason})
 	}
 	for _, i := range res.WebhookIssues {
 		out = append(out, Finding{Level: Warning, Kind: i.Kind, Namespace: "",
-			Name: i.Config, Issue: i.Problem, Reason: i.Reason})
+			Name: i.Config + "/" + i.Webhook, Issue: i.Problem, Reason: i.Reason})
 	}
 	for _, i := range res.QuotaIssues {
 		out = append(out, Finding{Level: Warning, Kind: "ResourceQuota", Namespace: i.Namespace,

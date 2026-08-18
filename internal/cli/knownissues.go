@@ -25,10 +25,12 @@ const proseWidth = 72
 // generated and nothing here is sent anywhere; this is not a smaller --explain.
 func runKnownIssues(args []string, w io.Writer) error {
 	if len(args) == 0 {
+		fmt.Fprintf(w, "Failure kinds kubeagent's pod and workload detectors report:\n")
 		for _, e := range knownissues.All() {
 			fmt.Fprintf(w, "  %-28s %s\n", e.Kind, e.Summary)
 		}
 		fmt.Fprintf(w, "\nPrint one:\n  %s known-issues <kind>\n", invokedAs)
+		fmt.Fprintf(w, "\nThe %s watch daemon additionally reports cluster-level and certificate\nissue kinds that this reference does not document.\n", invokedAs)
 		return nil
 	}
 	if len(args) > 1 {
@@ -129,7 +131,7 @@ func wrapProse(s, first, cont string, width int) []string {
 func newKnownIssuesCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:           "known-issues [kind]",
-		Short:         "Print what kubeagent knows about a failure kind, offline",
+		Short:         "Print what kubeagent's pod and workload detectors know about a failure kind, offline",
 		Args:          cobra.ArbitraryArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,

@@ -63,14 +63,72 @@ func TestAssess_Metrics(t *testing.T) {
 	}
 }
 
+// TestAssess_Capped covers both shapes of the ScalingLimited/capped arm: pinned
+// exactly at the cap, and clamped below it because demand has since eased.
+// CurrentReplicas is set explicitly in both cases (8 and 10, against
+// MaxReplicas 10) rather than left at hpa()'s zero value — a fixture whose
+// branch depends on an unset field proves nothing, and TooManyReplicas with
+// zero current replicas is a state the upstream HPA controller cannot produce.
 func TestAssess_Capped(t *testing.T) {
-	h := hpa("ops", "ingest-hpa", "Deployment", "ingest", 10,
-		cond(autoscalingv2.ScalingLimited, corev1.ConditionTrue, "TooManyReplicas", "the desired replica count is more than the maximum replica count"))
-	is, ok := find(Assess([]autoscalingv2.HorizontalPodAutoscaler{h}), "ingest-hpa")
-	if !ok || is.Category != "capped" {
-		t.Fatalf("want capped, got %+v", is)
+	for _, tc := range []struct {
+		name            string
+		currentReplicas int32
+		wantReason      string
+	}{
+		{"AtCap", 10, "pinned at maxReplicas 10 — desired exceeds the cap"},
+		{"BelowCap", 8, "at 8 of maxReplicas 10 — desired exceeds the cap"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := hpa("ops", "ingest-hpa", "Deployment", "ingest", 10,
+				cond(autoscalingv2.ScalingLimited, corev1.ConditionTrue, "TooManyReplicas", "the desired replica count is more than the maximum replica count"))
+			h.Status.CurrentReplicas = tc.currentReplicas
+			is, ok := find(Assess([]autoscalingv2.HorizontalPodAutoscaler{h}), "ingest-hpa")
+			if !ok || is.Category != "capped" {
+				t.Fatalf("want capped, got %+v", is)
+			}
+			if is.Reason != tc.wantReason {
+				t.Errorf("reason = %q, want %q", is.Reason, tc.wantReason)
+			}
+		})
 	}
-	if is.Reason != "pinned at maxReplicas 10 — desired exceeds the cap" {
+}
+
+func TestAssess_ScalingDisabled(t *testing.T) {
+	h := hpa("shop", "batch-hpa", "Deployment", "batch", 6,
+		cond(autoscalingv2.ScalingActive, corev1.ConditionFalse, "ScalingDisabled", "scaling is disabled since the replica count of the target is zero"))
+	is, ok := find(Assess([]autoscalingv2.HorizontalPodAutoscaler{h}), "batch-hpa")
+	if !ok || is.Category != "disabled" {
+		t.Fatalf("want disabled, got %+v", is)
+	}
+	if is.Reason != "scaling is disabled — scaling is disabled since the replica count of the target is zero" {
+		t.Errorf("reason = %q", is.Reason)
+	}
+}
+
+func TestAssess_AmbiguousSelector(t *testing.T) {
+	h := hpa("shop", "dup-hpa", "Deployment", "dup", 6,
+		cond(autoscalingv2.ScalingActive, corev1.ConditionFalse, "AmbiguousSelector", "selector overlaps with hpa other-hpa"))
+	is, ok := find(Assess([]autoscalingv2.HorizontalPodAutoscaler{h}), "dup-hpa")
+	if !ok || is.Category != "ambiguous" {
+		t.Fatalf("want ambiguous, got %+v", is)
+	}
+	if is.Reason != "two HPAs target the same pods — selector overlaps with hpa other-hpa" {
+		t.Errorf("reason = %q", is.Reason)
+	}
+}
+
+// TestAssess_UnknownScalingActiveReasonStaysMetrics pins the default arm: a
+// reason the table does not name must keep the pre-existing "metrics"
+// behaviour exactly, so a future edit that widens the table by accident is
+// caught here.
+func TestAssess_UnknownScalingActiveReasonStaysMetrics(t *testing.T) {
+	h := hpa("shop", "weird-hpa", "Deployment", "weird", 6,
+		cond(autoscalingv2.ScalingActive, corev1.ConditionFalse, "SomeFutureControllerReason", "a reason this table does not name"))
+	is, ok := find(Assess([]autoscalingv2.HorizontalPodAutoscaler{h}), "weird-hpa")
+	if !ok || is.Category != "metrics" {
+		t.Fatalf("want metrics (the default), got %+v", is)
+	}
+	if is.Reason != "can't fetch metrics — a reason this table does not name" {
 		t.Errorf("reason = %q", is.Reason)
 	}
 }

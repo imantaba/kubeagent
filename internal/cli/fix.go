@@ -67,21 +67,22 @@ func renderScan(w io.Writer, format string, in report.Input, res scan.Result, na
 // the caller after this returns.
 func resultInput(res scan.Result) report.Input {
 	return report.Input{
-		Cluster:          res.Health,
-		Result:           res.Inventory,
-		ServiceIssues:    res.ServiceIssues,
-		NodeReserve:      &res.NodeReserve,
-		PVCReclaim:       &res.PVCReclaim,
-		IngressIssues:    res.IngressIssues,
-		PVCIssues:        res.PVCIssues,
-		SecurityIssues:   res.SecurityIssues,
-		Certificates:     res.Certificates,
-		StuckTerminating: res.StuckTerminating,
-		PDBIssues:        res.PDBIssues,
-		HPAIssues:        res.HPAIssues,
-		WebhookIssues:    res.WebhookIssues,
-		QuotaIssues:      res.QuotaIssues,
-		Blind:            res.PartialReads,
+		Cluster:            res.Health,
+		Result:             res.Inventory,
+		ServiceIssues:      res.ServiceIssues,
+		NodeReserve:        &res.NodeReserve,
+		PVCReclaim:         &res.PVCReclaim,
+		IngressIssues:      res.IngressIssues,
+		PVCIssues:          res.PVCIssues,
+		SecurityIssues:     res.SecurityIssues,
+		Certificates:       res.Certificates,
+		StuckTerminating:   res.StuckTerminating,
+		PDBIssues:          res.PDBIssues,
+		HPAIssues:          res.HPAIssues,
+		WebhookIssues:      res.WebhookIssues,
+		WebhookURLBackends: res.WebhookURLBackends,
+		QuotaIssues:        res.QuotaIssues,
+		Blind:              res.PartialReads,
 	}
 }
 

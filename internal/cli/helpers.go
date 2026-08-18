@@ -1,12 +1,16 @@
 package cli
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"k8s.io/apimachinery/pkg/util/validation"
+
+	"github.com/imantaba/kubeagent/internal/safetext"
 	"github.com/imantaba/kubeagent/internal/scan"
 )
 
@@ -87,6 +91,40 @@ func quotaThresholdFromEnv(w io.Writer) float64 {
 	return scan.DefaultQuotaThreshold
 }
 
+// dnsRatioFromEnv reads KUBEAGENT_DNS_SERVFAIL_RATIO as a fraction in (0, 1],
+// falling back to 0.05.
+//
+// Unlike envFloat, it does not fall back silently. "50" is a plausible thing
+// to write for "warn me at 50%", parses as a float, and is not a fraction —
+// so the check ran at the default while the operator believed they had
+// changed the ratio. One line on w says what was ignored and what is being
+// used instead. A set-but-empty value is left alone: os.Getenv cannot tell it
+// from unset, and warning on it would fire for an ordinary trailing
+// "KUBEAGENT_DNS_SERVFAIL_RATIO=" in a shell profile.
+//
+// A parsed value of exactly 1 is a legitimate threshold — the check then
+// fires only when every response failed — so it is honored rather than
+// clamped like an out-of-range value. It still gets one advisory line: 1 is
+// also what an operator who meant "100%" would type, and, by mistake, what an
+// operator who meant "1%" would type too, so this advises rather than
+// silently accepting a value that is easy to type without meaning it.
+func dnsRatioFromEnv(w io.Writer) float64 {
+	const def = 0.05
+	v := os.Getenv("KUBEAGENT_DNS_SERVFAIL_RATIO")
+	if v == "" {
+		return def
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err == nil && f > 0 && f <= 1 {
+		if f == 1 {
+			warnf(w, "KUBEAGENT_DNS_SERVFAIL_RATIO=%q is 1; the check will now only fire when every response failed", v)
+		}
+		return f
+	}
+	warnf(w, "KUBEAGENT_DNS_SERVFAIL_RATIO=%q is not a fraction in (0, 1]; using %.2f", v, def)
+	return def
+}
+
 // envInt returns the env var parsed as an int, else def.
 func envInt(key string, def int) int {
 	if v := os.Getenv(key); v != "" {
@@ -97,6 +135,29 @@ func envInt(key string, def int) int {
 	return def
 }
 
+// envIntRange returns the env var parsed as an int in [lo, hi], or def if
+// unset. Unlike envInt, it does not fall back silently on a bad value: an
+// unparseable or out-of-range value is a defect the caller must refuse
+// rather than launder into a threshold nobody asked for, so it is returned
+// as an error naming the variable, the offending value and the valid range
+// rather than swallowed. envInt itself is unchanged — it has callers that
+// legitimately want an unbounded value — this is a separate, stricter
+// helper for the callers that do not.
+func envIntRange(key string, def, lo, hi int) (int, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return def, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return 0, fmt.Errorf("%s: must be an integer between %d and %d (got %q)", key, lo, hi, v)
+	}
+	if n < lo || n > hi {
+		return 0, fmt.Errorf("%s: must be between %d and %d (got %d)", key, lo, hi, n)
+	}
+	return n, nil
+}
+
 // envDuration returns the env var parsed as a Go duration ("30m", "2h"), else def.
 func envDuration(key string, def time.Duration) time.Duration {
 	if v := os.Getenv(key); v != "" {
@@ -105,4 +166,20 @@ func envDuration(key string, def time.Duration) time.Duration {
 		}
 	}
 	return def
+}
+
+// validateExpectedNodes rejects any declared expected-node name that is not
+// a valid DNS-1123 subdomain (lowercase letters, digits, '-' and '.') — the
+// only shape a real Kubernetes node name can have. src names where the value
+// came from (a flag or an env var) so the error tells the operator which one
+// to fix. The offending value is sanitized through safetext.Line before it
+// is quoted into the message: an untrusted declared name must never carry a
+// control character into the operator's terminal.
+func validateExpectedNodes(names []string, src string) error {
+	for _, n := range names {
+		if len(validation.IsDNS1123Subdomain(n)) > 0 {
+			return fmt.Errorf("%s: %q is not a valid node name (a node name is a DNS-1123 subdomain: lowercase letters, digits, '-' and '.')", src, safetext.Line(n))
+		}
+	}
+	return nil
 }

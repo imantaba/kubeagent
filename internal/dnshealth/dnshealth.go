@@ -17,7 +17,15 @@ type Report struct {
 	ErrorResponses int64   `json:"errorResponses"` // SERVFAIL + REFUSED
 	TotalResponses int64   `json:"totalResponses"`
 	PodsProbed     int     `json:"podsProbed"`
-	Detail         string  `json:"detail,omitempty"`
+	// PodsAnswered is the count of the PodsProbed pods that actually returned
+	// a 200 from /metrics — a subset PodsProbed alone cannot show. omitempty
+	// is for schema-additivity reasons only, the same reason a pod row's
+	// `state` is: on every real scan it is set anywhere PodsProbed is (the
+	// ok, degraded, below-floor and total-zero-but-partial-read cases), and
+	// it is zero only where PodsProbed is too, on the same no-CoreDNS-pods,
+	// forbidden and unreachable paths.
+	PodsAnswered int    `json:"podsAnswered,omitempty"`
+	Detail       string `json:"detail,omitempty"`
 }
 
 // maxCount bounds one parsed sample. Prometheus counters are float64; a value
@@ -96,9 +104,11 @@ func labelValue(line, key string) string {
 }
 
 // Assess collapses the aggregated rcode counts (summed across all probed pods) and
-// the per-pod probe outcomes into a Report. threshold is the error ratio that trips
-// "degraded"; floor is the minimum total responses required to judge.
-func Assess(agg map[string]int64, podsProbed, forbidden, unreachable int, threshold float64, floor int64) Report {
+// the per-pod probe outcomes into a Report. podsAnswered is the count of the
+// podsProbed pods that returned a 200 from /metrics. threshold is the error
+// ratio that trips "degraded"; floor is the minimum total responses required
+// to judge.
+func Assess(agg map[string]int64, podsProbed, podsAnswered, forbidden, unreachable int, threshold float64, floor int64) Report {
 	if podsProbed == 0 {
 		return Report{Status: ""}
 	}
@@ -126,7 +136,7 @@ func Assess(agg map[string]int64, podsProbed, forbidden, unreachable int, thresh
 		case unreachable > 0:
 			return Report{Status: "unreachable"}
 		default:
-			return Report{Status: "", PodsProbed: podsProbed}
+			return Report{Status: "", PodsProbed: podsProbed, PodsAnswered: podsAnswered}
 		}
 	}
 	errors := saturatingAdd(max(agg["SERVFAIL"], 0), max(agg["REFUSED"], 0))
@@ -135,10 +145,14 @@ func Assess(agg map[string]int64, podsProbed, forbidden, unreachable int, thresh
 	}
 	ratio := float64(errors) / float64(total)
 	if total < floor {
-		return Report{Status: "ok", TotalResponses: total, PodsProbed: podsProbed}
+		// Fewer than floor's worth of responses is too small a sample to call
+		// "ok": abstain rather than claim health, but keep the measurement so
+		// a caller that wants to see it anyway can — a JSON consumer, or an
+		// operator reading the raw numbers themselves.
+		return Report{Status: "", ServfailRatio: ratio, ErrorResponses: errors, TotalResponses: total, PodsProbed: podsProbed, PodsAnswered: podsAnswered}
 	}
 	if ratio >= threshold {
-		return Report{Status: "degraded", ServfailRatio: ratio, ErrorResponses: errors, TotalResponses: total, PodsProbed: podsProbed}
+		return Report{Status: "degraded", ServfailRatio: ratio, ErrorResponses: errors, TotalResponses: total, PodsProbed: podsProbed, PodsAnswered: podsAnswered}
 	}
-	return Report{Status: "ok", ServfailRatio: ratio, ErrorResponses: errors, TotalResponses: total, PodsProbed: podsProbed}
+	return Report{Status: "ok", ServfailRatio: ratio, ErrorResponses: errors, TotalResponses: total, PodsProbed: podsProbed, PodsAnswered: podsAnswered}
 }

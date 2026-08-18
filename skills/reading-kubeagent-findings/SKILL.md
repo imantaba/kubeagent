@@ -105,5 +105,6 @@ them faithfully. Do not upgrade "container repeatedly crashes after starting"
 into "the application is broken" — kubeagent observed the former and did not
 claim the latter.
 
-`remediationHint` is kubeagent's suggestion. Anything else you suggest is yours,
-and say so plainly: "kubeagent suggests X; separately, I would check Y."
+`remediationHint` is kubeagent's suggestion — the same deterministic, reviewed
+next step that `kubeagent scan --suggest` prints. Anything else you suggest is
+yours, and say so plainly.

@@ -27,13 +27,27 @@ type Schema = map[string]any
 const (
 	// ScanVersion is `kubeagent scan --output json`. 1.1 added `policy`; 1.2
 	// added `baseline`; 1.3 added `state` on a pod row, the kubectl-style
-	// display value computed beside the raw `phase`, which is unchanged. All
-	// three are additive: every added property is omitempty and absent from
-	// `required`, so a document produced without them still validates against
-	// the older schema. `state` is omitempty for that reason and no other — it
-	// is set on every row of every real scan, but a property in `required` is a
-	// MAJOR change however new it is.
-	ScanVersion     = "1.3"
+	// display value computed beside the raw `phase`, which is unchanged; 1.4
+	// added `unreachable` on `nodehealth.Report`, the count of probed kubelets
+	// whose /healthz never answered (transport failure or a 502/503/504 from
+	// the proxy), tracked separately from `forbidden` so a permission problem
+	// and a dead kubelet are not conflated; 1.5 added `podsAnswered` on
+	// `dnshealth.Report`, the count of the probed CoreDNS pods that actually
+	// returned a 200 from /metrics, tracked separately from `podsProbed` (the
+	// count selected) so a partial read is visible in the JSON the same way it
+	// already is in the text report; 1.6 added `suggestion` on a finding, the
+	// deterministic next step `scan --suggest` already prints in the text
+	// report, populated only when the flag is set. All six are additive: every
+	// added property is omitempty and absent from `required`, so a document
+	// produced without them still validates against the older schema. `state`,
+	// `unreachable`, `podsAnswered` and `suggestion` are omitempty for that
+	// reason and no other — `state` is set on every row of every real scan,
+	// `podsAnswered` is set anywhere `podsProbed` is on a real scan, a run
+	// with no unreachable kubelet legitimately encodes no `unreachable` key, a
+	// scan without `--suggest` legitimately encodes no `suggestion` key, but a
+	// property in `required` is a MAJOR change however new or however often
+	// it is set.
+	ScanVersion     = "1.6"
 	GateVersion     = "1.1"
 	RBACVersion     = "1.0"
 	WatchVersion    = "1.0"

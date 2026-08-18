@@ -86,11 +86,22 @@ func TestResultInput_CarriesWebhookIssues(t *testing.T) {
 	// Regression: the scan.Result → report.Input mapping must carry WebhookIssues,
 	// or the section never renders in the CLI (the stuck-terminating v0.34.0 bug).
 	res := scan.Result{WebhookIssues: []webhookhealth.Issue{
-		{Kind: "ValidatingWebhookConfiguration", Config: "policy-webhook", Webhook: "validate.policy.io", Problem: "no-endpoints", Reason: "…"},
+		{Kind: "ValidatingWebhookConfiguration", Config: "policy-webhook", Webhook: "validate.policy.io", Problem: "NoEndpoints", Reason: "…"},
 	}}
 	in := resultInput(res)
 	if len(in.WebhookIssues) != 1 || in.WebhookIssues[0].Config != "policy-webhook" {
 		t.Fatalf("resultInput must carry WebhookIssues into report.Input, got %+v", in.WebhookIssues)
+	}
+}
+
+func TestResultInput_CarriesWebhookURLBackends(t *testing.T) {
+	// Regression: the scan.Result → report.Input mapping must carry
+	// WebhookURLBackends, or the NOTES line never renders in the CLI even
+	// though webhookhealth.Assess computed a non-zero count.
+	res := scan.Result{WebhookURLBackends: 3}
+	in := resultInput(res)
+	if in.WebhookURLBackends != 3 {
+		t.Fatalf("resultInput must carry WebhookURLBackends into report.Input, got %d", in.WebhookURLBackends)
 	}
 }
 
@@ -120,6 +131,148 @@ func TestEnvInt_WebhookTimeoutDefault(t *testing.T) {
 	t.Setenv("KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS", "25")
 	if got := envInt("KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS", 15); got != 25 {
 		t.Errorf("env override should be 25, got %d", got)
+	}
+}
+
+// TestEnvIntRange drives the bounded helper the four
+// KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS call sites switch to. The API server
+// itself refuses a webhook timeoutSeconds above 30, so 1-30 is the bound
+// used throughout.
+func TestEnvIntRange(t *testing.T) {
+	const key = "KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS"
+
+	t.Run("unset defaults", func(t *testing.T) {
+		t.Setenv(key, "")
+		got, err := envIntRange(key, 15, 1, 30)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != 15 {
+			t.Errorf("got %d, want default 15", got)
+		}
+	})
+
+	accepted := []string{"1", "15", "30"}
+	for _, v := range accepted {
+		t.Run("accept_"+v, func(t *testing.T) {
+			t.Setenv(key, v)
+			got, err := envIntRange(key, 15, 1, 30)
+			if err != nil {
+				t.Fatalf("value %q: unexpected error: %v", v, err)
+			}
+			want, convErr := strconv.Atoi(v)
+			if convErr != nil {
+				t.Fatalf("test bug: %v", convErr)
+			}
+			if got != want {
+				t.Errorf("value %q: got %d, want %d", v, got, want)
+			}
+		})
+	}
+
+	// Refused cases, named per R163/R164/R165: above the cap, non-positive,
+	// unparseable, and R165's five wraparound values — each measured today
+	// (before this fix) to produce the finding count noted in its comment
+	// after int32(...) silently wraps it.
+	refused := []string{
+		"31",         // above the API server's own 30s cap
+		"100",        // well above the cap
+		"0",          // non-positive
+		"-5",         // non-positive
+		"abc",        // unparseable
+		"1e3",        // unparseable: strconv.Atoi rejects scientific notation
+		" ",          // unparseable: whitespace
+		"2147483648", // wraps to int32 -2147483648; silently produced 5 findings today
+		"4294967306", // wraps to int32 10; silently produced 7 findings today
+		"4294967311", // wraps to int32 15; silently produced 5 findings today
+		"4294967326", // wraps to int32 30; silently produced 3 findings today
+		"8589934607", // wraps to int32 15; silently produced 5 findings today
+	}
+	for _, v := range refused {
+		t.Run("refuse_"+v, func(t *testing.T) {
+			t.Setenv(key, v)
+			_, err := envIntRange(key, 15, 1, 30)
+			if err == nil {
+				t.Fatalf("value %q: want an error, got nil", v)
+			}
+			if !strings.Contains(err.Error(), key) {
+				t.Errorf("error %q does not name %s", err, key)
+			}
+		})
+	}
+
+	// The error message distinguishes an unparseable value from one that
+	// parsed fine but falls outside the range.
+	t.Run("unparseable message", func(t *testing.T) {
+		t.Setenv(key, "1e3")
+		_, err := envIntRange(key, 15, 1, 30)
+		want := key + `: must be an integer between 1 and 30 (got "1e3")`
+		if err == nil || err.Error() != want {
+			t.Errorf("error = %v, want %q", err, want)
+		}
+	})
+	t.Run("out-of-range message", func(t *testing.T) {
+		t.Setenv(key, "60")
+		_, err := envIntRange(key, 15, 1, 30)
+		want := key + ": must be between 1 and 30 (got 60)"
+		if err == nil || err.Error() != want {
+			t.Errorf("error = %v, want %q", err, want)
+		}
+	})
+}
+
+// TestValidateExpectedNodes drives the shared validator both call sites use:
+// scan's --expected-nodes flag and watch's KUBEAGENT_EXPECTED_NODES env var.
+// Six synthetic node names accept; every rejection names the source (src) so
+// the operator knows which one to fix.
+func TestValidateExpectedNodes(t *testing.T) {
+	valid := []string{"node-a", "node-b", "node-c", "node-d", "node-e", "node-f"}
+	if err := validateExpectedNodes(valid, "--expected-nodes"); err != nil {
+		t.Errorf("six valid node names rejected: %v", err)
+	}
+
+	invalid := []struct {
+		name  string
+		value string
+	}{
+		{"uppercase", "NODE-UPPER"},
+		{"interior newline", "node-a\nnode-b"},
+		{"space", "node a"},
+		{"slash", "node/a"},
+		{"254 bytes", strings.Repeat("a", 254)},
+		{"only a dash", "-"},
+	}
+	for _, tt := range invalid {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateExpectedNodes([]string{tt.value}, "--expected-nodes")
+			if err == nil {
+				t.Fatalf("value %q: want a validation error, got nil", tt.value)
+			}
+			if !strings.Contains(err.Error(), "--expected-nodes") {
+				t.Errorf("error %q does not name the source flag", err)
+			}
+			if !strings.Contains(err.Error(), "DNS-1123 subdomain") {
+				t.Errorf("error %q does not explain the required shape", err)
+			}
+		})
+	}
+
+	// The half of the fix a naive implementation drops: the sanitized echo.
+	// A control character in the declared name must not survive into the
+	// message printed to the operator's terminal.
+	err := validateExpectedNodes([]string{"node-a\nnode-b"}, "--expected-nodes")
+	if err == nil {
+		t.Fatal("want an error for a name containing a newline")
+	}
+	if strings.Contains(err.Error(), "\n") {
+		t.Errorf("error %q must not carry the newline through — safetext.Line should have folded it to a space", err)
+	}
+
+	// The source is echoed too, so the watch daemon's env-var call site names
+	// KUBEAGENT_EXPECTED_NODES, not the flag it does not have.
+	err = validateExpectedNodes([]string{"NODE-UPPER"}, "KUBEAGENT_EXPECTED_NODES")
+	if err == nil || !strings.Contains(err.Error(), "KUBEAGENT_EXPECTED_NODES") {
+		t.Errorf("error %v does not name KUBEAGENT_EXPECTED_NODES", err)
 	}
 }
 
@@ -172,6 +325,74 @@ func TestRun_ExplainLocalNeedsModel(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "needs --model") {
 		t.Fatalf("want the needs-model error, got %v", err)
 	}
+}
+
+// TestRun_ExplainGuardsDoNotFireForInvestigate proves R207: both --explain-only
+// precondition guards -- the key-or-endpoint check, and the local-model check
+// nested inside "an endpoint is set" -- must not fire when --investigate is
+// what actually selected the model path. --investigate supersedes --explain
+// and never reads the local model name, so an --explain-only requirement must
+// never block it, even when --explain is also set on the same command line.
+func TestRun_ExplainGuardsDoNotFireForInvestigate(t *testing.T) {
+	t.Run("neither key nor endpoint set, both flags: error names --investigate not --explain", func(t *testing.T) {
+		t.Setenv("ANTHROPIC_API_KEY", "")
+		t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "")
+		err := Run([]string{"scan", "--investigate", "--explain"})
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+		if !strings.Contains(err.Error(), "--investigate") {
+			t.Errorf("want the error to name --investigate (it supersedes --explain), got: %v", err)
+		}
+		if strings.Contains(err.Error(), "--explain") {
+			t.Errorf("error must not name --explain when --investigate is also set: %v", err)
+		}
+	})
+
+	t.Run("neither set, --explain alone: error names --explain", func(t *testing.T) {
+		t.Setenv("ANTHROPIC_API_KEY", "")
+		t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "")
+		err := Run([]string{"scan", "--explain"})
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+		if !strings.Contains(err.Error(), "--explain") {
+			t.Errorf("want the error to name --explain, got: %v", err)
+		}
+	})
+
+	t.Run("key and endpoint both set, no model, both flags: not the needs-model error", func(t *testing.T) {
+		// --investigate never reads explainModel -- the local-model guard is
+		// --explain's alone -- so with an Anthropic key present, --investigate
+		// must be able to proceed to cluster-connect even though the local
+		// endpoint's model requirement (which only --explain would need) is
+		// unmet.
+		t.Setenv("ANTHROPIC_API_KEY", "test-key")
+		t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "http://localhost:11434/v1")
+		t.Setenv("KUBEAGENT_MODEL", "")
+		err := Run([]string{"scan", "--investigate", "--explain", "--kubeconfig", "/nonexistent/path"})
+		if err == nil {
+			t.Fatal("expected a cluster-connect error for a nonexistent kubeconfig")
+		}
+		if strings.Contains(err.Error(), "needs --model") {
+			t.Errorf("the local-model guard must not fire when --investigate is set: %v", err)
+		}
+		if !strings.Contains(err.Error(), "loading kubeconfig") {
+			t.Errorf("expected the run to reach cluster-connect (proving both guards were skipped), got: %v", err)
+		}
+	})
+
+	t.Run("no key, endpoint set, no model, --explain alone: still the needs-model error", func(t *testing.T) {
+		// Pins the single-flag behavior: with only --explain set, the
+		// local-model guard is unchanged by this fix.
+		t.Setenv("ANTHROPIC_API_KEY", "")
+		t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "http://localhost:11434/v1")
+		t.Setenv("KUBEAGENT_MODEL", "")
+		err := Run([]string{"scan", "--explain"})
+		if err == nil || !strings.Contains(err.Error(), "needs --model") {
+			t.Fatalf("want the needs-model error, got %v", err)
+		}
+	})
 }
 
 func TestRun_ModelFlagIsRecognized(t *testing.T) {
@@ -1040,6 +1261,22 @@ func TestRunWatch_TinyNegativeSLOTargetIsNotLaunderedToOff(t *testing.T) {
 	}
 	if err.Error() != want {
 		t.Fatalf("error = %q, want exactly %q", err.Error(), want)
+	}
+}
+
+// TestRunWatch_RejectsAnInvalidExpectedNodeName proves runWatchOpts refuses a
+// KUBEAGENT_EXPECTED_NODES value that is not a DNS-1123 subdomain, before
+// buildTargets does any kubeconfig work — the same fail-fast point the
+// --slo-target tests above exercise through the real, unstubbed watch.Run.
+func TestRunWatch_RejectsAnInvalidExpectedNodeName(t *testing.T) {
+	t.Setenv("KUBEAGENT_EXPECTED_NODES", "NODE-UPPER")
+	kc := deadKubeconfigPath(t)
+	err := runWatchBounded(t, []string{"--kubeconfig", kc, "--metrics-addr", "127.0.0.1:0"}, 3*time.Second)
+	if err == nil {
+		t.Fatal("expected a validation error for an invalid KUBEAGENT_EXPECTED_NODES value")
+	}
+	if !strings.Contains(err.Error(), "KUBEAGENT_EXPECTED_NODES") {
+		t.Errorf("error %q does not name KUBEAGENT_EXPECTED_NODES", err)
 	}
 }
 
@@ -2108,7 +2345,10 @@ func TestGateScanOptionsIncludeTheEnvTunableThresholds(t *testing.T) {
 	t.Setenv("KUBEAGENT_QUOTA_THRESHOLD", "0.75")
 	t.Setenv("KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS", "30")
 
-	opts := gateScanOptions("prod", io.Discard)
+	opts, err := gateScanOptions("prod", io.Discard)
+	if err != nil {
+		t.Fatalf("gateScanOptions: %v", err)
+	}
 
 	if opts.Namespace != "prod" {
 		t.Errorf("Namespace = %q, want %q", opts.Namespace, "prod")
@@ -2251,6 +2491,36 @@ func TestRenderScanLeavesTextAndJSONOnTheOldPath(t *testing.T) {
 	}
 }
 
+// TestRenderScanSecurityRequestedNote proves report.Input.SecurityRequested
+// reaches htmlreport.Input through the exact seam runScan uses (renderScan),
+// following the same regression-test shape as
+// TestRenderScanRoutesHTMLWithEveryFieldPlumbed: without a test like this, a
+// field that silently never reached htmlreport.Input would ship unnoticed.
+func TestRenderScanSecurityRequestedNote(t *testing.T) {
+	const note = "Security posture was requested but is not part of the HTML report"
+	res := scan.Result{}
+	in := resultInput(res)
+	in.Now = time.Date(2026, 7, 28, 9, 30, 0, 0, time.UTC)
+
+	in.SecurityRequested = true
+	var withBuf bytes.Buffer
+	if err := renderScan(&withBuf, "html", in, res, ""); err != nil {
+		t.Fatalf("renderScan html: %v", err)
+	}
+	if !strings.Contains(withBuf.String(), note) {
+		t.Error("SecurityRequested did not reach the HTML report through renderScan")
+	}
+
+	in.SecurityRequested = false
+	var withoutBuf bytes.Buffer
+	if err := renderScan(&withoutBuf, "html", in, res, ""); err != nil {
+		t.Fatalf("renderScan html: %v", err)
+	}
+	if strings.Contains(withoutBuf.String(), note) {
+		t.Error("renderScan rendered the security note with SecurityRequested false")
+	}
+}
+
 func TestRun_UsageMentionsTUI(t *testing.T) {
 	err := Run([]string{})
 	if err == nil {
@@ -2300,8 +2570,14 @@ func TestRunTUI_RejectsExplainAndInvestigate(t *testing.T) {
 // which makes the struct non-comparable with the operator the brief specifies.
 // DeepEqual still compares the whole value, not a field or two.
 func TestTUIScanOptions_MatchesGateDefaults(t *testing.T) {
-	got := tuiScanOptions("shop", io.Discard)
-	want := gateScanOptions("shop", io.Discard)
+	got, err := tuiScanOptions("shop", io.Discard)
+	if err != nil {
+		t.Fatalf("tuiScanOptions: %v", err)
+	}
+	want, err := gateScanOptions("shop", io.Discard)
+	if err != nil {
+		t.Fatalf("gateScanOptions: %v", err)
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("tuiScanOptions = %+v, want %+v", got, want)
 	}
@@ -2548,7 +2824,7 @@ func TestParseScanFlagsCarriesEveryValue(t *testing.T) {
 	if opts.nodeHeartbeatThreshold != 90*time.Second {
 		t.Errorf("nodeHeartbeatThreshold = %v, want 90s", opts.nodeHeartbeatThreshold)
 	}
-	if got := strings.Join(splitCSV(opts.expectedNodes), "|"); got != "node-a|node-b" {
+	if got := strings.Join(opts.expectedNodes, "|"); got != "node-a|node-b" {
 		t.Errorf("expectedNodes = %q, want node-a|node-b", got)
 	}
 }
@@ -2935,6 +3211,79 @@ func TestQuotaThresholdFromEnv(t *testing.T) {
 					if !strings.Contains(msg, want) {
 						t.Errorf("warning %q does not name %s", msg, want)
 					}
+				}
+			case msg != "":
+				t.Errorf("want no warning, got %q", msg)
+			}
+		})
+	}
+}
+
+// An operator who writes KUBEAGENT_DNS_SERVFAIL_RATIO=50 means "warn me at
+// 50%". The value is not a fraction, so the check runs at the 0.05 default —
+// and used to say nothing at all, so the operator believed they had changed
+// the ratio. A parsed value of exactly 1 is different: it is a legitimate
+// threshold — the check then fires only when every response failed — so it
+// is honored rather than clamped, but it is also what an operator who meant
+// "100%" and an operator who meant "1%" would both type, so it still warns.
+func TestDNSRatioFromEnv(t *testing.T) {
+	const def = 0.05
+	cases := []struct {
+		name    string
+		set     bool
+		value   string
+		want    float64
+		wantMsg bool
+	}{
+		{name: "unset", want: def},
+		{name: "set but empty", set: true, value: "", want: def},
+		{name: "valid fraction", set: true, value: "0.24", want: 0.24},
+		{name: "another valid fraction", set: true, value: "0.25", want: 0.25},
+		{name: "exactly one is honored but warns", set: true, value: "1", want: 1.0, wantMsg: true},
+		{name: "percentage", set: true, value: "50", want: def, wantMsg: true},
+		{name: "unparseable", set: true, value: "abc", want: def, wantMsg: true},
+		{name: "zero", set: true, value: "0", want: def, wantMsg: true},
+		{name: "negative", set: true, value: "-0.1", want: def, wantMsg: true},
+		{name: "above one", set: true, value: "1.5", want: def, wantMsg: true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if c.set {
+				t.Setenv("KUBEAGENT_DNS_SERVFAIL_RATIO", c.value)
+			} else {
+				os.Unsetenv("KUBEAGENT_DNS_SERVFAIL_RATIO")
+			}
+			var buf bytes.Buffer
+			got := dnsRatioFromEnv(&buf)
+			if got != c.want {
+				t.Errorf("ratio = %v, want %v", got, c.want)
+			}
+			msg := buf.String()
+			switch {
+			case c.wantMsg && strings.Count(msg, "\n") != 1:
+				t.Fatalf("want exactly one warning line, got %q", msg)
+			case c.wantMsg && c.want == def:
+				// A rejected value falls back to the default; the warning
+				// names both the rejected value and what is used instead.
+				for _, want := range []string{"KUBEAGENT_DNS_SERVFAIL_RATIO", strconv.Quote(c.value), "0.05"} {
+					if !strings.Contains(msg, want) {
+						t.Errorf("warning %q does not name %s", msg, want)
+					}
+				}
+			case c.wantMsg:
+				// The "exactly one" row: honored, not rejected, so the
+				// warning must not use the rejection wording — an
+				// implementation that clamps this value silently and warns
+				// with the generic rejection message would still make this
+				// row's got == c.want check pass, which is why the value
+				// and the warning are both asserted here.
+				for _, want := range []string{"KUBEAGENT_DNS_SERVFAIL_RATIO", strconv.Quote(c.value)} {
+					if !strings.Contains(msg, want) {
+						t.Errorf("warning %q does not name %s", msg, want)
+					}
+				}
+				if strings.Contains(msg, "not a fraction") {
+					t.Errorf("warning %q uses the rejection wording for a value that was honored", msg)
 				}
 			case msg != "":
 				t.Errorf("want no warning, got %q", msg)

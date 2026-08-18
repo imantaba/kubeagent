@@ -135,6 +135,38 @@ func remediationPlanOf(in Input) []RemediationActionView {
 	return out
 }
 
+// suggestFindings returns a copy of findings with each entry's Suggestion set
+// from remediation.For, when that suggestion carries a next step. The input
+// slice is never mutated in place: PrintInventory passes in.Result.Workloads
+// into the encoded document by reference, and a print function that mutates
+// its caller's data is a defect on its own terms, regardless of who else
+// might read that data afterward.
+func suggestFindings(findings []diagnose.Finding) []diagnose.Finding {
+	if len(findings) == 0 {
+		return findings
+	}
+	out := make([]diagnose.Finding, len(findings))
+	for i, f := range findings {
+		if s := remediation.For(f); s.NextStep != "" {
+			f.Suggestion = &diagnose.Suggestion{NextStep: s.NextStep, Command: s.Command}
+		}
+		out[i] = f
+	}
+	return out
+}
+
+// suggestWorkloads returns a copy of workloads with each workload's findings
+// annotated by suggestFindings. Used only for the JSON output path when
+// --suggest is set; in.Result.Workloads itself is never touched.
+func suggestWorkloads(workloads []inventory.Workload) []inventory.Workload {
+	out := make([]inventory.Workload, len(workloads))
+	for i, wl := range workloads {
+		wl.Findings = suggestFindings(wl.Findings)
+		out[i] = wl
+	}
+	return out
+}
+
 // Input carries everything the report renders. Bundled into a struct because the
 // positional parameter list had grown unwieldy.
 type Input struct {
@@ -152,12 +184,22 @@ type Input struct {
 	PVCIssues          []pvchealth.Issue
 	SecurityIssues     []secscan.Finding
 	SecurityVerbose    bool
-	Suggest            bool
-	KubeletHealth      *nodehealth.Report
-	ControlPlane       *controlplane.Probe
-	DNS                *dnshealth.Report
-	Certificates       *certhealth.Report
-	Operators          *operators.Report
+	// SecurityRequested is true when --security was passed. internal/htmlreport
+	// is its one reader: that package's doc comment says the document it
+	// renders "is meant to be forwarded", so a reader of the page has no other
+	// way to tell "no security findings" from "--security was never passed".
+	// Rendered there, not exported: it has no json tag by design — SecurityIssues
+	// is a bare slice on report.ScanReport, with no wrapper type (unlike
+	// Policy *PolicyView, Capacity *capacity.Report, Baseline *baseline.Report)
+	// for this bit to ride along on, so tagging it directly would move a
+	// schemaVersion, which this decision refuses.
+	SecurityRequested bool
+	Suggest           bool
+	KubeletHealth     *nodehealth.Report
+	ControlPlane      *controlplane.Probe
+	DNS               *dnshealth.Report
+	Certificates      *certhealth.Report
+	Operators         *operators.Report
 	// GitOps is the advisory GitOps-drift view (opt-in --drift). Nil when the
 	// flag is off, so a default scan's JSON is unchanged.
 	GitOps *gitops.Report
@@ -176,7 +218,12 @@ type Input struct {
 	PDBIssues        []pdbhealth.Issue
 	HPAIssues        []hpahealth.Issue
 	WebhookIssues    []webhookhealth.Issue
-	QuotaIssues      []quotahealth.Issue
+	// WebhookURLBackends is scan.Result.WebhookURLBackends — the count of
+	// in-scope Fail-policy webhooks backed by a clientConfig.url rather than a
+	// Service, a backend kubeagent cannot check the reachability of. No json
+	// tag: Input is never marshalled — the encoded struct is ScanReport.
+	WebhookURLBackends int
+	QuotaIssues        []quotahealth.Issue
 	// Blind is scan.Result.PartialReads — the collector calls that failed, so a
 	// refused read is distinguishable from an empty one. Reasons are rendered
 	// verbatim here; see the safeReason comment in internal/htmlreport, which
@@ -185,20 +232,92 @@ type Input struct {
 	Explanation            string
 	Investigation          string
 	InvestigationConsulted []string
-	RemediationPlan        []remediate.Action // --fix: the proposed actions (JSON only)
-	Now                    time.Time          // clock for relative ages; main sets time.Now(); zero → wall-clock
+	// InvestigationTruncated is true when Investigation was cut short at the
+	// model's own output-length ceiling. Rendered, not exported: it has no
+	// json tag by design, the same rule as the two fields above it — a
+	// truncation flag on report.InvestigationView would move a
+	// schemaVersion, which this decision refuses.
+	InvestigationTruncated bool
+	// InvestigationSkipped is true when --investigate was passed but found
+	// nothing to chase: no workload findings, no service findings, and a
+	// cluster verdict that is not Degraded — the same three-way condition
+	// investigate.Investigate itself uses to skip. Rendered, not exported:
+	// no json tag by design, the same rule as the field above it — a
+	// skipped-investigation flag on report.InvestigationView would move a
+	// schemaVersion, which this decision refuses.
+	InvestigationSkipped bool
+	RemediationPlan      []remediate.Action // --fix: the proposed actions (JSON only)
+	Now                  time.Time          // clock for relative ages; main sets time.Now(); zero → wall-clock
+}
+
+// stuckTerminatingSuppresses reports whether issue already explains why wl is
+// failing, so wl's own NEEDS ATTENTION row would just repeat it.
+//
+// All four conjuncts are required. issue.Kind == "Pod" && wl.Kind == "Pod" is
+// not redundant: termhealth.Issue.Kind ranges over Namespace, Pod and
+// PersistentVolumeClaim, so a namespace+name match alone would let a
+// stuck-terminating PersistentVolumeClaim (or Namespace) suppress a Pod
+// workload that merely happens to share its namespace and name.
+// wl.Status == "Failed" is deliberately narrower than wl.Flagged() (len(Findings)
+// > 0 || Ready < Desired || Status == "Failed"): Flagged() would also suppress a
+// terminating pod that is flagged for an unrelated reason — e.g. an
+// ImagePullBackOff finding on a pod that also happens to be stuck
+// terminating — losing that second finding. That is exactly the trap
+// internal/rollouthealth's own comment warns about (rollouthealth.go:146-150):
+// a workload failing for two independent reasons must not have one of them
+// silently dropped by widening a suppression clause instead of replacing it.
+func stuckTerminatingSuppresses(issue termhealth.Issue, wl inventory.Workload) bool {
+	return issue.Kind == "Pod" && wl.Kind == "Pod" &&
+		issue.Namespace == wl.Namespace && issue.Name == wl.Name &&
+		wl.Status == "Failed"
+}
+
+// suppressStuckTerminatingRows drops a Failed Pod workload's row when a
+// StuckTerminating issue already names the same pod: the terminating row
+// explains *why* the pod is Failed (a finalizer, a grace period, or a
+// pvc-protection block), so printing both duplicates one fact under two
+// headings. The stuck-terminating row is the survivor because it carries the
+// reason; the workload row would not.
+//
+// Allocates a new slice rather than filtering in place: the caller's
+// in.Result.Workloads shares its backing array with internal/cli, which
+// still holds scan.Result after PrintInventory returns, so reusing that
+// array (e.g. workloads[:0]) would corrupt the caller's copy.
+func suppressStuckTerminatingRows(workloads []inventory.Workload, issues []termhealth.Issue) []inventory.Workload {
+	out := make([]inventory.Workload, 0, len(workloads))
+	for _, wl := range workloads {
+		suppressed := false
+		for _, is := range issues {
+			if stuckTerminatingSuppresses(is, wl) {
+				suppressed = true
+				break
+			}
+		}
+		if !suppressed {
+			out = append(out, wl)
+		}
+	}
+	return out
 }
 
 // PrintInventory writes the cluster verdict and the prioritized workload set to w.
 func PrintInventory(in Input, format string, w io.Writer) error {
+	// Suppress before the format switch so the JSON workloads local (below)
+	// and printInventoryText's NEEDS ATTENTION loop and summary line all
+	// inherit the same filtered set from one change, rather than three.
+	in.Result.Workloads = suppressStuckTerminatingRows(in.Result.Workloads, in.StuckTerminating)
 	switch format {
 	case "json":
+		workloads := in.Result.Workloads
+		if in.Suggest {
+			workloads = suggestWorkloads(workloads)
+		}
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
 		return enc.Encode(ScanReport{
 			SchemaVersion:      jsonschema.ScanVersion,
 			Cluster:            in.Cluster,
-			Workloads:          in.Result.Workloads,
+			Workloads:          workloads,
 			Resources:          in.Resources,
 			Platform:           in.Platform,
 			ServiceIssues:      in.ServiceIssues,
@@ -364,7 +483,7 @@ func printInventoryText(in Input, w io.Writer) error {
 	}
 
 	if in.Explanation != "" {
-		if _, err := fmt.Fprintf(w, "\n── Explanation ──\n%s\n", in.Explanation); err != nil {
+		if _, err := fmt.Fprintf(w, "\n── Explanation ── (model-written, not pre-reviewed; verify every command before running)\n%s\n", in.Explanation); err != nil {
 			return err
 		}
 	}
@@ -372,12 +491,29 @@ func printInventoryText(in Input, w io.Writer) error {
 		if _, err := fmt.Fprintf(w, "\n── Investigation ──\n"); err != nil {
 			return err
 		}
+		consulted := "(no reads — the model answered from the scan alone)"
 		if len(in.InvestigationConsulted) > 0 {
-			if _, err := fmt.Fprintf(w, "consulted: %s\n", strings.Join(in.InvestigationConsulted, " · ")); err != nil {
+			consulted = strings.Join(in.InvestigationConsulted, " · ")
+		}
+		if _, err := fmt.Fprintf(w, "consulted: %s\n", consulted); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(w, "(model-generated; verify commands before running)\n"); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(w, "%s\n", in.Investigation); err != nil {
+			return err
+		}
+		if in.InvestigationTruncated {
+			if _, err := fmt.Fprintln(w, "(narrative truncated at the model's output limit)"); err != nil {
 				return err
 			}
 		}
-		if _, err := fmt.Fprintf(w, "%s\n", in.Investigation); err != nil {
+	} else if in.InvestigationSkipped {
+		// No consulted: line here — there was no investigation, so there is
+		// no trail. The heading still renders so this reads as a section
+		// like every other, not a bare floating sentence.
+		if _, err := fmt.Fprintf(w, "\n── Investigation ──\nInvestigation skipped — no workload findings, no service findings, and the cluster verdict is not Degraded.\n"); err != nil {
 			return err
 		}
 	}
@@ -415,7 +551,8 @@ func printHeader(in Input, real []svchealth.Issue, realIng []ingresshealth.Route
 	if c.Verdict == "" {
 		return nil
 	}
-	if _, err := fmt.Fprintf(w, "Cluster: %s — %d/%d nodes Ready\n", c.Verdict, c.NodesReady, c.NodesTotal); err != nil {
+	if _, err := fmt.Fprintf(w, "Cluster: %s — %d/%d nodes Ready\n",
+		c.Verdict, c.NodesReady, c.NodesTotal+c.NodesExpectedAbsent); err != nil {
 		return err
 	}
 	for _, iss := range c.NodeIssues {
@@ -429,8 +566,16 @@ func printHeader(in Input, real []svchealth.Issue, realIng []ingresshealth.Route
 		}
 	}
 	if c.ScopeNote != "" {
-		if _, err := fmt.Fprintf(w, "  · %s\n", c.ScopeNote); err != nil {
-			return err
+		// ScopeNote may carry up to two sentences joined by "\n" (R156): the
+		// system-rollup caveat and the admission-webhook caveat are about
+		// different things and either can appear without the other, so each
+		// renders on its own "  · " line rather than one line with an
+		// embedded newline. This is kubeagent's own text, not API text —
+		// line-wrapping, not parsing.
+		for _, sentence := range strings.Split(c.ScopeNote, "\n") {
+			if _, err := fmt.Fprintf(w, "  · %s\n", sentence); err != nil {
+				return err
+			}
 		}
 	}
 	if line := attentionLine(in, real, realIng); line != "" {
@@ -493,14 +638,14 @@ func attentionLine(in Input, real []svchealth.Issue, realIng []ingresshealth.Rou
 		parts = append(parts, fmt.Sprintf("%d %s stuck terminating", n, plural(n, "resource", "resources")))
 	}
 	if n := len(in.PDBIssues); n > 0 {
-		parts = append(parts, fmt.Sprintf("%d %s blocking drains", n, plural(n, "PodDisruptionBudget", "PodDisruptionBudgets")))
+		parts = append(parts, fmt.Sprintf("%d %s", n, plural(n, "PodDisruptionBudget issue", "PodDisruptionBudget issues")))
 	}
 	if n := len(in.HPAIssues); n > 0 {
 		parts = append(parts, fmt.Sprintf("%d %s can't scale", n, plural(n, "HPA", "HPAs")))
 	}
 	webhookFailing, webhookSlow := 0, 0
 	for _, i := range in.WebhookIssues {
-		if i.Problem == "high-timeout" {
+		if i.Problem == "HighTimeout" {
 			webhookSlow++
 		} else {
 			webhookFailing++
@@ -547,7 +692,7 @@ func printNotes(in Input, expected []svchealth.Issue, expectedIng []ingresshealt
 					names = append(names, r.Name)
 				}
 			}
-			fmt.Fprintf(&b, "  • %d %s reserve no memory: %s\n", n.WarnCount, plural(n.WarnCount, "node", "nodes"), strings.Join(names, ", "))
+			fmt.Fprintf(&b, "  • %d %s no memory: %s\n", n.WarnCount, plural(n.WarnCount, "node reserves", "nodes reserve"), strings.Join(names, ", "))
 			fmt.Fprintln(&b, "      — OS/kubelet memory pressure can destabilize the node")
 		}
 		if n.EphemeralNone > 0 {
@@ -557,7 +702,7 @@ func printNotes(in Input, expected []svchealth.Issue, expectedIng []ingresshealt
 					names = append(names, r.Name)
 				}
 			}
-			fmt.Fprintf(&b, "  • %d %s reserve no ephemeral-storage: %s\n", n.EphemeralNone, plural(n.EphemeralNone, "node", "nodes"), strings.Join(names, ", "))
+			fmt.Fprintf(&b, "  • %d %s no ephemeral-storage: %s\n", n.EphemeralNone, plural(n.EphemeralNone, "node reserves", "nodes reserve"), strings.Join(names, ", "))
 			fmt.Fprintln(&b, "      — disk pressure can destabilize the node")
 		}
 	}
@@ -570,8 +715,20 @@ func printNotes(in Input, expected []svchealth.Issue, expectedIng []ingresshealt
 	if err := printIngressIssues(expectedIng, "  •", &b); err != nil {
 		return err
 	}
+	if in.WebhookURLBackends > 0 {
+		fmt.Fprintf(&b, "  • %d Fail-policy admission %s not checked: clientConfig.url backend\n",
+			in.WebhookURLBackends, plural(in.WebhookURLBackends, "webhook", "webhooks"))
+	}
 	if hint := footerHint(in.Result); hint != "" {
 		fmt.Fprintf(&b, "  • %s\n", hint)
+	}
+	// --certs ran (Certificates != nil) but found nothing to flag
+	// (certificatesRender is false): confirm the check ran rather than stay
+	// silent about it. A run with findings renders the CERTIFICATES section
+	// instead, so this bullet and that section never both appear.
+	if rep := in.Certificates; rep != nil && !certificatesRender(rep) {
+		fmt.Fprintf(&b, "  • %d certificates checked, none expired or expiring within %dd\n",
+			rep.Checked, rep.WarnDays)
 	}
 	if b.Len() == 0 {
 		return nil
@@ -597,7 +754,11 @@ func printContext(in Input, w io.Writer) error {
 		if n.EphemeralReporting == 0 {
 			fmt.Fprintf(&b, "  %-17s %s\n", "ephemeral-storage", "not reported")
 		} else {
-			fmt.Fprintln(&b, reserveLine("ephemeral-storage", n.EphemeralNone, n.EphemeralReporting, true))
+			line := reserveLine("ephemeral-storage", n.EphemeralNone, n.EphemeralReporting, true)
+			if missing := total - n.EphemeralReporting; missing > 0 {
+				line += fmt.Sprintf("  (%d %s not report it)", missing, plural(missing, "node does", "nodes do"))
+			}
+			fmt.Fprintln(&b, line)
 		}
 	}
 	if err := printResources(in.Resources, &b); err != nil {
@@ -825,17 +986,15 @@ func printBlindSpots(blind []scan.ReadFailure, w io.Writer) error {
 	return err
 }
 
-// printWebhookIssues lists admission webhooks that will reject every intercepted request.
+// printWebhookIssues lists admission webhooks that either already reject every
+// intercepted request (missing or endpoint-less backend) or would block one for
+// a long time if their backend were slow (high timeoutSeconds).
 func printWebhookIssues(issues []webhookhealth.Issue, w io.Writer) error {
 	for _, is := range issues {
 		if _, err := fmt.Fprintf(w, "  ✗ %s  %s  webhook %s\n", is.Config, is.Kind, is.Webhook); err != nil {
 			return err
 		}
-		label := "WebhookDown"
-		if is.Problem == "high-timeout" {
-			label = "WebhookSlow"
-		}
-		if _, err := fmt.Fprintf(w, "      ⚠ %s: %s\n", label, is.Reason); err != nil {
+		if _, err := fmt.Fprintf(w, "      ⚠ %s: %s\n", is.Problem, is.Reason); err != nil {
 			return err
 		}
 	}
@@ -949,9 +1108,13 @@ func printSecurityIssues(issues []secscan.Finding, verbose bool, w io.Writer) er
 	}
 
 	// Restricted aggregate (default only, when there are restricted findings).
+	// The denominator is every workload in the section, not just the restricted
+	// ones: "2 across 1 workload" reads as if restricted coverage were total,
+	// when the section may also carry baseline/exposed workloads that are clean
+	// on the restricted profile. "of M" names the actual population.
 	if !verbose && nRestricted > 0 {
-		if _, err := fmt.Fprintf(w, "\n  restricted (hardening gaps, near-universal): %d across %d %s\n",
-			nRestricted, len(restrictedWorkloads), plural(len(restrictedWorkloads), "workload", "workloads")); err != nil {
+		if _, err := fmt.Fprintf(w, "\n  restricted (hardening gaps, near-universal): %d across %d of %d %s\n",
+			nRestricted, len(restrictedWorkloads), len(allWorkloads), plural(len(allWorkloads), "workload", "workloads")); err != nil {
 			return err
 		}
 		var checks []string
@@ -980,8 +1143,12 @@ func printPVCReclaim(rep *pvcreclaim.Report, full bool, w io.Writer) error {
 		return nil
 	}
 	if full {
+		if _, err := fmt.Fprintf(w, "  • %d %s on Delete reclaim policy — deleting the claim destroys the volume\n",
+			len(rep.PVCs), plural(len(rep.PVCs), "PVC", "PVCs")); err != nil {
+			return err
+		}
 		for _, p := range rep.PVCs {
-			line := fmt.Sprintf("  • %s/%s  pv %s", p.Namespace, p.Name, p.PV)
+			line := fmt.Sprintf("      %s/%s  pv %s", p.Namespace, p.Name, p.PV)
 			if p.StorageClass != "" {
 				line += "  class " + p.StorageClass
 			}
@@ -1078,13 +1245,21 @@ type findingGroup struct {
 // apart with. Only the text output collapses: the JSON document is the one
 // that gets forwarded, and it still carries one finding per pod.
 //
-// The key is the whole rendered block bar the evidence line, so a group can
-// never print fewer lines than the findings it stands for. Everything that
+// The key is the whole rendered block bar the evidence line. Everything that
 // varies per pod and is not evidence keeps the findings apart: a --suggest
 // command names the pod, a resources block names the container's limits, a log
 // excerpt is that pod's own. Evidence is the one part allowed to vary inside a
 // group, and every distinct value is printed — which is what shows the restart
-// counts when they differ, since that is where a restart count lives.
+// counts when they differ, since that is where a restart count lives. A group
+// prints its head once, one line per distinct evidence value, and its shared
+// tail once — the resources block, the log excerpt, the suggestions. Whenever
+// it stands for more than one finding, the block is shorter than rendering
+// those findings separately, because the head and the tail go out once
+// instead of once per finding. Against the finding *count* there is no fixed
+// relation: a pair that agrees prints two lines, equal to the count; a pair
+// carrying a resources block prints three, more than the count; and six that
+// agree with no tail print two lines, fewer than the count. count is what
+// says how many findings stand behind the block.
 func groupFindings(findings []diagnose.Finding, suggest bool) []findingGroup {
 	var groups []findingGroup
 	at := map[string]int{} // block key -> index into groups
@@ -1118,16 +1293,16 @@ func hasLine(lines []string, s string) bool {
 }
 
 const (
-	// maxEvidence is the rune budget for one rendered evidence line, marker
-	// included, so the line is never longer than this.
+	// maxEvidence is the rune budget for the evidence string on one rendered
+	// evidence line. The line itself is eight runes longer — renderFinding
+	// prepends the indent and the "↳ " marker — so a cut line measures 508.
 	//
 	// A container runtime repeats every layer of a failure — the back-off
 	// preamble, the rpc error, the unpack failure, the resolve failure, the bare
 	// reference — and on a long registry path that composed line runs past the
-	// screen and takes the alignment of the rows below it with it. Real ones
-	// measure a few hundred characters and are the only place the true cause
-	// appears, so the budget is set where it keeps them whole and bites only on
-	// the pathological.
+	// screen. Real ones measure a few hundred characters and are the only place
+	// the true cause appears, so the budget is set where it keeps them whole and
+	// bites only on the pathological.
 	//
 	// This is not safetext.MaxLine restated. That budget bounds each hostile
 	// value at the moment it enters kubeagent; this one bounds the line a
@@ -1144,10 +1319,11 @@ const (
 // capEvidence fits s inside maxEvidence runes, marking the cut when it makes
 // one. Runes, not bytes, so a multi-byte character is never split.
 //
-// Text only: --output json is the machine surface and the place an operator
-// goes for the complete cause, so it carries the whole string. The cap is a
-// terminal-layout decision and narrows no claim — evidence quotes what the
-// cluster said, and the finding's own reason is untouched.
+// Text only: --output json carries the evidence as stored, without this cap.
+// That is not the same as carrying the whole thing — every untrusted API value
+// is bounded at safetext.MaxLine runes on the way in, so a longer message is
+// already short by the time it reaches here. This cap is a terminal-layout
+// decision layered on that bound; the finding's own reason is untouched.
 func capEvidence(s string) string {
 	if len(s) <= maxEvidence { // bytes >= runes, so most lines end here
 		return s
@@ -1255,6 +1431,9 @@ func printWorkload(wl inventory.Workload, now time.Time, suggest bool, w io.Writ
 		line := fmt.Sprintf("    ↳ changed: rollout to revision %s, %s", wl.Rollout.Revision, wl.Rollout.Since)
 		if wl.Rollout.NewImage != "" {
 			line += fmt.Sprintf(" · image %s → %s", wl.Rollout.OldImage, wl.Rollout.NewImage)
+			if wl.Rollout.Container != "" {
+				line += fmt.Sprintf(" (container %q)", wl.Rollout.Container)
+			}
 		}
 		if _, err := fmt.Fprintln(w, line); err != nil {
 			return err
@@ -1313,8 +1492,17 @@ func printControlPlane(p *controlplane.Probe, w io.Writer) error {
 			return err
 		}
 		if len(p.Failed) > 0 {
-			if _, err := fmt.Fprintf(w, "      ⚠ %d checks failing: %s\n", len(p.Failed), strings.Join(p.Failed, ", ")); err != nil {
-				return err
+			switch {
+			case len(p.Failed) > controlplane.MaxFailedChecks:
+				if _, err := fmt.Fprintf(w, "      ⚠ more than %d checks failing: %s, …\n",
+					controlplane.MaxFailedChecks, strings.Join(p.Failed[:controlplane.MaxFailedChecks], ", ")); err != nil {
+					return err
+				}
+			default:
+				if _, err := fmt.Fprintf(w, "      ⚠ %d %s failing: %s\n",
+					len(p.Failed), plural(len(p.Failed), "check", "checks"), strings.Join(p.Failed, ", ")); err != nil {
+					return err
+				}
 			}
 		} else {
 			if _, err := fmt.Fprintln(w, "      ⚠ apiserver /readyz reported not ready"); err != nil {
@@ -1326,7 +1514,8 @@ func printControlPlane(p *controlplane.Probe, w io.Writer) error {
 			return err
 		}
 	}
-	return nil
+	_, err := fmt.Fprintln(w)
+	return err
 }
 
 // dnsRenders reports whether the DNS section would print.
@@ -1349,8 +1538,12 @@ func printDNSHealth(p *dnshealth.Report, w io.Writer) error {
 			return err
 		}
 		pct := float64(int64(p.ServfailRatio*1000+0.5)) / 10
-		if _, err := fmt.Fprintf(w, "      ⚠ CoreDNS SERVFAIL+REFUSED ratio %.1f%% (%d/%d responses across %d pods)\n",
-			pct, p.ErrorResponses, p.TotalResponses, p.PodsProbed); err != nil {
+		podsText := fmt.Sprintf("%d pods", p.PodsProbed)
+		if p.PodsAnswered != p.PodsProbed {
+			podsText = fmt.Sprintf("%d of %d pods", p.PodsAnswered, p.PodsProbed)
+		}
+		if _, err := fmt.Fprintf(w, "      ⚠ CoreDNS SERVFAIL+REFUSED ratio %.1f%% (%d/%d responses across %s)\n",
+			pct, p.ErrorResponses, p.TotalResponses, podsText); err != nil {
 			return err
 		}
 	case "forbidden":
@@ -1358,7 +1551,8 @@ func printDNSHealth(p *dnshealth.Report, w io.Writer) error {
 			return err
 		}
 	}
-	return nil
+	_, err := fmt.Fprintln(w)
+	return err
 }
 
 // certificatesRender reports whether the CERTIFICATES section would print
@@ -1379,7 +1573,10 @@ func printCertificates(rep *certhealth.Report, w io.Writer) error {
 		return err
 	}
 	if rep.Forbidden {
-		_, err := fmt.Fprintln(w, "  certificates: secrets access denied — apply deploy/rbac-certs.yaml (or Helm certs.enabled=true)")
+		if _, err := fmt.Fprintln(w, "  certificates: secrets access denied — apply deploy/rbac-certs.yaml (or Helm certs.enabled=true)"); err != nil {
+			return err
+		}
+		_, err := fmt.Fprintln(w)
 		return err
 	}
 	for _, c := range rep.Expired {
@@ -1407,7 +1604,10 @@ func printCertificates(rep *certhealth.Report, w io.Writer) error {
 			return err
 		}
 	}
-	_, err := fmt.Fprintf(w, "  · %d certificates checked (warn window %dd)\n", rep.Checked, rep.WarnDays)
+	if _, err := fmt.Fprintf(w, "  · %d certificates checked (warn window %dd)\n", rep.Checked, rep.WarnDays); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintln(w)
 	return err
 }
 
@@ -1620,7 +1820,8 @@ func printKubeletHealth(rep *nodehealth.Report, w io.Writer) error {
 		if _, err := fmt.Fprintln(w, "  kubelet-health needs the nodes/proxy add-on (deploy/rbac-diskusage.yaml or Helm kubeletHealth.enabled=true)"); err != nil {
 			return err
 		}
-		return nil
+		_, err := fmt.Fprintln(w)
+		return err
 	}
 	for _, iss := range rep.Unhealthy {
 		line := fmt.Sprintf("  ✗ node %s kubelet /healthz unhealthy", iss.Node)
@@ -1631,7 +1832,8 @@ func printKubeletHealth(rep *nodehealth.Report, w io.Writer) error {
 			return err
 		}
 	}
-	return nil
+	_, err := fmt.Fprintln(w)
+	return err
 }
 
 // printCapacity renders the advisory CAPACITY section (opt-in --capacity): the

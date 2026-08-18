@@ -589,15 +589,17 @@ with `KUBEAGENT_KUBELET_HEALTH=true` and the `nodes/proxy` add-on
 ### Control-plane health (opt-in)
 
 `scan --control-plane-health` probes the apiserver `/readyz?verbose` endpoint
-and flags an unhealthy control plane — naming the individual checks that are
-failing (etcd, admission/controller poststarthooks, informer-sync). It covers
-**apiserver and etcd**; scheduler/controller-manager health is a documented
-follow-on.
+and flags a control plane that reports itself **not ready**. It covers
+**apiserver and etcd** — those are the checks `/readyz` runs; scheduler and
+controller-manager health is not covered.
 
-It is **opt-in**: off by default because it requires a `/readyz` grant not
-included in the base RBAC profile. Enable the add-on grant with the Helm value
-`controlPlaneHealth.enabled=true` or by applying
-`deploy/rbac-controlplane.yaml`. In the daemon, set
+It is **opt-in**: off by default because it costs an extra request per scan and
+is advisory. Most clusters already allow it — Kubernetes grants `get /readyz`
+to `system:authenticated` through the default `system:public-info-viewer` and
+`system:discovery` roles — but kubeagent still ships the grant explicitly, for
+clusters that have narrowed those defaults and so that `kubeagent rbac print`
+names every path the feature reads. Apply it with the Helm value
+`controlPlaneHealth.enabled=true` or `deploy/rbac-controlplane.yaml`. In the daemon, set
 `KUBEAGENT_CONTROL_PLANE_HEALTH=true`; the gauge
 `kubeagent_control_plane_unhealthy` is `1` when the check fires, `0`
 otherwise.
@@ -608,8 +610,13 @@ The check is **advisory** — it appears in a `CONTROL PLANE` section and JSON
 ```text
 CONTROL PLANE  (opt-in)
   ✗ control plane not ready
-      ⚠ 2 checks failing: etcd, poststarthook/start-kube-apiserver-admission-initializer
+      ⚠ apiserver /readyz reported not ready
 ```
+
+kubeagent reports *that* the control plane is not ready, not *which* readyz
+check failed: the apiserver returns the per-check detail as `text/plain`, and
+the Kubernetes client discards the body of a non-2xx response it cannot
+decode. Run `kubectl get --raw '/readyz?verbose'` for the per-check list.
 
 ### DNS / CoreDNS resolution health (opt-in)
 

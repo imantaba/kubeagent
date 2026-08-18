@@ -200,11 +200,13 @@
 
 - **Control-plane / etcd health (`--control-plane-health`)** (Theme-B control-plane closer) —
   opt-in `scan --control-plane-health` probes the apiserver `/readyz?verbose`
-  endpoint and flags an unhealthy control plane, naming the failing checks (etcd,
-  admission/controller poststarthooks, informer-sync). Covers apiserver + etcd;
-  scheduler/controller-manager health is a documented follow-on. Read-only; needs
-  the `/readyz` add-on grant (`deploy/rbac-controlplane.yaml` or Helm
-  `controlPlaneHealth.enabled=true`); the daemon exposes
+  endpoint and flags a control plane that reports itself not ready. Covers
+  apiserver + etcd; scheduler/controller-manager health is not covered.
+  Read-only, an extra request per scan, and advisory. Most clusters already
+  allow the `/readyz` read via the default `system:public-info-viewer` /
+  `system:discovery` roles; kubeagent still ships an explicit add-on grant
+  (`deploy/rbac-controlplane.yaml` or Helm `controlPlaneHealth.enabled=true`)
+  for clusters that have narrowed those defaults. The daemon exposes
   `kubeagent_control_plane_unhealthy`. See
   [Failure diagnostics](features/diagnostics.md).
 

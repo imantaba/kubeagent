@@ -153,6 +153,15 @@ never reads these custom resources, so neither is wired into the Helm chart —
 adding a chart toggle for a grant the daemon never uses would be the opposite
 of least privilege.
 
+`controlplane`'s grant is usually already held: Kubernetes' own default
+`system:public-info-viewer` and `system:discovery` ClusterRoles grant `get
+/readyz` to `system:authenticated`, so `kubeagent rbac check` will typically
+report this feature runnable even without `deploy/rbac-controlplane.yaml` or
+Helm's `controlPlaneHealth.enabled=true` applied. kubeagent still ships that
+add-on grant explicitly, both because it is the correct grant to request and
+because it is what keeps `rbac print` honest about every path the feature
+reads, for the clusters that have narrowed those defaults.
+
 `certs`'s grant is worth naming precisely: `secrets: list` is a whole-object
 read, and there is no server-side field projection for Secrets, so the API
 server returns `tls.key` in the response body alongside `tls.crt` for every

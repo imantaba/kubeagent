@@ -1283,9 +1283,12 @@ answer.
 ## Status
 
 `kubeagent scan` performs a read-only, whole-cluster scan, in text or JSON.
-The `###` sections on this page are the inventory of what it checks;
-`kubeagent known-issues` is the same inventory as a command, machine-checked
-against the detector set.
+The `###` sections on this page are the inventory of what it checks, and
+cover more ground than `kubeagent known-issues`: that command documents the
+sixteen issue kinds `diagnose.DefaultDetectors` can emit, machine-checked
+against the detector set, while this page also covers advisory sections —
+webhooks, certificates, capacity and more — that sit outside that
+sixteen-kind vocabulary.
 
 The optional `--suggest` flag prints a deterministic next-step suggestion and
 a read-only `kubectl` investigation command under each finding — offline, no

@@ -822,9 +822,10 @@ Findings appear in **NEEDS ATTENTION** with the rule and the reason, e.g.:
 all 3 pods — no voluntary eviction can ever proceed; every node drain will hang`.
 The text report prefixes every one of these findings with the constant label
 `PDBBlocked`, regardless of category — the example above is actually the
-`unsatisfiable` category, not `blocking`. The category is what the JSON and
-watch surfaces publish as a distinct issue kind: `PDBUnsatisfiable`,
-`PDBStale`, `PDBBlocked`, or `PDBSingleton`. Read-only and advisory — it does
+`unsatisfiable` category, not `blocking`. `scan --output json` publishes the
+category itself, in a `category` field. Elsewhere the category is mapped onto
+kubeagent's finding vocabulary, which spells the four `PDBUnsatisfiable`,
+`PDBStale`, `PDBBlocked` and `PDBSingleton`. Read-only and advisory — it does
 not change the cluster verdict. The daemon exposes
 `kubeagent_pdb_blocking_issues`. Adds a base
 `policy/poddisruptionbudgets` read grant.
@@ -873,10 +874,11 @@ Each finding names the HPA, its scale target, and the reason — for example:
 `⚠ HPAStuck: can't fetch metrics — the HPA was unable to compute the replica
 count: unable to get external metric shop/queue_depth/nil: …`. The text report
 prefixes every one of these findings with the constant label `HPAStuck`,
-regardless of category — the example above is the `metrics` category. The
-category is what the JSON and watch surfaces publish as a distinct issue
-kind: `HPAUnableToScale`, `HPAMetricsFailed`, `HPAScalingDisabled`,
-`HPAAmbiguousSelector`, or `HPACapped`.
+regardless of category — the example above is the `metrics` category.
+`scan --output json` publishes the category itself, in a `category` field.
+Elsewhere the category is mapped onto kubeagent's finding vocabulary, which
+spells the five `HPAUnableToScale`, `HPAMetricsFailed`,
+`HPAScalingDisabled`, `HPAAmbiguousSelector` and `HPACapped`.
 
 Read-only and advisory — it does not change the cluster verdict. The daemon
 exposes `kubeagent_hpa_scaling_issues`. Adds a base

@@ -222,7 +222,7 @@
   is at or above 15 (env `KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS`, Helm
   `webhookLatency.timeoutThreshold`) — a latency landmine that blocks every
   intercepted create/update for up to that long, then rejects it. Rendered
-  `WebhookSlow`; complements the existing webhook-failure check (missing/no-endpoints
+  `HighTimeout`; complements the existing webhook-failure check (MissingService/NoEndpoints
   backend). Read-only, always-on, advisory; the daemon exposes
   `kubeagent_admission_webhook_latency_risks`; no new RBAC.
   See [Failure diagnostics](features/diagnostics.md).

@@ -126,7 +126,7 @@ kubeagent scan
   whose `timeoutSeconds` is at or above 15 (tunable via
   `KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS` / Helm `webhookLatency.timeoutThreshold`)
   — a latency landmine that blocks every intercepted create/update for up to
-  that long, then rejects it. Rendered `WebhookSlow`; always-on, advisory, and
+  that long, then rejects it. Rendered `HighTimeout`; always-on, advisory, and
   cluster-wide only; the daemon exposes
   `kubeagent_admission_webhook_latency_risks`. No new RBAC.
 - **ResourceQuota near-exhaustion** — `scan` flags a namespace's ResourceQuota

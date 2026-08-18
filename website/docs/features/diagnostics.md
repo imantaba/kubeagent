@@ -767,16 +767,16 @@ exposes `kubeagent_hpa_scaling_issues`. Adds a base
 ### Admission-webhook failure
 
 `scan` flags a Validating or Mutating webhook whose `failurePolicy` is `Fail`
-and whose backing Service is **missing** (`missing-service`) or **has no ready
-endpoints** (`no-endpoints`). Either condition means the webhook will reject
+and whose backing Service is **missing** (`MissingService`) or **has no ready
+endpoints** (`NoEndpoints`). Either condition means the webhook will reject
 every `create`/`update` it intercepts — making the cluster effectively read-only
 for the affected resource kinds without any obvious error at the workload level.
 
 Two problems are detected:
 
-- **missing-service** — the Service referenced in the webhook's `clientConfig`
+- **MissingService** — the Service referenced in the webhook's `clientConfig`
   does not exist in the cluster.
-- **no-endpoints** — the Service exists but has no ready Pod endpoints behind it.
+- **NoEndpoints** — the Service exists but has no ready Pod endpoints behind it.
 
 The check only flags webhooks under `failurePolicy: Fail` (the default in
 `admissionregistration.k8s.io/v1` when the field is omitted). Webhooks with
@@ -794,7 +794,7 @@ the webhook name, followed by the reason — for example:
 
 ```text
 ✗ policy-webhook  ValidatingWebhookConfiguration  webhook validate.policy.io
-    ⚠ WebhookDown: backend Service kube-system/policy-svc has no ready
+    ⚠ NoEndpoints: backend Service kube-system/policy-svc has no ready
       endpoints — failurePolicy Fail rejects every intercepted create/update
 ```
 
@@ -831,7 +831,7 @@ output:
 ```text
 WEBHOOK
   ✗ slow-validator  ValidatingWebhookConfiguration  webhook policy.example.com
-      ⚠ WebhookSlow: timeoutSeconds 30 ≥ 15s under failurePolicy Fail — a slow webhook blocks every intercepted create/update for up to 30s, then rejects it
+      ⚠ HighTimeout: timeoutSeconds 30 ≥ 15s under failurePolicy Fail — a slow webhook blocks every intercepted create/update for up to 30s, then rejects it
 ```
 
 ### Security posture (opt-in)

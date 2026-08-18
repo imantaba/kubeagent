@@ -53,6 +53,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The admission-webhook health docs named category labels kubeagent no
+  longer prints.** `website/docs/features/diagnostics.md`, `README.md` and
+  `website/docs/roadmap.md` described the webhook-failure and
+  webhook-latency findings as rendering `missing-service`, `no-endpoints`,
+  `WebhookDown` or `WebhookSlow`; the renderer has printed `MissingService`,
+  `NoEndpoints` and `HighTimeout` since the underlying category values were
+  CamelCased, so every quoted example was stale. All three files now quote
+  the labels kubeagent actually prints.
+
 - **Root-cause registry grouping could key on the wrong container's image.**
   A workload's image-pull failure is attributed to a shared registry outage
   by grouping workloads whose failing pull shares a host, but the grouping

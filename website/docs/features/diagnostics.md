@@ -859,7 +859,7 @@ WEBHOOK
 
 ### Security posture (opt-in)
 
-`scan --security` walks every workload's pod template and each Service and flags
+`scan --security` walks every running pod and each Service and flags
 high-signal, Pod Security Standards-aligned problems: privileged or
 over-privileged containers (privileged, host namespaces, `hostPath`, `hostPort`,
 dangerous added capabilities), insecure container defaults (runs as root,
@@ -875,7 +875,11 @@ pass `--security-verbose` to list every finding per workload instead. JSON
 curated subset aligned with the Pod Security Standards, not a conformance
 scanner. It is read-only and **advisory** — it does not change the cluster
 verdict — needs no extra RBAC, and skips
-`kube-system`/`kube-node-lease`/`kube-public` unless you target one with `-n`.
+`kube-system`/`kube-node-lease`/`kube-public` unless you target one with `-n`;
+those three are the only namespaces skipped, and an addon namespace is
+scanned like any other. A workload with no running pods — a Deployment
+scaled to zero, a CronJob that has not yet fired — is not examined even when
+its pod template is unsafe.
 
 ### Crash log root-cause (opt-in)
 

@@ -228,8 +228,16 @@ type Input struct {
 	// truncation flag on report.InvestigationView would move a
 	// schemaVersion, which this decision refuses.
 	InvestigationTruncated bool
-	RemediationPlan        []remediate.Action // --fix: the proposed actions (JSON only)
-	Now                    time.Time          // clock for relative ages; main sets time.Now(); zero → wall-clock
+	// InvestigationSkipped is true when --investigate was passed but found
+	// nothing to chase: no workload findings, no service findings, and a
+	// cluster verdict that is not Degraded — the same three-way condition
+	// investigate.Investigate itself uses to skip. Rendered, not exported:
+	// no json tag by design, the same rule as the field above it — a
+	// skipped-investigation flag on report.InvestigationView would move a
+	// schemaVersion, which this decision refuses.
+	InvestigationSkipped bool
+	RemediationPlan      []remediate.Action // --fix: the proposed actions (JSON only)
+	Now                  time.Time          // clock for relative ages; main sets time.Now(); zero → wall-clock
 }
 
 // PrintInventory writes the cluster verdict and the prioritized workload set to w.
@@ -433,6 +441,13 @@ func printInventoryText(in Input, w io.Writer) error {
 			if _, err := fmt.Fprintln(w, "(narrative truncated at the model's output limit)"); err != nil {
 				return err
 			}
+		}
+	} else if in.InvestigationSkipped {
+		// No consulted: line here — there was no investigation, so there is
+		// no trail. The heading still renders so this reads as a section
+		// like every other, not a bare floating sentence.
+		if _, err := fmt.Fprintf(w, "\n── Investigation ──\nInvestigation skipped — no workload findings, no service findings, and the cluster verdict is not Degraded.\n"); err != nil {
+			return err
 		}
 	}
 	return nil

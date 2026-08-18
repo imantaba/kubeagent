@@ -405,6 +405,15 @@ func runScan(o scanOptions) error {
 	in.Investigation = investigationReport.Narrative
 	in.InvestigationConsulted = investigationReport.Consulted
 	in.InvestigationTruncated = investigationReport.Truncated
+	// InvestigationSkipped names the one case that is otherwise
+	// indistinguishable from --investigate never having been passed: with
+	// o.investigate set, runModelPath always enters the investigate arm
+	// above; a failure sets modelRes.notice (handled above, and leaves
+	// investigationReport zero); and a success with an empty narrative is
+	// impossible because Investigate itself returns an error rather than an
+	// empty report for that case. So this conjunction is exactly the skip
+	// and nothing else.
+	in.InvestigationSkipped = o.investigate && modelRes.notice == "" && investigationReport.Narrative == ""
 	in.RemediationPlan = fixPlan
 	if err := renderScan(os.Stdout, o.output, in, res, o.namespace); err != nil {
 		return err

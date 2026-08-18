@@ -2940,6 +2940,52 @@ func TestPrintInventory_TextShowsInvestigation(t *testing.T) {
 	}
 }
 
+// TestPrintInventory_TextShowsInvestigationSkipped proves R214(B): a scan
+// where --investigate found nothing to chase — no workload findings, no
+// service findings, and a cluster verdict that is not Degraded — renders a
+// "── Investigation ──" section naming why, instead of staying silent.
+func TestPrintInventory_TextShowsInvestigationSkipped(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster:              clusterhealth.ClusterHealth{Verdict: "Healthy"},
+		InvestigationSkipped: true,
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	const want = "\n── Investigation ──\nInvestigation skipped — no workload findings, no service findings, and the cluster verdict is not Degraded.\n"
+	if !strings.Contains(out, want) {
+		t.Errorf("expected the exact skip sentence under its own heading:\ngot:  %q\nwant substring: %q", out, want)
+	}
+	if strings.Contains(out, "consulted:") {
+		t.Errorf("a skipped investigation has no trail and must not render a consulted: line:\n%s", out)
+	}
+}
+
+// TestPrintInventory_TextOmitsInvestigationSkippedWhenNarrativePresent is the
+// negative case: a run that did investigate renders its narrative, never the
+// skip sentence — Investigation != "" must take precedence even if
+// InvestigationSkipped were (wrongly) also set.
+func TestPrintInventory_TextOmitsInvestigationSkippedWhenNarrativePresent(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster:              clusterhealth.ClusterHealth{Verdict: "Healthy"},
+		Investigation:        "web — ImagePullBackOff\n- Root cause: bad tag",
+		InvestigationSkipped: true,
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "Investigation skipped") {
+		t.Errorf("a run with a narrative must never render the skip sentence:\n%s", out)
+	}
+	if !strings.Contains(out, "Root cause: bad tag") {
+		t.Errorf("expected the narrative to render:\n%s", out)
+	}
+}
+
 // A silent "consulted:" line when no reads happened reads as "the model read
 // something and I'm not telling you what" rather than "the model read
 // nothing" — the one case where the omission is most misleading, since the

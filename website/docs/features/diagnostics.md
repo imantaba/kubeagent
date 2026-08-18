@@ -1031,6 +1031,25 @@ Investigation  shop/api  Deployment
   reachable from this namespace. Update the ConfigMap or correct the hostname.
 ```
 
+**Reachable scope:**
+
+- The set of objects the loop may read is seeded from the flagged workloads
+  **alone** — each workload named in a finding, its pods, and each pod's
+  node. A run triggered only by a Service issue, or only by a Degraded
+  cluster verdict, begins with nothing reachable: the workload seed is
+  empty, so every tool call the model attempts on such a run is refused by
+  the closure guard.
+- Of the object-level finding families a scan can flag —
+  PersistentVolumeClaim, PodDisruptionBudget, HorizontalPodAutoscaler,
+  admission webhook, ResourceQuota, ingress route, and stuck-terminating —
+  only PersistentVolumeClaim is reachable today, one hop from an in-scope
+  pod. The other six have no supported read path in the current tool set.
+- A scan with no workload findings, no Service findings, and a cluster
+  verdict that is not Degraded runs no investigation at all — the report
+  says so, printing `Investigation skipped — no workload findings, no
+  service findings, and the cluster verdict is not Degraded.` under the
+  `── Investigation ──` heading instead of staying silent.
+
 **Constraints and requirements:**
 
 - **Anthropic-only** — requires `ANTHROPIC_API_KEY`. Tool-use is not available

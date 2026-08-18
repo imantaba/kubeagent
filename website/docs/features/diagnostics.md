@@ -422,7 +422,7 @@ node attribution. Docker Hub images (`nginx:...`) group under `docker.io`.
 A **broken PersistentVolumeClaim** is joined the same way: when a workload's pod
 mounts a PVC that the [Pending-PVC check](#pending-pvc-storage-provisioning) has
 diagnosed as failing to provision or bind, the workload is attributed
-`↳ likely caused by PVC <name> (MissingStorageClass)` — the parenthetical is the PVC's failure reason and can be `MissingStorageClass`, `NoMatchingPV`, `ProvisioningFailed`, or `FailedBinding` depending on what the cluster reports — connecting a pod stuck in
+`↳ likely caused by PVC <name> (MissingStorageClass)` — the parenthetical is the PVC's failure reason and can be `ProvisioningFailed`, `FailedBinding`, `MissingStorageClass`, `NoMatchingPV`, `PVSelectorMismatch`, or `ProvisionerNotResponding` depending on what the cluster reports — connecting a pod stuck in
 `Pending`/`ContainerCreating` to the storage cause kubeagent already reports. The
 pod normally carries a finding of its own as well: one that cannot be scheduled
 because its claim is unbound is reported `Unschedulable` at **high** confidence,

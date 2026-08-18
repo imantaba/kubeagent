@@ -1164,11 +1164,12 @@ JSON evidence ends in `…` and you need the rest, `kubectl -n <ns> describe pod
 
 ### Agentic investigation (`--investigate`)
 
-`kubeagent scan --investigate` runs the full scan, then — for each finding —
-launches a bounded, read-only, model-driven tool-use loop. The model can
-describe a flagged object, list its events, and hop to related resources
-(owner Deployment, node, PVC) to chase the root cause across the finding's
-resource graph. When the loop concludes it emits an **Investigation** section:
+`kubeagent scan --investigate` runs the full scan, then launches a single
+bounded, read-only, model-driven tool-use loop over everything the scan
+flagged. The model can describe a flagged object, list its events, and hop to
+related resources (its owner — ReplicaSet, Deployment or Job — its node, or
+its PVCs) to chase a root cause across the findings' resource graph. When the
+loop concludes it emits an **Investigation** section:
 an evidence trail (`consulted: ...` line) followed by a grounded Fix-first
 narrative. The **commands** are kubeagent's deterministic, pre-reviewed ones,
 and the narrative around them — the ranking, the sequencing, and any remedial
@@ -1235,13 +1236,21 @@ answer.
   Running both flags is unnecessary; `--investigate` includes the grounded
   narrative that `--explain` provides, plus the follow-up reads. When both
   flags are passed, `--investigate` runs and `--explain` is silently ignored.
-- **Capped** — the loop is bounded per finding: at most **8 reads** and **6
-  turns**, so the total API cost is predictable and the scan remains fast.
+- **Capped** — one loop per scan, bounded at **8 reads** and **6 turns** in
+  total, shared across every finding. The budget does not grow with the
+  number of findings: on a cluster with many problems the loop will
+  investigate a few of them in depth rather than all of them shallowly.
+  Total API cost is therefore a fixed ceiling regardless of cluster size.
 - **No logs** — `--investigate` does not fetch container logs. It uses
   structured Kubernetes object reads only (describe / events / get), so no
   raw container output leaves the process.
-- **Structured-only egress** — only object metadata, conditions, and events
-  are sent to the model. No pod specs, env values, or secrets.
+- **Bounded egress** — what leaves the process is the scan's own finding
+  inventory (each finding's reason and evidence, container resource requests
+  and limits, kubeagent's suggested fix, and any rollout image change) plus,
+  for each tool call, an object's status, conditions and events together with
+  the scheduling-relevant spec fields: node name, taints, schedulability,
+  storage class and PVC claim names. Never sent: container env values, args
+  or command, Secret or ConfigMap data, and container logs.
 - **Never writes** — all tool calls are `get`/`list` only. The read-only
   invariant is not relaxed.
 - **Model selection** — reuses `--model` / `KUBEAGENT_MODEL` (default

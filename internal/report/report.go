@@ -184,12 +184,21 @@ type Input struct {
 	PVCIssues          []pvchealth.Issue
 	SecurityIssues     []secscan.Finding
 	SecurityVerbose    bool
-	Suggest            bool
-	KubeletHealth      *nodehealth.Report
-	ControlPlane       *controlplane.Probe
-	DNS                *dnshealth.Report
-	Certificates       *certhealth.Report
-	Operators          *operators.Report
+	// SecurityRequested is true when --security was passed. internal/htmlreport
+	// is its one reader: that document is written to be forwarded, so unlike a
+	// reader of --output text or --output json — who typed the flag themselves
+	// — a reader of the page has no other way to tell "no security findings"
+	// from "--security was never passed". Rendered there, not exported: it has
+	// no json tag by design — tagging it onto report.ScanReport, which has no
+	// existing field for it to ride along on, would move a schemaVersion, which
+	// this decision refuses.
+	SecurityRequested bool
+	Suggest           bool
+	KubeletHealth     *nodehealth.Report
+	ControlPlane      *controlplane.Probe
+	DNS               *dnshealth.Report
+	Certificates      *certhealth.Report
+	Operators         *operators.Report
 	// GitOps is the advisory GitOps-drift view (opt-in --drift). Nil when the
 	// flag is off, so a default scan's JSON is unchanged.
 	GitOps *gitops.Report

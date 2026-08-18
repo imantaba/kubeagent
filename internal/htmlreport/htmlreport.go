@@ -78,6 +78,10 @@ type view struct {
 	Cluster     clusterhealth.ClusterHealth
 	Workloads   []inventory.Workload
 	Explanation string
+	// SecurityRequested mirrors report.Input.SecurityRequested: true when
+	// --security was passed, so the template can say the section was omitted
+	// from this document rather than stay silent about it.
+	SecurityRequested bool
 	// Policy is nil unless --policy was given, so a scan without it renders the
 	// same bytes it rendered before the flag existed.
 	Policy *policyView
@@ -234,13 +238,14 @@ func newView(in Input) view {
 		blind = append(blind, blindSpot{Resource: b.Resource, Reason: safeReason(b.Reason)})
 	}
 	v := view{
-		Version:     in.Version,
-		Scope:       scope,
-		Generated:   now.UTC().Format("2006-01-02 15:04:05 UTC"),
-		Blind:       blind,
-		Cluster:     in.Report.Cluster,
-		Workloads:   in.Report.Result.Workloads,
-		Explanation: in.Report.Explanation,
+		Version:           in.Version,
+		Scope:             scope,
+		Generated:         now.UTC().Format("2006-01-02 15:04:05 UTC"),
+		Blind:             blind,
+		Cluster:           in.Report.Cluster,
+		Workloads:         in.Report.Result.Workloads,
+		Explanation:       in.Report.Explanation,
+		SecurityRequested: in.Report.SecurityRequested,
 	}
 	if p := in.Report.Policy; p != nil {
 		pv := &policyView{Rules: p.Rules}

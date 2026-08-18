@@ -79,6 +79,10 @@
   </p>
 </header>
 
+{{- if .SecurityRequested}}
+<p class="empty">Security posture was requested but is not part of the HTML report &mdash; re-run with --output text or --output json to see it.</p>
+{{- end}}
+
 {{- if .Blind}}
 <section class="blind">
   <h2>Blind spots</h2>

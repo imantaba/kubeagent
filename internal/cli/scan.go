@@ -400,6 +400,7 @@ func runScan(o scanOptions) error {
 	in.Policy = policyView
 	in.Baseline = baselineRep
 	in.SecurityVerbose = o.securityVerbose
+	in.SecurityRequested = o.security
 	in.Suggest = o.suggest
 	in.Explanation = explanation
 	in.Investigation = investigationReport.Narrative

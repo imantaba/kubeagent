@@ -501,6 +501,34 @@ func TestRenderExplanationOnlyWhenPresent(t *testing.T) {
 	}
 }
 
+// TestRenderSecurityRequestedNote pins R175(C). The HTML report is written to
+// be forwarded, so unlike --output text or --output json — where the reader
+// typed the flag themselves — a reader of the page has no other way to tell
+// "no security findings" from "--security was never passed". A length check
+// on SecurityIssues alone gets the requested-with-zero-findings case wrong,
+// which is why report.Input carries this field at all: the note must render
+// when SecurityRequested is true and must stay absent otherwise.
+func TestRenderSecurityRequestedNote(t *testing.T) {
+	const note = "Security posture was requested but is not part of the HTML report"
+	with := render(t, Input{
+		Report:  report.Input{Now: fixedNow, SecurityRequested: true},
+		Version: "v0.66.0",
+	})
+	if !strings.Contains(with, note) {
+		t.Error("--security was requested but the HTML report carries no note about it")
+	}
+	if !strings.Contains(with, "--output text or --output json") {
+		t.Error("the note must name the two formats that still carry the SECURITY section")
+	}
+	without := render(t, Input{
+		Report:  report.Input{Now: fixedNow},
+		Version: "v0.66.0",
+	})
+	if strings.Contains(without, note) {
+		t.Error("a scan without --security must not render the security note")
+	}
+}
+
 func policyInput() Input {
 	in := Input{Version: "test", Namespace: "prod"}
 	in.Report.Now = time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)

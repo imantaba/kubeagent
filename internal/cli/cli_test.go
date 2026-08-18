@@ -2491,6 +2491,36 @@ func TestRenderScanLeavesTextAndJSONOnTheOldPath(t *testing.T) {
 	}
 }
 
+// TestRenderScanSecurityRequestedNote proves report.Input.SecurityRequested
+// reaches htmlreport.Input through the exact seam runScan uses (renderScan),
+// the same regression pattern TestRenderScanRoutesHTMLWithEveryFieldPlumbed
+// pins for every other report.Input field: a field that silently never
+// reached htmlreport.Input would ship unnoticed otherwise.
+func TestRenderScanSecurityRequestedNote(t *testing.T) {
+	const note = "Security posture was requested but is not part of the HTML report"
+	res := scan.Result{}
+	in := resultInput(res)
+	in.Now = time.Date(2026, 7, 28, 9, 30, 0, 0, time.UTC)
+
+	in.SecurityRequested = true
+	var withBuf bytes.Buffer
+	if err := renderScan(&withBuf, "html", in, res, ""); err != nil {
+		t.Fatalf("renderScan html: %v", err)
+	}
+	if !strings.Contains(withBuf.String(), note) {
+		t.Error("SecurityRequested did not reach the HTML report through renderScan")
+	}
+
+	in.SecurityRequested = false
+	var withoutBuf bytes.Buffer
+	if err := renderScan(&withoutBuf, "html", in, res, ""); err != nil {
+		t.Fatalf("renderScan html: %v", err)
+	}
+	if strings.Contains(withoutBuf.String(), note) {
+		t.Error("renderScan rendered the security note with SecurityRequested false")
+	}
+}
+
 func TestRun_UsageMentionsTUI(t *testing.T) {
 	err := Run([]string{})
 	if err == nil {

@@ -1188,8 +1188,9 @@ JSON evidence ends in `…` and you need the rest, `kubectl -n <ns> describe pod
 `kubeagent scan --investigate` runs the full scan, then launches a single
 bounded, read-only, model-driven tool-use loop over everything the scan
 flagged. The model can describe a flagged object, list its events, and hop to
-related resources (its owner — ReplicaSet, Deployment or Job — its node, or
-its PVCs) to chase a root cause across the findings' resource graph. When the
+related resources (its immediate owner — whichever controller kind the pod's
+`ownerReferences` names — its node, or its PVCs) to chase a root cause across
+the findings' resource graph. When the
 loop concludes it emits an **Investigation** section:
 an evidence trail (`consulted: ...` line) followed by a grounded Fix-first
 narrative. The **commands** are kubeagent's deterministic, pre-reviewed ones,

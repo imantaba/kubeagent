@@ -1311,9 +1311,9 @@ deterministic offline core (`scan`, `--suggest`) is unchanged; `--explain`
 remains opt-in. The Fix command sent to the model has its pod name replaced
 with `<pod>` when the finding names a specific pod of a controller-owned
 workload and that pod's name differs from the workload's own identity — a
-generated per-replica name identifies one instance rather than the
-Deployment, StatefulSet, DaemonSet or Job being explained. A finding
-diagnosed on the workload object itself (RolloutStuck) or on an ownerless
+generated per-replica name identifies one instance rather than the workload
+being explained. A finding diagnosed on the workload object itself
+(RolloutStuck) or on an ownerless
 pod keeps its real name. So a rendered `--explain` Fix line may read
 `kubectl -n shop describe pod <pod>` rather than the real name; run
 `--suggest` alongside `--explain` for the real command.

@@ -1039,11 +1039,26 @@ Investigation  shop/api  Deployment
   cluster verdict, begins with nothing reachable: the workload seed is
   empty, so every tool call the model attempts on such a run is refused by
   the closure guard.
-- Of the object-level finding families a scan can flag —
-  PersistentVolumeClaim, PodDisruptionBudget, HorizontalPodAutoscaler,
-  admission webhook, ResourceQuota, ingress route, and stuck-terminating —
-  only PersistentVolumeClaim is reachable today, one hop from an in-scope
-  pod. The other six have no supported read path in the current tool set.
+- Reachability follows the object's **kind**, and the three tools gate
+  differently. `describe` reads structured status only for `pod`,
+  `deployment`, `replicaset`, `statefulset`, `daemonset`, `job`, `node` and
+  `pvc`, and only when the scope already holds that object; any other kind is
+  refused. `get_related` sources only from an in-scope pod and grows the set
+  by `owner`, `node` or `pvc`. `get_events` is the exception: it gates on
+  namespace and name **alone**, ignoring kind, and queries the API by
+  `involvedObject.name` — so events for an object of any kind come back once
+  something of that namespace and name is in scope.
+- Applied to the object-level finding families a scan can flag: a
+  PersistentVolumeClaim finding is describable, one hop from an in-scope pod
+  that mounts the claim. Stuck-terminating is three kinds rather than one — a
+  Namespace, a Pod or a PersistentVolumeClaim — and its Pod and
+  PersistentVolumeClaim arms use those same paths. PodDisruptionBudget,
+  HorizontalPodAutoscaler, admission webhook, ResourceQuota, ingress route
+  and stuck-terminating's Namespace arm name kinds `describe` does not
+  accept, so their structured status is out of reach; their events are not,
+  whenever the object shares a namespace and name with something already in
+  scope — which is ordinary for an HPA, a PDB or an Ingress named after the
+  workload or Service it targets.
 - A scan with no workload findings, no Service findings, and a cluster
   verdict that is not Degraded runs no investigation at all — the report
   says so, printing `Investigation skipped — no workload findings, no

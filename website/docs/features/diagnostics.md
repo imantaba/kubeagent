@@ -761,6 +761,11 @@ deterministic remediation core that `--explain` now ranks and phrases: the LLM
 ranks and sequences these commands, and never invents or substitutes one. See
 [Explaining findings](#explaining-findings-opt-in) for how that grounding works.
 
+The same deterministic table is surfaced unconditionally by the MCP server as a
+finding's `remediationHint` — an MCP client has no flag to pass, so "opt-in"
+describes `scan`. The MCP server remains read-only toward the cluster;
+separately, it makes no LLM call.
+
 ### Stuck-terminating resources
 
 `scan` flags a resource wedged in `Terminating` — deletion pending longer than

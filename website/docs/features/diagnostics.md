@@ -1368,7 +1368,7 @@ days), kubeagent adds a `changed:` line with the revision, its age, and the
 first-container image delta:
 
 ```text
-⚠ shop/web  Deployment  0/1 Degraded
+✗ shop/web  Deployment  0/1 Degraded
     ⚠ ImagePullBackOff: Bad image reference or registry authentication
     ↳ changed: rollout to revision 6, 4d ago · image nginx:1.27 → nginx:bad
 ```

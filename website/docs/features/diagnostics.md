@@ -825,23 +825,46 @@ exposes `kubeagent_pdb_blocking_issues`. Adds a base
 ### HPA-can't-scale
 
 `scan` flags a HorizontalPodAutoscaler that is stuck and cannot scale as
-intended, covering three categories:
+intended, covering five categories:
 
 - **unable** — the HPA's `AbleToScale` condition is `False`, meaning the
-  controller can't act on the scale target at all (the target Deployment or
-  StatefulSet is missing, or the `scale` subresource returned an error).
-- **metrics** — the HPA's `ScalingActive` condition is `False`, meaning metric
-  collection has failed (a custom or external metrics adapter is down, or the
-  metrics server cannot return the resource metric), so the HPA's replica
-  calculation is stuck.
-- **capped** — the workload is pinned at `maxReplicas` while demand exceeds the
-  cap (`TooManyReplicas` reason on `ScalingLimited`), so the autoscaler has run
-  out of headroom and the workload is under-replicated.
+  controller can't act on the scale target at all: the target is missing, its
+  `scale` subresource returned an error, or the target's kind has no `scale`
+  subresource at all — a DaemonSet, for instance, whose message reads *the server
+  could not find the requested resource*.
+- **disabled** — the HPA's `ScalingActive` condition is `False` with reason
+  `ScalingDisabled`: the target's replica count is currently zero, so the
+  controller has nothing to scale.
+- **ambiguous** — the HPA's `ScalingActive` condition is `False` with reason
+  `AmbiguousSelector`: another HPA targets an overlapping set of pods through the
+  same label selector, so neither can compute a reliable metric.
+- **metrics** — the HPA's `ScalingActive` condition is `False` for any other
+  reason, meaning metric collection has failed (a custom or external metrics
+  adapter is down, or the metrics server cannot return the resource metric), so
+  the HPA's replica calculation is stuck. `disabled` and `ambiguous` above are
+  the two named sub-cases of this same condition, distinguished by its reason;
+  every other reason falls through to `metrics`.
+- **capped** — the workload is limited by `maxReplicas` while the HPA's
+  recommendation exceeds the cap (`TooManyReplicas` reason on `ScalingLimited`).
+  That recommendation is smoothed over the controller's stabilization window, so
+  the finding can persist for several minutes after demand itself has fallen.
+
+An HPA is left unflagged when it is healthy, when it is limited only at its floor
+(`TooFewReplicas` on `ScalingLimited`), when it is still rate-limited on the way
+up (`ScaleUpLimit`), and for the few seconds after creation before the controller
+has written any condition at all.
+
+An HPA can be in more than one of these states at once — a target that has gone
+missing while the HPA was already at its cap is both `unable` and `capped`. The
+finding names the first that applies, in the order listed above. `disabled`,
+`ambiguous` and `metrics` cannot co-occur with each other on the same HPA — they
+are mutually exclusive readings of one condition's reason, not three more
+precedence tiers.
 
 Each finding names the HPA, its scale target, and the reason — for example:
 `✗ shop/api-hpa  HorizontalPodAutoscaler  targets Deployment/api` /
-`⚠ HPAStuck: can't fetch metrics — unable to get resource metric cpu: no
-metrics returned`.
+`⚠ HPAStuck: can't fetch metrics — the HPA was unable to compute the replica
+count: unable to get external metric shop/queue_depth/nil: …`.
 
 Read-only and advisory — it does not change the cluster verdict. The daemon
 exposes `kubeagent_hpa_scaling_issues`. Adds a base

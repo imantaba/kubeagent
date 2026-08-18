@@ -250,8 +250,10 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   bumping the surface's version in `internal/jsonschema` and regenerating with
   `go test ./internal/schemadoc -run TestSchemaDrift -update`. The drift test
   says whether the change was additive (MINOR) or breaking (MAJOR). `scan` is
-  at schema version **1.3** (added `policy`, then `baseline`, then a pod row's
-  `state`, all three `omitempty`), `gate` is at **1.1** (added
+  at schema version **1.6** (added `policy`, then `baseline`, then a pod row's
+  `state`, then `unreachable` on `nodehealth.Report`, then `podsAnswered` on
+  `dnshealth.Report`, then `suggestion` on a finding, all six `omitempty`),
+  `gate` is at **1.1** (added
   `policyNotEvaluated`, `omitempty`), and `fleet` is at **1.2** (added `shared`
   at 1.1, then `name` at 1.2, both `omitempty`) — all three additive;
   `baseline` enters at **1.0**. A run

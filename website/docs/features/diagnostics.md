@@ -659,6 +659,29 @@ calls at all. The in-cluster daemon needs the secrets add-on grant
 (`deploy/rbac-certs.yaml` or Helm `certs.enabled=true`) and enables the check
 with `KUBEAGENT_CERTS=true`.
 
+The `Invalid` category names a `kubernetes.io/tls` Secret whose certificate
+could not be parsed: `detail` is `empty tls.crt` when `tls.crt` is missing or
+empty, `invalid certificate data` when every PEM block in it fails to parse —
+so a malformed secret is reported rather than silently skipped, and a JSON
+consumer can match on either `detail` value under the `invalid` key.
+
+A refused `secrets` read is visibly not a clean result: the section prints
+`certificates: secrets access denied — apply deploy/rbac-certs.yaml (or Helm
+certs.enabled=true)` in place of any findings, and the same refusal also
+names `secrets` in the [`BLIND SPOTS`](rbac.md#blind-spots) section — the
+read is refused once and reported in both places.
+
+Example output:
+
+```text
+CERTIFICATES  (advisory — public certificate metadata only)
+  ✗ web/tls-example  EXPIRED 4d ago  (CN example.com)
+      — fronts ingress web/example-ingress (example.com)
+  ⚠ api/tls-internal  expires in 12d  (CN api.example.org)
+  ⚠ payments/tls-broken  invalid certificate data
+  · 3 certificates checked (warn window 30d)
+```
+
 ### Next-step suggestions (opt-in)
 
 `scan --suggest` prints a deterministic, reviewed next-step suggestion and a

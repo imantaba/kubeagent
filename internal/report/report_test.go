@@ -120,6 +120,41 @@ func TestPrintInventory_JSONIncludesExplanation(t *testing.T) {
 	}
 }
 
+// TestPrintInventory_TextExplanationHeadingHasProvenanceParenthetical proves
+// R233(C): the Explanation heading names its own authorship, and adding it
+// changes no byte before the heading -- the standing promise that the
+// deterministic core is untouched by --explain.
+func TestPrintInventory_TextExplanationHeadingHasProvenanceParenthetical(t *testing.T) {
+	base := Input{Cluster: sampleCluster(), Result: inventory.Result{Workloads: sampleWorkloads()}}
+
+	var withoutBuf bytes.Buffer
+	if err := PrintInventory(base, "text", &withoutBuf); err != nil {
+		t.Fatal(err)
+	}
+
+	withExplanation := base
+	withExplanation.Explanation = "rancher is fine"
+	var withBuf bytes.Buffer
+	if err := PrintInventory(withExplanation, "text", &withBuf); err != nil {
+		t.Fatal(err)
+	}
+	out := withBuf.String()
+
+	const heading = "── Explanation ── (model-written, not pre-reviewed; verify every command before running)"
+	if !strings.Contains(out, heading+"\nrancher is fine\n") {
+		t.Errorf("expected the Explanation heading with its provenance parenthetical, followed by the narrative:\n%s", out)
+	}
+
+	sep := "\n── Explanation ──"
+	idx := strings.Index(out, sep)
+	if idx == -1 {
+		t.Fatalf("Explanation section separator not found:\n%s", out)
+	}
+	if got, want := out[:idx], withoutBuf.String(); got != want {
+		t.Errorf("bytes before the Explanation heading changed -- the deterministic core must be untouched by --explain:\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
 func TestPrintInventory_UnknownFormatErrors(t *testing.T) {
 	var buf bytes.Buffer
 	if err := PrintInventory(Input{}, "xml", &buf); err == nil {

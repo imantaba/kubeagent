@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`scan --investigate` and `scan --explain` now say more about their own
+  output.** A run with `--investigate` set that found nothing to chase — no
+  workload findings, no service findings, and a cluster verdict that is not
+  Degraded — used to print nothing at all; it now prints an
+  `── Investigation ──` section with one line: `Investigation skipped — no
+  workload findings, no service findings, and the cluster verdict is not
+  Degraded.` Every rendered Investigation narrative now also carries a
+  provenance line, `(model-generated; verify commands before running)`,
+  between the `consulted:` trail and the narrative — a reminder that the
+  narrative is model-written even where it references kubeagent's own
+  deterministic commands. The `── Explanation ──` heading gains a matching
+  parenthetical, `(model-written, not pre-reviewed; verify every command
+  before running)`, so both surfaces name their own authorship at the point a
+  reader sees them. None of this changes `--fix`'s allowlist or the
+  read-only invariant, and no `schemaVersion` moves — this is text-report
+  rendering only.
+
 - **`scan` now discloses two things it used to skip silently, both under
   admission-webhook health.** A `clientConfig.url` backend on a `Fail`-policy
   webhook is not a `Service` kubeagent can check the endpoints of; `scan` now

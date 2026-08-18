@@ -419,7 +419,7 @@ func printInventoryText(in Input, w io.Writer) error {
 	}
 
 	if in.Explanation != "" {
-		if _, err := fmt.Fprintf(w, "\n── Explanation ──\n%s\n", in.Explanation); err != nil {
+		if _, err := fmt.Fprintf(w, "\n── Explanation ── (model-written, not pre-reviewed; verify every command before running)\n%s\n", in.Explanation); err != nil {
 			return err
 		}
 	}

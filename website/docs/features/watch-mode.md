@@ -783,13 +783,15 @@ kubectl apply -f deploy/
 curl localhost:8080/metrics
 ```
 
-Flags (each with a `KUBEAGENT_*` env fallback, except `--context`, which is
-repeatable and has none): `--context` (repeatable; default: current-context),
+The flags below each have a `KUBEAGENT_*` env fallback, except `--context`,
+`--include-cron` and `--include-restarts`, which have none (`--context` is
+also repeatable): `--context` (repeatable; default: current-context),
 `--cluster-name` / `KUBEAGENT_CLUSTER_NAME` (`local`; see
 [Watching several clusters](#watching-several-clusters)), `--include-local` /
 `KUBEAGENT_INCLUDE_LOCAL` (off by default), `--metrics-addr` /
 `KUBEAGENT_METRICS_ADDR` (`:8080`), `--heartbeat` / `KUBEAGENT_HEARTBEAT`
-(`60s`), `--debounce` / `KUBEAGENT_DEBOUNCE` (`2s`), `--namespace`/`-n` /
+(`60s`), `--debounce` / `KUBEAGENT_DEBOUNCE` (`2s`), `--include-cron` (off by
+default), `--include-restarts` (off by default), `--namespace`/`-n` /
 `KUBEAGENT_NAMESPACE` (default all namespaces).
 
 Settings with **no flag** — the daemon reads these from the environment only,

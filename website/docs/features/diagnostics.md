@@ -604,9 +604,11 @@ also exposed in JSON as `nodesExpectedAbsent`.
 `scan --kubelet-health` actively probes each node's kubelet `/healthz` through
 the `nodes/proxy` subresource (the same add-on `--disk-usage` uses) and flags a
 kubelet that is **reachable but reporting unhealthy** — `✗ node worker-2 kubelet
-/healthz unhealthy: [-]pleg failed`. This is the "alive but sick" failure mode
-(a failing PLEG/runtime/syncloop subcheck) that the passive lease-heartbeat and
-`NotReady` checks miss, and it often shows *before* the node flips to `NotReady`.
+/healthz unhealthy: [-]syncloop failed`. The kubelet's `/healthz` covers a small
+fixed set of subchecks (`ping`, `log`, `syncloop`, `device-plugin`); a container
+runtime or PLEG failure is **not** among them and surfaces on the node's `Ready`
+condition instead, where the `NotReady` check catches it. This probe is for the
+narrower case where those subchecks fail while the node is still `Ready`.
 A dead/unreachable kubelet is skipped (already flagged by the node checks), and a
 missing `nodes/proxy` grant prints a one-line hint. It is read-only (a `GET`),
 opt-in, and **advisory** — it appears in the `KUBELET HEALTH` section and JSON

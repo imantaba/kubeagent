@@ -2957,6 +2957,46 @@ func TestPrintInventory_TextShowsConsultedTrailJoined(t *testing.T) {
 	}
 }
 
+// TestPrintInventory_TextShowsTruncationNotice proves R225(A)'s renderer half:
+// a narrative whose truncation flag is set gets one extra line the renderer
+// writes itself.
+func TestPrintInventory_TextShowsTruncationNotice(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster:                clusterhealth.ClusterHealth{Verdict: "Healthy"},
+		Investigation:          "web — ImagePullBackOff\n- Root cause: bad tag",
+		InvestigationConsulted: []string{"describe pod shop/web-abc"},
+		InvestigationTruncated: true,
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "(narrative truncated at the model's output limit)") {
+		t.Errorf("expected the truncation notice line:\n%s", out)
+	}
+}
+
+// TestPrintInventory_TextOmitsTruncationNoticeWhenNotTruncated is the
+// negative case: an unset flag must render nothing extra. The golden files
+// depend on this — no golden fixture sets the flag, so a defect here would
+// move golden-scan.txt.
+func TestPrintInventory_TextOmitsTruncationNoticeWhenNotTruncated(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster:                clusterhealth.ClusterHealth{Verdict: "Healthy"},
+		Investigation:          "web — ImagePullBackOff\n- Root cause: bad tag",
+		InvestigationConsulted: []string{"describe pod shop/web-abc"},
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "truncated") {
+		t.Errorf("must not mention truncation when the flag is unset:\n%s", out)
+	}
+}
+
 func TestPrintInventory_JSONIncludesInvestigation(t *testing.T) {
 	var buf bytes.Buffer
 	in := Input{
@@ -2969,6 +3009,26 @@ func TestPrintInventory_JSONIncludesInvestigation(t *testing.T) {
 	out := buf.String()
 	if !strings.Contains(out, `"investigation"`) || !strings.Contains(out, `"narrative"`) || !strings.Contains(out, `"consulted"`) {
 		t.Errorf("investigation JSON missing: %s", out)
+	}
+}
+
+// TestPrintInventory_JSONOmitsTruncationFlag proves the binding ruling on
+// R225's placement clause: the truncation flag lands on Input and is
+// rendered, never exported. Even with the flag set, the JSON view carries no
+// trace of it — report.InvestigationView has no field for it.
+func TestPrintInventory_JSONOmitsTruncationFlag(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Investigation:          "narrative",
+		InvestigationConsulted: []string{"describe pod shop/web-abc"},
+		InvestigationTruncated: true,
+	}
+	if err := PrintInventory(in, "json", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if strings.Contains(strings.ToLower(out), "truncat") {
+		t.Errorf("JSON must never carry the truncation flag: %s", out)
 	}
 }
 

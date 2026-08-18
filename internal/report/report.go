@@ -222,6 +222,12 @@ type Input struct {
 	Explanation            string
 	Investigation          string
 	InvestigationConsulted []string
+	// InvestigationTruncated is true when Investigation was cut short at the
+	// model's own output-length ceiling. Rendered, not exported: it has no
+	// json tag by design, the same rule as the two fields above it — a
+	// truncation flag on report.InvestigationView would move a
+	// schemaVersion, which this decision refuses.
+	InvestigationTruncated bool
 	RemediationPlan        []remediate.Action // --fix: the proposed actions (JSON only)
 	Now                    time.Time          // clock for relative ages; main sets time.Now(); zero → wall-clock
 }
@@ -422,6 +428,11 @@ func printInventoryText(in Input, w io.Writer) error {
 		}
 		if _, err := fmt.Fprintf(w, "%s\n", in.Investigation); err != nil {
 			return err
+		}
+		if in.InvestigationTruncated {
+			if _, err := fmt.Fprintln(w, "(narrative truncated at the model's output limit)"); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

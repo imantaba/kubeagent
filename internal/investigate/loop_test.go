@@ -64,7 +64,7 @@ func TestRunLoop_GathersThenConcludes(t *testing.T) {
 		{Text: "root cause: bad image", Done: true},
 	}}
 	exec := &countingExec{}
-	narrative, trail, err := runLoop(context.Background(), conv, exec, NewScope(nil))
+	narrative, trail, _, err := runLoop(context.Background(), conv, exec, NewScope(nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestRunLoop_CapsToolCallsAndConcludes(t *testing.T) {
 	exec := &countingExec{}
 	s := NewScope(nil)
 	s.Add("pod", "shop", "p")
-	narrative, _, err := runLoop(context.Background(), conv, exec, s)
+	narrative, _, _, err := runLoop(context.Background(), conv, exec, s)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestRunLoop_CapsToolCallsAndConcludes(t *testing.T) {
 
 func TestRunLoop_StartErrorPropagates(t *testing.T) {
 	conv := &fakeConv{t: t, startErr: errors.New("api down")}
-	_, _, err := runLoop(context.Background(), conv, &countingExec{}, NewScope(nil))
+	_, _, _, err := runLoop(context.Background(), conv, &countingExec{}, NewScope(nil))
 	if err == nil {
 		t.Error("expected the start error to propagate")
 	}
@@ -143,7 +143,7 @@ func TestRunLoop_BudgetSlicesWithinATurn(t *testing.T) {
 		{Text: "done", Done: true},
 	}}
 	exec := &countingExec{}
-	narrative, _, err := runLoop(context.Background(), conv, exec, NewScope(nil))
+	narrative, _, _, err := runLoop(context.Background(), conv, exec, NewScope(nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +181,7 @@ func TestRunLoop_AnswersEveryToolUseEvenWhenOverBudget(t *testing.T) {
 		{Text: "done", Done: true},
 	}}
 	exec := &countingExec{}
-	narrative, _, err := runLoop(context.Background(), conv, exec, NewScope(nil))
+	narrative, _, _, err := runLoop(context.Background(), conv, exec, NewScope(nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,5 +193,37 @@ func TestRunLoop_AnswersEveryToolUseEvenWhenOverBudget(t *testing.T) {
 	}
 	if narrative != "done" {
 		t.Errorf("narrative = %q, want %q", narrative, "done")
+	}
+}
+
+// TestRunLoop_PropagatesTruncated proves R225(A): the Truncated bit on the
+// reply that produced the final narrative reaches runLoop's return value, so
+// a caller can tell whether the model's own turn hit its output-length
+// ceiling rather than choosing to stop.
+func TestRunLoop_PropagatesTruncated(t *testing.T) {
+	conv := &fakeConv{t: t, replies: []reply{
+		{Text: "cut off mid", Done: true, Truncated: true},
+	}}
+	_, _, truncated, err := runLoop(context.Background(), conv, &countingExec{}, NewScope(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !truncated {
+		t.Error("expected runLoop to report the final reply's Truncated bit as true")
+	}
+}
+
+// TestRunLoop_ReportsNotTruncatedOnCleanFinish is the negative case: a normal
+// conclusion (Done, not Truncated) must not be reported as truncated.
+func TestRunLoop_ReportsNotTruncatedOnCleanFinish(t *testing.T) {
+	conv := &fakeConv{t: t, replies: []reply{
+		{Text: "root cause: bad image", Done: true},
+	}}
+	_, _, truncated, err := runLoop(context.Background(), conv, &countingExec{}, NewScope(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if truncated {
+		t.Error("a clean finish must not be reported as truncated")
 	}
 }

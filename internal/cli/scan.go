@@ -404,6 +404,7 @@ func runScan(o scanOptions) error {
 	in.Explanation = explanation
 	in.Investigation = investigationReport.Narrative
 	in.InvestigationConsulted = investigationReport.Consulted
+	in.InvestigationTruncated = investigationReport.Truncated
 	in.RemediationPlan = fixPlan
 	if err := renderScan(os.Stdout, o.output, in, res, o.namespace); err != nil {
 		return err

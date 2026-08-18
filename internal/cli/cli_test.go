@@ -2493,9 +2493,9 @@ func TestRenderScanLeavesTextAndJSONOnTheOldPath(t *testing.T) {
 
 // TestRenderScanSecurityRequestedNote proves report.Input.SecurityRequested
 // reaches htmlreport.Input through the exact seam runScan uses (renderScan),
-// the same regression pattern TestRenderScanRoutesHTMLWithEveryFieldPlumbed
-// pins for every other report.Input field: a field that silently never
-// reached htmlreport.Input would ship unnoticed otherwise.
+// following the same regression-test shape as
+// TestRenderScanRoutesHTMLWithEveryFieldPlumbed: without a test like this, a
+// field that silently never reached htmlreport.Input would ship unnoticed.
 func TestRenderScanSecurityRequestedNote(t *testing.T) {
 	const note = "Security posture was requested but is not part of the HTML report"
 	res := scan.Result{}

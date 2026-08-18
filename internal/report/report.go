@@ -185,13 +185,14 @@ type Input struct {
 	SecurityIssues     []secscan.Finding
 	SecurityVerbose    bool
 	// SecurityRequested is true when --security was passed. internal/htmlreport
-	// is its one reader: that document is written to be forwarded, so unlike a
-	// reader of --output text or --output json — who typed the flag themselves
-	// — a reader of the page has no other way to tell "no security findings"
-	// from "--security was never passed". Rendered there, not exported: it has
-	// no json tag by design — tagging it onto report.ScanReport, which has no
-	// existing field for it to ride along on, would move a schemaVersion, which
-	// this decision refuses.
+	// is its one reader: that package's doc comment says the document it
+	// renders "is meant to be forwarded", so a reader of the page has no other
+	// way to tell "no security findings" from "--security was never passed".
+	// Rendered there, not exported: it has no json tag by design — SecurityIssues
+	// is a bare slice on report.ScanReport, with no wrapper type (unlike
+	// Policy *PolicyView, Capacity *capacity.Report, Baseline *baseline.Report)
+	// for this bit to ride along on, so tagging it directly would move a
+	// schemaVersion, which this decision refuses.
 	SecurityRequested bool
 	Suggest           bool
 	KubeletHealth     *nodehealth.Report

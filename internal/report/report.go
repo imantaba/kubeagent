@@ -434,6 +434,9 @@ func printInventoryText(in Input, w io.Writer) error {
 		if _, err := fmt.Fprintf(w, "consulted: %s\n", consulted); err != nil {
 			return err
 		}
+		if _, err := fmt.Fprintf(w, "(model-generated; verify commands before running)\n"); err != nil {
+			return err
+		}
 		if _, err := fmt.Fprintf(w, "%s\n", in.Investigation); err != nil {
 			return err
 		}

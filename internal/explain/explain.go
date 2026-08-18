@@ -44,8 +44,9 @@ then two-space indented lines beneath it:
   Fix: use the provided deterministic, pre-reviewed command for this issue
   verbatim — you may add a namespace or flag already shown, sequence multiple
   provided commands, and phrase it for on-call, but never substitute or invent a
-  different command. When the provided command is a generic describe, keep it and
-  say what to look for in the output.
+  different command. A Fix line may contain only a read-only command, or the
+  exact command supplied with the finding. When the provided command is a
+  generic describe, keep it and say what to look for in the output.
 
 Be tight — no preamble, no restating the input, no generic advice. If a finding
 is expected (e.g. a scaled-to-zero workload), say it needs no action. Prefer

@@ -3025,6 +3025,44 @@ func TestPrintInventory_TextShowsConsultedTrailJoined(t *testing.T) {
 	}
 }
 
+// TestPrintInventory_TextShowsProvenanceLine proves R226's render half: the
+// provenance line renders whenever an Investigation section does, whether or
+// not the trail is empty, and it sits between the consulted: line and the
+// narrative — never above the heading, never after the narrative.
+func TestPrintInventory_TextShowsProvenanceLine(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		consulted []string
+	}{
+		{name: "empty trail", consulted: nil},
+		{name: "non-empty trail", consulted: []string{"describe pod shop/web-abc"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			in := Input{
+				Cluster:                clusterhealth.ClusterHealth{Verdict: "Healthy"},
+				Investigation:          "web — ImagePullBackOff\n- Root cause: bad tag",
+				InvestigationConsulted: tc.consulted,
+			}
+			if err := PrintInventory(in, "text", &buf); err != nil {
+				t.Fatal(err)
+			}
+			out := buf.String()
+			const provenance = "(model-generated; verify commands before running)"
+			consultedIdx := strings.Index(out, "consulted:")
+			provenanceIdx := strings.Index(out, provenance)
+			narrativeIdx := strings.Index(out, "Root cause: bad tag")
+			if consultedIdx == -1 || provenanceIdx == -1 || narrativeIdx == -1 {
+				t.Fatalf("expected consulted:, provenance line and narrative all present:\n%s", out)
+			}
+			if !(consultedIdx < provenanceIdx && provenanceIdx < narrativeIdx) {
+				t.Errorf("expected order consulted: -> provenance -> narrative, got indices %d, %d, %d:\n%s",
+					consultedIdx, provenanceIdx, narrativeIdx, out)
+			}
+		})
+	}
+}
+
 // TestPrintInventory_TextShowsTruncationNotice proves R225(A)'s renderer half:
 // a narrative whose truncation flag is set gets one extra line the renderer
 // writes itself.

@@ -1092,8 +1092,11 @@ finding's priority or the cluster verdict.
   print: nodes that reserve no memory or no ephemeral-storage for the OS and
   kubelet, PersistentVolumeClaims on a `Delete` reclaim policy (a grouped
   summary; pass `--pvc-reclaim` for the full list), Services and ingress routes
-  that are intentionally empty (scaled to zero or a CronJob between runs), and
-  counts of workloads hidden behind `--include-restarts` / `--include-cron`.
+  that are intentionally empty (scaled to zero or a CronJob between runs),
+  Fail-policy admission webhooks whose `clientConfig.url` backend could not be
+  checked, counts of workloads hidden behind `--include-restarts` /
+  `--include-cron`, and — only when `--certs` ran and found nothing to flag —
+  a line confirming how many certificates were checked.
 - **CONTEXT** — reference data: kubelet reservations (collapsed to one line
   when all nodes reserve the same), the cluster resource summary, and platform
   facts.
@@ -1104,10 +1107,13 @@ per unready node, because an unready node is the first thing a report should
 say rather than reference data.
 
 A "Needs attention" line under the cluster verdict summarizes every NEEDS
-ATTENTION category that fired, joined by `·` — failing workloads first, then
-Services without endpoints, volumes low on disk, broken ingress routes, PVCs,
-stuck resources, PodDisruptionBudgets, HPAs, webhooks and quotas. When findings
-were attributed to a shared root cause the workload clause carries the rollup —
+ATTENTION category that fired **except credential warnings**, joined by `·` —
+failing workloads first, then Services without endpoints, volumes low on disk,
+broken ingress routes, PVCs, stuck resources, PodDisruptionBudgets, HPAs,
+webhooks and quotas. A scan whose NEEDS ATTENTION section is triggered only by
+credential warnings prints that section — including the warnings themselves —
+with no "Needs attention:" line above it. When findings were attributed to a
+shared root cause the workload clause carries the rollup —
 `11 workloads failing (3 ⇐ 2 root causes)` means three of the eleven were
 traced to two underlying causes; see [Root-cause attribution](#root-cause-attribution).
 `--output json` is unaffected and always contains the full detail.

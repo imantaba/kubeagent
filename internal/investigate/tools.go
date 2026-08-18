@@ -37,7 +37,7 @@ func toolSpecs() []toolSpec {
 		},
 		{
 			Name:        "get_related",
-			Description: "From an in-scope pod, resolve a related object and bring it into scope: its owner (ReplicaSet/Deployment/Job), its node, or its PersistentVolumeClaims.",
+			Description: "From an in-scope pod, resolve a related object and bring it into scope: the owners its ownerReferences name, its node, or its PersistentVolumeClaims.",
 			Properties: map[string]any{
 				"namespace": prop("the pod's namespace"),
 				"name":      prop("the pod's name"),

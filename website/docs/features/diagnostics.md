@@ -1261,18 +1261,20 @@ answer.
 - **Capped** — one loop per scan, bounded at **8 reads** and **6 turns** in
   total, shared across every finding. The budget does not grow with the
   number of findings: on a cluster with many problems the loop will
-  investigate a few of them in depth rather than all of them shallowly.
-  Total API cost is therefore a fixed ceiling regardless of cluster size.
+  investigate a few of them in depth rather than all of them shallowly. That
+  bound is on the number of reads and turns, not on their size — a turn's
+  token cost still varies with how much a tool call's result contains.
 - **No logs** — `--investigate` does not fetch container logs. It uses
   structured Kubernetes object reads only (describe / events / get), so no
   raw container output leaves the process.
 - **Bounded egress** — what leaves the process is the scan's own finding
-  inventory (each finding's reason and evidence, container resource requests
-  and limits, kubeagent's suggested fix, and any rollout image change) plus,
-  for each tool call, an object's status, conditions and events together with
-  the scheduling-relevant spec fields: node name, taints, schedulability,
-  storage class and PVC claim names. Never sent: container env values, args
-  or command, Secret or ConfigMap data, and container logs.
+  inventory (each finding's reason and evidence, a redacted log cause when
+  one is present, container resource requests and limits, kubeagent's
+  suggested fix, and any rollout image change) plus, for each tool call, an
+  object's status, conditions and events together with the scheduling-relevant
+  spec fields: node name, taints, schedulability, storage class, PVC claim
+  names and the bound PersistentVolume name. Never sent: container env
+  values, args or command, Secret or ConfigMap data, and container logs.
 - **Never writes** — all tool calls are `get`/`list` only. The read-only
   invariant is not relaxed.
 - **Model selection** — reuses `--model` / `KUBEAGENT_MODEL` (default

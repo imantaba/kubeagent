@@ -32,12 +32,19 @@ type toolResult struct {
 
 // Reader executes an allowed tool call via read-only client-go calls, rendering
 // only structured fields — never env, secret data, container args, or logs —
-// and never an address it chose: no PodIP, HostIP, or ClusterIP appears in a
-// tool result. A condition, waiting/terminated, or event Reason and Message is
+// and never an address it chose: no PodIP, HostIP, or ClusterIP field is ever
+// printed. A condition, waiting/terminated, or event Reason and Message is
 // free text the API server does not validate, so it passes through sanitize on
 // its way out (see describePod), which catches a network address embedded in
 // that text. It does not catch an arbitrary URL: the cluster's own text can
 // still carry one, path and all.
+//
+// That does not make a tool result address-free. When a client-go Get or List
+// call in this file fails, the error is returned to the model as err.Error(),
+// unfiltered by sanitize or by anything else -- a *url.Error from a failed
+// call names the API server's own host:port in its dial failure, and the
+// request path it was reaching for besides. This is a known gap: no decision
+// in this package closes it.
 type Reader struct {
 	client kubernetes.Interface
 }

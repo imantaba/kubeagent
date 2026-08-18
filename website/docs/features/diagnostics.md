@@ -1109,14 +1109,15 @@ CONTEXT — `Cluster: Degraded — 5/6 nodes Ready` followed by one `✗ node` r
 per unready node, because an unready node is the first thing a report should
 say rather than reference data.
 
-A "Needs attention" line under the cluster verdict summarizes every NEEDS
-ATTENTION category that fired **except credential warnings**, joined by `·` —
-failing workloads first, then Services without endpoints, volumes low on disk,
-broken ingress routes, PVCs, stuck resources, PodDisruptionBudgets, HPAs,
-webhooks and quotas. A scan whose NEEDS ATTENTION section is triggered only by
-credential warnings prints that section — including the warnings themselves —
-with no "Needs attention:" line above it. When findings were attributed to a
-shared root cause the workload clause carries the rollup —
+A "Needs attention" line under the cluster verdict summarizes the NEEDS
+ATTENTION categories that fired, joined by `·` — failing workloads first,
+then Services without endpoints, volumes low on disk, broken ingress routes,
+PVCs, stuck resources, PodDisruptionBudgets, HPAs, webhooks and quotas. It
+counts only *flagged* workloads and does not cover credential warnings, so
+the section can print with no "Needs attention:" line above it — for example
+when it was triggered only by credential warnings, or only by an unflagged
+workload surfaced by `--include-restarts` / `--include-cron`. When findings
+were attributed to a shared root cause the workload clause carries the rollup —
 `11 workloads failing (3 ⇐ 2 root causes)` means three of the eleven were
 traced to two underlying causes; see [Root-cause attribution](#root-cause-attribution).
 `--output json` is unaffected and always contains the full detail.

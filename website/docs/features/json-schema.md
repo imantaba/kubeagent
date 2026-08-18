@@ -97,6 +97,20 @@ A `schemaVersion` promise is narrower than it might look. Not covered:
 Matching on a `reason` string will break the day the wording changes. The
 stable thing to match on is `issue`.
 
+## A known casing inconsistency
+
+`scan`'s `blindSpots` array and `gate`'s `inconclusive` array both hold the
+same fact — a collector call that failed — but their entries are cased
+differently. `scan`'s `scan.ReadFailure` has no JSON tags, so it publishes
+`Resource` and `Reason`, capitalized; `gate`'s `gate.Blindspot` is tagged, so
+it publishes `resource` and `reason`, lowercase, alongside `waived`. Both are
+`required` in their respective schemas, exactly as they ship. Aligning the
+two would rename a required property in one of them — a **MAJOR** change by
+the drift classifier — so it is documented here rather than fixed, and is
+parked as a candidate for the next MAJOR bump `scan` takes for an unrelated
+reason. A consumer reading both documents must special-case the two keys
+until then.
+
 ## The published schemas
 
 Each surface's schema is published at a URL that carries only the **major**

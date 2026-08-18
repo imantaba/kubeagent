@@ -919,22 +919,41 @@ every affected operation.
 The threshold defaults to 15 and is tunable via the environment variable
 `KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS` (e.g.
 `KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS=10` to warn earlier) or the Helm value
-`webhookLatency.timeoutThreshold`. Webhooks with `failurePolicy: Ignore` and
-those with a `nil` (unset) `timeoutSeconds` are never flagged.
+`webhookLatency.timeoutThreshold`.
+
+Webhooks with `failurePolicy: Ignore` are never flagged. This is deliberate,
+and it is not the same reason the failure check skips them: an `Ignore`
+webhook with a high `timeoutSeconds` still blocks every intercepted
+`create`/`update` for the full timeout — measured at 30 seconds — and only
+then falls through and allows it. That is a latency cost, not an availability
+failure, so kubeagent reports it as neither. Webhooks with a `nil` (unset)
+`timeoutSeconds` are never flagged either; see below for what a live API
+server actually stores.
+
+Omitting `timeoutSeconds` does not opt a webhook out: the API server defaults
+the field to 10 on write, so an omitted timeout is flagged at any threshold of
+10 or below. kubeagent still guards against a nil `timeoutSeconds`, for
+objects read from a manifest rather than from a live API server.
 
 Valid values are 1–30. The API server refuses a webhook `timeoutSeconds` above
 30 ("the timeout value must be between 1 and 30 seconds"), so a threshold above
 30 could only ever match nothing; kubeagent refuses it rather than reporting a
 clean posture.
 
-The check is **always-on**, **cluster-wide only** (skipped under
-`--namespace`), and **advisory** — it does not change the cluster verdict. The
-daemon exposes `kubeagent_admission_webhook_latency_risks`. No new RBAC is
-required (reuses the `admissionregistration.k8s.io` grant above). Example
-output:
+The check runs on every `Fail`-policy webhook whose backend is not already
+reported down. A webhook that is both backend-down and slow reports the
+backend problem only — that is the one that already rejects every request —
+with its timeout named in the same reason. Its latency finding, and its place
+in `kubeagent_admission_webhook_latency_risks`, appear on the next scan once
+the backend is healthy.
+
+The check is **cluster-wide only** (skipped under `--namespace`) and
+**advisory** — it does not change the cluster verdict. The daemon exposes
+`kubeagent_admission_webhook_latency_risks`. No new RBAC is required (reuses
+the `admissionregistration.k8s.io` grant above). Example output:
 
 ```text
-WEBHOOK
+NEEDS ATTENTION
   ✗ slow-validator  ValidatingWebhookConfiguration  webhook policy.example.com
       ⚠ HighTimeout: timeoutSeconds 30 ≥ 15s under failurePolicy Fail — a slow webhook blocks every intercepted create/update for up to 30s, then rejects it
 ```

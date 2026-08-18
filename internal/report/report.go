@@ -240,8 +240,62 @@ type Input struct {
 	Now                  time.Time          // clock for relative ages; main sets time.Now(); zero → wall-clock
 }
 
+// stuckTerminatingSuppresses reports whether issue already explains why wl is
+// failing, so wl's own NEEDS ATTENTION row would just repeat it.
+//
+// All four conjuncts are required. issue.Kind == "Pod" && wl.Kind == "Pod" is
+// not redundant: termhealth.Issue.Kind ranges over Namespace, Pod and
+// PersistentVolumeClaim, so a namespace+name match alone would let a
+// stuck-terminating PersistentVolumeClaim (or Namespace) suppress a Pod
+// workload that merely happens to share its namespace and name.
+// wl.Status == "Failed" is deliberately narrower than wl.Flagged() (len(Findings)
+// > 0 || Ready < Desired || Status == "Failed"): Flagged() would also suppress a
+// terminating pod that is flagged for an unrelated reason — e.g. an
+// ImagePullBackOff finding on a pod that also happens to be stuck
+// terminating — losing that second finding. That is exactly the trap
+// internal/rollouthealth's own comment warns about (rollouthealth.go:136-144):
+// a workload failing for two independent reasons must not have one of them
+// silently dropped by widening a suppression clause instead of replacing it.
+func stuckTerminatingSuppresses(issue termhealth.Issue, wl inventory.Workload) bool {
+	return issue.Kind == "Pod" && wl.Kind == "Pod" &&
+		issue.Namespace == wl.Namespace && issue.Name == wl.Name &&
+		wl.Status == "Failed"
+}
+
+// suppressStuckTerminatingRows drops a Failed Pod workload's row when a
+// StuckTerminating issue already names the same pod: the terminating row
+// explains *why* the pod is Failed (a finalizer, a grace period, or a
+// pvc-protection block), so printing both duplicates one fact under two
+// headings. The stuck-terminating row is the survivor because it carries the
+// reason; the workload row would not.
+//
+// Allocates a new slice rather than filtering in place: the caller's
+// in.Result.Workloads shares its backing array with internal/cli, which
+// still holds scan.Result after PrintInventory returns, so reusing that
+// array (e.g. workloads[:0]) would corrupt the caller's copy.
+func suppressStuckTerminatingRows(workloads []inventory.Workload, issues []termhealth.Issue) []inventory.Workload {
+	out := make([]inventory.Workload, 0, len(workloads))
+	for _, wl := range workloads {
+		suppressed := false
+		for _, is := range issues {
+			if stuckTerminatingSuppresses(is, wl) {
+				suppressed = true
+				break
+			}
+		}
+		if !suppressed {
+			out = append(out, wl)
+		}
+	}
+	return out
+}
+
 // PrintInventory writes the cluster verdict and the prioritized workload set to w.
 func PrintInventory(in Input, format string, w io.Writer) error {
+	// Suppress before the format switch so the JSON workloads local (below)
+	// and printInventoryText's NEEDS ATTENTION loop and summary line all
+	// inherit the same filtered set from one change, rather than three.
+	in.Result.Workloads = suppressStuckTerminatingRows(in.Result.Workloads, in.StuckTerminating)
 	switch format {
 	case "json":
 		workloads := in.Result.Workloads

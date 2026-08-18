@@ -2399,6 +2399,183 @@ func TestPrintInventory_StuckTerminatingAbsentWhenEmpty(t *testing.T) {
 	}
 }
 
+// TestPrintInventory_StuckTerminatingSuppressesFailedPodRow is regression
+// fixture 1 for R130: a pod both Failed and stuck-terminating renders one
+// row, the stuck-terminating one — the terminating row explains *why* the
+// pod is Failed, so the workload row duplicates the same fact under a
+// second heading.
+func TestPrintInventory_StuckTerminatingSuppressesFailedPodRow(t *testing.T) {
+	ws := []inventory.Workload{{
+		Namespace: "shop", Name: "orphan", Kind: "Pod",
+		Desired: 1, Ready: 0, Status: "Failed",
+	}}
+	in := Input{
+		Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		Result:  inventory.Result{Workloads: ws},
+		StuckTerminating: []termhealth.Issue{
+			{Kind: "Pod", Namespace: "shop", Name: "orphan", Age: "5m", PastGrace: true, Reason: "finalizer example.com/cleanup-hook"},
+		},
+	}
+	var buf bytes.Buffer
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "shop/orphan  Pod  0/1 Failed") {
+		t.Errorf("Failed Pod workload row must be suppressed when a StuckTerminating issue names the same pod:\n%s", out)
+	}
+	if !strings.Contains(out, "✗ shop/orphan  Pod  Terminating 5m (past grace)") {
+		t.Errorf("StuckTerminating row must survive as the sole mention:\n%s", out)
+	}
+	if strings.Contains(out, "workload failing") {
+		t.Errorf("summary must not count the suppressed row:\n%s", out)
+	}
+	if !strings.Contains(out, "1 resource stuck terminating") {
+		t.Errorf("summary must still count the StuckTerminating issue:\n%s", out)
+	}
+
+	var jbuf bytes.Buffer
+	if err := PrintInventory(in, "json", &jbuf); err != nil {
+		t.Fatal(err)
+	}
+	var got ScanReport
+	if err := json.Unmarshal(jbuf.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Workloads) != 0 {
+		t.Errorf("JSON workloads array must drop the suppressed row, got %+v", got.Workloads)
+	}
+	if len(got.StuckTerminating) != 1 {
+		t.Errorf("JSON stuckTerminating array must stay unfiltered, got %+v", got.StuckTerminating)
+	}
+}
+
+// TestPrintInventory_FailedPodNotTerminatingRowSurvives is regression
+// fixture 2 for R130: a Failed pod with no matching StuckTerminating issue
+// is unaffected.
+func TestPrintInventory_FailedPodNotTerminatingRowSurvives(t *testing.T) {
+	ws := []inventory.Workload{{
+		Namespace: "shop", Name: "solo", Kind: "Pod",
+		Desired: 1, Ready: 0, Status: "Failed",
+	}}
+	in := Input{
+		Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		Result:  inventory.Result{Workloads: ws},
+	}
+	var buf bytes.Buffer
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "shop/solo  Pod  0/1 Failed") {
+		t.Errorf("a Failed Pod with no StuckTerminating match must keep its row:\n%s", out)
+	}
+}
+
+// TestPrintInventory_TerminatingPodNotFailedRowSurvives is regression
+// fixture 3 for R130: a stuck-terminating pod that is not Failed is
+// unaffected — the third conjunct is wl.Status == "Failed", not
+// wl.Flagged(), so a non-Failed match must not be suppressed.
+func TestPrintInventory_TerminatingPodNotFailedRowSurvives(t *testing.T) {
+	ws := []inventory.Workload{{
+		Namespace: "shop", Name: "orphan", Kind: "Pod",
+		Desired: 1, Ready: 1, Status: "Running",
+	}}
+	in := Input{
+		Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		Result:  inventory.Result{Workloads: ws},
+		StuckTerminating: []termhealth.Issue{
+			{Kind: "Pod", Namespace: "shop", Name: "orphan", Age: "5m", Reason: "finalizer example.com/cleanup-hook"},
+		},
+	}
+	var buf bytes.Buffer
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "shop/orphan  Pod  1/1 Running") {
+		t.Errorf("a terminating pod that is not Failed must keep its workload row:\n%s", out)
+	}
+}
+
+// TestPrintInventory_StuckTerminatingDifferentNamespaceNotSuppressed is
+// regression fixture 4 for R130: a stuck-terminating pod in a different
+// namespace with the same name must not suppress the workload row.
+func TestPrintInventory_StuckTerminatingDifferentNamespaceNotSuppressed(t *testing.T) {
+	ws := []inventory.Workload{{
+		Namespace: "shop", Name: "orphan", Kind: "Pod",
+		Desired: 1, Ready: 0, Status: "Failed",
+	}}
+	in := Input{
+		Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		Result:  inventory.Result{Workloads: ws},
+		StuckTerminating: []termhealth.Issue{
+			{Kind: "Pod", Namespace: "other", Name: "orphan", Age: "5m", Reason: "finalizer example.com/cleanup-hook"},
+		},
+	}
+	var buf bytes.Buffer
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "shop/orphan  Pod  0/1 Failed") {
+		t.Errorf("a StuckTerminating issue in a different namespace must not suppress the workload row:\n%s", out)
+	}
+}
+
+// TestPrintInventory_StuckTerminatingPVCSameNameNotSuppressed is regression
+// fixture 5 for R130 (added by the anchor pre-verification, §3): a
+// stuck-terminating PersistentVolumeClaim sharing a Pod workload's
+// namespace and name must not suppress it — the predicate requires
+// issue.Kind == "Pod" too, not just a namespace+name match.
+func TestPrintInventory_StuckTerminatingPVCSameNameNotSuppressed(t *testing.T) {
+	ws := []inventory.Workload{{
+		Namespace: "shop", Name: "data", Kind: "Pod",
+		Desired: 1, Ready: 0, Status: "Failed",
+	}}
+	in := Input{
+		Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		Result:  inventory.Result{Workloads: ws},
+		StuckTerminating: []termhealth.Issue{
+			{Kind: "PersistentVolumeClaim", Namespace: "shop", Name: "data", Age: "20m", Reason: "pvc-protection — still mounted by pod shop/db-0"},
+		},
+	}
+	var buf bytes.Buffer
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "shop/data  Pod  0/1 Failed") {
+		t.Errorf("a stuck-terminating PVC sharing the pod's namespace+name must not suppress the Pod workload row:\n%s", out)
+	}
+}
+
+// TestPrintInventory_StuckTerminatingSuppressionDoesNotMutateCallerSlice
+// pins the aliasing ruling: PrintInventory must allocate a new slice rather
+// than filter in.Result.Workloads in place, because that slice shares the
+// caller's backing array and internal/cli still holds scan.Result after
+// rendering.
+func TestPrintInventory_StuckTerminatingSuppressionDoesNotMutateCallerSlice(t *testing.T) {
+	ws := []inventory.Workload{
+		{Namespace: "shop", Name: "orphan", Kind: "Pod", Desired: 1, Ready: 0, Status: "Failed"},
+		{Namespace: "shop", Name: "keep", Kind: "Deployment", Desired: 1, Ready: 1, Status: "Running"},
+	}
+	in := Input{
+		Cluster: clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1},
+		Result:  inventory.Result{Workloads: ws},
+		StuckTerminating: []termhealth.Issue{
+			{Kind: "Pod", Namespace: "shop", Name: "orphan", Age: "5m", Reason: "finalizer example.com/cleanup-hook"},
+		},
+	}
+	var buf bytes.Buffer
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	if len(ws) != 2 || ws[0].Name != "orphan" || ws[1].Name != "keep" {
+		t.Fatalf("caller's Workloads slice must be untouched by the filter, got %+v", ws)
+	}
+}
+
 func TestPrintInventory_PDBIssues(t *testing.T) {
 	var buf bytes.Buffer
 	in := Input{

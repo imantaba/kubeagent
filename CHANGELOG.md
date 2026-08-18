@@ -370,6 +370,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   already does on its own, narrower key. No `schemaVersion` moves and no
   golden file changes: this reshapes the prompt, not the report.
 
+- **A pod both `Failed` and stuck-terminating rendered twice.** `scan`'s
+  NEEDS ATTENTION block printed the workload's own `Failed` row and a
+  separate `StuckTerminating` row for the same pod, saying the same thing
+  twice under two headings — the terminating row already names *why* the
+  pod is `Failed` (a finalizer, a grace period, or a `pvc-protection`
+  block). The workload row is now suppressed when a `StuckTerminating`
+  issue names the same kind (`Pod`), namespace and name, and the workload's
+  own status is `Failed`; the terminating row survives, since it carries
+  the reason the workload row would not. This is the same zero-redundancy
+  pattern `RolloutStuck` already follows when a pod-level finding names the
+  cause, applied to a new overlap rather than a new rule. The
+  failing-workload count in the summary line drops by one per suppression
+  without a separate patch — `Status == "Failed"` is one of the conditions
+  that count was already keying on — and the stuck-terminating count is
+  untouched. Nothing else moves: no detector runs differently, `gate`'s
+  verdict is unaffected (both rows were already `warning`), and JSON output
+  only loses an array element, so no `schemaVersion` moves.
+
 ### Changed
 
 - **`KUBEAGENT_WEBHOOK_TIMEOUT_SECONDS` is now validated instead of silently

@@ -1047,11 +1047,14 @@ export ANTHROPIC_API_KEY=sk-ant-...
 Sample output for a CrashLoopBackOff pod:
 
 ```text
-Investigation  shop/api  Deployment
-  consulted: pod shop/api-7f9c-xr2kp (describe), events for shop/api-7f9c-xr2kp
-  Fix first: the pod exits immediately after the DB_HOST env var is resolved —
-  the ConfigMap "api-config" sets DB_HOST to "postgres.internal" which is not
-  reachable from this namespace. Update the ConfigMap or correct the hostname.
+── Investigation ──
+consulted: describe pod shop/api-7f9c-xr2kp · events shop/api-7f9c-xr2kp · related shop/api-7f9c-xr2kp→node
+(model-generated; verify commands before running)
+Fix first: the pod's readiness probe fails every attempt on the same GET
+/healthz timeout, and the node it is scheduled on shows no other pod
+failing the same way, which rules out a node-level cause. Raise the
+container's readinessProbe.timeoutSeconds or find why /healthz is slow to
+answer.
 ```
 
 **Reachable scope:**

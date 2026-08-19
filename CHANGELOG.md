@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `scan --investigate` is smarter per tool call (the hypothesis engine's
+  second slice). The loop's first message now carries the deterministic
+  root-cause hypothesis trace — the same considered/attributed/ruled-out
+  lines `scan --why` prints — with an instruction to verify the attributed
+  causes and spend the budget on what the deterministic pass could not
+  explain. A new `get_log_causes` tool classifies the bounded
+  previous-instance log tail (the same 25-line read `--logs` uses) into a
+  plain-language cause: only the classified, address-redacted cause string
+  crosses the model boundary, never a raw log line, and a refused read names
+  the `pods/log` permission. `get_related` learns the `service` relation
+  (the Services whose selectors match the pod's labels) and `describe`
+  learns the Service kind (type, ports, selector, ready-endpoint count —
+  never a ClusterIP or endpoint address). Loop bounds are unchanged
+  (8 reads, 6 turns), and no JSON schema moves.
+
+### Fixed
+
+- A failed read inside the `--investigate` loop no longer returns the raw
+  client-go error to the model. The error now reduces through the same
+  redaction the CLI's enrichment-failure notice uses: any URL in the error
+  chain is cut to `scheme://host`, dropping the request path and query that
+  the previous behavior leaked.
+
 ## [1.20.0] - 2026-08-19
 
 ### Added

@@ -560,8 +560,22 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   both `omitempty`). `scan --why` renders the trace in the text report;
   JSON always carries it. Attribution behavior is byte-identical: same
   rules, same precedence, same `RootCause` strings, and the trace never
-  reaches `findings.Finding`, so `gate` and `fleet` are untouched. Slices 2
-  (trace-primed `--investigate`) and 3 (the chaos correctness corpus)
-  remain.
+  reaches `findings.Finding`, so `gate` and `fleet` are untouched.
+  Slice 2 has since shipped: `--investigate`'s loop is now trace-primed —
+  its first message carries the same considered/attributed/ruled-out lines
+  `scan --why` prints, with an instruction to verify the attributed causes
+  and spend the budget on what the deterministic pass could not explain. A
+  fourth tool, `get_log_causes`, classifies a crashed container's bounded
+  previous-instance log tail (the same 25-line read `--logs` uses) into a
+  plain-language cause; only the classified, address-redacted cause string
+  crosses the model boundary, never a raw log line, and a refused read
+  names the `pods/log` permission. `get_related` learns the `service`
+  relation and `describe` learns the Service kind (type, ports, selector,
+  ready-endpoint count — never a ClusterIP or endpoint address), reachable
+  only via that hop from an in-scope pod, so scope seeding is unchanged.
+  Every failed read inside the loop now reduces through `redact.Error`
+  instead of returning the raw client-go error. Loop bounds are unchanged
+  (8 reads, 6 turns), Anthropic-only and never-fatal are unchanged, and no
+  JSON schema moves. Only slice 3, the chaos correctness corpus, remains.
   The remaining post-1.0 work is other baseline dimensions and the
-  hypothesis engine's remaining slices.
+  hypothesis engine's last slice, the chaos correctness corpus.

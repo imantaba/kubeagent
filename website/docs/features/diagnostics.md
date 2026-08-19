@@ -1237,9 +1237,11 @@ JSON evidence ends in `…` and you need the rest, `kubectl -n <ns> describe pod
 
 `kubeagent scan --investigate` runs the full scan, then launches a single
 bounded, read-only, model-driven tool-use loop over everything the scan
-flagged. The model can describe a flagged object, list its events, and hop to
-related resources (the owners its `ownerReferences` name, its node, or its
-PVCs) to chase a root cause across the findings' resource graph. When the
+flagged. The model can describe a flagged object, list its events, hop to
+related resources (the owners its `ownerReferences` name, its node, its
+PersistentVolumeClaims, or the Services whose selectors match its labels),
+and classify a crashed container's previous-log tail into a plain-language
+cause, to chase a root cause across the findings' resource graph. When the
 loop concludes it emits an **Investigation** section:
 an evidence trail (`consulted: ...` line) followed by a grounded Fix-first
 narrative. The **commands** are kubeagent's deterministic, pre-reviewed ones,
@@ -1264,6 +1266,14 @@ container's readinessProbe.timeoutSeconds or find why /healthz is slow to
 answer.
 ```
 
+**Trace-primed.** The loop's first message now carries the deterministic
+root-cause hypothesis trace — the same per-workload `considered … :
+attributed/ruled out/outranked` lines `scan --why` prints — with an
+instruction to verify the attributed causes with the tools and spend the
+budget on what the deterministic pass could not explain. This is a
+difference from `--explain` by design: `--explain`'s payload excludes node
+names, while `--investigate`'s prompt and tools already surface them.
+
 **Reachable scope:**
 
 - The set of objects the loop may read is seeded from the flagged workloads
@@ -1272,18 +1282,23 @@ answer.
   cluster verdict, begins with nothing reachable: the workload seed is
   empty, so every tool call the model attempts on such a run is refused by
   the closure guard.
-- Reachability follows the object's **kind**, and the three tools gate
+- Reachability follows the object's **kind**, and the four tools gate
   differently. `describe` reads structured status only for `pod`,
-  `deployment`, `replicaset`, `statefulset`, `daemonset`, `job`, `node` and
-  `pvc`, and only when the scope already holds that object; any other kind is
-  refused. `get_related` sources only from an in-scope pod and grows the set
-  by `owner`, `node` or `pvc`. `get_events` is the exception: it gates on
-  namespace and name **alone**, ignoring kind, and queries the API by
-  `involvedObject.name` — so events for an object of any kind come back once
-  something of that namespace and name is in scope.
+  `deployment`, `replicaset`, `statefulset`, `daemonset`, `job`, `node`,
+  `pvc` and `service`, and only when the scope already holds that object;
+  any other kind is refused. `get_related` sources only from an in-scope pod
+  and grows the set by `owner`, `node`, `pvc` or `service`. `get_log_causes`
+  reads only a pod already in scope — the same gate as `describe pod`.
+  `get_events` is the exception: it gates on namespace and name **alone**,
+  ignoring kind, and queries the API by `involvedObject.name` — so events
+  for an object of any kind come back once something of that namespace and
+  name is in scope.
 - Applied to the object-level finding families a scan can flag: a
   PersistentVolumeClaim finding is describable, one hop from an in-scope pod
-  that mounts the claim. Stuck-terminating is three kinds rather than one — a
+  that mounts the claim. A Service finding is likewise describable, but only
+  via the `service` hop from an in-scope pod — scope seeding is unchanged,
+  so a run with only Service findings still begins with nothing reachable,
+  as above. Stuck-terminating is three kinds rather than one — a
   Namespace, a Pod or a PersistentVolumeClaim — and its Pod and
   PersistentVolumeClaim arms use those same paths. PodDisruptionBudget,
   HorizontalPodAutoscaler, admission webhook, ResourceQuota, ingress route
@@ -1313,17 +1328,27 @@ answer.
   investigate a few of them in depth rather than all of them shallowly. That
   bound is on the number of reads and turns, not on their size — a turn's
   token cost still varies with how much a tool call's result contains.
-- **No logs** — `--investigate` does not fetch container logs. It uses
-  structured Kubernetes object reads only (describe / events / get), so no
-  raw container output leaves the process.
+- **Logs never cross raw.** `get_log_causes` reads the same bounded
+  previous-instance tail (last 25 lines) that `--logs` uses, on demand and
+  whether or not `--logs` was passed — but only the classified cause crosses
+  the model boundary: a fixed-vocabulary string, address-redacted. No raw
+  log line ever leaves the process; the excerpt `--logs` renders locally is
+  deliberately discarded here. A refused read returns a fixed refusal naming
+  the `pods/log` permission.
 - **Bounded egress** — what leaves the process is the scan's own finding
   inventory (each finding's reason and evidence, a redacted log cause when
   one is present, container resource requests and limits, kubeagent's
-  suggested fix, and any rollout image change) plus, for each tool call, an
-  object's status, conditions and events together with the scheduling-relevant
-  spec fields: node name, taints, schedulability, storage class, PVC claim
-  names and the bound PersistentVolume name. Never sent: container env
-  values, args or command, Secret or ConfigMap data, and container logs.
+  suggested fix, and any rollout image change), the hypothesis trace primed
+  into the loop's first message (cause, verdict, reason and confidence per
+  flagged workload), plus, for each tool call, an object's status,
+  conditions and events together with the scheduling-relevant spec fields:
+  node name, taints, schedulability, storage class, PVC claim names and the
+  bound PersistentVolume name; a `get_log_causes` call's classified log
+  cause; and, for a failed read, the API server address reduced to
+  `scheme://host` plus the error's non-URL cause text — no request path or
+  query, where the previous behavior leaked the raw error string. Never
+  sent: container env values, args or command, Secret or ConfigMap data, and
+  any raw log line.
 - **Never writes** — all tool calls are `get`/`list` only. The read-only
   invariant is not relaxed.
 - **Model selection** — reuses `--model` / `KUBEAGENT_MODEL` (default

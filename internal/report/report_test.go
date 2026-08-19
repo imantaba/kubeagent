@@ -2334,6 +2334,32 @@ func TestPrintInventory_CertificatesNotesBullet(t *testing.T) {
 			t.Errorf("must not render the confirmation bullet when --certs was not given, got:\n%s", out)
 		}
 	})
+
+	t.Run("one checked: singular", func(t *testing.T) {
+		var buf bytes.Buffer
+		if err := PrintInventory(Input{Cluster: cluster,
+			Certificates: &certhealth.Report{Checked: 1, WarnDays: 30}}, "text", &buf); err != nil {
+			t.Fatal(err)
+		}
+		if out := buf.String(); !strings.Contains(out, "1 certificate checked, none expired or expiring within 30d") {
+			t.Errorf("missing the singular confirmation bullet, got:\n%s", out)
+		}
+	})
+
+	t.Run("zero checked: says none were found, not that none expired", func(t *testing.T) {
+		var buf bytes.Buffer
+		if err := PrintInventory(Input{Cluster: cluster,
+			Certificates: &certhealth.Report{Checked: 0, WarnDays: 30}}, "text", &buf); err != nil {
+			t.Fatal(err)
+		}
+		out := buf.String()
+		if !strings.Contains(out, "no TLS certificates found to check") {
+			t.Errorf("missing the zero-checked bullet, got:\n%s", out)
+		}
+		if strings.Contains(out, "none expired or expiring") {
+			t.Errorf("a run that checked nothing must not claim none expired, got:\n%s", out)
+		}
+	})
 }
 
 func TestPrintInventory_ConfidenceTags(t *testing.T) {

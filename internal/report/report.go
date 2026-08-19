@@ -742,8 +742,12 @@ func printNotes(in Input, expected []svchealth.Issue, expectedIng []ingresshealt
 	// silent about it. A run with findings renders the CERTIFICATES section
 	// instead, so this bullet and that section never both appear.
 	if rep := in.Certificates; rep != nil && !certificatesRender(rep) {
-		fmt.Fprintf(&b, "  • %d certificates checked, none expired or expiring within %dd\n",
-			rep.Checked, rep.WarnDays)
+		if rep.Checked == 0 {
+			fmt.Fprintf(&b, "  • no TLS certificates found to check\n")
+		} else {
+			fmt.Fprintf(&b, "  • %d %s checked, none expired or expiring within %dd\n",
+				rep.Checked, plural(rep.Checked, "certificate", "certificates"), rep.WarnDays)
+		}
 	}
 	if b.Len() == 0 {
 		return nil

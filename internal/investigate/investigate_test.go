@@ -25,8 +25,8 @@ func TestInvestigate_RunsLoopAndReturnsReport(t *testing.T) {
 		if !strings.Contains(system, "read-only tools") {
 			t.Error("system prompt should carry the investigation instruction")
 		}
-		if len(specs) != 3 {
-			t.Errorf("expected 3 tool specs, got %d", len(specs))
+		if len(specs) != 4 {
+			t.Errorf("expected 4 tool specs, got %d", len(specs))
 		}
 		return &fakeConv{t: t, replies: []reply{
 			{Calls: []toolCall{mkCall("describe", map[string]string{"kind": "pod", "namespace": "shop", "name": "web-abc"})}},

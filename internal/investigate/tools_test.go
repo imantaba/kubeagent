@@ -33,6 +33,9 @@ func TestToolSpecs_RequiredMatchesWhatTheExecutorDereferences(t *testing.T) {
 		// (scope.Allowed, the pod Get call), in.Name (scope.Allowed, the pod
 		// Get call), and in.Relation (the owner/node/pvc switch).
 		{"get_related", []string{"namespace", "name", "relation"}},
+		// getLogCauses dereferences namespace, pod and container: the scope
+		// check needs namespace+pod, and PreviousLogs needs all three.
+		{"get_log_causes", []string{"namespace", "pod", "container"}},
 	}
 
 	byName := make(map[string]toolSpec)

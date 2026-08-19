@@ -7,9 +7,12 @@ import (
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/imantaba/kubeagent/internal/collect"
+	"github.com/imantaba/kubeagent/internal/logscan"
 	"github.com/imantaba/kubeagent/internal/redact"
 	"github.com/imantaba/kubeagent/internal/safetext"
 )
@@ -31,8 +34,10 @@ type toolResult struct {
 }
 
 // Reader executes an allowed tool call via read-only client-go calls, rendering
-// only structured fields — never env, secret data, container args, or logs —
-// and never an address it chose: no PodIP, HostIP, or ClusterIP field is ever
+// only structured fields — never env, secret data, container args, or a raw
+// log line (get_log_causes reads a bounded previous-instance tail but returns
+// only its classified cause) — and never an address it chose: no PodIP,
+// HostIP, or ClusterIP field is ever
 // printed. A condition, waiting/terminated, or event Reason and Message is
 // free text the API server does not validate, so it passes through sanitize on
 // its way out (see describePod), which catches a network address embedded in
@@ -89,6 +94,8 @@ func (r Reader) execute(ctx context.Context, c toolCall, scope *Scope) toolResul
 		return r.getEvents(ctx, c, scope)
 	case "get_related":
 		return r.getRelated(ctx, c, scope)
+	case "get_log_causes":
+		return r.getLogCauses(ctx, c, scope)
 	default:
 		return errResult(c.ID, fmt.Sprintf("unknown tool %q", c.Name))
 	}
@@ -334,4 +341,46 @@ func (r Reader) getRelated(ctx context.Context, c toolCall, scope *Scope) toolRe
 	default:
 		return errResult(c.ID, fmt.Sprintf("unknown relation %q (want owner|node|pvc)", in.Relation))
 	}
+}
+
+// logCausesInput is the wire shape of a get_log_causes call.
+type logCausesInput struct{ Namespace, Pod, Container string }
+
+// getLogCauses classifies the previous-instance log tail of an in-scope pod's
+// container and returns only the classified cause. The raw excerpt never
+// crosses the model boundary: logscan.Clue.Excerpt is deliberately discarded,
+// matching the report's policy split — a LogCause may cross after redaction, a
+// LogExcerpt never does.
+func (r Reader) getLogCauses(ctx context.Context, c toolCall, scope *Scope) toolResult {
+	var in logCausesInput
+	if err := json.Unmarshal(c.Input, &in); err != nil {
+		return errResult(c.ID, "invalid input: "+err.Error())
+	}
+	if !scope.Allowed("pod", in.Namespace, in.Pod) {
+		return errResult(c.ID, fmt.Sprintf("pod %s/%s is not in scope for this investigation", in.Namespace, in.Pod))
+	}
+	log, ok, err := collect.PreviousLogs(ctx, r.client, in.Namespace, in.Pod, in.Container)
+	return logCauseResult(c.ID, in.Namespace, in.Pod, in.Container, log, ok, err)
+}
+
+// logCauseResult turns one PreviousLogs answer into a tool result. It is split
+// from the fetch so every arm is unit-testable: the fake clientset serves a
+// fixed body for GetLogs, so only errors can be injected through it. The
+// refusal arm's text is fixed — the API error's own message never passes
+// through it — and the other-error arm reduces via redact.Error like every
+// failed read in this file.
+func logCauseResult(id, namespace, pod, container, log string, ok bool, err error) toolResult {
+	switch {
+	case apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err):
+		return errResult(id, fmt.Sprintf("reading the previous log of %s/%s was refused: this identity lacks the pods/log get permission", namespace, pod))
+	case err != nil:
+		return errResult(id, redact.Error(err))
+	case !ok:
+		return okResult(id, fmt.Sprintf("no previous-instance log for %s/%s container %q (nothing was refused; the container may not have restarted)", namespace, pod, container))
+	}
+	clue := logscan.Classify(log)
+	if clue.Cause == "" {
+		return okResult(id, fmt.Sprintf("the previous log of %s/%s container %q has no classifiable output", namespace, pod, container))
+	}
+	return okResult(id, "log cause: "+redact.Addresses(clue.Cause))
 }

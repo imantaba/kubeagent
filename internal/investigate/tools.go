@@ -45,5 +45,15 @@ func toolSpecs() []toolSpec {
 			},
 			Required: []string{"namespace", "name", "relation"},
 		},
+		{
+			Name:        "get_log_causes",
+			Description: "Classify the previous-instance log tail (last 25 lines) of an in-scope pod's container into a plain-language crash cause. Returns only the classified cause string — never a raw log line.",
+			Properties: map[string]any{
+				"namespace": prop("the pod's namespace"),
+				"pod":       prop("the pod's name"),
+				"container": prop("the container name within the pod"),
+			},
+			Required: []string{"namespace", "pod", "container"},
+		},
 	}
 }

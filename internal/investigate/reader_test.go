@@ -10,8 +10,10 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 
@@ -587,5 +589,139 @@ func TestReader_FailedReads_ReduceViaRedactError(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// logCauseResult is pure so every arm is testable: the fake clientset's
+// GetLogs serves a fixed body, so content-dependent arms cannot be driven
+// through it.
+func TestLogCauseResult_RefusalNamesPodsLogPermission(t *testing.T) {
+	for _, err := range []error{
+		apierrors.NewForbidden(schema.GroupResource{Resource: "pods/log"}, "web-abc", errors.New("no access")),
+		apierrors.NewUnauthorized("no bearer token"),
+	} {
+		res := logCauseResult("t1", "shop", "web-abc", "app", "", false, err)
+		if !res.IsError {
+			t.Fatalf("expected an error result for %v", err)
+		}
+		want := "reading the previous log of shop/web-abc was refused: this identity lacks the pods/log get permission"
+		if res.Content != want {
+			t.Errorf("content = %q, want %q", res.Content, want)
+		}
+	}
+}
+
+func TestLogCauseResult_OtherErrorReducesViaRedactError(t *testing.T) {
+	err := &url.Error{
+		Op:  "Get",
+		URL: "https://10.96.0.1:6443/api/v1/namespaces/shop/pods/web-abc/log?previous=true",
+		Err: errors.New("connection refused"),
+	}
+	res := logCauseResult("t1", "shop", "web-abc", "app", "", false, err)
+	if !res.IsError {
+		t.Fatal("expected an error result")
+	}
+	if !strings.Contains(res.Content, "https://10.96.0.1:6443") || strings.Contains(res.Content, "/api/v1/") {
+		t.Errorf("want scheme://host only, got %q", res.Content)
+	}
+}
+
+func TestLogCauseResult_NoPreviousInstance(t *testing.T) {
+	res := logCauseResult("t1", "shop", "web-abc", "app", "", false, nil)
+	if res.IsError {
+		t.Fatalf("no previous instance is not an error: %q", res.Content)
+	}
+	want := `no previous-instance log for shop/web-abc container "app" (nothing was refused; the container may not have restarted)`
+	if res.Content != want {
+		t.Errorf("content = %q, want %q", res.Content, want)
+	}
+}
+
+// TestLogCauseResult_ExcerptNeverCrosses is the boundary proof: a classified
+// log returns ONLY the fixed-vocabulary cause. No line of the log itself —
+// addresses, tokens, anything — reaches the result.
+func TestLogCauseResult_ExcerptNeverCrosses(t *testing.T) {
+	log := "dial tcp 10.96.0.10:6379: connect: connection refused\ntoken=not-a-real-routing-key"
+	res := logCauseResult("t1", "shop", "web-abc", "app", log, true, nil)
+	if res.IsError {
+		t.Fatalf("unexpected error: %q", res.Content)
+	}
+	if !strings.HasPrefix(res.Content, "log cause: ") {
+		t.Errorf("want a classified cause, got %q", res.Content)
+	}
+	for _, leaked := range []string{"10.96.0.10", "dial tcp", "not-a-real-routing-key", "token="} {
+		if strings.Contains(res.Content, leaked) {
+			t.Errorf("raw log content crossed the boundary: %q in %q", leaked, res.Content)
+		}
+	}
+}
+
+func TestLogCauseResult_FallbackCauseOnly(t *testing.T) {
+	res := logCauseResult("t1", "shop", "web-abc", "app", "something odd happened", true, nil)
+	want := "log cause: last output before exit (no signature in the last 25 lines)"
+	if res.Content != want {
+		t.Errorf("content = %q, want %q", res.Content, want)
+	}
+	if strings.Contains(res.Content, "something odd happened") {
+		t.Errorf("the last line itself must not cross: %q", res.Content)
+	}
+}
+
+func TestLogCauseResult_UnclassifiableLog(t *testing.T) {
+	// A placeholder-only log classifies to the zero Clue (Cause == "").
+	log := "unable to retrieve container logs for containerd://0123456789abcdef"
+	res := logCauseResult("t1", "shop", "web-abc", "app", log, true, nil)
+	if res.IsError {
+		t.Fatalf("unexpected error: %q", res.Content)
+	}
+	want := `the previous log of shop/web-abc container "app" has no classifiable output`
+	if res.Content != want {
+		t.Errorf("content = %q, want %q", res.Content, want)
+	}
+}
+
+func TestReader_GetLogCauses_OutOfScopeIsRefused(t *testing.T) {
+	r := Reader{client: fake.NewSimpleClientset()}
+	s := NewScope(nil)
+	res := r.execute(context.Background(), call("get_log_causes", map[string]string{"namespace": "shop", "pod": "web-abc", "container": "app"}), s)
+	if !res.IsError || !strings.Contains(res.Content, "not in scope") {
+		t.Errorf("out-of-scope pod must be refused, got %+v", res)
+	}
+}
+
+// TestReader_GetLogCauses_WiredThroughExecute drives the real path: the fake
+// clientset serves its fixed "fake logs" body, which classifies to the
+// fallback cause — and the body itself must not appear in the result.
+func TestReader_GetLogCauses_WiredThroughExecute(t *testing.T) {
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "web-abc", Namespace: "shop"}}
+	r := Reader{client: fake.NewSimpleClientset(pod)}
+	s := NewScope(nil)
+	s.Add("pod", "shop", "web-abc")
+	res := r.execute(context.Background(), call("get_log_causes", map[string]string{"namespace": "shop", "pod": "web-abc", "container": "app"}), s)
+	if res.IsError {
+		t.Fatalf("unexpected error: %q", res.Content)
+	}
+	if res.Content != "log cause: last output before exit (no signature in the last 25 lines)" {
+		t.Errorf("content = %q", res.Content)
+	}
+	if strings.Contains(res.Content, "fake logs") {
+		t.Errorf("the raw log body crossed the boundary: %q", res.Content)
+	}
+}
+
+func TestReader_GetLogCauses_ForbiddenViaReactor(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	client.PrependReactor("get", "pods", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "pods/log"}, "web-abc", errors.New("no access"))
+	})
+	r := Reader{client: client}
+	s := NewScope(nil)
+	s.Add("pod", "shop", "web-abc")
+	res := r.execute(context.Background(), call("get_log_causes", map[string]string{"namespace": "shop", "pod": "web-abc", "container": "app"}), s)
+	if !res.IsError || !strings.Contains(res.Content, "pods/log get permission") {
+		t.Errorf("a forbidden read must name the missing permission, got %+v", res)
+	}
+	if strings.Contains(res.Content, "no access") {
+		t.Errorf("the API error's own text must not pass through the refusal arm: %q", res.Content)
 	}
 }

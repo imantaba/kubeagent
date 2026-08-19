@@ -29,6 +29,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Job-addressed command. `scan --output json` moves to schema version **1.7**
   (added `kind` on a finding, `omitempty`): additive, so every existing
   consumer is unaffected.
+- **A `PVSelectorMismatch` finding pluralizes its exclusion count.** The detail
+  read "(1 otherwise-suitable volume(s) excluded)"; it now reads "volume" or
+  "volumes" by count, the same three-line helper the report renderer already
+  uses — duplicated into `internal/pvchealth` because the dependency runs the
+  other way.
+- **The certificates NOTES bullet no longer claims a clean bill it never
+  checked.** A scan that found no TLS certificates rendered "0 certificates
+  checked, none expired or expiring within 30d" — a reassurance with an empty
+  denominator. Zero checked now says "no TLS certificates found to check";
+  a non-zero count keeps the old sentence, singular/plural correct.
+- **`--explain` prompts no longer carry an address quoted in a finding's
+  evidence.** Evidence is API text and quotes addresses outright — a probe
+  finding carries the kubelet's `Get http://<pod-ip>/…` message, a DNS finding
+  names the resolver it asked. Both prompt builders (the scan explanation and
+  the watch daemon's incident explanation) now run evidence through the same
+  address redaction the log-cause line already gets, at the boundary where the
+  text leaves the process. The rendered scan report keeps the raw evidence,
+  and matching decisions upstream still run on the raw value.
+- **`scan --investigate`'s `get_related` node and PVC arms now sanitize what
+  they render.** The owner arm has done this since 1.18.0; the node and PVC
+  arms had the same defect: a pod's `spec.nodeName` and a volume's `claimName`
+  reached both the rendered tool result and the `Scope` entry raw. Both now
+  pass through the same ingress sanitizer, with the same sanitized value in
+  both sinks, so the scope table and the rendered line cannot disagree about
+  what is in scope.
 
 ## [1.18.0] - 2026-08-19
 

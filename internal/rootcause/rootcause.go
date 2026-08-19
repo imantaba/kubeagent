@@ -152,7 +152,10 @@ func registryHost(image string) string {
 // threshold is a single workload — the PVC is independently diagnosed, so this
 // is a join against evidence, not an inference. Pure and deterministic (issue
 // keys checked in sorted order). Call after Annotate (nodes win) and before
-// AnnotateRegistry (evidence beats statistics).
+// AnnotateRegistry (evidence beats statistics). Every own-namespace broken
+// PVC evaluated for a flagged workload is recorded in w.RootCauseTrace with a
+// verdict, whatever the outcome; a PVC in another namespace is not a
+// candidate.
 func AnnotatePVC(workloads []inventory.Workload, podPVCs map[string][]string, issues []pvchealth.Issue) {
 	if len(issues) == 0 || len(podPVCs) == 0 {
 		return
@@ -169,20 +172,33 @@ func AnnotatePVC(workloads []inventory.Workload, podPVCs map[string][]string, is
 	sort.Strings(keys)
 	for i := range workloads {
 		w := &workloads[i]
-		if !w.Flagged() || w.RootCause != "" {
+		if !w.Flagged() {
 			continue
 		}
-		mounted := map[string]bool{}
+		mounted := map[string]string{} // "ns/claim" → first pod mounting it
 		for _, p := range w.Pods {
 			for _, claim := range podPVCs[w.Namespace+"/"+p.Name] {
-				mounted[w.Namespace+"/"+claim] = true
+				key := w.Namespace + "/" + claim
+				if _, seen := mounted[key]; !seen {
+					mounted[key] = p.Name
+				}
 			}
 		}
 		for _, key := range keys {
-			if mounted[key] {
-				name := key[strings.IndexByte(key, '/')+1:]
-				workloads[i].RootCause = "PVC " + name + " (" + reasonByKey[key] + ")"
-				break
+			if !strings.HasPrefix(key, w.Namespace+"/") {
+				continue // a PVC in another namespace is not a candidate for this workload
+			}
+			name := key[strings.IndexByte(key, '/')+1:]
+			cause := "PVC " + name + " (" + reasonByKey[key] + ")"
+			pod, isMounted := mounted[key]
+			switch {
+			case !isMounted:
+				record(w, cause, "pvc", inventory.VerdictRuledOut, "not mounted by this workload's pods")
+			case w.RootCause == "":
+				w.RootCause = cause
+				record(w, cause, "pvc", inventory.VerdictAttributed, "pod "+pod+" mounts it")
+			default:
+				record(w, cause, "pvc", inventory.VerdictOutranked, w.RootCause+" is the stronger cause")
 			}
 		}
 	}

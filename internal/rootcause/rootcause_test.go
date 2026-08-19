@@ -449,3 +449,96 @@ func TestAnnotate_TraceEmptyForUnflaggedAndEmptyDown(t *testing.T) {
 		t.Errorf("empty down list produced a trace: %+v", flagged[0].RootCauseTrace)
 	}
 }
+
+func TestAnnotatePVC_TraceAttributedNamesMountingPod(t *testing.T) {
+	ws := []inventory.Workload{pvcWL("shop", "reports", "reports-1")}
+	podPVCs := map[string][]string{"shop/reports-1": {"reports-data"}}
+	issues := []pvchealth.Issue{{Namespace: "shop", Name: "reports-data", Reason: "ProvisioningFailed"}}
+	AnnotatePVC(ws, podPVCs, issues)
+	want := inventory.Hypothesis{
+		Cause:   "PVC reports-data (ProvisioningFailed)",
+		Kind:    "pvc",
+		Verdict: inventory.VerdictAttributed,
+		Reason:  "pod reports-1 mounts it",
+	}
+	if len(ws[0].RootCauseTrace) != 1 || ws[0].RootCauseTrace[0] != want {
+		t.Errorf("trace = %+v, want [%+v]", ws[0].RootCauseTrace, want)
+	}
+}
+
+func TestAnnotatePVC_TraceRuledOutNotMounted(t *testing.T) {
+	ws := []inventory.Workload{pvcWL("shop", "reports", "reports-1")}
+	podPVCs := map[string][]string{"shop/reports-1": {"other-healthy-pvc"}}
+	issues := []pvchealth.Issue{{Namespace: "shop", Name: "reports-data", Reason: "ProvisioningFailed"}}
+	AnnotatePVC(ws, podPVCs, issues)
+	if ws[0].RootCause != "" {
+		t.Fatalf("RootCause = %q, want empty", ws[0].RootCause)
+	}
+	want := inventory.Hypothesis{
+		Cause:   "PVC reports-data (ProvisioningFailed)",
+		Kind:    "pvc",
+		Verdict: inventory.VerdictRuledOut,
+		Reason:  "not mounted by this workload's pods",
+	}
+	if len(ws[0].RootCauseTrace) != 1 || ws[0].RootCauseTrace[0] != want {
+		t.Errorf("trace = %+v, want [%+v]", ws[0].RootCauseTrace, want)
+	}
+}
+
+func TestAnnotatePVC_TraceOutrankedByNodeAttribution(t *testing.T) {
+	w := pvcWL("shop", "reports", "reports-1")
+	w.RootCause = "node worker-2 (NotReady)"
+	ws := []inventory.Workload{w}
+	podPVCs := map[string][]string{"shop/reports-1": {"reports-data"}}
+	issues := []pvchealth.Issue{{Namespace: "shop", Name: "reports-data", Reason: "ProvisioningFailed"}}
+	AnnotatePVC(ws, podPVCs, issues)
+	if ws[0].RootCause != "node worker-2 (NotReady)" {
+		t.Fatalf("node attribution must survive, got %q", ws[0].RootCause)
+	}
+	want := inventory.Hypothesis{
+		Cause:   "PVC reports-data (ProvisioningFailed)",
+		Kind:    "pvc",
+		Verdict: inventory.VerdictOutranked,
+		Reason:  "node worker-2 (NotReady) is the stronger cause",
+	}
+	if len(ws[0].RootCauseTrace) != 1 || ws[0].RootCauseTrace[0] != want {
+		t.Errorf("trace = %+v, want [%+v]", ws[0].RootCauseTrace, want)
+	}
+}
+
+func TestAnnotatePVC_TraceOutrankedSameKindTie(t *testing.T) {
+	// Pod mounts two broken PVCs: alpha-data wins (sorted first, existing
+	// pinned behavior), zeta-data matched evidence but lost.
+	ws := []inventory.Workload{pvcWL("shop", "reports", "reports-1")}
+	podPVCs := map[string][]string{"shop/reports-1": {"zeta-data", "alpha-data"}}
+	issues := []pvchealth.Issue{
+		{Namespace: "shop", Name: "zeta-data", Reason: "ProvisioningFailed"},
+		{Namespace: "shop", Name: "alpha-data", Reason: "FailedBinding"},
+	}
+	AnnotatePVC(ws, podPVCs, issues)
+	if ws[0].RootCause != "PVC alpha-data (FailedBinding)" {
+		t.Fatalf("RootCause = %q", ws[0].RootCause)
+	}
+	if len(ws[0].RootCauseTrace) != 2 {
+		t.Fatalf("trace has %d entries, want 2: %+v", len(ws[0].RootCauseTrace), ws[0].RootCauseTrace)
+	}
+	wantSecond := inventory.Hypothesis{
+		Cause:   "PVC zeta-data (ProvisioningFailed)",
+		Kind:    "pvc",
+		Verdict: inventory.VerdictOutranked,
+		Reason:  "PVC alpha-data (FailedBinding) is the stronger cause",
+	}
+	if ws[0].RootCauseTrace[1] != wantSecond {
+		t.Errorf("trace[1] = %+v, want %+v", ws[0].RootCauseTrace[1], wantSecond)
+	}
+}
+
+func TestAnnotatePVC_TraceSkipsForeignNamespaceCandidates(t *testing.T) {
+	ws := []inventory.Workload{pvcWL("shop", "reports", "reports-1")}
+	podPVCs := map[string][]string{"shop/reports-1": {"reports-data"}}
+	issues := []pvchealth.Issue{{Namespace: "other", Name: "reports-data", Reason: "ProvisioningFailed"}}
+	AnnotatePVC(ws, podPVCs, issues)
+	if len(ws[0].RootCauseTrace) != 0 {
+		t.Errorf("a foreign-namespace PVC is not a candidate, got trace %+v", ws[0].RootCauseTrace)
+	}
+}

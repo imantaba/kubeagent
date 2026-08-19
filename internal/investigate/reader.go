@@ -17,6 +17,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/logscan"
 	"github.com/imantaba/kubeagent/internal/redact"
 	"github.com/imantaba/kubeagent/internal/safetext"
+	"github.com/imantaba/kubeagent/internal/svchealth"
 )
 
 // toolCall is one model-requested read (backend-agnostic; the Anthropic backend
@@ -261,7 +262,11 @@ func describePVC(p *corev1.PersistentVolumeClaim) string {
 // IP. Port names, selector keys and values, and targetPort are API-validated
 // syntax, so none pass through sanitize -- the same reasoning as describePod's
 // pod and node names. It is a method, not a free function like the other
-// describe renderers, because the ready-endpoint count needs a second read.
+// describe renderers, because the ready-endpoint count needs a second read --
+// EndpointSlices, the resource core RBAC already grants, never the legacy
+// Endpoints resource, which no shipped kubeagent role covers. The count reuses
+// svchealth.ReadyEndpoints, the same logic every other ready-endpoint answer
+// in kubeagent uses (svchealth, webhookhealth, ingresshealth).
 func (r Reader) describeService(ctx context.Context, svc *corev1.Service) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "service %s/%s: type=%s\n", svc.Namespace, svc.Name, svc.Spec.Type)
@@ -278,18 +283,11 @@ func (r Reader) describeService(ctx context.Context, svc *corev1.Service) string
 		sort.Strings(pairs)
 		fmt.Fprintf(&b, "  selector: %s\n", strings.Join(pairs, ","))
 	}
-	ep, err := r.client.CoreV1().Endpoints(svc.Namespace).Get(ctx, svc.Name, metav1.GetOptions{})
-	switch {
-	case apierrors.IsNotFound(err):
-		b.WriteString("  ready endpoints: 0 (no Endpoints object)\n")
-	case err != nil:
+	slices, err := collect.EndpointSlices(ctx, r.client, svc.Namespace)
+	if err != nil {
 		fmt.Fprintf(&b, "  ready endpoints: unknown (%s)\n", redact.Error(err))
-	default:
-		ready := 0
-		for _, ss := range ep.Subsets {
-			ready += len(ss.Addresses)
-		}
-		fmt.Fprintf(&b, "  ready endpoints: %d\n", ready)
+	} else {
+		fmt.Fprintf(&b, "  ready endpoints: %d\n", svchealth.ReadyEndpoints(*svc, slices))
 	}
 	return b.String()
 }
@@ -401,10 +399,10 @@ func (r Reader) getRelated(ctx context.Context, c toolCall, scope *Scope) toolRe
 			if !labels.SelectorFromSet(svc.Spec.Selector).Matches(labels.Set(p.Labels)) {
 				continue
 			}
-			// svc.Name is the listed object's own metadata.name, which the
-			// API server validates — unlike the owner/node/pvc arms above,
-			// whose names come from unvalidated fields of another object —
-			// so no safetext.Line here. Both sinks get the same value.
+			// svc.Name is the listed object's own metadata.name — unlike the
+			// owner/node/pvc arms above, which read a name out of another
+			// object's fields and sanitize it at that ingress — so no
+			// safetext.Line here. Both sinks get the same value.
 			scope.Add("service", in.Namespace, svc.Name)
 			names = append(names, svc.Name)
 		}

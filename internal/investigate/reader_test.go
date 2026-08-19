@@ -10,6 +10,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -18,6 +19,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 
+	"github.com/imantaba/kubeagent/internal/rbacprofile"
 	"github.com/imantaba/kubeagent/internal/redact"
 	"github.com/imantaba/kubeagent/internal/safetext"
 )
@@ -739,14 +741,17 @@ func TestReader_DescribeService_RendersStructuredShape(t *testing.T) {
 			},
 		},
 	}
-	ep := &corev1.Endpoints{
-		ObjectMeta: metav1.ObjectMeta{Name: "frontend", Namespace: "shop"},
-		Subsets: []corev1.EndpointSubset{{
-			Addresses:         []corev1.EndpointAddress{{IP: "10.244.1.5"}, {IP: "10.244.2.6"}},
-			NotReadyAddresses: []corev1.EndpointAddress{{IP: "10.244.3.7"}},
-		}},
+	ready, notReady := true, false
+	slice := &discoveryv1.EndpointSlice{
+		ObjectMeta:  metav1.ObjectMeta{Name: "frontend-abc", Namespace: "shop", Labels: map[string]string{discoveryv1.LabelServiceName: "frontend"}},
+		AddressType: discoveryv1.AddressTypeIPv4,
+		Endpoints: []discoveryv1.Endpoint{
+			{Addresses: []string{"10.244.1.5"}, Conditions: discoveryv1.EndpointConditions{Ready: &ready}},
+			{Addresses: []string{"10.244.2.6"}, Conditions: discoveryv1.EndpointConditions{Ready: &ready}},
+			{Addresses: []string{"10.244.3.7"}, Conditions: discoveryv1.EndpointConditions{Ready: &notReady}},
+		},
 	}
-	r := Reader{client: fake.NewSimpleClientset(svc, ep)}
+	r := Reader{client: fake.NewSimpleClientset(svc, slice)}
 	s := NewScope(nil)
 	s.Add("service", "shop", "frontend")
 	res := r.execute(context.Background(), call("describe", map[string]string{"kind": "service", "namespace": "shop", "name": "frontend"}), s)
@@ -771,7 +776,7 @@ func TestReader_DescribeService_RendersStructuredShape(t *testing.T) {
 	}
 }
 
-func TestReader_DescribeService_NoEndpointsObjectIsZero(t *testing.T) {
+func TestReader_DescribeService_NoEndpointSlicesIsZero(t *testing.T) {
 	svc := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{Name: "frontend", Namespace: "shop"},
 		Spec:       corev1.ServiceSpec{Type: corev1.ServiceTypeClusterIP},
@@ -783,7 +788,7 @@ func TestReader_DescribeService_NoEndpointsObjectIsZero(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("unexpected error: %q", res.Content)
 	}
-	for _, want := range []string{"selector: (none)", "ready endpoints: 0 (no Endpoints object)"} {
+	for _, want := range []string{"selector: (none)", "ready endpoints: 0"} {
 		if !strings.Contains(res.Content, want) {
 			t.Errorf("missing %q, got:\n%s", want, res.Content)
 		}
@@ -866,5 +871,102 @@ func TestReader_GetRelated_UnknownRelationNamesService(t *testing.T) {
 	res := r.execute(context.Background(), call("get_related", map[string]string{"namespace": "shop", "name": "web-abc", "relation": "secrets"}), s)
 	if !res.IsError || !strings.Contains(res.Content, "want owner|node|pvc|service") {
 		t.Errorf("the default arm must name the full relation set, got %+v", res)
+	}
+}
+
+// Every read the tool loop can issue must stay within the grants kubeagent's
+// own RBAC ships: the core rules plus the logs feature's pods/log. The
+// Endpoints regression showed why this pin must exist — reader tests against
+// a permissive fake clientset stay green even when a read touches a resource
+// no shipped manifest grants.
+func TestReaderReadsStayWithinGrantedRBAC(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "web-abc", Namespace: "shop",
+			Labels:          map[string]string{"app": "web"},
+			OwnerReferences: []metav1.OwnerReference{{Kind: "ReplicaSet", Name: "web-5f"}},
+		},
+		Spec: corev1.PodSpec{
+			NodeName: "node-1",
+			Volumes: []corev1.Volume{{
+				Name: "data",
+				VolumeSource: corev1.VolumeSource{
+					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "data-pvc"},
+				},
+			}},
+		},
+	}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-1"}}
+	pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "data-pvc", Namespace: "shop"}}
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "frontend", Namespace: "shop"},
+		Spec:       corev1.ServiceSpec{Selector: map[string]string{"app": "web"}},
+	}
+	ready := true
+	slice := &discoveryv1.EndpointSlice{
+		ObjectMeta:  metav1.ObjectMeta{Name: "frontend-abc", Namespace: "shop", Labels: map[string]string{discoveryv1.LabelServiceName: "frontend"}},
+		AddressType: discoveryv1.AddressTypeIPv4,
+		Endpoints:   []discoveryv1.Endpoint{{Addresses: []string{"10.244.1.5"}, Conditions: discoveryv1.EndpointConditions{Ready: &ready}}},
+	}
+	event := &corev1.Event{
+		ObjectMeta:     metav1.ObjectMeta{Name: "web-abc.1", Namespace: "shop"},
+		InvolvedObject: corev1.ObjectReference{Name: "web-abc", Namespace: "shop"},
+		Reason:         "Started", Message: "started container", Count: 1,
+	}
+
+	client := fake.NewSimpleClientset(pod, node, pvc, svc, slice, event)
+	r := Reader{client: client}
+
+	s := NewScope(nil)
+	s.Add("pod", "shop", "web-abc")
+	s.Add("node", "", "node-1")
+	s.Add("pvc", "shop", "data-pvc")
+	s.Add("service", "shop", "frontend")
+
+	calls := []toolCall{
+		call("describe", map[string]string{"kind": "pod", "namespace": "shop", "name": "web-abc"}),
+		call("describe", map[string]string{"kind": "node", "namespace": "", "name": "node-1"}),
+		call("describe", map[string]string{"kind": "pvc", "namespace": "shop", "name": "data-pvc"}),
+		call("describe", map[string]string{"kind": "service", "namespace": "shop", "name": "frontend"}),
+		call("get_events", map[string]string{"namespace": "shop", "name": "web-abc"}),
+		call("get_related", map[string]string{"namespace": "shop", "name": "web-abc", "relation": "owner"}),
+		call("get_related", map[string]string{"namespace": "shop", "name": "web-abc", "relation": "node"}),
+		call("get_related", map[string]string{"namespace": "shop", "name": "web-abc", "relation": "pvc"}),
+		call("get_related", map[string]string{"namespace": "shop", "name": "web-abc", "relation": "service"}),
+		call("get_log_causes", map[string]string{"namespace": "shop", "pod": "web-abc", "container": "app"}),
+	}
+	for _, c := range calls {
+		if res := r.execute(context.Background(), c, s); res.IsError {
+			t.Fatalf("tool %q unexpectedly refused: %q", c.Name, res.Content)
+		}
+	}
+
+	granted := map[string]bool{}
+	for _, name := range []string{"core", "logs"} {
+		f, ok := rbacprofile.Lookup(name)
+		if !ok {
+			t.Fatalf("no %q feature in rbacprofile", name)
+		}
+		for _, rule := range f.Rules {
+			for _, res := range rule.Resources {
+				granted[rule.APIGroup+"/"+res] = true
+			}
+		}
+	}
+
+	for _, a := range client.Actions() {
+		verb := a.GetVerb()
+		if verb != "get" && verb != "list" {
+			t.Errorf("action %s %s uses verb %q; only get/list are ever granted", verb, a.GetResource(), verb)
+			continue
+		}
+		gvr := a.GetResource()
+		resource := gvr.Group + "/" + gvr.Resource
+		if sub := a.GetSubresource(); sub != "" {
+			resource += "/" + sub
+		}
+		if !granted[resource] {
+			t.Errorf("action %s %s touches %q, which no shipped RBAC grant (core or logs) covers", verb, gvr, resource)
+		}
 	}
 }

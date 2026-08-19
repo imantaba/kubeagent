@@ -561,7 +561,7 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   JSON always carries it. Attribution behavior is byte-identical: same
   rules, same precedence, same `RootCause` strings, and the trace never
   reaches `findings.Finding`, so `gate` and `fleet` are untouched.
-  Slice 2 has since shipped: `--investigate`'s loop is now trace-primed —
+  Slice 2 has since shipped (v1.21.0): `--investigate`'s loop is now trace-primed —
   its first message carries the same considered/attributed/ruled-out lines
   `scan --why` prints, with an instruction to verify the attributed causes
   and spend the budget on what the deterministic pass could not explain. A

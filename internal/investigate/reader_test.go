@@ -14,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 
@@ -723,5 +724,147 @@ func TestReader_GetLogCauses_ForbiddenViaReactor(t *testing.T) {
 	}
 	if strings.Contains(res.Content, "no access") {
 		t.Errorf("the API error's own text must not pass through the refusal arm: %q", res.Content)
+	}
+}
+
+func TestReader_DescribeService_RendersStructuredShape(t *testing.T) {
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "frontend", Namespace: "shop"},
+		Spec: corev1.ServiceSpec{
+			Type:      corev1.ServiceTypeClusterIP,
+			ClusterIP: "10.96.14.203",
+			Selector:  map[string]string{"tier": "frontend", "app": "web"},
+			Ports: []corev1.ServicePort{
+				{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP, TargetPort: intstr.FromInt(8080)},
+			},
+		},
+	}
+	ep := &corev1.Endpoints{
+		ObjectMeta: metav1.ObjectMeta{Name: "frontend", Namespace: "shop"},
+		Subsets: []corev1.EndpointSubset{{
+			Addresses:         []corev1.EndpointAddress{{IP: "10.244.1.5"}, {IP: "10.244.2.6"}},
+			NotReadyAddresses: []corev1.EndpointAddress{{IP: "10.244.3.7"}},
+		}},
+	}
+	r := Reader{client: fake.NewSimpleClientset(svc, ep)}
+	s := NewScope(nil)
+	s.Add("service", "shop", "frontend")
+	res := r.execute(context.Background(), call("describe", map[string]string{"kind": "service", "namespace": "shop", "name": "frontend"}), s)
+	if res.IsError {
+		t.Fatalf("unexpected error: %q", res.Content)
+	}
+	for _, want := range []string{
+		"service shop/frontend: type=ClusterIP",
+		"port http 80/TCP -> 8080",
+		"selector: app=web,tier=frontend", // sorted keys
+		"ready endpoints: 2",              // not-ready addresses excluded
+	} {
+		if !strings.Contains(res.Content, want) {
+			t.Errorf("describe service missing %q, got:\n%s", want, res.Content)
+		}
+	}
+	if strings.Contains(res.Content, "10.96.14.203") {
+		t.Errorf("ClusterIP must never render: %q", res.Content)
+	}
+	if strings.Contains(res.Content, "10.244.") {
+		t.Errorf("endpoint addresses must never render: %q", res.Content)
+	}
+}
+
+func TestReader_DescribeService_NoEndpointsObjectIsZero(t *testing.T) {
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "frontend", Namespace: "shop"},
+		Spec:       corev1.ServiceSpec{Type: corev1.ServiceTypeClusterIP},
+	}
+	r := Reader{client: fake.NewSimpleClientset(svc)}
+	s := NewScope(nil)
+	s.Add("service", "shop", "frontend")
+	res := r.execute(context.Background(), call("describe", map[string]string{"kind": "service", "namespace": "shop", "name": "frontend"}), s)
+	if res.IsError {
+		t.Fatalf("unexpected error: %q", res.Content)
+	}
+	for _, want := range []string{"selector: (none)", "ready endpoints: 0 (no Endpoints object)"} {
+		if !strings.Contains(res.Content, want) {
+			t.Errorf("missing %q, got:\n%s", want, res.Content)
+		}
+	}
+}
+
+func TestReader_DescribeService_OutOfScopeIsRefused(t *testing.T) {
+	svc := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "frontend", Namespace: "shop"}}
+	r := Reader{client: fake.NewSimpleClientset(svc)}
+	res := r.execute(context.Background(), call("describe", map[string]string{"kind": "service", "namespace": "shop", "name": "frontend"}), NewScope(nil))
+	if !res.IsError || !strings.Contains(res.Content, "not in scope") {
+		t.Errorf("an out-of-scope service must be refused, got %+v", res)
+	}
+}
+
+// TestReader_GetRelated_Service_AddsMatchesToScope proves the hop and its
+// load-bearing guard: labels.SelectorFromSet of an EMPTY selector matches
+// every pod, so a selectorless Service must be skipped explicitly.
+func TestReader_GetRelated_Service_AddsMatchesToScope(t *testing.T) {
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "web-abc", Namespace: "shop", Labels: map[string]string{"app": "web"}}}
+	matching := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "frontend", Namespace: "shop"},
+		Spec:       corev1.ServiceSpec{Selector: map[string]string{"app": "web"}},
+	}
+	other := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "backend", Namespace: "shop"},
+		Spec:       corev1.ServiceSpec{Selector: map[string]string{"app": "db"}},
+	}
+	selectorless := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "external", Namespace: "shop"},
+	}
+	r := Reader{client: fake.NewSimpleClientset(pod, matching, other, selectorless)}
+	s := NewScope(nil)
+	s.Add("pod", "shop", "web-abc")
+	res := r.execute(context.Background(), call("get_related", map[string]string{"namespace": "shop", "name": "web-abc", "relation": "service"}), s)
+	if res.IsError {
+		t.Fatalf("unexpected error: %q", res.Content)
+	}
+	if !strings.Contains(res.Content, "Services selecting web-abc: frontend") {
+		t.Errorf("matching service missing, got %q", res.Content)
+	}
+	for _, absent := range []string{"backend", "external"} {
+		if strings.Contains(res.Content, absent) {
+			t.Errorf("%q must not match, got %q", absent, res.Content)
+		}
+	}
+	if !s.Allowed("service", "shop", "frontend") {
+		t.Error("the matching service must enter scope")
+	}
+	for _, name := range []string{"backend", "external"} {
+		if s.Allowed("service", "shop", name) {
+			t.Errorf("service %q must not enter scope", name)
+		}
+	}
+}
+
+func TestReader_GetRelated_Service_NoMatchIsNotAnError(t *testing.T) {
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "web-abc", Namespace: "shop", Labels: map[string]string{"app": "web"}}}
+	other := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "backend", Namespace: "shop"},
+		Spec:       corev1.ServiceSpec{Selector: map[string]string{"app": "db"}},
+	}
+	r := Reader{client: fake.NewSimpleClientset(pod, other)}
+	s := NewScope(nil)
+	s.Add("pod", "shop", "web-abc")
+	res := r.execute(context.Background(), call("get_related", map[string]string{"namespace": "shop", "name": "web-abc", "relation": "service"}), s)
+	if res.IsError {
+		t.Fatalf("no match is not an error: %q", res.Content)
+	}
+	if res.Content != "no Service in shop selects pod web-abc" {
+		t.Errorf("content = %q", res.Content)
+	}
+}
+
+func TestReader_GetRelated_UnknownRelationNamesService(t *testing.T) {
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "web-abc", Namespace: "shop"}}
+	r := Reader{client: fake.NewSimpleClientset(pod)}
+	s := NewScope(nil)
+	s.Add("pod", "shop", "web-abc")
+	res := r.execute(context.Background(), call("get_related", map[string]string{"namespace": "shop", "name": "web-abc", "relation": "secrets"}), s)
+	if !res.IsError || !strings.Contains(res.Content, "want owner|node|pvc|service") {
+		t.Errorf("the default arm must name the full relation set, got %+v", res)
 	}
 }

@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/imantaba/kubeagent/internal/collect"
@@ -137,6 +139,12 @@ func (r Reader) describe(ctx context.Context, c toolCall, scope *Scope) toolResu
 			return errResult(c.ID, redact.Error(err))
 		}
 		return okResult(c.ID, describePVC(pvc))
+	case "service":
+		svc, err := r.client.CoreV1().Services(in.Namespace).Get(ctx, in.Name, metav1.GetOptions{})
+		if err != nil {
+			return errResult(c.ID, redact.Error(err))
+		}
+		return okResult(c.ID, r.describeService(ctx, svc))
 	default:
 		return errResult(c.ID, fmt.Sprintf("kind %q is not supported for describe", in.Kind))
 	}
@@ -247,6 +255,45 @@ func describePVC(p *corev1.PersistentVolumeClaim) string {
 		p.Namespace, p.Name, p.Status.Phase, sc, p.Spec.VolumeName)
 }
 
+// describeService renders a Service's structured shape: type, ports, selector
+// and the count of ready endpoints behind it. It never renders an address
+// kubeagent chose: no ClusterIP, no LoadBalancer ingress address, no endpoint
+// IP. Port names, selector keys and values, and targetPort are API-validated
+// syntax, so none pass through sanitize -- the same reasoning as describePod's
+// pod and node names. It is a method, not a free function like the other
+// describe renderers, because the ready-endpoint count needs a second read.
+func (r Reader) describeService(ctx context.Context, svc *corev1.Service) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "service %s/%s: type=%s\n", svc.Namespace, svc.Name, svc.Spec.Type)
+	for _, p := range svc.Spec.Ports {
+		fmt.Fprintf(&b, "  port %s %d/%s -> %s\n", p.Name, p.Port, p.Protocol, p.TargetPort.String())
+	}
+	if len(svc.Spec.Selector) == 0 {
+		b.WriteString("  selector: (none)\n")
+	} else {
+		pairs := make([]string, 0, len(svc.Spec.Selector))
+		for k, v := range svc.Spec.Selector {
+			pairs = append(pairs, k+"="+v)
+		}
+		sort.Strings(pairs)
+		fmt.Fprintf(&b, "  selector: %s\n", strings.Join(pairs, ","))
+	}
+	ep, err := r.client.CoreV1().Endpoints(svc.Namespace).Get(ctx, svc.Name, metav1.GetOptions{})
+	switch {
+	case apierrors.IsNotFound(err):
+		b.WriteString("  ready endpoints: 0 (no Endpoints object)\n")
+	case err != nil:
+		fmt.Fprintf(&b, "  ready endpoints: unknown (%s)\n", redact.Error(err))
+	default:
+		ready := 0
+		for _, ss := range ep.Subsets {
+			ready += len(ss.Addresses)
+		}
+		fmt.Fprintf(&b, "  ready endpoints: %d\n", ready)
+	}
+	return b.String()
+}
+
 type eventsInput struct{ Namespace, Name string }
 
 func (r Reader) getEvents(ctx context.Context, c toolCall, scope *Scope) toolResult {
@@ -338,8 +385,36 @@ func (r Reader) getRelated(ctx context.Context, c toolCall, scope *Scope) toolRe
 			return okResult(c.ID, fmt.Sprintf("pod %s/%s has no PersistentVolumeClaims", in.Namespace, in.Name))
 		}
 		return okResult(c.ID, fmt.Sprintf("PVCs of %s: %s\n", in.Name, strings.Join(names, ", ")))
+	case "service":
+		svcs, err := r.client.CoreV1().Services(in.Namespace).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return errResult(c.ID, redact.Error(err))
+		}
+		var names []string
+		for _, svc := range svcs.Items {
+			// A selectorless Service selects no pods, but
+			// labels.SelectorFromSet of an empty set matches everything —
+			// skip it explicitly or every Service in the namespace matches.
+			if len(svc.Spec.Selector) == 0 {
+				continue
+			}
+			if !labels.SelectorFromSet(svc.Spec.Selector).Matches(labels.Set(p.Labels)) {
+				continue
+			}
+			// svc.Name is the listed object's own metadata.name, which the
+			// API server validates — unlike the owner/node/pvc arms above,
+			// whose names come from unvalidated fields of another object —
+			// so no safetext.Line here. Both sinks get the same value.
+			scope.Add("service", in.Namespace, svc.Name)
+			names = append(names, svc.Name)
+		}
+		if len(names) == 0 {
+			return okResult(c.ID, fmt.Sprintf("no Service in %s selects pod %s", in.Namespace, in.Name))
+		}
+		sort.Strings(names)
+		return okResult(c.ID, fmt.Sprintf("Services selecting %s: %s\n", in.Name, strings.Join(names, ", ")))
 	default:
-		return errResult(c.ID, fmt.Sprintf("unknown relation %q (want owner|node|pvc)", in.Relation))
+		return errResult(c.ID, fmt.Sprintf("unknown relation %q (want owner|node|pvc|service)", in.Relation))
 	}
 }
 

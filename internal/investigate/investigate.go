@@ -117,7 +117,7 @@ const investigateSuffix = `
 
 You may call the provided read-only tools to gather more evidence about a finding
 before you conclude — describe an object, list its events, resolve a related
-object (owner, node, PVC), or classify a crashed container's previous log into
+object (owner, node, PVC, Service), or classify a crashed container's previous log into
 a cause. Investigate only what the findings point to. Use only
 the facts you observe. When you have enough, stop calling tools and give the
 explanation in the required structure.

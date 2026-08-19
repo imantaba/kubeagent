@@ -195,11 +195,16 @@ type Input struct {
 	// schemaVersion, which this decision refuses.
 	SecurityRequested bool
 	Suggest           bool
-	KubeletHealth     *nodehealth.Report
-	ControlPlane      *controlplane.Probe
-	DNS               *dnshealth.Report
-	Certificates      *certhealth.Report
-	Operators         *operators.Report
+	// Why is true when --why was passed: printWorkload then renders the
+	// root-cause hypothesis trace under each workload. Presentation-only, no
+	// json tag — Input is never marshalled; the trace itself rides on
+	// inventory.Workload inside ScanReport, so JSON always carries it.
+	Why           bool
+	KubeletHealth *nodehealth.Report
+	ControlPlane  *controlplane.Probe
+	DNS           *dnshealth.Report
+	Certificates  *certhealth.Report
+	Operators     *operators.Report
 	// GitOps is the advisory GitOps-drift view (opt-in --drift). Nil when the
 	// flag is off, so a default scan's JSON is unchanged.
 	GitOps *gitops.Report
@@ -391,7 +396,7 @@ func printInventoryText(in Input, w io.Writer) error {
 			return err
 		}
 		for _, wl := range in.Result.Workloads {
-			if err := printWorkload(wl, now, in.Suggest, w); err != nil {
+			if err := printWorkload(wl, now, in.Suggest, in.Why, w); err != nil {
 				return err
 			}
 		}
@@ -1400,7 +1405,7 @@ func renderFinding(f diagnose.Finding, suggest bool) (head, evidence, tail strin
 	return head, evidence, b.String()
 }
 
-func printWorkload(wl inventory.Workload, now time.Time, suggest bool, w io.Writer) error {
+func printWorkload(wl inventory.Workload, now time.Time, suggest, why bool, w io.Writer) error {
 	flag := "  "
 	if wl.Flagged() {
 		flag = "✗ "
@@ -1430,6 +1435,14 @@ func printWorkload(wl inventory.Workload, now time.Time, suggest bool, w io.Writ
 		}
 		if _, err := fmt.Fprintf(w, "    ↳ likely caused by %s%s\n", wl.RootCause, rcTag); err != nil {
 			return err
+		}
+	}
+	if why {
+		for _, h := range wl.RootCauseTrace {
+			verdict := strings.ReplaceAll(string(h.Verdict), "_", " ")
+			if _, err := fmt.Fprintf(w, "      · considered %s: %s — %s\n", h.Cause, verdict, h.Reason); err != nil {
+				return err
+			}
 		}
 	}
 	if wl.Image != "" {

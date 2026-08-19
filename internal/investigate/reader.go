@@ -40,11 +40,15 @@ type toolResult struct {
 // still carry one, path and all.
 //
 // That does not make a tool result address-free. When a client-go Get or List
-// call in this file fails, the error is returned to the model as err.Error(),
-// unfiltered by sanitize or by anything else -- a *url.Error from a failed
-// call names the API server's own host:port in its dial failure, and the
-// request path it was reaching for besides. This is a known gap: no decision
-// in this package closes it.
+// call in this file fails, the error reaches the model through redact.Error,
+// which walks any *url.Error chain and reduces the URL at every level to
+// scheme://host: the request path and query are dropped, and the API server's
+// address survives only in that reduced form -- the same shape the CLI's own
+// enrichment-failure notice uses. What redact.Error does not rewrite is error
+// text outside a *url.Error -- an API status message, say -- which is the
+// cluster's own text and can quote whatever it likes. The unfiltered
+// err.Error() gap this paragraph used to record is closed; what remains is
+// the scheme://host reduction itself and that non-URL cause text.
 type Reader struct {
 	client kubernetes.Interface
 }
@@ -109,7 +113,7 @@ func (r Reader) describe(ctx context.Context, c toolCall, scope *Scope) toolResu
 	case "pod":
 		p, err := r.client.CoreV1().Pods(in.Namespace).Get(ctx, in.Name, metav1.GetOptions{})
 		if err != nil {
-			return errResult(c.ID, err.Error())
+			return errResult(c.ID, redact.Error(err))
 		}
 		return okResult(c.ID, describePod(p))
 	case "deployment", "replicaset", "statefulset", "daemonset", "job":
@@ -117,13 +121,13 @@ func (r Reader) describe(ctx context.Context, c toolCall, scope *Scope) toolResu
 	case "node":
 		n, err := r.client.CoreV1().Nodes().Get(ctx, in.Name, metav1.GetOptions{})
 		if err != nil {
-			return errResult(c.ID, err.Error())
+			return errResult(c.ID, redact.Error(err))
 		}
 		return okResult(c.ID, describeNode(n))
 	case "pvc":
 		pvc, err := r.client.CoreV1().PersistentVolumeClaims(in.Namespace).Get(ctx, in.Name, metav1.GetOptions{})
 		if err != nil {
-			return errResult(c.ID, err.Error())
+			return errResult(c.ID, redact.Error(err))
 		}
 		return okResult(c.ID, describePVC(pvc))
 	default:
@@ -178,7 +182,7 @@ func (r Reader) describeWorkload(ctx context.Context, id, kind, ns, name string)
 	case "deployment":
 		d, err := r.client.AppsV1().Deployments(ns).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
-			return errResult(id, err.Error())
+			return errResult(id, redact.Error(err))
 		}
 		fmt.Fprintf(&b, "deployment %s/%s: ready=%d/%d updated=%d available=%d\n",
 			ns, name, d.Status.ReadyReplicas, d.Status.Replicas, d.Status.UpdatedReplicas, d.Status.AvailableReplicas)
@@ -188,27 +192,27 @@ func (r Reader) describeWorkload(ctx context.Context, id, kind, ns, name string)
 	case "replicaset":
 		rs, err := r.client.AppsV1().ReplicaSets(ns).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
-			return errResult(id, err.Error())
+			return errResult(id, redact.Error(err))
 		}
 		fmt.Fprintf(&b, "replicaset %s/%s: ready=%d/%d available=%d\n", ns, name,
 			rs.Status.ReadyReplicas, rs.Status.Replicas, rs.Status.AvailableReplicas)
 	case "statefulset":
 		ss, err := r.client.AppsV1().StatefulSets(ns).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
-			return errResult(id, err.Error())
+			return errResult(id, redact.Error(err))
 		}
 		fmt.Fprintf(&b, "statefulset %s/%s: ready=%d/%d\n", ns, name, ss.Status.ReadyReplicas, ss.Status.Replicas)
 	case "daemonset":
 		ds, err := r.client.AppsV1().DaemonSets(ns).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
-			return errResult(id, err.Error())
+			return errResult(id, redact.Error(err))
 		}
 		fmt.Fprintf(&b, "daemonset %s/%s: ready=%d desired=%d available=%d unavailable=%d\n", ns, name,
 			ds.Status.NumberReady, ds.Status.DesiredNumberScheduled, ds.Status.NumberAvailable, ds.Status.NumberUnavailable)
 	case "job":
 		j, err := r.client.BatchV1().Jobs(ns).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
-			return errResult(id, err.Error())
+			return errResult(id, redact.Error(err))
 		}
 		fmt.Fprintf(&b, "job %s/%s: active=%d succeeded=%d failed=%d\n", ns, name, j.Status.Active, j.Status.Succeeded, j.Status.Failed)
 	}
@@ -250,7 +254,7 @@ func (r Reader) getEvents(ctx context.Context, c toolCall, scope *Scope) toolRes
 		FieldSelector: "involvedObject.name=" + in.Name,
 	})
 	if err != nil {
-		return errResult(c.ID, err.Error())
+		return errResult(c.ID, redact.Error(err))
 	}
 	if len(evs.Items) == 0 {
 		return okResult(c.ID, fmt.Sprintf("no events for %s/%s", in.Namespace, in.Name))
@@ -276,7 +280,7 @@ func (r Reader) getRelated(ctx context.Context, c toolCall, scope *Scope) toolRe
 	}
 	p, err := r.client.CoreV1().Pods(in.Namespace).Get(ctx, in.Name, metav1.GetOptions{})
 	if err != nil {
-		return errResult(c.ID, err.Error())
+		return errResult(c.ID, redact.Error(err))
 	}
 	switch in.Relation {
 	case "owner":

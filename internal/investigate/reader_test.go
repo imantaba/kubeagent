@@ -3,13 +3,17 @@ package investigate
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net/url"
 	"strings"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/imantaba/kubeagent/internal/redact"
 	"github.com/imantaba/kubeagent/internal/safetext"
@@ -525,5 +529,63 @@ func TestReader_GetRelated_PVC_SanitizesClaimName(t *testing.T) {
 	}
 	if s.Allowed("pvc", "shop", "data"+bel+"-0") {
 		t.Error("scope must not contain an entry built from the raw, unsanitized claim name")
+	}
+}
+
+// TestReader_FailedReads_ReduceViaRedactError proves the reader.go doc
+// comment's closed gap: a failed client-go read reaches the model as
+// op + scheme://host + cause — never the request path or query.
+func TestReader_FailedReads_ReduceViaRedactError(t *testing.T) {
+	failure := &url.Error{
+		Op:  "Get",
+		URL: "https://10.96.0.1:6443/api/v1/namespaces/shop/pods/web-abc?timeout=30s",
+		Err: errors.New("connection refused"),
+	}
+	tests := []struct {
+		name     string
+		resource string // the fake clientset resource the reactor intercepts
+		verb     string
+		call     toolCall
+	}{
+		{"describe pod", "pods", "get", call("describe", map[string]string{"kind": "pod", "namespace": "shop", "name": "web-abc"})},
+		{"describe node", "nodes", "get", call("describe", map[string]string{"kind": "node", "namespace": "", "name": "worker-1"})},
+		{"describe pvc", "persistentvolumeclaims", "get", call("describe", map[string]string{"kind": "pvc", "namespace": "shop", "name": "data-0"})},
+		{"describe deployment", "deployments", "get", call("describe", map[string]string{"kind": "deployment", "namespace": "shop", "name": "web"})},
+		{"describe replicaset", "replicasets", "get", call("describe", map[string]string{"kind": "replicaset", "namespace": "shop", "name": "web-rs"})},
+		{"describe statefulset", "statefulsets", "get", call("describe", map[string]string{"kind": "statefulset", "namespace": "shop", "name": "db"})},
+		{"describe daemonset", "daemonsets", "get", call("describe", map[string]string{"kind": "daemonset", "namespace": "shop", "name": "logger"})},
+		{"describe job", "jobs", "get", call("describe", map[string]string{"kind": "job", "namespace": "shop", "name": "migrate"})},
+		{"get_events", "events", "list", call("get_events", map[string]string{"namespace": "shop", "name": "web-abc"})},
+		{"get_related", "pods", "get", call("get_related", map[string]string{"namespace": "shop", "name": "web-abc", "relation": "owner"})},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := fake.NewSimpleClientset()
+			client.PrependReactor(tt.verb, tt.resource, func(k8stesting.Action) (bool, runtime.Object, error) {
+				return true, nil, failure
+			})
+			s := NewScope(nil)
+			s.Add("pod", "shop", "web-abc")
+			s.Add("node", "", "worker-1")
+			s.Add("pvc", "shop", "data-0")
+			s.Add("deployment", "shop", "web")
+			s.Add("replicaset", "shop", "web-rs")
+			s.Add("statefulset", "shop", "db")
+			s.Add("daemonset", "shop", "logger")
+			s.Add("job", "shop", "migrate")
+			r := Reader{client: client}
+			res := r.execute(context.Background(), tt.call, s)
+			if !res.IsError {
+				t.Fatalf("expected an error result, got %+v", res)
+			}
+			if !strings.Contains(res.Content, "https://10.96.0.1:6443") || !strings.Contains(res.Content, "connection refused") {
+				t.Errorf("want op + scheme://host + cause to survive, got %q", res.Content)
+			}
+			for _, leaked := range []string{"/api/v1/namespaces", "timeout=30s"} {
+				if strings.Contains(res.Content, leaked) {
+					t.Errorf("request path/query leaked into the tool result: %q", res.Content)
+				}
+			}
+		})
 	}
 }

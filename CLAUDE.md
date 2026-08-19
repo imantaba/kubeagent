@@ -250,10 +250,11 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   bumping the surface's version in `internal/jsonschema` and regenerating with
   `go test ./internal/schemadoc -run TestSchemaDrift -update`. The drift test
   says whether the change was additive (MINOR) or breaking (MAJOR). `scan` is
-  at schema version **1.7** (added `policy`, then `baseline`, then a pod row's
+  at schema version **1.8** (added `policy`, then `baseline`, then a pod row's
   `state`, then `unreachable` on `nodehealth.Report`, then `podsAnswered` on
   `dnshealth.Report`, then `suggestion` on a finding, then `kind` on a
-  finding, all seven `omitempty`),
+  finding, then a workload row's `rootCauseTrace` and `rootCauseConfidence`,
+  all nine `omitempty`),
   `gate` is at **1.1** (added
   `policyNotEvaluated`, `omitempty`), and `fleet` is at **1.2** (added `shared`
   at 1.1, then `name` at 1.2, both `omitempty`) — all three additive;
@@ -550,4 +551,17 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   load errors. `fleet` moves to schema version **1.2** (added the optional
   `name` on a cluster summary and on an unreachable cluster, both
   `omitempty`).
-  The remaining post-1.0 work is other baseline dimensions.
+- **Post-1.0 — the hypothesis engine, slice 1 has shipped:** the root-cause
+  attribution pass keeps every candidate it evaluates instead of discarding
+  the losers. `inventory.Workload` gains `rootCauseTrace` — one entry per
+  candidate with a closed-set verdict (`attributed`, `ruled_out`,
+  `outranked`) and one evidence sentence — and `rootCauseConfidence`, the
+  stored grade of the winning attribution (scan schema 1.7 → 1.8, additive,
+  both `omitempty`). `scan --why` renders the trace in the text report;
+  JSON always carries it. Attribution behavior is byte-identical: same
+  rules, same precedence, same `RootCause` strings, and the trace never
+  reaches `findings.Finding`, so `gate` and `fleet` are untouched. Slices 2
+  (trace-primed `--investigate`) and 3 (the chaos correctness corpus)
+  remain.
+  The remaining post-1.0 work is other baseline dimensions and the
+  hypothesis engine's remaining slices.

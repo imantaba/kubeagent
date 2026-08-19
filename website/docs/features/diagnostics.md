@@ -433,6 +433,39 @@ diagnosed, a single affected workload is enough — unlike the registry case, th
 is a join against evidence, not an inference. Node attribution still takes
 precedence.
 
+#### The hypothesis trace and `scan --why`
+
+The attribution pass keeps every candidate it evaluates, not only the
+winner. Each flagged workload with at least one candidate carries a
+`rootCauseTrace` in the JSON document (scan schema 1.8, additive): one entry
+per candidate with a `cause`, a `kind` (`node`, `pvc` or `registry`), a
+closed-set `verdict` and one evidence sentence. The verdicts:
+
+- `attributed` — this candidate is the workload's `rootCause`.
+- `ruled_out` — its evidence did not match this workload (no pod on that
+  node, PVC not mounted, only one workload failing against that registry).
+- `outranked` — its evidence matched, but precedence chose a stronger
+  cause. This is the verdict that tells you the pass *saw* the candidate
+  and rejected it deliberately.
+
+The stored `rootCauseConfidence` sits beside the trace — the same word the
+text report renders as a tag.
+
+In the text report the trace is opt-in: `scan --why` prints it under each
+workload. Without the flag the output is unchanged.
+
+```text
+✗ shop/api  Deployment  0/2 Degraded
+    ↳ likely caused by node worker-2 (NotReady)
+      · considered node worker-2 (NotReady): attributed — pod api-a is scheduled on it
+      · considered node worker-9 (NotReady): ruled out — no pod of this workload is scheduled on it
+      · considered PVC data-0 (ProvisioningFailed): outranked — node worker-2 (NotReady) is the stronger cause
+```
+
+A healthy cluster records nothing: only flagged workloads are evaluated,
+and only when candidates exist. Attribution itself is unchanged — same
+rules, same precedence, same `rootCause` strings.
+
 ### Node reservations
 
 `scan` reports each node's aggregate kubelet resource reservation for **memory,

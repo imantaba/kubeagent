@@ -24,6 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never a ClusterIP or endpoint address). Loop bounds are unchanged
   (8 reads, 6 turns), and no JSON schema moves.
 
+### Changed
+
+- rbac: the `investigate` feature summary now records that its log-cause tool
+  uses the `logs` grant (`pods/log`) when present, refusing cleanly without
+  it.
+
 ### Fixed
 
 - A failed read inside the `--investigate` loop no longer returns the raw

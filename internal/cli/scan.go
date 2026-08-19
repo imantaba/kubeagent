@@ -325,10 +325,10 @@ func runScan(o scanOptions) error {
 	// the deterministic report below still renders on stdout with exit 0, and
 	// runModelPath reduces the failure to one stderr notice naming which flag
 	// failed and why (via enrichmentFailure, R227) instead of returning an
-	// error. This also covers R220: a narrative-less investigation reaches
-	// runModelPath as just another error and gets the same notice-not-failure
-	// treatment, so the report renders with no Investigation section rather
-	// than nothing at all.
+	// error. A narrative-less investigation is covered by the same rule
+	// (R220): it reaches runModelPath as just another error and gets the
+	// same notice-not-failure treatment, so the report renders with no
+	// Investigation section rather than nothing at all.
 	modelRes := runModelPath(o,
 		func() (investigate.Report, error) {
 			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)

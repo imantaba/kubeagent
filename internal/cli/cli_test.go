@@ -534,6 +534,15 @@ func TestRun_SuggestFlagAccepted(t *testing.T) {
 	}
 }
 
+func TestRun_WhyFlagAccepted(t *testing.T) {
+	// --why must be a defined flag: this fails on output-format validation
+	// (before any cluster call), proving the flag parsed.
+	err := Run([]string{"scan", "--why", "--output", "bogus"})
+	if err == nil || !strings.Contains(err.Error(), "unknown output format") {
+		t.Fatalf("expected the output-format error (flag accepted), got: %v", err)
+	}
+}
+
 func TestRun_ControlPlaneHealthFlagAccepted(t *testing.T) {
 	err := Run([]string{"scan", "--control-plane-health", "--output", "bogus"})
 	if err == nil || !strings.Contains(err.Error(), "unknown output format") {
@@ -2793,6 +2802,7 @@ func TestParseScanFlagsCarriesEveryValue(t *testing.T) {
 		"--drift-age", "30m",
 		"--node-heartbeat-threshold", "90s",
 		"--expected-nodes", "node-a,node-b",
+		"--why",
 	})
 	if err != nil {
 		t.Fatalf("parseScanFlags: %v", err)
@@ -2827,6 +2837,9 @@ func TestParseScanFlagsCarriesEveryValue(t *testing.T) {
 	if got := strings.Join(opts.expectedNodes, "|"); got != "node-a|node-b" {
 		t.Errorf("expectedNodes = %q, want node-a|node-b", got)
 	}
+	if !opts.why {
+		t.Error("why = false, want true")
+	}
 }
 
 func TestParseScanFlagsDefaults(t *testing.T) {
@@ -2848,6 +2861,9 @@ func TestParseScanFlagsDefaults(t *testing.T) {
 	}
 	if opts.nodeHeartbeatThreshold != 40*time.Second {
 		t.Errorf("nodeHeartbeatThreshold = %v, want 40s", opts.nodeHeartbeatThreshold)
+	}
+	if opts.why {
+		t.Error("why = true by default, want false")
 	}
 }
 

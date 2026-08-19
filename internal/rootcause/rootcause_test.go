@@ -367,3 +367,295 @@ func TestAnnotatePVC_EmptyInputsNoop(t *testing.T) {
 		t.Errorf("empty inputs => no-op, got %q", ws[0].RootCause)
 	}
 }
+
+func TestAnnotate_TraceAttributed(t *testing.T) {
+	ws := []inventory.Workload{wl("shop", "api", 0, 2, "worker-2")}
+	Annotate(ws, []clusterhealth.DownNode{{Name: "worker-2", Reason: "NotReady"}})
+	want := inventory.Hypothesis{
+		Cause:   "node worker-2 (NotReady)",
+		Kind:    "node",
+		Verdict: inventory.VerdictAttributed,
+		Reason:  "pod api-a is scheduled on it",
+	}
+	if len(ws[0].RootCauseTrace) != 1 || ws[0].RootCauseTrace[0] != want {
+		t.Errorf("trace = %+v, want [%+v]", ws[0].RootCauseTrace, want)
+	}
+}
+
+func TestAnnotate_TraceRuledOutNodeNotHosting(t *testing.T) {
+	ws := []inventory.Workload{wl("shop", "api", 0, 2, "worker-9")} // healthy node
+	Annotate(ws, []clusterhealth.DownNode{{Name: "worker-2", Reason: "NotReady"}})
+	if ws[0].RootCause != "" {
+		t.Fatalf("RootCause = %q, want empty", ws[0].RootCause)
+	}
+	want := inventory.Hypothesis{
+		Cause:   "node worker-2 (NotReady)",
+		Kind:    "node",
+		Verdict: inventory.VerdictRuledOut,
+		Reason:  "no pod of this workload is scheduled on it",
+	}
+	if len(ws[0].RootCauseTrace) != 1 || ws[0].RootCauseTrace[0] != want {
+		t.Errorf("trace = %+v, want [%+v]", ws[0].RootCauseTrace, want)
+	}
+}
+
+func TestAnnotate_TraceOutrankedSameKindTie(t *testing.T) {
+	// Pods on two down nodes: sorted-first worker-2 wins (existing pinned
+	// behavior), worker-5 matched evidence but lost — outranked, not dropped.
+	ws := []inventory.Workload{wl("shop", "api", 0, 2, "worker-5", "worker-2")}
+	down := []clusterhealth.DownNode{{Name: "worker-5", Reason: "NotReady"}, {Name: "worker-2", Reason: "NotReady"}}
+	Annotate(ws, down)
+	if ws[0].RootCause != "node worker-2 (NotReady)" {
+		t.Fatalf("RootCause = %q", ws[0].RootCause)
+	}
+	if len(ws[0].RootCauseTrace) != 2 {
+		t.Fatalf("trace has %d entries, want 2: %+v", len(ws[0].RootCauseTrace), ws[0].RootCauseTrace)
+	}
+	wantSecond := inventory.Hypothesis{
+		Cause:   "node worker-5 (NotReady)",
+		Kind:    "node",
+		Verdict: inventory.VerdictOutranked,
+		Reason:  "node worker-2 (NotReady) is the stronger cause",
+	}
+	if ws[0].RootCauseTrace[1] != wantSecond {
+		t.Errorf("trace[1] = %+v, want %+v", ws[0].RootCauseTrace[1], wantSecond)
+	}
+	if ws[0].RootCauseTrace[0].Verdict != inventory.VerdictAttributed {
+		t.Errorf("trace[0].Verdict = %q, want attributed", ws[0].RootCauseTrace[0].Verdict)
+	}
+}
+
+func TestAnnotate_TraceNamesPodOnTheNode(t *testing.T) {
+	// api-a is on the healthy worker-9; api-b is the pod on the down node —
+	// the attributed reason must name api-b, not the first pod overall.
+	ws := []inventory.Workload{wl("shop", "api", 0, 2, "worker-9", "worker-2")}
+	Annotate(ws, []clusterhealth.DownNode{{Name: "worker-2", Reason: "NotReady"}})
+	if got := ws[0].RootCauseTrace[0].Reason; got != "pod api-b is scheduled on it" {
+		t.Errorf("attributed reason = %q, want pod api-b is scheduled on it", got)
+	}
+}
+
+func TestAnnotate_TraceEmptyForUnflaggedAndEmptyDown(t *testing.T) {
+	healthy := wl("shop", "api", 2, 2, "worker-2")
+	healthy.Status = "Running"
+	ws := []inventory.Workload{healthy}
+	Annotate(ws, []clusterhealth.DownNode{{Name: "worker-2", Reason: "NotReady"}})
+	if len(ws[0].RootCauseTrace) != 0 {
+		t.Errorf("unflagged workload got a trace: %+v", ws[0].RootCauseTrace)
+	}
+	flagged := []inventory.Workload{wl("shop", "api", 0, 2, "worker-2")}
+	Annotate(flagged, nil)
+	if len(flagged[0].RootCauseTrace) != 0 {
+		t.Errorf("empty down list produced a trace: %+v", flagged[0].RootCauseTrace)
+	}
+}
+
+func TestAnnotatePVC_TraceAttributedNamesMountingPod(t *testing.T) {
+	ws := []inventory.Workload{pvcWL("shop", "reports", "reports-1")}
+	podPVCs := map[string][]string{"shop/reports-1": {"reports-data"}}
+	issues := []pvchealth.Issue{{Namespace: "shop", Name: "reports-data", Reason: "ProvisioningFailed"}}
+	AnnotatePVC(ws, podPVCs, issues)
+	want := inventory.Hypothesis{
+		Cause:   "PVC reports-data (ProvisioningFailed)",
+		Kind:    "pvc",
+		Verdict: inventory.VerdictAttributed,
+		Reason:  "pod reports-1 mounts it",
+	}
+	if len(ws[0].RootCauseTrace) != 1 || ws[0].RootCauseTrace[0] != want {
+		t.Errorf("trace = %+v, want [%+v]", ws[0].RootCauseTrace, want)
+	}
+}
+
+func TestAnnotatePVC_TraceRuledOutNotMounted(t *testing.T) {
+	ws := []inventory.Workload{pvcWL("shop", "reports", "reports-1")}
+	podPVCs := map[string][]string{"shop/reports-1": {"other-healthy-pvc"}}
+	issues := []pvchealth.Issue{{Namespace: "shop", Name: "reports-data", Reason: "ProvisioningFailed"}}
+	AnnotatePVC(ws, podPVCs, issues)
+	if ws[0].RootCause != "" {
+		t.Fatalf("RootCause = %q, want empty", ws[0].RootCause)
+	}
+	want := inventory.Hypothesis{
+		Cause:   "PVC reports-data (ProvisioningFailed)",
+		Kind:    "pvc",
+		Verdict: inventory.VerdictRuledOut,
+		Reason:  "not mounted by this workload's pods",
+	}
+	if len(ws[0].RootCauseTrace) != 1 || ws[0].RootCauseTrace[0] != want {
+		t.Errorf("trace = %+v, want [%+v]", ws[0].RootCauseTrace, want)
+	}
+}
+
+func TestAnnotatePVC_TraceOutrankedByNodeAttribution(t *testing.T) {
+	w := pvcWL("shop", "reports", "reports-1")
+	w.RootCause = "node worker-2 (NotReady)"
+	ws := []inventory.Workload{w}
+	podPVCs := map[string][]string{"shop/reports-1": {"reports-data"}}
+	issues := []pvchealth.Issue{{Namespace: "shop", Name: "reports-data", Reason: "ProvisioningFailed"}}
+	AnnotatePVC(ws, podPVCs, issues)
+	if ws[0].RootCause != "node worker-2 (NotReady)" {
+		t.Fatalf("node attribution must survive, got %q", ws[0].RootCause)
+	}
+	want := inventory.Hypothesis{
+		Cause:   "PVC reports-data (ProvisioningFailed)",
+		Kind:    "pvc",
+		Verdict: inventory.VerdictOutranked,
+		Reason:  "node worker-2 (NotReady) is the stronger cause",
+	}
+	if len(ws[0].RootCauseTrace) != 1 || ws[0].RootCauseTrace[0] != want {
+		t.Errorf("trace = %+v, want [%+v]", ws[0].RootCauseTrace, want)
+	}
+}
+
+func TestAnnotatePVC_TraceOutrankedSameKindTie(t *testing.T) {
+	// Pod mounts two broken PVCs: alpha-data wins (sorted first, existing
+	// pinned behavior), zeta-data matched evidence but lost.
+	ws := []inventory.Workload{pvcWL("shop", "reports", "reports-1")}
+	podPVCs := map[string][]string{"shop/reports-1": {"zeta-data", "alpha-data"}}
+	issues := []pvchealth.Issue{
+		{Namespace: "shop", Name: "zeta-data", Reason: "ProvisioningFailed"},
+		{Namespace: "shop", Name: "alpha-data", Reason: "FailedBinding"},
+	}
+	AnnotatePVC(ws, podPVCs, issues)
+	if ws[0].RootCause != "PVC alpha-data (FailedBinding)" {
+		t.Fatalf("RootCause = %q", ws[0].RootCause)
+	}
+	if len(ws[0].RootCauseTrace) != 2 {
+		t.Fatalf("trace has %d entries, want 2: %+v", len(ws[0].RootCauseTrace), ws[0].RootCauseTrace)
+	}
+	wantSecond := inventory.Hypothesis{
+		Cause:   "PVC zeta-data (ProvisioningFailed)",
+		Kind:    "pvc",
+		Verdict: inventory.VerdictOutranked,
+		Reason:  "PVC alpha-data (FailedBinding) is the stronger cause",
+	}
+	if ws[0].RootCauseTrace[1] != wantSecond {
+		t.Errorf("trace[1] = %+v, want %+v", ws[0].RootCauseTrace[1], wantSecond)
+	}
+}
+
+func TestAnnotatePVC_TraceSkipsForeignNamespaceCandidates(t *testing.T) {
+	ws := []inventory.Workload{pvcWL("shop", "reports", "reports-1")}
+	podPVCs := map[string][]string{"shop/reports-1": {"reports-data"}}
+	issues := []pvchealth.Issue{{Namespace: "other", Name: "reports-data", Reason: "ProvisioningFailed"}}
+	AnnotatePVC(ws, podPVCs, issues)
+	if len(ws[0].RootCauseTrace) != 0 {
+		t.Errorf("a foreign-namespace PVC is not a candidate, got trace %+v", ws[0].RootCauseTrace)
+	}
+}
+
+func TestAnnotateRegistry_TraceAttributedGroup(t *testing.T) {
+	ws := []inventory.Workload{
+		pullWL("frontend", "ghcr.io/shop/frontend:2.4", "ImagePullBackOff"),
+		pullWL("search", "ghcr.io/shop/search:1.9", "ErrImagePull"),
+	}
+	AnnotateRegistry(ws)
+	want := inventory.Hypothesis{
+		Cause:   "registry ghcr.io (2 workloads failing to pull)",
+		Kind:    "registry",
+		Verdict: inventory.VerdictAttributed,
+		Reason:  "2 workloads failing to pull from this host clear the threshold of 2",
+	}
+	for i := range ws {
+		if ws[i].RootCause != "registry ghcr.io (2 workloads failing to pull)" {
+			t.Fatalf("ws[%d].RootCause = %q", i, ws[i].RootCause)
+		}
+		if len(ws[i].RootCauseTrace) != 1 || ws[i].RootCauseTrace[0] != want {
+			t.Errorf("ws[%d] trace = %+v, want [%+v]", i, ws[i].RootCauseTrace, want)
+		}
+	}
+}
+
+func TestAnnotateRegistry_TraceRuledOutBelowThreshold(t *testing.T) {
+	ws := []inventory.Workload{pullWL("frontend", "ghcr.io/shop/frontend:2.4", "ImagePullBackOff")}
+	AnnotateRegistry(ws)
+	if ws[0].RootCause != "" {
+		t.Fatalf("RootCause = %q, want empty", ws[0].RootCause)
+	}
+	want := inventory.Hypothesis{
+		Cause:   "registry ghcr.io",
+		Kind:    "registry",
+		Verdict: inventory.VerdictRuledOut,
+		Reason:  "only workload failing to pull from this host; threshold is 2",
+	}
+	if len(ws[0].RootCauseTrace) != 1 || ws[0].RootCauseTrace[0] != want {
+		t.Errorf("trace = %+v, want [%+v]", ws[0].RootCauseTrace, want)
+	}
+}
+
+func TestAnnotateRegistry_TraceOutrankedByEarlierAttribution(t *testing.T) {
+	attributed := pullWL("frontend", "ghcr.io/shop/frontend:2.4", "ImagePullBackOff")
+	attributed.RootCause = "node worker-2 (NotReady)"
+	ws := []inventory.Workload{attributed}
+	AnnotateRegistry(ws)
+	if ws[0].RootCause != "node worker-2 (NotReady)" {
+		t.Fatalf("earlier attribution must survive, got %q", ws[0].RootCause)
+	}
+	want := inventory.Hypothesis{
+		Cause:   "registry ghcr.io",
+		Kind:    "registry",
+		Verdict: inventory.VerdictOutranked,
+		Reason:  "node worker-2 (NotReady) is the stronger cause",
+	}
+	if len(ws[0].RootCauseTrace) != 1 || ws[0].RootCauseTrace[0] != want {
+		t.Errorf("trace = %+v, want [%+v]", ws[0].RootCauseTrace, want)
+	}
+}
+
+func TestAnnotateRegistry_TraceRuledOutUndeterminableImage(t *testing.T) {
+	ws := []inventory.Workload{pullWLWithImage("frontend", "ghcr.io/shop/frontend:2.4", "", "ImagePullBackOff")}
+	AnnotateRegistry(ws)
+	if ws[0].RootCause != "" {
+		t.Fatalf("RootCause = %q, want empty", ws[0].RootCause)
+	}
+	want := inventory.Hypothesis{
+		Cause:   "registry unknown",
+		Kind:    "registry",
+		Verdict: inventory.VerdictRuledOut,
+		Reason:  "image reference undeterminable",
+	}
+	if len(ws[0].RootCauseTrace) != 1 || ws[0].RootCauseTrace[0] != want {
+		t.Errorf("trace = %+v, want [%+v]", ws[0].RootCauseTrace, want)
+	}
+}
+
+func TestAnnotateRegistry_TraceEmptyWithoutPullFinding(t *testing.T) {
+	ws := []inventory.Workload{wl("shop", "api", 0, 2, "worker-2")} // flagged, no findings
+	AnnotateRegistry(ws)
+	if len(ws[0].RootCauseTrace) != 0 {
+		t.Errorf("no pull finding must record nothing, got %+v", ws[0].RootCauseTrace)
+	}
+}
+
+func TestTraceAcrossAnnotatorsKeepsScanOrder(t *testing.T) {
+	// One workload on a down node, mounting a broken PVC, with a pull finding.
+	// internal/scan/scan.go's chain order (Annotate → AnnotatePVC →
+	// AnnotateRegistry) must yield: node attributed, then pvc outranked, then
+	// registry outranked — append order is evaluation order.
+	w := wl("shop", "api", 0, 2, "worker-2")
+	w.Findings = append(w.Findings, diagnose.Finding{Pod: "shop/api", Issue: "ImagePullBackOff",
+		Reason: "Bad image reference or registry authentication", Image: "ghcr.io/shop/api:2.4"})
+	ws := []inventory.Workload{w}
+	Annotate(ws, []clusterhealth.DownNode{{Name: "worker-2", Reason: "NotReady"}})
+	AnnotatePVC(ws, map[string][]string{"shop/api-a": {"api-data"}},
+		[]pvchealth.Issue{{Namespace: "shop", Name: "api-data", Reason: "ProvisioningFailed"}})
+	AnnotateRegistry(ws)
+	if ws[0].RootCause != "node worker-2 (NotReady)" {
+		t.Fatalf("RootCause = %q", ws[0].RootCause)
+	}
+	got := ws[0].RootCauseTrace
+	if len(got) != 3 {
+		t.Fatalf("trace has %d entries, want 3: %+v", len(got), got)
+	}
+	wantKinds := []string{"node", "pvc", "registry"}
+	wantVerdicts := []inventory.Verdict{inventory.VerdictAttributed, inventory.VerdictOutranked, inventory.VerdictOutranked}
+	for i := range got {
+		if got[i].Kind != wantKinds[i] || got[i].Verdict != wantVerdicts[i] {
+			t.Errorf("trace[%d] = kind %q verdict %q, want %q %q", i, got[i].Kind, got[i].Verdict, wantKinds[i], wantVerdicts[i])
+		}
+	}
+	for i, h := range got[1:] {
+		if h.Reason != "node worker-2 (NotReady) is the stronger cause" {
+			t.Errorf("trace[%d] outranked reason = %q", i+1, h.Reason)
+		}
+	}
+}

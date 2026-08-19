@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`scan --why` and the root-cause hypothesis trace.** The attribution pass
+  now keeps every candidate cause it evaluates — node, PVC and registry —
+  with a closed-set verdict (`attributed`, `ruled_out`, `outranked`) and one
+  evidence sentence per candidate, instead of discarding everything it
+  rejected. `scan --output json` always carries the trace on a workload row
+  (`rootCauseTrace`, with the stored `rootCauseConfidence` beside it; scan
+  schema 1.7 → 1.8, additive), and `scan --why` prints it in the text report
+  under each `↳ likely caused by` line. Without `--why`, text output is
+  byte-identical to before, and attribution itself is unchanged: same rules,
+  same precedence, same `rootCause` strings.
+
 ## [1.19.0] - 2026-08-19
 
 ### Fixed

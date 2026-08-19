@@ -19,6 +19,8 @@ import (
 // Annotate sets w.RootCause on each flagged workload that has a pod on a hard-down
 // node. It mutates the slice elements in place. When several down nodes host the
 // workload's pods, the node whose name sorts first is chosen (deterministic).
+// Every down node evaluated for a flagged workload is recorded in
+// w.RootCauseTrace with a verdict, whatever the outcome.
 func Annotate(workloads []inventory.Workload, down []clusterhealth.DownNode) {
 	if len(down) == 0 {
 		return
@@ -39,9 +41,15 @@ func Annotate(workloads []inventory.Workload, down []clusterhealth.DownNode) {
 		}
 		on := podNodes(*w)
 		for _, name := range names {
-			if on[name] {
-				workloads[i].RootCause = "node " + name + " (" + reasonByNode[name] + ")"
-				break
+			cause := "node " + name + " (" + reasonByNode[name] + ")"
+			switch {
+			case !on[name]:
+				record(w, cause, "node", inventory.VerdictRuledOut, "no pod of this workload is scheduled on it")
+			case w.RootCause == "":
+				w.RootCause = cause
+				record(w, cause, "node", inventory.VerdictAttributed, "pod "+podOn(*w, name)+" is scheduled on it")
+			default:
+				record(w, cause, "node", inventory.VerdictOutranked, w.RootCause+" is the stronger cause")
 			}
 		}
 	}
@@ -58,6 +66,26 @@ func podNodes(w inventory.Workload) map[string]bool {
 	return on
 }
 
+// record appends one evaluated candidate to the workload's trace. The trace
+// keeps everything the pass considered, whatever the verdict — "ruled out"
+// and "outranked" are answers, not omissions.
+func record(w *inventory.Workload, cause, kind string, verdict inventory.Verdict, reason string) {
+	w.RootCauseTrace = append(w.RootCauseTrace, inventory.Hypothesis{
+		Cause: cause, Kind: kind, Verdict: verdict, Reason: reason,
+	})
+}
+
+// podOn names the first pod of w placed on node, in w.Pods order. Empty when
+// none is — callers use it only after establishing placement.
+func podOn(w inventory.Workload, node string) string {
+	for _, p := range w.Pods {
+		if p.Node == node {
+			return p.Name
+		}
+	}
+	return ""
+}
+
 // AnnotateRegistry sets w.RootCause = "registry <host> (<N> workloads failing to
 // pull)" on each flagged, not-yet-attributed workload whose image-pull failure
 // shares a registry host with at least one other such workload — the shared
@@ -65,12 +93,23 @@ func podNodes(w inventory.Workload) map[string]bool {
 // Pure and deterministic (hosts processed in sorted order). Call after Annotate:
 // node attribution wins, and a node-attributed workload is excluded from the
 // group count too.
+// Every flagged workload with a pull finding is recorded in w.RootCauseTrace
+// with a verdict — attributed, ruled_out (below threshold, or image
+// undeterminable), or outranked when an earlier rule already attributed it.
 func AnnotateRegistry(workloads []inventory.Workload) {
 	groups := map[string][]int{}
 	for i := range workloads {
 		w := &workloads[i]
-		img, ok := pullImage(*w)
-		if !w.Flagged() || w.RootCause != "" || !ok {
+		img, hasPull := pullImage(*w)
+		if !w.Flagged() || !hasPull {
+			continue
+		}
+		if img == "" {
+			record(w, "registry unknown", "registry", inventory.VerdictRuledOut, "image reference undeterminable")
+			continue
+		}
+		if w.RootCause != "" {
+			record(w, "registry "+safetext.Line(registryHost(img)), "registry", inventory.VerdictOutranked, w.RootCause+" is the stronger cause")
 			continue
 		}
 		host := registryHost(img)
@@ -84,23 +123,29 @@ func AnnotateRegistry(workloads []inventory.Workload) {
 	for _, host := range hosts {
 		members := groups[host]
 		if len(members) < 2 {
+			for _, i := range members {
+				record(&workloads[i], "registry "+safetext.Line(host), "registry", inventory.VerdictRuledOut, "only workload failing to pull from this host; threshold is 2")
+			}
 			continue
 		}
 		cause := fmt.Sprintf("registry %s (%d workloads failing to pull)", safetext.Line(host), len(members))
+		reason := fmt.Sprintf("%d workloads failing to pull from this host clear the threshold of 2", len(members))
 		for _, i := range members {
 			workloads[i].RootCause = cause
+			record(&workloads[i], cause, "registry", inventory.VerdictAttributed, reason)
 		}
 	}
 }
 
 // pullImage returns the first pull finding's Image in w.Findings order, and
-// whether that image is determinable. A workload with no pull finding at all,
-// or whose first pull finding carries no image, reports ok=false — arm (B):
-// grouping under the wrong host is worse than not grouping.
-func pullImage(w inventory.Workload) (string, bool) {
+// whether the workload has a pull finding at all. An empty image with
+// hasPull=true means the finding carries no image reference — the caller
+// records that as ruled out rather than grouping under the wrong host,
+// arm (B): grouping under the wrong host is worse than not grouping.
+func pullImage(w inventory.Workload) (image string, hasPull bool) {
 	for _, f := range w.Findings {
 		if f.Issue == "ImagePullBackOff" || f.Issue == "ErrImagePull" {
-			return f.Image, f.Image != ""
+			return f.Image, true
 		}
 	}
 	return "", false
@@ -124,7 +169,10 @@ func registryHost(image string) string {
 // threshold is a single workload — the PVC is independently diagnosed, so this
 // is a join against evidence, not an inference. Pure and deterministic (issue
 // keys checked in sorted order). Call after Annotate (nodes win) and before
-// AnnotateRegistry (evidence beats statistics).
+// AnnotateRegistry (evidence beats statistics). Every own-namespace broken
+// PVC evaluated for a flagged workload is recorded in w.RootCauseTrace with a
+// verdict, whatever the outcome; a PVC in another namespace is not a
+// candidate.
 func AnnotatePVC(workloads []inventory.Workload, podPVCs map[string][]string, issues []pvchealth.Issue) {
 	if len(issues) == 0 || len(podPVCs) == 0 {
 		return
@@ -141,20 +189,33 @@ func AnnotatePVC(workloads []inventory.Workload, podPVCs map[string][]string, is
 	sort.Strings(keys)
 	for i := range workloads {
 		w := &workloads[i]
-		if !w.Flagged() || w.RootCause != "" {
+		if !w.Flagged() {
 			continue
 		}
-		mounted := map[string]bool{}
+		mounted := map[string]string{} // "ns/claim" → first pod mounting it
 		for _, p := range w.Pods {
 			for _, claim := range podPVCs[w.Namespace+"/"+p.Name] {
-				mounted[w.Namespace+"/"+claim] = true
+				key := w.Namespace + "/" + claim
+				if _, seen := mounted[key]; !seen {
+					mounted[key] = p.Name
+				}
 			}
 		}
 		for _, key := range keys {
-			if mounted[key] {
-				name := key[strings.IndexByte(key, '/')+1:]
-				workloads[i].RootCause = "PVC " + name + " (" + reasonByKey[key] + ")"
-				break
+			if !strings.HasPrefix(key, w.Namespace+"/") {
+				continue // a PVC in another namespace is not a candidate for this workload
+			}
+			name := key[strings.IndexByte(key, '/')+1:]
+			cause := "PVC " + name + " (" + reasonByKey[key] + ")"
+			pod, isMounted := mounted[key]
+			switch {
+			case !isMounted:
+				record(w, cause, "pvc", inventory.VerdictRuledOut, "not mounted by this workload's pods")
+			case w.RootCause == "":
+				w.RootCause = cause
+				record(w, cause, "pvc", inventory.VerdictAttributed, "pod "+pod+" mounts it")
+			default:
+				record(w, cause, "pvc", inventory.VerdictOutranked, w.RootCause+" is the stronger cause")
 			}
 		}
 	}

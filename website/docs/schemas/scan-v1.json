@@ -869,6 +869,35 @@
       ],
       "type": "object"
     },
+    "inventory.Hypothesis": {
+      "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
+      "properties": {
+        "cause": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "verdict": {
+          "enum": [
+            "attributed",
+            "ruled_out",
+            "outranked"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "cause",
+        "kind",
+        "reason",
+        "verdict"
+      ],
+      "type": "object"
+    },
     "inventory.PodRow": {
       "$comment": "additionalProperties is deliberately unset (JSON Schema's default: permitted). A MINOR version bump may add properties, and a document must still validate against an older schema of the same MAJOR.",
       "properties": {
@@ -996,6 +1025,15 @@
         },
         "rootCause": {
           "type": "string"
+        },
+        "rootCauseConfidence": {
+          "type": "string"
+        },
+        "rootCauseTrace": {
+          "items": {
+            "$ref": "#/$defs/inventory.Hypothesis"
+          },
+          "type": "array"
         },
         "schedule": {
           "type": "string"

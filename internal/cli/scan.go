@@ -66,6 +66,7 @@ type scanOptions struct {
 	security               bool
 	securityVerbose        bool
 	suggest                bool
+	why                    bool
 	fix                    bool
 	dryRun                 bool
 	assumeYes              bool
@@ -119,6 +120,7 @@ func bindScanFlags(cmd *cobra.Command, o *scanOptions) {
 	f.BoolVar(&o.security, "security", false, "flag insecure workloads and exposed Services (read-only, advisory)")
 	f.BoolVar(&o.securityVerbose, "security-verbose", false, "with --security: list every finding per workload (default: dangerous findings in full, restricted gaps aggregated)")
 	f.BoolVar(&o.suggest, "suggest", false, "print a deterministic next-step suggestion (and a read-only kubectl command) under each finding")
+	f.BoolVar(&o.why, "why", false, "print the root-cause hypothesis trace under each workload: every candidate cause considered, with its verdict and evidence")
 	f.BoolVar(&o.fix, "fix", false, "propose and (after confirmation) apply safe, reversible remediations (opt-in writes)")
 	f.BoolVar(&o.dryRun, "dry-run", false, "with --fix: print proposed remediations only; never prompt or write")
 	f.BoolVar(&o.assumeYes, "yes", false, "with --fix: apply all proposed remediations without prompting")
@@ -402,6 +404,7 @@ func runScan(o scanOptions) error {
 	in.SecurityVerbose = o.securityVerbose
 	in.SecurityRequested = o.security
 	in.Suggest = o.suggest
+	in.Why = o.why
 	in.Explanation = explanation
 	in.ExplanationTruncated = modelRes.explanationTruncated
 	in.Investigation = investigationReport.Narrative

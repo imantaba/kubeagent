@@ -367,3 +367,85 @@ func TestAnnotatePVC_EmptyInputsNoop(t *testing.T) {
 		t.Errorf("empty inputs => no-op, got %q", ws[0].RootCause)
 	}
 }
+
+func TestAnnotate_TraceAttributed(t *testing.T) {
+	ws := []inventory.Workload{wl("shop", "api", 0, 2, "worker-2")}
+	Annotate(ws, []clusterhealth.DownNode{{Name: "worker-2", Reason: "NotReady"}})
+	want := inventory.Hypothesis{
+		Cause:   "node worker-2 (NotReady)",
+		Kind:    "node",
+		Verdict: inventory.VerdictAttributed,
+		Reason:  "pod api-a is scheduled on it",
+	}
+	if len(ws[0].RootCauseTrace) != 1 || ws[0].RootCauseTrace[0] != want {
+		t.Errorf("trace = %+v, want [%+v]", ws[0].RootCauseTrace, want)
+	}
+}
+
+func TestAnnotate_TraceRuledOutNodeNotHosting(t *testing.T) {
+	ws := []inventory.Workload{wl("shop", "api", 0, 2, "worker-9")} // healthy node
+	Annotate(ws, []clusterhealth.DownNode{{Name: "worker-2", Reason: "NotReady"}})
+	if ws[0].RootCause != "" {
+		t.Fatalf("RootCause = %q, want empty", ws[0].RootCause)
+	}
+	want := inventory.Hypothesis{
+		Cause:   "node worker-2 (NotReady)",
+		Kind:    "node",
+		Verdict: inventory.VerdictRuledOut,
+		Reason:  "no pod of this workload is scheduled on it",
+	}
+	if len(ws[0].RootCauseTrace) != 1 || ws[0].RootCauseTrace[0] != want {
+		t.Errorf("trace = %+v, want [%+v]", ws[0].RootCauseTrace, want)
+	}
+}
+
+func TestAnnotate_TraceOutrankedSameKindTie(t *testing.T) {
+	// Pods on two down nodes: sorted-first worker-2 wins (existing pinned
+	// behavior), worker-5 matched evidence but lost — outranked, not dropped.
+	ws := []inventory.Workload{wl("shop", "api", 0, 2, "worker-5", "worker-2")}
+	down := []clusterhealth.DownNode{{Name: "worker-5", Reason: "NotReady"}, {Name: "worker-2", Reason: "NotReady"}}
+	Annotate(ws, down)
+	if ws[0].RootCause != "node worker-2 (NotReady)" {
+		t.Fatalf("RootCause = %q", ws[0].RootCause)
+	}
+	if len(ws[0].RootCauseTrace) != 2 {
+		t.Fatalf("trace has %d entries, want 2: %+v", len(ws[0].RootCauseTrace), ws[0].RootCauseTrace)
+	}
+	wantSecond := inventory.Hypothesis{
+		Cause:   "node worker-5 (NotReady)",
+		Kind:    "node",
+		Verdict: inventory.VerdictOutranked,
+		Reason:  "node worker-2 (NotReady) is the stronger cause",
+	}
+	if ws[0].RootCauseTrace[1] != wantSecond {
+		t.Errorf("trace[1] = %+v, want %+v", ws[0].RootCauseTrace[1], wantSecond)
+	}
+	if ws[0].RootCauseTrace[0].Verdict != inventory.VerdictAttributed {
+		t.Errorf("trace[0].Verdict = %q, want attributed", ws[0].RootCauseTrace[0].Verdict)
+	}
+}
+
+func TestAnnotate_TraceNamesPodOnTheNode(t *testing.T) {
+	// api-a is on the healthy worker-9; api-b is the pod on the down node —
+	// the attributed reason must name api-b, not the first pod overall.
+	ws := []inventory.Workload{wl("shop", "api", 0, 2, "worker-9", "worker-2")}
+	Annotate(ws, []clusterhealth.DownNode{{Name: "worker-2", Reason: "NotReady"}})
+	if got := ws[0].RootCauseTrace[0].Reason; got != "pod api-b is scheduled on it" {
+		t.Errorf("attributed reason = %q, want pod api-b is scheduled on it", got)
+	}
+}
+
+func TestAnnotate_TraceEmptyForUnflaggedAndEmptyDown(t *testing.T) {
+	healthy := wl("shop", "api", 2, 2, "worker-2")
+	healthy.Status = "Running"
+	ws := []inventory.Workload{healthy}
+	Annotate(ws, []clusterhealth.DownNode{{Name: "worker-2", Reason: "NotReady"}})
+	if len(ws[0].RootCauseTrace) != 0 {
+		t.Errorf("unflagged workload got a trace: %+v", ws[0].RootCauseTrace)
+	}
+	flagged := []inventory.Workload{wl("shop", "api", 0, 2, "worker-2")}
+	Annotate(flagged, nil)
+	if len(flagged[0].RootCauseTrace) != 0 {
+		t.Errorf("empty down list produced a trace: %+v", flagged[0].RootCauseTrace)
+	}
+}

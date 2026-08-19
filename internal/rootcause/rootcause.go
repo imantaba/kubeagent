@@ -19,6 +19,8 @@ import (
 // Annotate sets w.RootCause on each flagged workload that has a pod on a hard-down
 // node. It mutates the slice elements in place. When several down nodes host the
 // workload's pods, the node whose name sorts first is chosen (deterministic).
+// Every down node evaluated for a flagged workload is recorded in
+// w.RootCauseTrace with a verdict, whatever the outcome.
 func Annotate(workloads []inventory.Workload, down []clusterhealth.DownNode) {
 	if len(down) == 0 {
 		return
@@ -39,9 +41,15 @@ func Annotate(workloads []inventory.Workload, down []clusterhealth.DownNode) {
 		}
 		on := podNodes(*w)
 		for _, name := range names {
-			if on[name] {
-				workloads[i].RootCause = "node " + name + " (" + reasonByNode[name] + ")"
-				break
+			cause := "node " + name + " (" + reasonByNode[name] + ")"
+			switch {
+			case !on[name]:
+				record(w, cause, "node", inventory.VerdictRuledOut, "no pod of this workload is scheduled on it")
+			case w.RootCause == "":
+				w.RootCause = cause
+				record(w, cause, "node", inventory.VerdictAttributed, "pod "+podOn(*w, name)+" is scheduled on it")
+			default:
+				record(w, cause, "node", inventory.VerdictOutranked, w.RootCause+" is the stronger cause")
 			}
 		}
 	}
@@ -56,6 +64,26 @@ func podNodes(w inventory.Workload) map[string]bool {
 		}
 	}
 	return on
+}
+
+// record appends one evaluated candidate to the workload's trace. The trace
+// keeps everything the pass considered, whatever the verdict — "ruled out"
+// and "outranked" are answers, not omissions.
+func record(w *inventory.Workload, cause, kind string, verdict inventory.Verdict, reason string) {
+	w.RootCauseTrace = append(w.RootCauseTrace, inventory.Hypothesis{
+		Cause: cause, Kind: kind, Verdict: verdict, Reason: reason,
+	})
+}
+
+// podOn names the first pod of w placed on node, in w.Pods order. Empty when
+// none is — callers use it only after establishing placement.
+func podOn(w inventory.Workload, node string) string {
+	for _, p := range w.Pods {
+		if p.Node == node {
+			return p.Name
+		}
+	}
+	return ""
 }
 
 // AnnotateRegistry sets w.RootCause = "registry <host> (<N> workloads failing to

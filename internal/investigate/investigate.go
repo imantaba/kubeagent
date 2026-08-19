@@ -164,6 +164,7 @@ func (c *Client) Investigate(ctx context.Context, cluster clusterhealth.ClusterH
 	}
 	system := explain.SystemPrompt + investigateSuffix
 	firstUser := explain.BuildInventoryPrompt(cluster, summary, facts, serviceIssues, workloads) +
+		renderTrace(workloads) +
 		"\n\nInvestigate the findings with the read-only tools, then explain."
 	conv := c.newConversation(system, firstUser, toolSpecs())
 	narrative, trail, truncated, err := runLoop(ctx, conv, Reader{client: client}, NewScope(workloads))

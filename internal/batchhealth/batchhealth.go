@@ -100,16 +100,17 @@ func jobFailedFinding(j batchv1.Job, wkey string, fromCronJob bool) *diagnose.Fi
 			// humanReason, so it is sanitized there instead: on the one arm that
 			// echoes it rather than on the switch's input.
 			msg := safetext.Line(c.Message)
-			base, evidence := "the Job failed", msg
+			base, evidence, kind := "the Job failed", msg, "Job"
 			if fromCronJob {
 				base = "the most recent scheduled run failed"
 				evidence = fmt.Sprintf("job %q: %s", j.Name, msg)
+				kind = "CronJob"
 			}
 			reason := base
 			if p := humanReason(c.Reason); p != "" {
 				reason = base + " — " + p
 			}
-			return &diagnose.Finding{Pod: wkey, Issue: "JobFailed", Reason: reason, Evidence: evidence}
+			return &diagnose.Finding{Pod: wkey, Kind: kind, Issue: "JobFailed", Reason: reason, Evidence: evidence}
 		}
 	}
 	return nil

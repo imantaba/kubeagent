@@ -43,6 +43,9 @@ func TestAnnotate_FailedJob(t *testing.T) {
 	if f.Evidence != "Job has reached the specified backoff limit" {
 		t.Errorf("Evidence = %q", f.Evidence)
 	}
+	if f.Kind != "Job" {
+		t.Errorf("Kind = %q, want Job", f.Kind)
+	}
 }
 
 func TestAnnotate_CompleteJobNotFlagged(t *testing.T) {
@@ -75,6 +78,9 @@ func TestAnnotate_CronJobNewestRunFailed(t *testing.T) {
 	}
 	if want := `job "nightly-2": Job was active longer than specified deadline`; f.Evidence != want {
 		t.Errorf("Evidence = %q, want %q", f.Evidence, want)
+	}
+	if f.Kind != "CronJob" {
+		t.Errorf("Kind = %q, want CronJob", f.Kind)
 	}
 }
 

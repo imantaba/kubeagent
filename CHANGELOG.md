@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`scan --suggest` no longer hands a CronJob a command that cannot resolve.**
+  A `JobFailed` finding on a CronJob names the CronJob in its identity, and no
+  Job by that name exists — the failed run is named `<name>-<minute>` and is
+  rotated away by `failedJobsHistoryLimit` besides — so the suggested
+  `kubectl -n <ns> logs job/<name>` always came back NotFound. A finding now
+  carries an optional `kind` ("Job" or "CronJob", set only by the JobFailed
+  producer), and the CronJob arm suggests
+  `kubectl -n <ns> describe cronjob <name>` with a next step that names the
+  schedule. A standalone Job's suggestion is unchanged, and a `JobFailed`
+  finding with no kind — from a producer that predates the field — keeps the
+  Job-addressed command. `scan --output json` moves to schema version **1.7**
+  (added `kind` on a finding, `omitempty`): additive, so every existing
+  consumer is unaffected.
+
 ## [1.18.0] - 2026-08-19
 
 ### Changed

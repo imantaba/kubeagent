@@ -33,6 +33,7 @@ type Suggestion struct {
 // Finding is one diagnosis: what's wrong with a pod and why.
 type Finding struct {
 	Pod        string              `json:"pod"`                  // "namespace/name"
+	Kind       string              `json:"kind,omitempty"`       // what Pod names when it is not a pod; set only by the JobFailed producer ("Job" or "CronJob"), consumed by internal/remediation
 	Issue      string              `json:"issue"`                // "CrashLoopBackOff"
 	Reason     string              `json:"reason"`               // human-readable root cause
 	Evidence   string              `json:"evidence"`             // the exact signal observed

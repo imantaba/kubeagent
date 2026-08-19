@@ -28,8 +28,9 @@ func TestFor_TableAndCommands(t *testing.T) {
 		{"Init:CreateContainerConfigError", "", "referenced ConfigMap or Secret is missing", "kubectl -n shop describe pod web-abc"},
 		{"FailedCreate", "", "the controller can't create pods", "kubectl -n shop get events --field-selector reason=FailedCreate"},
 		{"JobFailed", "", "exhausted its retries", "kubectl -n shop logs job/web-abc"},
-		// RolloutStuck names a Deployment, a StatefulSet or a DaemonSet, and a
-		// Finding carries no kind — so the command is one that needs none.
+		// RolloutStuck names a Deployment, a StatefulSet or a DaemonSet, and
+		// its Kind is empty (only the JobFailed producer sets one) — so the
+		// command is one that needs no kind.
 		{"RolloutStuck", "", "the rollout is wedged", "kubectl -n shop get events --field-selector involvedObject.name=web-abc"},
 		{"SomethingNew", "", "inspect the object for details", "kubectl -n shop describe pod web-abc"},
 	}
@@ -41,6 +42,37 @@ func TestFor_TableAndCommands(t *testing.T) {
 		}
 		if got.Command != tc.wantCmd {
 			t.Errorf("%s: Command = %q, want %q", tc.issue, got.Command, tc.wantCmd)
+		}
+	}
+}
+
+// A CronJob-sourced JobFailed finding carries the CronJob's name in Pod, and
+// no Job by that name exists — the failed run is named "<name>-<minute>" — so
+// the job/ log command could never resolve. The suggestion addresses the
+// CronJob itself instead.
+func TestFor_JobFailedFromCronJob(t *testing.T) {
+	f := diagnose.Finding{Issue: "JobFailed", Kind: "CronJob", Pod: "shop/nightly"}
+	got := For(f)
+	if want := "inspect that run and the schedule"; !strings.Contains(got.NextStep, want) {
+		t.Errorf("NextStep = %q, want it to contain %q", got.NextStep, want)
+	}
+	if want := "kubectl -n shop describe cronjob nightly"; got.Command != want {
+		t.Errorf("Command = %q, want %q", got.Command, want)
+	}
+}
+
+// Every Kind other than "CronJob" — "Job" from the standalone-Job constructor,
+// or empty from a producer that predates the field — keeps the Job-addressed
+// log command, so nothing that worked before degrades.
+func TestFor_JobFailedKeepsJobCommandForOtherKinds(t *testing.T) {
+	for _, kind := range []string{"", "Job"} {
+		f := diagnose.Finding{Issue: "JobFailed", Kind: kind, Pod: "shop/web-abc"}
+		got := For(f)
+		if want := "kubectl -n shop logs job/web-abc"; got.Command != want {
+			t.Errorf("Kind %q: Command = %q, want %q", kind, got.Command, want)
+		}
+		if want := "exhausted its retries"; !strings.Contains(got.NextStep, want) {
+			t.Errorf("Kind %q: NextStep = %q, want it to contain %q", kind, got.NextStep, want)
 		}
 	}
 }

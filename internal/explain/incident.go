@@ -67,7 +67,10 @@ func BuildIncidentPrompt(object string, issues []string, cluster clusterhealth.C
 			fmt.Fprintf(&b, "- %s/%s (%s): %d/%d ready, status %s, %d restarts\n",
 				w.Namespace, w.Name, w.Kind, w.Ready, w.Desired, w.Status, w.Restarts)
 			for _, f := range w.Findings {
-				fmt.Fprintf(&b, "    issue: %s — %s (%s)\n", f.Issue, f.Reason, f.Evidence)
+				// Evidence is API text and quotes addresses outright — the
+				// same rule as findingBlock in explain.go: redact where the
+				// prompt is assembled, keep the rendered report raw.
+				fmt.Fprintf(&b, "    issue: %s — %s (%s)\n", f.Issue, f.Reason, redact.Addresses(f.Evidence))
 				// LogCause is one of logscan's fixed classifier strings —
 				// every signature discards its submatches — so it cannot
 				// carry an in-cluster address today. This call is defence in

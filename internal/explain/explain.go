@@ -286,7 +286,13 @@ func writeFindingBlocks(b *strings.Builder, w inventory.Workload) {
 // line. It is the unit writeFindingBlocks compares, collapses and caps.
 func findingBlock(f diagnose.Finding, w inventory.Workload) string {
 	var blk strings.Builder
-	fmt.Fprintf(&blk, "    issue: %s — %s (%s)\n", f.Issue, f.Reason, f.Evidence)
+	// Evidence is API text and quotes addresses outright — a probe finding
+	// carries the kubelet's "Get http://<pod-ip>/…" message, a DNS finding
+	// names the resolver it asked. The prompt is where the value leaves the
+	// process, so the address is redacted here; the rendered scan report
+	// keeps the raw evidence, and matching decisions upstream already ran
+	// on it.
+	fmt.Fprintf(&blk, "    issue: %s — %s (%s)\n", f.Issue, f.Reason, redact.Addresses(f.Evidence))
 	// LogCause is one of logscan's fixed classifier strings — every signature
 	// discards its submatches — so it cannot carry an in-cluster address
 	// today. This call is defence in depth at the boundary where a prompt

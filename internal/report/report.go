@@ -492,6 +492,11 @@ func printInventoryText(in Input, w io.Writer) error {
 		if _, err := fmt.Fprintf(w, "\n── Explanation ── (model-written, not pre-reviewed; verify every command before running)\n%s\n", in.Explanation); err != nil {
 			return err
 		}
+		if in.ExplanationTruncated {
+			if _, err := fmt.Fprintln(w, "(narrative truncated at the model's output limit)"); err != nil {
+				return err
+			}
+		}
 	}
 	if in.Investigation != "" {
 		if _, err := fmt.Fprintf(w, "\n── Investigation ──\n"); err != nil {

@@ -302,13 +302,20 @@ func (r Reader) getRelated(ctx context.Context, c toolCall, scope *Scope) toolRe
 		if p.Spec.NodeName == "" {
 			return okResult(c.ID, fmt.Sprintf("pod %s/%s is not scheduled to a node", in.Namespace, in.Name))
 		}
-		scope.Add("node", "", p.Spec.NodeName)
-		return okResult(c.ID, fmt.Sprintf("node of %s: %s\n", in.Name, p.Spec.NodeName))
+		// safetext.Line, not sanitize, for the same reason as the owner arm
+		// above: a legal node name that looks like an IPv4 address would be
+		// rewritten by redact.Addresses, breaking the scope match. Both
+		// sinks get the same sanitized value.
+		node := safetext.Line(p.Spec.NodeName)
+		scope.Add("node", "", node)
+		return okResult(c.ID, fmt.Sprintf("node of %s: %s\n", in.Name, node))
 	case "pvc":
 		var names []string
 		for _, v := range p.Spec.Volumes {
 			if v.PersistentVolumeClaim != nil {
-				n := v.PersistentVolumeClaim.ClaimName
+				// safetext.Line, not sanitize — same rule as the owner and
+				// node arms above, same sanitized value in both sinks.
+				n := safetext.Line(v.PersistentVolumeClaim.ClaimName)
 				scope.Add("pvc", in.Namespace, n)
 				names = append(names, n)
 			}

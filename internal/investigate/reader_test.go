@@ -452,3 +452,78 @@ func TestReader_GetRelated_Owner_SanitizesKindAndName(t *testing.T) {
 		t.Error("scope must not contain an entry built from the raw, unsanitized owner reference")
 	}
 }
+
+// TestReader_GetRelated_Node_SanitizesNodeName proves the "node" arm of
+// getRelated runs spec.nodeName through safetext.Line before either the
+// rendered tool result or the Scope entry. Same rule as the owner arm above:
+// both sinks must agree on the sanitized form.
+func TestReader_GetRelated_Node_SanitizesNodeName(t *testing.T) {
+	const bel = "\a" // a control character (BEL); safetext.Line drops it.
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "web-abc", Namespace: "shop"},
+		Spec:       corev1.PodSpec{NodeName: "worker" + bel + "-1"},
+	}
+	r := Reader{client: fake.NewSimpleClientset(pod)}
+	s := NewScope(nil)
+	s.Add("pod", "shop", "web-abc")
+
+	res := r.execute(context.Background(), call("get_related", map[string]string{
+		"namespace": "shop", "name": "web-abc", "relation": "node",
+	}), s)
+
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", res.Content)
+	}
+	if strings.Contains(res.Content, bel) {
+		t.Errorf("control character leaked unsanitized into tool result: %q", res.Content)
+	}
+	if !strings.Contains(res.Content, "worker-1") {
+		t.Errorf("expected the sanitized node name in the tool result, got: %q", res.Content)
+	}
+	if !s.Allowed("node", "", "worker-1") {
+		t.Error("scope entry must use the sanitized node name, not the raw one")
+	}
+	if s.Allowed("node", "", "worker"+bel+"-1") {
+		t.Error("scope must not contain an entry built from the raw, unsanitized node name")
+	}
+}
+
+// TestReader_GetRelated_PVC_SanitizesClaimName proves the "pvc" arm of
+// getRelated runs a volume's claimName through safetext.Line before either
+// the rendered tool result or the Scope entry. Same rule as the owner and
+// node arms above: both sinks must agree on the sanitized form.
+func TestReader_GetRelated_PVC_SanitizesClaimName(t *testing.T) {
+	const bel = "\a" // a control character (BEL); safetext.Line drops it.
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "web-abc", Namespace: "shop"},
+		Spec: corev1.PodSpec{Volumes: []corev1.Volume{{
+			Name: "data",
+			VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+				ClaimName: "data" + bel + "-0",
+			}},
+		}}},
+	}
+	r := Reader{client: fake.NewSimpleClientset(pod)}
+	s := NewScope(nil)
+	s.Add("pod", "shop", "web-abc")
+
+	res := r.execute(context.Background(), call("get_related", map[string]string{
+		"namespace": "shop", "name": "web-abc", "relation": "pvc",
+	}), s)
+
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", res.Content)
+	}
+	if strings.Contains(res.Content, bel) {
+		t.Errorf("control character leaked unsanitized into tool result: %q", res.Content)
+	}
+	if !strings.Contains(res.Content, "data-0") {
+		t.Errorf("expected the sanitized claim name in the tool result, got: %q", res.Content)
+	}
+	if !s.Allowed("pvc", "shop", "data-0") {
+		t.Error("scope entry must use the sanitized claim name, not the raw one")
+	}
+	if s.Allowed("pvc", "shop", "data"+bel+"-0") {
+		t.Error("scope must not contain an entry built from the raw, unsanitized claim name")
+	}
+}

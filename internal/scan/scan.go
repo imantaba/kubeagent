@@ -631,7 +631,7 @@ func Evaluate(ctx context.Context, client kubernetes.Interface, opts Options) (R
 		if logOK[k] {
 			if clue := logscan.Classify(logText[k]); clue.Cause != "" {
 				findings[logTargets[k].finding].LogCause = clue.Cause
-				findings[logTargets[k].finding].LogExcerpt = clue.Excerpt
+				findings[logTargets[k].finding].LogExcerpt = redact.Addresses(clue.Excerpt)
 			}
 		}
 	}

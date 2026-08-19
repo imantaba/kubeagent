@@ -33,8 +33,10 @@ var signatures = []signature{
 	// No submatch reaches the returned cause. report.go renders LogCause
 	// unredacted, so interpolating the dialed address here would forward
 	// whatever the container printed — including a credential embedded in a
-	// URL — off the machine. The raw line still reaches Excerpt, sanitized and
-	// truncated, which is where an operator can see it.
+	// URL — off the machine. The raw line still reaches Clue.Excerpt here,
+	// sanitized and truncated, but internal/scan redacts any address in it
+	// before the excerpt reaches a finding — so that assignment, not this
+	// return, is where the address itself stops being visible to an operator.
 	{"conn-refused", regexp.MustCompile(`(?i)dial tcp \S+: connect: connection refused`), func([]string) string {
 		return "cannot reach a dependency — connection refused"
 	}},

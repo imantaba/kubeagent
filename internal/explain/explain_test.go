@@ -17,14 +17,15 @@ import (
 // fakeSummarizer stands in for the Anthropic-backed summarizer so tests never
 // touch the network. It records whether it was called.
 type fakeSummarizer struct {
-	called bool
-	reply  string
-	err    error
+	called    bool
+	reply     string
+	truncated bool
+	err       error
 }
 
-func (f *fakeSummarizer) summarize(ctx context.Context, system, prompt string) (string, error) {
+func (f *fakeSummarizer) summarize(ctx context.Context, system, prompt string) (Explanation, error) {
 	f.called = true
-	return f.reply, f.err
+	return Explanation{Text: f.reply, Truncated: f.truncated}, f.err
 }
 
 func TestExplainInventory_SkipsWhenEmptyAndHealthy(t *testing.T) {
@@ -34,8 +35,8 @@ func TestExplainInventory_SkipsWhenEmptyAndHealthy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got != "" || f.called {
-		t.Errorf("expected no call and empty result; got %q called=%v", got, f.called)
+	if got.Text != "" || f.called {
+		t.Errorf("expected no call and empty result; got %q called=%v", got.Text, f.called)
 	}
 }
 
@@ -47,8 +48,8 @@ func TestExplainInventory_SummarizesFlaggedWorkload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got != "coredns is degraded." || !f.called {
-		t.Errorf("got %q called=%v", got, f.called)
+	if got.Text != "coredns is degraded." || !f.called {
+		t.Errorf("got %q called=%v", got.Text, f.called)
 	}
 }
 
@@ -101,8 +102,8 @@ func TestExplainInventory_ExplainsDegradedClusterWithNoWorkloads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got != "two nodes are NotReady" || !f.called {
-		t.Errorf("expected the degraded cluster to be explained; got %q called=%v", got, f.called)
+	if got.Text != "two nodes are NotReady" || !f.called {
+		t.Errorf("expected the degraded cluster to be explained; got %q called=%v", got.Text, f.called)
 	}
 }
 
@@ -130,8 +131,8 @@ func TestExplainInventory_SummarizesGivenWorkloads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got != "all noted" || !f.called {
-		t.Errorf("expected the given workload to be summarized; got %q called=%v", got, f.called)
+	if got.Text != "all noted" || !f.called {
+		t.Errorf("expected the given workload to be summarized; got %q called=%v", got.Text, f.called)
 	}
 }
 
@@ -214,8 +215,40 @@ func TestExplainInventory_ExplainsWhenOnlyServiceIssues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got != "web has no endpoints" || !f.called {
-		t.Errorf("expected service-only issues to be explained; got %q called=%v", got, f.called)
+	if got.Text != "web has no endpoints" || !f.called {
+		t.Errorf("expected service-only issues to be explained; got %q called=%v", got.Text, f.called)
+	}
+}
+
+// TestExplainInventory_PropagatesTruncated proves the positive half of R241:
+// a summarizer reporting a truncated reply makes ExplainInventory's
+// Explanation carry that flag through.
+func TestExplainInventory_PropagatesTruncated(t *testing.T) {
+	f := &fakeSummarizer{reply: "cut off mid-sent", truncated: true}
+	c := &Client{s: f}
+	ws := []inventory.Workload{{Namespace: "a", Name: "web", Kind: "Deployment", Ready: 0, Desired: 1, Status: "Degraded"}}
+	got, err := c.ExplainInventory(context.Background(), clusterhealth.ClusterHealth{Verdict: "Healthy"}, nil, nil, nil, ws)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !got.Truncated {
+		t.Errorf("Truncated = false, want true when the summarizer reports truncation")
+	}
+}
+
+// TestExplainInventory_NotTruncatedWhenClean is the negative case: a
+// summarizer that completed normally must not have its Explanation flagged
+// as truncated.
+func TestExplainInventory_NotTruncatedWhenClean(t *testing.T) {
+	f := &fakeSummarizer{reply: "a complete answer"}
+	c := &Client{s: f}
+	ws := []inventory.Workload{{Namespace: "a", Name: "web", Kind: "Deployment", Ready: 0, Desired: 1, Status: "Degraded"}}
+	got, err := c.ExplainInventory(context.Background(), clusterhealth.ClusterHealth{Verdict: "Healthy"}, nil, nil, nil, ws)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Truncated {
+		t.Errorf("Truncated = true, want false when the summarizer completed normally")
 	}
 }
 

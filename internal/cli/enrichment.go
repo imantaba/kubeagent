@@ -6,6 +6,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 
+	"github.com/imantaba/kubeagent/internal/explain"
 	"github.com/imantaba/kubeagent/internal/investigate"
 	"github.com/imantaba/kubeagent/internal/redact"
 )
@@ -43,9 +44,13 @@ func enrichmentFailure(err error) string {
 // investigation), or, on failure, a notice for stderr. An enrichment failure
 // is never fatal to the scan (R223), so this carries no error.
 type modelPathResult struct {
-	explanation   string
-	investigation investigate.Report
-	notice        string
+	explanation string
+	// explanationTruncated is true when explanation was cut short at the
+	// model's own output-length ceiling. Truncation is not a failure: it
+	// rides alongside a successful explanation, never a notice.
+	explanationTruncated bool
+	investigation        investigate.Report
+	notice               string
 }
 
 // runModelPath runs whichever model-enrichment arm is selected —
@@ -53,7 +58,7 @@ type modelPathResult struct {
 // and reduces a failure to one notice line instead of aborting the run.
 // investigateFn and explainFn are the actual calls, injected so this is
 // testable with no network and no cluster.
-func runModelPath(o scanOptions, investigateFn func() (investigate.Report, error), explainFn func() (string, error)) modelPathResult {
+func runModelPath(o scanOptions, investigateFn func() (investigate.Report, error), explainFn func() (explain.Explanation, error)) modelPathResult {
 	switch {
 	case o.investigate:
 		rep, err := investigateFn()
@@ -62,11 +67,11 @@ func runModelPath(o scanOptions, investigateFn func() (investigate.Report, error
 		}
 		return modelPathResult{investigation: rep}
 	case o.explain:
-		text, err := explainFn()
+		exp, err := explainFn()
 		if err != nil {
 			return modelPathResult{notice: fmt.Sprintf("--explain: %s", enrichmentFailure(err))}
 		}
-		return modelPathResult{explanation: text}
+		return modelPathResult{explanation: exp.Text, explanationTruncated: exp.Truncated}
 	}
 	return modelPathResult{}
 }

@@ -82,7 +82,7 @@ type Explanation struct {
 // a one-object incident follow-up and a whole-cluster scan summary want
 // different instructions.
 type summarizer interface {
-	summarize(ctx context.Context, system, prompt string) (string, error)
+	summarize(ctx context.Context, system, prompt string) (Explanation, error)
 }
 
 // toExplanation turns an *anthropic.Message into an Explanation: the
@@ -127,19 +127,20 @@ func NewFromConfig(model, endpoint, apiKey string) *Client {
 }
 
 // ExplainInventory summarizes the cluster verdict (when degraded) and the given
-// (already-prioritized) workloads. It skips the API call and returns "" when the
-// cluster is healthy and there are no workloads or service issues to explain.
-func (c *Client) ExplainInventory(ctx context.Context, cluster clusterhealth.ClusterHealth, summary *resources.Summary, facts *platform.Facts, serviceIssues []svchealth.Issue, workloads []inventory.Workload) (string, error) {
+// (already-prioritized) workloads. It skips the API call and returns a zero
+// Explanation when the cluster is healthy and there are no workloads or
+// service issues to explain.
+func (c *Client) ExplainInventory(ctx context.Context, cluster clusterhealth.ClusterHealth, summary *resources.Summary, facts *platform.Facts, serviceIssues []svchealth.Issue, workloads []inventory.Workload) (Explanation, error) {
 	if cluster.Verdict != "Degraded" && len(workloads) == 0 && len(serviceIssues) == 0 {
-		return "", nil
+		return Explanation{}, nil
 	}
 	out, err := c.s.summarize(ctx, SystemPrompt, BuildInventoryPrompt(cluster, summary, facts, serviceIssues, workloads))
 	if err != nil {
-		return "", fmt.Errorf("explaining workloads: %w", err)
+		return Explanation{}, fmt.Errorf("explaining workloads: %w", err)
 	}
-	out = strings.TrimSpace(out)
-	if out == "" {
-		return "", fmt.Errorf("explaining workloads: model returned no text")
+	out.Text = strings.TrimSpace(out.Text)
+	if out.Text == "" {
+		return Explanation{}, fmt.Errorf("explaining workloads: model returned no text")
 	}
 	return out, nil
 }
@@ -322,7 +323,7 @@ type anthropicSummarizer struct {
 	model  string
 }
 
-func (a anthropicSummarizer) summarize(ctx context.Context, system, prompt string) (string, error) {
+func (a anthropicSummarizer) summarize(ctx context.Context, system, prompt string) (Explanation, error) {
 	resp, err := a.client.Messages.New(ctx, anthropic.MessageNewParams{
 		Model: anthropic.Model(a.model),
 		// The hard ceiling on the narrative, not a target. 2048 cut a
@@ -335,7 +336,7 @@ func (a anthropicSummarizer) summarize(ctx context.Context, system, prompt strin
 		},
 	})
 	if err != nil {
-		return "", err
+		return Explanation{}, err
 	}
-	return toExplanation(resp).Text, nil
+	return toExplanation(resp), nil
 }

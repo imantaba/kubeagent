@@ -120,9 +120,15 @@ func (c *Client) ExplainIncident(ctx context.Context, prompt string) (string, er
 	if err != nil {
 		return "", fmt.Errorf("explaining incident: %w", err)
 	}
-	out = strings.TrimSpace(out)
-	if out == "" {
+	// out.Truncated is discarded here, not detected: internal/oncall depends
+	// on ExplainIncident's (string, error) signature and WatchVersion stays
+	// 1.0, so this path's own truncation goes unrecorded rather than being
+	// surfaced. That is an accepted cost of keeping the interface and the
+	// schema version fixed, not a claim that the incident narrative cannot
+	// be cut.
+	text := strings.TrimSpace(out.Text)
+	if text == "" {
 		return "", fmt.Errorf("explaining incident: model returned no text")
 	}
-	return out, nil
+	return text, nil
 }

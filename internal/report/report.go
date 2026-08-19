@@ -228,8 +228,14 @@ type Input struct {
 	// refused read is distinguishable from an empty one. Reasons are rendered
 	// verbatim here; see the safeReason comment in internal/htmlreport, which
 	// classifies instead because that document is written to be forwarded.
-	Blind                  []scan.ReadFailure
-	Explanation            string
+	Blind       []scan.ReadFailure
+	Explanation string
+	// ExplanationTruncated is true when Explanation was cut short at the
+	// model's own output-length ceiling. Rendered, not exported: it has no
+	// json tag by design, the same rule InvestigationTruncated follows below
+	// — a truncation flag on ScanReport would move a schemaVersion, which
+	// this decision refuses.
+	ExplanationTruncated   bool
 	Investigation          string
 	InvestigationConsulted []string
 	// InvestigationTruncated is true when Investigation was cut short at the

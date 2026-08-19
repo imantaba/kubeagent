@@ -68,9 +68,10 @@ func ResolveModel(flagVal, envVal string) string {
 
 // Explanation is a summarizer call's result: the narrative text plus whether
 // it was cut short at the model's own output-length ceiling rather than
-// because the model chose to stop. It is the same shape
-// investigate.Report already carries (Narrative/Truncated there, Text/
-// Truncated here).
+// because the model chose to stop. It carries the same pair of values
+// investigate.Report does (Narrative/Truncated there, Text/Truncated here);
+// that type also has a Consulted evidence trail, which this one has no
+// counterpart for.
 type Explanation struct {
 	Text      string
 	Truncated bool

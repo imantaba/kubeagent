@@ -176,9 +176,11 @@ func TestPrintInventory_TextShowsExplanationTruncationNotice(t *testing.T) {
 }
 
 // TestPrintInventory_TextOmitsExplanationTruncationNoticeWhenNotTruncated is
-// the negative case: an unset flag must render nothing extra. No golden
-// fixture sets Explanation, so a defect here could move a golden file that
-// starts doing so in the future.
+// the negative case: an unset flag must render nothing extra. Unlike the
+// investigation sibling further down, no golden file backs this one: the
+// notice renders only inside the in.Explanation != "" block and no golden
+// fixture sets Explanation, so a defect here would move no golden. This test
+// is the only guard.
 func TestPrintInventory_TextOmitsExplanationTruncationNoticeWhenNotTruncated(t *testing.T) {
 	var buf bytes.Buffer
 	in := Input{

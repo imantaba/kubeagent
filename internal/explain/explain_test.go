@@ -220,7 +220,7 @@ func TestExplainInventory_ExplainsWhenOnlyServiceIssues(t *testing.T) {
 	}
 }
 
-// TestExplainInventory_PropagatesTruncated proves the positive half of R241:
+// TestExplainInventory_PropagatesTruncated proves the positive half of R240:
 // a summarizer reporting a truncated reply makes ExplainInventory's
 // Explanation carry that flag through.
 func TestExplainInventory_PropagatesTruncated(t *testing.T) {

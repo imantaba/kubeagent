@@ -3,11 +3,15 @@
 // condition messages, container-status reasons, certificate subjects — before it
 // is put in front of an operator.
 //
-// Object names, namespaces and container names are NOT this package's problem:
-// the API server validates them as DNS-1123 labels, so a real cluster cannot
-// present anything hostile there. The unvalidated fields are the ones that
-// matter, and the tail of a crashed container's log is the one an unprivileged
-// attacker controls outright.
+// An object's own metadata.name and metadata.namespace, and a container name,
+// are NOT this package's problem: the API server validates those as DNS-1123
+// names, so a real cluster cannot present anything hostile in them. A field
+// that *references* an object by name is a different matter and is not
+// covered — apimachinery's validateOwnerReference checks an OwnerReference's
+// Kind and Name for non-emptiness and nothing else, so those two are
+// unvalidated and internal/investigate sanitizes them. The unvalidated fields
+// are the ones that matter, and the tail of a crashed container's log is the
+// one an unprivileged attacker controls outright.
 //
 // Pure: no I/O, no state, no clock. Safe to call from a detector.
 package safetext

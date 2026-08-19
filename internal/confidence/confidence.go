@@ -61,8 +61,16 @@ func ForRootCause(rootCause string) string {
 // before Annotate — internal/scan/scan.go calls rollouthealth.Annotate ahead
 // of confidence.Annotate. Reordering that would silently fall back to
 // ForIssue's answer for those findings instead of failing loudly.
+//
+// Annotate also stores the attribution confidence on the workload row
+// (RootCauseConfidence), the same word internal/report renders as a tag, so
+// the JSON document carries it too; an empty or unrecognized RootCause
+// stores nothing.
 func Annotate(workloads []inventory.Workload) {
 	for i := range workloads {
+		if c := ForRootCause(workloads[i].RootCause); c != "" {
+			workloads[i].RootCauseConfidence = c
+		}
 		for j := range workloads[i].Findings {
 			if workloads[i].Findings[j].Confidence == "" {
 				workloads[i].Findings[j].Confidence = ForIssue(workloads[i].Findings[j].Issue)

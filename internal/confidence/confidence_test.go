@@ -75,3 +75,23 @@ func TestAnnotate_PresetConfidenceSurvives(t *testing.T) {
 		t.Errorf("empty Confidence = %q, want high (filled from ForIssue)", got)
 	}
 }
+
+func TestAnnotate_StoresRootCauseConfidence(t *testing.T) {
+	ws := []inventory.Workload{
+		{Namespace: "shop", Name: "api", RootCause: "node worker-2 (NotReady)"},
+		{Namespace: "shop", Name: "web", RootCause: "registry ghcr.io (2 workloads failing to pull)"},
+		{Namespace: "shop", Name: "db", RootCause: "PVC data-0 (ProvisioningFailed)"},
+		{Namespace: "shop", Name: "cache"}, // no attribution
+	}
+	Annotate(ws)
+	for i, want := range []string{"high", "medium", "high", ""} {
+		if got := ws[i].RootCauseConfidence; got != want {
+			t.Errorf("ws[%d].RootCauseConfidence = %q, want %q", i, got, want)
+		}
+	}
+	// Idempotent: a second call writes the same values.
+	Annotate(ws)
+	if ws[0].RootCauseConfidence != "high" || ws[3].RootCauseConfidence != "" {
+		t.Error("Annotate must be idempotent for RootCauseConfidence")
+	}
+}

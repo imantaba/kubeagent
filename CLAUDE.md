@@ -551,7 +551,7 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   load errors. `fleet` moves to schema version **1.2** (added the optional
   `name` on a cluster summary and on an unreachable cluster, both
   `omitempty`).
-- **Post-1.0 — the hypothesis engine, slice 1 has shipped:** the root-cause
+- **Post-1.0 — the hypothesis engine, slice 1 has shipped (v1.20.0):** the root-cause
   attribution pass keeps every candidate it evaluates instead of discarding
   the losers. `inventory.Workload` gains `rootCauseTrace` — one entry per
   candidate with a closed-set verdict (`attributed`, `ruled_out`,

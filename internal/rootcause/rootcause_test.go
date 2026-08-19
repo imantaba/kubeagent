@@ -542,3 +542,120 @@ func TestAnnotatePVC_TraceSkipsForeignNamespaceCandidates(t *testing.T) {
 		t.Errorf("a foreign-namespace PVC is not a candidate, got trace %+v", ws[0].RootCauseTrace)
 	}
 }
+
+func TestAnnotateRegistry_TraceAttributedGroup(t *testing.T) {
+	ws := []inventory.Workload{
+		pullWL("frontend", "ghcr.io/shop/frontend:2.4", "ImagePullBackOff"),
+		pullWL("search", "ghcr.io/shop/search:1.9", "ErrImagePull"),
+	}
+	AnnotateRegistry(ws)
+	want := inventory.Hypothesis{
+		Cause:   "registry ghcr.io (2 workloads failing to pull)",
+		Kind:    "registry",
+		Verdict: inventory.VerdictAttributed,
+		Reason:  "2 workloads failing to pull from this host clear the threshold of 2",
+	}
+	for i := range ws {
+		if ws[i].RootCause != "registry ghcr.io (2 workloads failing to pull)" {
+			t.Fatalf("ws[%d].RootCause = %q", i, ws[i].RootCause)
+		}
+		if len(ws[i].RootCauseTrace) != 1 || ws[i].RootCauseTrace[0] != want {
+			t.Errorf("ws[%d] trace = %+v, want [%+v]", i, ws[i].RootCauseTrace, want)
+		}
+	}
+}
+
+func TestAnnotateRegistry_TraceRuledOutBelowThreshold(t *testing.T) {
+	ws := []inventory.Workload{pullWL("frontend", "ghcr.io/shop/frontend:2.4", "ImagePullBackOff")}
+	AnnotateRegistry(ws)
+	if ws[0].RootCause != "" {
+		t.Fatalf("RootCause = %q, want empty", ws[0].RootCause)
+	}
+	want := inventory.Hypothesis{
+		Cause:   "registry ghcr.io",
+		Kind:    "registry",
+		Verdict: inventory.VerdictRuledOut,
+		Reason:  "only workload failing to pull from this host; threshold is 2",
+	}
+	if len(ws[0].RootCauseTrace) != 1 || ws[0].RootCauseTrace[0] != want {
+		t.Errorf("trace = %+v, want [%+v]", ws[0].RootCauseTrace, want)
+	}
+}
+
+func TestAnnotateRegistry_TraceOutrankedByEarlierAttribution(t *testing.T) {
+	attributed := pullWL("frontend", "ghcr.io/shop/frontend:2.4", "ImagePullBackOff")
+	attributed.RootCause = "node worker-2 (NotReady)"
+	ws := []inventory.Workload{attributed}
+	AnnotateRegistry(ws)
+	if ws[0].RootCause != "node worker-2 (NotReady)" {
+		t.Fatalf("earlier attribution must survive, got %q", ws[0].RootCause)
+	}
+	want := inventory.Hypothesis{
+		Cause:   "registry ghcr.io",
+		Kind:    "registry",
+		Verdict: inventory.VerdictOutranked,
+		Reason:  "node worker-2 (NotReady) is the stronger cause",
+	}
+	if len(ws[0].RootCauseTrace) != 1 || ws[0].RootCauseTrace[0] != want {
+		t.Errorf("trace = %+v, want [%+v]", ws[0].RootCauseTrace, want)
+	}
+}
+
+func TestAnnotateRegistry_TraceRuledOutUndeterminableImage(t *testing.T) {
+	ws := []inventory.Workload{pullWLWithImage("frontend", "ghcr.io/shop/frontend:2.4", "", "ImagePullBackOff")}
+	AnnotateRegistry(ws)
+	if ws[0].RootCause != "" {
+		t.Fatalf("RootCause = %q, want empty", ws[0].RootCause)
+	}
+	want := inventory.Hypothesis{
+		Cause:   "registry unknown",
+		Kind:    "registry",
+		Verdict: inventory.VerdictRuledOut,
+		Reason:  "image reference undeterminable",
+	}
+	if len(ws[0].RootCauseTrace) != 1 || ws[0].RootCauseTrace[0] != want {
+		t.Errorf("trace = %+v, want [%+v]", ws[0].RootCauseTrace, want)
+	}
+}
+
+func TestAnnotateRegistry_TraceEmptyWithoutPullFinding(t *testing.T) {
+	ws := []inventory.Workload{wl("shop", "api", 0, 2, "worker-2")} // flagged, no findings
+	AnnotateRegistry(ws)
+	if len(ws[0].RootCauseTrace) != 0 {
+		t.Errorf("no pull finding must record nothing, got %+v", ws[0].RootCauseTrace)
+	}
+}
+
+func TestTraceAcrossAnnotatorsKeepsScanOrder(t *testing.T) {
+	// One workload on a down node, mounting a broken PVC, with a pull finding.
+	// internal/scan/scan.go's chain order (Annotate → AnnotatePVC →
+	// AnnotateRegistry) must yield: node attributed, then pvc outranked, then
+	// registry outranked — append order is evaluation order.
+	w := wl("shop", "api", 0, 2, "worker-2")
+	w.Findings = append(w.Findings, diagnose.Finding{Pod: "shop/api", Issue: "ImagePullBackOff",
+		Reason: "Bad image reference or registry authentication", Image: "ghcr.io/shop/api:2.4"})
+	ws := []inventory.Workload{w}
+	Annotate(ws, []clusterhealth.DownNode{{Name: "worker-2", Reason: "NotReady"}})
+	AnnotatePVC(ws, map[string][]string{"shop/api-a": {"api-data"}},
+		[]pvchealth.Issue{{Namespace: "shop", Name: "api-data", Reason: "ProvisioningFailed"}})
+	AnnotateRegistry(ws)
+	if ws[0].RootCause != "node worker-2 (NotReady)" {
+		t.Fatalf("RootCause = %q", ws[0].RootCause)
+	}
+	got := ws[0].RootCauseTrace
+	if len(got) != 3 {
+		t.Fatalf("trace has %d entries, want 3: %+v", len(got), got)
+	}
+	wantKinds := []string{"node", "pvc", "registry"}
+	wantVerdicts := []inventory.Verdict{inventory.VerdictAttributed, inventory.VerdictOutranked, inventory.VerdictOutranked}
+	for i := range got {
+		if got[i].Kind != wantKinds[i] || got[i].Verdict != wantVerdicts[i] {
+			t.Errorf("trace[%d] = kind %q verdict %q, want %q %q", i, got[i].Kind, got[i].Verdict, wantKinds[i], wantVerdicts[i])
+		}
+	}
+	for i, h := range got[1:] {
+		if h.Reason != "node worker-2 (NotReady) is the stronger cause" {
+			t.Errorf("trace[%d] outranked reason = %q", i+1, h.Reason)
+		}
+	}
+}

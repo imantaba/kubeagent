@@ -93,12 +93,23 @@ func podOn(w inventory.Workload, node string) string {
 // Pure and deterministic (hosts processed in sorted order). Call after Annotate:
 // node attribution wins, and a node-attributed workload is excluded from the
 // group count too.
+// Every flagged workload with a pull finding is recorded in w.RootCauseTrace
+// with a verdict — attributed, ruled_out (below threshold, or image
+// undeterminable), or outranked when an earlier rule already attributed it.
 func AnnotateRegistry(workloads []inventory.Workload) {
 	groups := map[string][]int{}
 	for i := range workloads {
 		w := &workloads[i]
-		img, ok := pullImage(*w)
-		if !w.Flagged() || w.RootCause != "" || !ok {
+		img, hasPull := pullImage(*w)
+		if !w.Flagged() || !hasPull {
+			continue
+		}
+		if img == "" {
+			record(w, "registry unknown", "registry", inventory.VerdictRuledOut, "image reference undeterminable")
+			continue
+		}
+		if w.RootCause != "" {
+			record(w, "registry "+safetext.Line(registryHost(img)), "registry", inventory.VerdictOutranked, w.RootCause+" is the stronger cause")
 			continue
 		}
 		host := registryHost(img)
@@ -112,23 +123,29 @@ func AnnotateRegistry(workloads []inventory.Workload) {
 	for _, host := range hosts {
 		members := groups[host]
 		if len(members) < 2 {
+			for _, i := range members {
+				record(&workloads[i], "registry "+safetext.Line(host), "registry", inventory.VerdictRuledOut, "only workload failing to pull from this host; threshold is 2")
+			}
 			continue
 		}
 		cause := fmt.Sprintf("registry %s (%d workloads failing to pull)", safetext.Line(host), len(members))
+		reason := fmt.Sprintf("%d workloads failing to pull from this host clear the threshold of 2", len(members))
 		for _, i := range members {
 			workloads[i].RootCause = cause
+			record(&workloads[i], cause, "registry", inventory.VerdictAttributed, reason)
 		}
 	}
 }
 
 // pullImage returns the first pull finding's Image in w.Findings order, and
-// whether that image is determinable. A workload with no pull finding at all,
-// or whose first pull finding carries no image, reports ok=false — arm (B):
-// grouping under the wrong host is worse than not grouping.
-func pullImage(w inventory.Workload) (string, bool) {
+// whether the workload has a pull finding at all. An empty image with
+// hasPull=true means the finding carries no image reference — the caller
+// records that as ruled out rather than grouping under the wrong host,
+// arm (B): grouping under the wrong host is worse than not grouping.
+func pullImage(w inventory.Workload) (image string, hasPull bool) {
 	for _, f := range w.Findings {
 		if f.Issue == "ImagePullBackOff" || f.Issue == "ErrImagePull" {
-			return f.Image, f.Image != ""
+			return f.Image, true
 		}
 	}
 	return "", false

@@ -679,8 +679,12 @@ func plural(n int, one, many string) string {
 	return many
 }
 
-// printNotes renders advisory content: expected-empty services, expected-empty
-// ingress routes, PVC reclaim, and the hidden-counts footer.
+// printNotes renders the NOTES section: the advisory bullets that qualify the
+// report rather than diagnose a workload — a condition worth knowing that is
+// not a finding, a check that ran and flagged nothing, and what the inventory
+// left out behind a flag. Each bullet is written by the block that owns its
+// input, so the set grows with those blocks and this comment does not
+// enumerate them. The header is emitted only if at least one bullet was.
 func printNotes(in Input, expected []svchealth.Issue, expectedIng []ingresshealth.RouteIssue, w io.Writer) error {
 	now := nowOr(in.Now)
 	var b strings.Builder

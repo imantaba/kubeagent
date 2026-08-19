@@ -10,9 +10,13 @@ import (
 // renderTrace renders each flagged workload's deterministic root-cause
 // hypothesis trace for the investigation's opening message, or "" when no
 // workload carries one. It lives here and not in internal/explain on purpose:
-// the trace names nodes, and --explain's payload deliberately excludes node
-// names, while --investigate already surfaces node names through its tools —
-// the two egress boundaries differ and must stay separate.
+// explain.BuildInventoryPrompt, the base prompt both flags share, already
+// names a node in its degraded-cluster section when the cluster is
+// Degraded. What the trace adds is a per-workload attribution tying a
+// named node to a named workload as its cause, and the tool loop adds
+// direct node reads (describe on a node, get_related's node hop) on top —
+// exposure --explain has no equivalent of, which is why the two egress
+// boundaries stay separate.
 // explain.BuildInventoryPrompt and --explain's payload are unchanged.
 func renderTrace(workloads []inventory.Workload) string {
 	var b strings.Builder

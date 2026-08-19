@@ -1270,9 +1270,12 @@ answer.
 root-cause hypothesis trace — the same per-workload `considered … :
 attributed/ruled out/outranked` lines `scan --why` prints — with an
 instruction to verify the attributed causes with the tools and spend the
-budget on what the deterministic pass could not explain. This is a
-difference from `--explain` by design: `--explain`'s payload excludes node
-names, while `--investigate`'s prompt and tools already surface them.
+budget on what the deterministic pass could not explain. Both flags share
+the same base prompt, which already names a node in its degraded-cluster
+section when the cluster is Degraded. What the trace adds, by design, is a
+per-workload attribution tying a named node to a named workload as its
+cause, on top of the tool loop's direct node reads (`describe` on a node,
+`get_related`'s node hop) — exposure `--explain` has no equivalent of.
 
 **Reachable scope:**
 

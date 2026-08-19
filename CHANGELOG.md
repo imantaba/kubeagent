@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`scan --explain` on a clean cluster now says the explanation was skipped.**
+  When the scan finds nothing to explain, no model call is made — that is
+  deliberate and unchanged — but the output was indistinguishable from
+  `--explain` never having been passed. The text report now renders an
+  `── Explanation ──` section with a one-line skip notice, the same treatment
+  `--investigate` already gives the same situation. The JSON document is
+  untouched: the flag is rendered, not exported, so no `schemaVersion` moves.
 - **`scan --suggest` no longer hands a CronJob a command that cannot resolve.**
   A `JobFailed` finding on a CronJob names the CronJob in its identity, and no
   Job by that name exists — the failed run is named `<name>-<minute>` and is

@@ -416,6 +416,16 @@ func runScan(o scanOptions) error {
 	// empty report for that case. So this conjunction is exactly the skip
 	// and nothing else.
 	in.InvestigationSkipped = o.investigate && modelRes.notice == "" && investigationReport.Narrative == ""
+	// ExplanationSkipped follows the same argument one flag over: with
+	// o.explain set and o.investigate clear, runModelPath enters the explain
+	// arm; a failure sets modelRes.notice (handled above); and a success with
+	// an empty explanation happens only through ExplainInventory's clean-scan
+	// guard, because a real run that produced no text returns an error rather
+	// than an empty explanation. --investigate supersedes --explain in
+	// runModelPath, so o.investigate is excluded — that path never entered
+	// the explain arm at all. So this conjunction is exactly the skip and
+	// nothing else.
+	in.ExplanationSkipped = o.explain && !o.investigate && modelRes.notice == "" && explanation == ""
 	in.RemediationPlan = fixPlan
 	if err := renderScan(os.Stdout, o.output, in, res, o.namespace); err != nil {
 		return err

@@ -2362,6 +2362,48 @@ func TestPrintInventory_CertificatesNotesBullet(t *testing.T) {
 	})
 }
 
+// R-explain-skip: --explain on a clean scan makes no model call, and until
+// this notice the output was indistinguishable from --explain never having
+// been passed. The Investigation section already renders a skip notice for
+// the same situation; the Explanation section now does too.
+func TestPrintInventory_ExplanationSkipped(t *testing.T) {
+	cluster := clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1}
+
+	t.Run("skipped: heading plus notice", func(t *testing.T) {
+		var buf bytes.Buffer
+		if err := PrintInventory(Input{Cluster: cluster, ExplanationSkipped: true}, "text", &buf); err != nil {
+			t.Fatal(err)
+		}
+		out := buf.String()
+		if !strings.Contains(out, "── Explanation ──") {
+			t.Errorf("want the Explanation heading, got:\n%s", out)
+		}
+		if !strings.Contains(out, "Explanation skipped — no findings to explain.") {
+			t.Errorf("want the skip notice, got:\n%s", out)
+		}
+	})
+
+	t.Run("explanation present: no skip notice", func(t *testing.T) {
+		var buf bytes.Buffer
+		if err := PrintInventory(Input{Cluster: cluster, Explanation: "all good"}, "text", &buf); err != nil {
+			t.Fatal(err)
+		}
+		if out := buf.String(); strings.Contains(out, "Explanation skipped") {
+			t.Errorf("a rendered explanation must not carry the skip notice, got:\n%s", out)
+		}
+	})
+
+	t.Run("neither: no Explanation section at all", func(t *testing.T) {
+		var buf bytes.Buffer
+		if err := PrintInventory(Input{Cluster: cluster}, "text", &buf); err != nil {
+			t.Fatal(err)
+		}
+		if out := buf.String(); strings.Contains(out, "── Explanation ──") {
+			t.Errorf("no --explain and no skip must render no Explanation section, got:\n%s", out)
+		}
+	})
+}
+
 func TestPrintInventory_ConfidenceTags(t *testing.T) {
 	// RolloutStuck is one issue string rendered two different ways: internal/
 	// rollouthealth's Deployment arm sets "high" (a controller-set condition —

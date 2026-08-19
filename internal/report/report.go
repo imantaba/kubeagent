@@ -235,7 +235,13 @@ type Input struct {
 	// json tag by design, the same rule InvestigationTruncated follows below
 	// — a truncation flag on ScanReport would move a schemaVersion, which
 	// this decision refuses.
-	ExplanationTruncated   bool
+	ExplanationTruncated bool
+	// ExplanationSkipped is true when --explain was passed but the scan found
+	// nothing to explain, so no model call was made. Rendered, not exported:
+	// no json tag by design, the same rule as the field above it — a
+	// skipped-explanation flag on ScanReport would move a schemaVersion,
+	// which this decision refuses.
+	ExplanationSkipped     bool
 	Investigation          string
 	InvestigationConsulted []string
 	// InvestigationTruncated is true when Investigation was cut short at the
@@ -496,6 +502,13 @@ func printInventoryText(in Input, w io.Writer) error {
 			if _, err := fmt.Fprintln(w, "(narrative truncated at the model's output limit)"); err != nil {
 				return err
 			}
+		}
+	} else if in.ExplanationSkipped {
+		// No model-written caveat here — no model was called, so there is
+		// nothing to verify. The heading still renders so this reads as a
+		// section like every other, not a bare floating sentence.
+		if _, err := fmt.Fprintf(w, "\n── Explanation ──\nExplanation skipped — no findings to explain.\n"); err != nil {
+			return err
 		}
 	}
 	if in.Investigation != "" {

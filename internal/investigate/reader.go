@@ -282,11 +282,16 @@ func (r Reader) getRelated(ctx context.Context, c toolCall, scope *Scope) toolRe
 		}
 		var b strings.Builder
 		// Kind and Name go through safetext.Line, not this file's sanitize
-		// helper: sanitize also runs redact.Addresses, which would treat a
-		// dotted-numeric object name -- a legal DNS-1123 subdomain such as
-		// "10.0.0.1" -- as a host:port and redact it. Both places below use
-		// the same sanitized values so the rendered line and the Scope entry
-		// never disagree about what the resolved owner is.
+		// helper. sanitize also runs redact.Addresses, and of its three
+		// alternatives only the dotted-quad IPv4 one has an optional port --
+		// the bracketed IPv6 alternative requires a port besides its
+		// brackets, and the dotted-DNS-name alternative requires one too. A
+		// DNS-1123 object name can never contain the ':' either of those two
+		// need, so the IPv4 alternative is the only one that can ever match
+		// it, and it can match with no port present. A legal name that looks
+		// like an IPv4 address, e.g. "192.0.2.1", would therefore be
+		// rewritten to "<redacted>", breaking the scope match. Both places
+		// below are built from the same sanitized values.
 		for _, o := range p.OwnerReferences {
 			kind, name := safetext.Line(o.Kind), safetext.Line(o.Name)
 			scope.Add(kind, in.Namespace, name)

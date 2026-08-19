@@ -68,9 +68,12 @@ func BuildIncidentPrompt(object string, issues []string, cluster clusterhealth.C
 				w.Namespace, w.Name, w.Kind, w.Ready, w.Desired, w.Status, w.Restarts)
 			for _, f := range w.Findings {
 				fmt.Fprintf(&b, "    issue: %s — %s (%s)\n", f.Issue, f.Reason, f.Evidence)
-				// LogCause is built from the container's own log, so it can
-				// carry an in-cluster address. The report may show it; a
-				// prompt leaves the process, so redact it here.
+				// LogCause is one of logscan's fixed classifier strings —
+				// every signature discards its submatches — so it cannot
+				// carry an in-cluster address today. This call is defence in
+				// depth at the boundary where a prompt leaves the process: it
+				// holds even if a future signature interpolates the line it
+				// matched.
 				if f.LogCause != "" {
 					fmt.Fprintf(&b, "      log cause: %s\n", redact.Addresses(f.LogCause))
 				}

@@ -66,6 +66,16 @@ func ResolveModel(flagVal, envVal string) string {
 	return DefaultModel
 }
 
+// Explanation is a summarizer call's result: the narrative text plus whether
+// it was cut short at the model's own output-length ceiling rather than
+// because the model chose to stop. It is the same shape
+// investigate.Report already carries (Narrative/Truncated there, Text/
+// Truncated here).
+type Explanation struct {
+	Text      string
+	Truncated bool
+}
+
 // summarizer turns a system prompt plus a user prompt into a single plain-text
 // completion. The Anthropic-backed implementation lives in this package; tests
 // use a fake. The system prompt is a parameter rather than a constant because
@@ -73,6 +83,23 @@ func ResolveModel(flagVal, envVal string) string {
 // different instructions.
 type summarizer interface {
 	summarize(ctx context.Context, system, prompt string) (string, error)
+}
+
+// toExplanation turns an *anthropic.Message into an Explanation: the
+// concatenated text blocks, plus whether the reply was cut short at the
+// model's own output-length ceiling (StopReasonMaxTokens) rather than
+// because the model chose to stop. Pure, no network — the seam
+// anthropicSummarizer.summarize calls, and TestToExplanation_* exercises
+// directly with a bare composite literal.
+func toExplanation(resp *anthropic.Message) Explanation {
+	var e Explanation
+	for _, block := range resp.Content {
+		if tb, ok := block.AsAny().(anthropic.TextBlock); ok {
+			e.Text += tb.Text
+		}
+	}
+	e.Truncated = resp.StopReason == anthropic.StopReasonMaxTokens
+	return e
 }
 
 // Client explains findings via one Claude API call.
@@ -310,11 +337,5 @@ func (a anthropicSummarizer) summarize(ctx context.Context, system, prompt strin
 	if err != nil {
 		return "", err
 	}
-	var out strings.Builder
-	for _, block := range resp.Content {
-		if tb, ok := block.AsAny().(anthropic.TextBlock); ok {
-			out.WriteString(tb.Text)
-		}
-	}
-	return out.String(), nil
+	return toExplanation(resp).Text, nil
 }

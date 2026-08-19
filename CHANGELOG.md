@@ -7,6 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`scan --explain` asks the model for a longer narrative.** The Anthropic
+  summarizer requested `MaxTokens: 2048`; on a cluster with many distinct
+  workloads the narrative reached that ceiling and came back cut off
+  mid-sentence, which the caller could not tell from a complete answer. The
+  cap is now 8192, the same value `internal/investigate` already asks for on
+  the same model. This changes what is requested, not what kubeagent does with
+  the reply: the value is a ceiling, so a short narrative stays short and a
+  healthy cluster still produces the same one-liner. A comment on
+  `maxFindingBlocksPerWorkload` that attributed the response bound to a raised
+  `MaxTokens` this package never had is restated against what the constant and
+  the summarizer's cap each actually do, citing neither value — so raising one
+  cannot falsify the other.
+
+### Fixed
+
+- **`scan --explain` used to end a truncated narrative as though it were
+  complete.** `── Investigation ──` already rendered `(narrative truncated
+  at the model's output limit)` when the model's reply hit its own output
+  ceiling; `── Explanation ──` rendered nothing, because nothing on the
+  `--explain` path read a stop reason. A narrative that stopped mid-sentence
+  was therefore indistinguishable from one that ended because the model was
+  done. `internal/explain` now carries a truncation flag out of the API
+  response, through its summarizer interface and `ExplainInventory`, through
+  `internal/cli`, to the report — and the `── Explanation ──` section renders
+  the **same** notice, byte for byte, that the investigation section already
+  used. Truncation is not treated as an enrichment failure: the narrative is
+  still printed, no stderr notice appears, and nothing is added to
+  `report.ScanReport`, so no `schemaVersion` moves. The OpenAI-compatible
+  local arm reads the same signal from `finish_reason: "length"`; a server
+  that omits the field is reported as not-truncated, which is the honest
+  answer — kubeagent did not learn that the reply was cut, not that it
+  wasn't. `ExplainIncident` keeps its `(string, error)` signature and
+  discards the flag, so the watch daemon's incident path is unchanged and
+  its own truncation stays undetected — an accepted cost, recorded in the
+  code at the point it is paid.
+
+- **A crashed container's log excerpt could carry a dependency's address into
+  the JSON report.** `LogExcerpt` holds a line straight out of a container's
+  own output, and it ships in `scan --output json` as well as the text report
+  — a document meant to be forwarded. `internal/scan` now applies
+  `redact.Addresses` to the classified excerpt at the point it is assigned
+  onto a finding. `logscan.Classify` is unchanged and still returns the raw line;
+  the redaction happens one step later, in the caller. What this guarantees is
+  bounded and is now written down as such: the dialed address in the
+  `host:port` form Go's dialer produces, not every address that could appear
+  anywhere in the line.
+
+- **`scan --investigate`'s `get_related` tool rendered an owner's `Kind` and
+  `Name` without sanitizing them.** Both were read straight off the API object
+  and used in the rendered tool result and in the `Scope` entry for the
+  resolved owner, skipping the project's standing rule that untrusted API text
+  is sanitized at ingress rather than at each renderer. Both now pass through
+  `safetext.Line`, and both uses share the sanitized value, so the rendered
+  line and the scope entry can never disagree about which owner was resolved.
+  `safetext.Line` is used directly here rather than the file's local helper,
+  which also runs `redact.Addresses` and would rewrite a legal dotted-numeric
+  object name into `<redacted>`, breaking the scope match.
+
+- **A group of comments and doc lines promised more than the code delivered.**
+  Each was narrowed to what holds rather than deleted: the `LogExcerpt` field
+  comment said the value was text-output-only when it carries no `json:"-"`
+  and ships in JSON too; a `logscan` comment claimed `internal/scan` redacts
+  "any address" in an excerpt, which `redact.Addresses`' own regexp does not
+  back; an `internal/investigate` comment described `redact.Addresses` as
+  treating a dotted-numeric object name "as a host:port", when the hazard is
+  the opposite — the pattern matches something that is not one; `printNotes`'
+  doc comment named four of the bullets it renders as though those were all of
+  them, and now describes the function instead of listing its output, saying so
+  explicitly so the list is not restored; comments on the
+  `--explain` and incident prompt paths said a classified log cause could
+  carry an in-cluster address, which no signature in `internal/logscan` can
+  produce any more, and now say what the surviving `redact.Addresses` calls
+  are actually for — defence in depth at the boundary where a prompt leaves
+  the process, holding if a future signature ever interpolates the line it
+  matched; and two published examples used names outside the
+  documentation-reserved ranges — an RFC 1918 pod IP in a sample pod row, and
+  a `.corp` internal hostname in the HTML-report page's
+  kubeconfig-context-name example — now an RFC 5737 address and a reserved
+  TLD.
+
 ## [1.17.0] - 2026-08-19
 
 ### Added

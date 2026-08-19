@@ -72,7 +72,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   comment said the value was text-output-only when it carries no `json:"-"`
   and ships in JSON too; a `logscan` comment claimed `internal/scan` redacts
   "any address" in an excerpt, which `redact.Addresses`' own regexp does not
-  back; an `internal/investigate` comment described `redact.Addresses` as
+  back, and now names both what that regexp catches and the single-label
+  service host it does not; an `internal/investigate` comment described `redact.Addresses` as
   treating a dotted-numeric object name "as a host:port", when the hazard is
   the opposite — the pattern matches something that is not one; `printNotes`'
   doc comment named four of the bullets it renders as though those were all of
@@ -84,10 +85,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are actually for — defence in depth at the boundary where a prompt leaves
   the process, holding if a future signature ever interpolates the line it
   matched; and two published examples used names outside the
-  documentation-reserved ranges — an RFC 1918 pod IP in a sample pod row, and
-  a `.corp` internal hostname in the HTML-report page's
+  documentation-reserved ranges — an RFC 1918 pod IP in `diagnostics.md`'s
+  sample pod row, and a `.corp` internal hostname in `html-report.md`'s
   kubeconfig-context-name example — now an RFC 5737 address and a reserved
-  TLD.
+  TLD. That is the whole of what moved, and it is not a sweep of the docs
+  tree: `quickstart.md` keeps three pod addresses of the same class in its
+  own sample rows. It is captured scan output kept in step with the demo
+  GIF, so editing it by hand and re-recording it carry different costs, and
+  choosing between them is not this release's call.
 
 ## [1.17.0] - 2026-08-19
 

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.19.0] - 2026-08-19
+
 ### Fixed
 
 - **`scan --explain` on a clean cluster now says the explanation was skipped.**
@@ -2939,7 +2941,8 @@ infrastructure (a documentation site and a pre-release chaos-test harness).
 - CI (vet/test/build on push & PR) and a release workflow publishing a
   linux/amd64 tarball + `SHA256SUMS` to a GitHub Release.
 
-[Unreleased]: https://github.com/imantaba/kubeagent/compare/v1.18.0...HEAD
+[Unreleased]: https://github.com/imantaba/kubeagent/compare/v1.19.0...HEAD
+[1.19.0]: https://github.com/imantaba/kubeagent/compare/v1.18.0...v1.19.0
 [1.18.0]: https://github.com/imantaba/kubeagent/compare/v1.17.0...v1.18.0
 [1.17.0]: https://github.com/imantaba/kubeagent/compare/v1.16.1...v1.17.0
 [1.16.1]: https://github.com/imantaba/kubeagent/compare/v1.16.0...v1.16.1

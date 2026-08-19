@@ -67,9 +67,12 @@ type Reader struct {
 // usual concern: text past safetext.MaxLine is discarded, never rendered, so
 // an address in the dropped tail leaks nothing either way.
 //
-// sanitize does not catch everything: redact.Addresses matches a bare
-// host:port or IP:port shape, not an arbitrary URL, so a registry address
-// quoted inside an image-pull failure keeps its scheme and path intact.
+// sanitize does not catch everything: redact.Addresses matches a bracketed
+// IPv6 address with its port, a dotted-quad IPv4 address with or without one,
+// or a dotted DNS name with its port -- never an arbitrary URL, so a registry
+// address quoted inside an image-pull failure keeps its scheme and path
+// intact. The DNS alternative needs that dot: a single-label service host
+// with a port ("redis:6379") passes through as well (R248).
 func sanitize(s string) string {
 	return redact.Addresses(safetext.Line(s))
 }

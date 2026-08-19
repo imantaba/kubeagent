@@ -281,9 +281,16 @@ func (r Reader) getRelated(ctx context.Context, c toolCall, scope *Scope) toolRe
 			return okResult(c.ID, fmt.Sprintf("pod %s/%s has no owner", in.Namespace, in.Name))
 		}
 		var b strings.Builder
+		// Kind and Name go through safetext.Line, not this file's sanitize
+		// helper: sanitize also runs redact.Addresses, which would treat a
+		// dotted-numeric object name -- a legal DNS-1123 subdomain such as
+		// "10.0.0.1" -- as a host:port and redact it. Both places below use
+		// the same sanitized values so the rendered line and the Scope entry
+		// never disagree about what the resolved owner is.
 		for _, o := range p.OwnerReferences {
-			scope.Add(o.Kind, in.Namespace, o.Name)
-			fmt.Fprintf(&b, "owner of %s: %s %s\n", in.Name, o.Kind, o.Name)
+			kind, name := safetext.Line(o.Kind), safetext.Line(o.Name)
+			scope.Add(kind, in.Namespace, name)
+			fmt.Fprintf(&b, "owner of %s: %s %s\n", in.Name, kind, name)
 		}
 		return okResult(c.ID, b.String())
 	case "node":

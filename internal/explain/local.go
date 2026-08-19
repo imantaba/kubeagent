@@ -33,10 +33,16 @@ type chatRequest struct {
 type chatResponse struct {
 	Choices []struct {
 		Message chatMessage `json:"message"`
+		// FinishReason is "length" when the server cut the reply at its own
+		// output limit. A server that omits the field entirely decodes to ""
+		// here, which maps to not-truncated — the Go zero value and the
+		// honest answer: kubeagent did not learn that the reply was cut, not
+		// that it wasn't.
+		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
 }
 
-func (o openaiSummarizer) summarize(ctx context.Context, system, prompt string) (string, error) {
+func (o openaiSummarizer) summarize(ctx context.Context, system, prompt string) (Explanation, error) {
 	body, err := json.Marshal(chatRequest{
 		Model:  o.model,
 		Stream: false,
@@ -46,12 +52,12 @@ func (o openaiSummarizer) summarize(ctx context.Context, system, prompt string) 
 		},
 	})
 	if err != nil {
-		return "", err
+		return Explanation{}, err
 	}
 	url := strings.TrimRight(o.endpoint, "/") + "/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return "", err
+		return Explanation{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if o.apiKey != "" {
@@ -59,21 +65,22 @@ func (o openaiSummarizer) summarize(ctx context.Context, system, prompt string) 
 	}
 	resp, err := o.http.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("calling local explain endpoint: %w", err)
+		return Explanation{}, fmt.Errorf("calling local explain endpoint: %w", err)
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("local explain endpoint returned %d: %s", resp.StatusCode, snippet(raw))
+		return Explanation{}, fmt.Errorf("local explain endpoint returned %d: %s", resp.StatusCode, snippet(raw))
 	}
 	var cr chatResponse
 	if err := json.Unmarshal(raw, &cr); err != nil {
-		return "", fmt.Errorf("parsing local explain response: %w", err)
+		return Explanation{}, fmt.Errorf("parsing local explain response: %w", err)
 	}
 	if len(cr.Choices) == 0 {
-		return "", fmt.Errorf("local explain endpoint returned no choices")
+		return Explanation{}, fmt.Errorf("local explain endpoint returned no choices")
 	}
-	return cr.Choices[0].Message.Content, nil
+	choice := cr.Choices[0]
+	return Explanation{Text: choice.Message.Content, Truncated: choice.FinishReason == "length"}, nil
 }
 
 // snippet trims an endpoint's error body for inclusion in an error message.

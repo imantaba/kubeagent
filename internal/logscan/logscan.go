@@ -33,8 +33,15 @@ var signatures = []signature{
 	// No submatch reaches the returned cause. report.go renders LogCause
 	// unredacted, so interpolating the dialed address here would forward
 	// whatever the container printed — including a credential embedded in a
-	// URL — off the machine. The raw line still reaches Excerpt, sanitized and
-	// truncated, which is where an operator can see it.
+	// URL — off the machine. The fixed string returned below is the only
+	// guarantee this file makes. The raw line still reaches Clue.Excerpt,
+	// sanitized and truncated, and internal/scan runs redact.Addresses over
+	// that — but this is a partial defence, not a second guarantee.
+	// redact.Addresses catches an IPv4 address, a bracketed IPv6 address
+	// with a port, and a dotted hostname with a port; its hostname
+	// alternative requires a dot, so a single-label service host — "dial tcp
+	// redis:6379", the ordinary same-namespace shape — survives into
+	// Finding.LogExcerpt and ships in scan --output json.
 	{"conn-refused", regexp.MustCompile(`(?i)dial tcp \S+: connect: connection refused`), func([]string) string {
 		return "cannot reach a dependency — connection refused"
 	}},

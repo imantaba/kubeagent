@@ -228,8 +228,14 @@ type Input struct {
 	// refused read is distinguishable from an empty one. Reasons are rendered
 	// verbatim here; see the safeReason comment in internal/htmlreport, which
 	// classifies instead because that document is written to be forwarded.
-	Blind                  []scan.ReadFailure
-	Explanation            string
+	Blind       []scan.ReadFailure
+	Explanation string
+	// ExplanationTruncated is true when Explanation was cut short at the
+	// model's own output-length ceiling. Rendered, not exported: it has no
+	// json tag by design, the same rule InvestigationTruncated follows below
+	// — a truncation flag on ScanReport would move a schemaVersion, which
+	// this decision refuses.
+	ExplanationTruncated   bool
 	Investigation          string
 	InvestigationConsulted []string
 	// InvestigationTruncated is true when Investigation was cut short at the
@@ -486,6 +492,11 @@ func printInventoryText(in Input, w io.Writer) error {
 		if _, err := fmt.Fprintf(w, "\n── Explanation ── (model-written, not pre-reviewed; verify every command before running)\n%s\n", in.Explanation); err != nil {
 			return err
 		}
+		if in.ExplanationTruncated {
+			if _, err := fmt.Fprintln(w, "(narrative truncated at the model's output limit)"); err != nil {
+				return err
+			}
+		}
 	}
 	if in.Investigation != "" {
 		if _, err := fmt.Fprintf(w, "\n── Investigation ──\n"); err != nil {
@@ -679,8 +690,12 @@ func plural(n int, one, many string) string {
 	return many
 }
 
-// printNotes renders advisory content: expected-empty services, expected-empty
-// ingress routes, PVC reclaim, and the hidden-counts footer.
+// printNotes renders the NOTES section: the advisory bullets that qualify the
+// report rather than diagnose a workload — a condition worth knowing that is
+// not a finding, a check that ran and flagged nothing, and what the inventory
+// left out behind a flag. Each bullet is written by the block that owns its
+// input, so the set grows with those blocks and this comment does not
+// enumerate them. The header is emitted only if at least one bullet was.
 func printNotes(in Input, expected []svchealth.Issue, expectedIng []ingresshealth.RouteIssue, w io.Writer) error {
 	now := nowOr(in.Now)
 	var b strings.Builder

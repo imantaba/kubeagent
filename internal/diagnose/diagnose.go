@@ -41,7 +41,7 @@ type Finding struct {
 	Image      string              `json:"-"`                    // raw image reference of the failing container (matching only, not serialized); set by ImagePullDetector and the init-container image-pull arm, consumed by internal/rootcause and internal/rollout
 	Confidence string              `json:"confidence,omitempty"` // "high" (direct k8s state) | "medium" (heuristic); set by the producer where it knows better, else filled by confidence.Annotate
 	LogCause   string              `json:"logCause,omitempty"`   // set by scan --logs enrichment
-	LogExcerpt string              `json:"logExcerpt,omitempty"` // set by scan --logs enrichment (text output only)
+	LogExcerpt string              `json:"logExcerpt,omitempty"` // set by scan --logs enrichment; ships in scan --output json as well as the text report
 	Suggestion *Suggestion         `json:"suggestion,omitempty"` // set by scan --suggest JSON output
 }
 

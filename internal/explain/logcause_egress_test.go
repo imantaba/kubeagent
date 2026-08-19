@@ -9,11 +9,13 @@ import (
 	"github.com/imantaba/kubeagent/internal/inventory"
 )
 
-// LogCause is built from the container's own log text, so it can carry an
-// in-cluster address that the operator may see in the report but that must not
-// leave the process. LogExcerpt is already scoped "text output only" for the
-// same reason; these two tests hold the equivalent line for LogCause at the
-// two places a prompt is assembled.
+// LogCause is one of logscan's fixed classifier strings — every signature
+// discards its submatches — so it cannot carry an in-cluster address today.
+// These two tests hold the boundary rather than the classifier: they assert
+// that the two places a prompt is assembled redact what they are handed,
+// whatever built it. leakedAddr is therefore a shape production no longer
+// emits, which is the point — the tests fail if either boundary stops
+// redacting, before a future signature makes that shape reachable again.
 //
 // Found by the cross-version chaos matrix: scenario 14's egress assertion went
 // red on a real runner when the broken workload logged a connection refused to

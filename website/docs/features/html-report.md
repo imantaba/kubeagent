@@ -45,7 +45,7 @@ produced with `--security` says so on the page.
 **No cluster identity.** No context name, no API server URL, no kubeconfig
 path. A context name is not safe by default — in the wild they carry
 `arn:aws:eks:eu-west-1:<account>:cluster/prod` or
-`admin@prod-db.internal.corp` — and this file is meant to be forwarded.
+`admin@prod-db.internal.example` — and this file is meant to be forwarded.
 Whoever shares it names the cluster in the ticket. This is the same rule
 [`kubeagent gate`](ci-gate.md) follows for its verdict, so both shareable
 artifacts behave identically.

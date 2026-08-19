@@ -155,6 +155,47 @@ func TestPrintInventory_TextExplanationHeadingHasProvenanceParenthetical(t *test
 	}
 }
 
+// TestPrintInventory_TextShowsExplanationTruncationNotice mirrors
+// TestPrintInventory_TextShowsTruncationNotice for the Explanation path: a
+// narrative whose truncation flag is set gets the same notice line the
+// Investigation path already renders, using the exact same literal.
+func TestPrintInventory_TextShowsExplanationTruncationNotice(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster:              clusterhealth.ClusterHealth{Verdict: "Healthy"},
+		Explanation:          "rancher is fine",
+		ExplanationTruncated: true,
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "(narrative truncated at the model's output limit)") {
+		t.Errorf("expected the truncation notice line under the Explanation section:\n%s", out)
+	}
+}
+
+// TestPrintInventory_TextOmitsExplanationTruncationNoticeWhenNotTruncated is
+// the negative case: an unset flag must render nothing extra. Unlike the
+// investigation sibling further down, no golden file backs this one: the
+// notice renders only inside the in.Explanation != "" block and no golden
+// fixture sets Explanation, so a defect here would move no golden. This test
+// is the only guard.
+func TestPrintInventory_TextOmitsExplanationTruncationNoticeWhenNotTruncated(t *testing.T) {
+	var buf bytes.Buffer
+	in := Input{
+		Cluster:     clusterhealth.ClusterHealth{Verdict: "Healthy"},
+		Explanation: "rancher is fine",
+	}
+	if err := PrintInventory(in, "text", &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "truncated") {
+		t.Errorf("must not mention truncation when the flag is unset:\n%s", out)
+	}
+}
+
 func TestPrintInventory_UnknownFormatErrors(t *testing.T) {
 	var buf bytes.Buffer
 	if err := PrintInventory(Input{}, "xml", &buf); err == nil {

@@ -145,9 +145,9 @@ type fakeIncidentSummarizer struct {
 	err    error
 }
 
-func (f *fakeIncidentSummarizer) summarize(_ context.Context, system, prompt string) (string, error) {
+func (f *fakeIncidentSummarizer) summarize(_ context.Context, system, prompt string) (Explanation, error) {
 	f.system, f.prompt = system, prompt
-	return f.out, f.err
+	return Explanation{Text: f.out}, f.err
 }
 
 func TestExplainIncidentUsesTheIncidentSystemPrompt(t *testing.T) {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 
+	"github.com/imantaba/kubeagent/internal/explain"
 	"github.com/imantaba/kubeagent/internal/investigate"
 )
 
@@ -95,7 +96,7 @@ func TestRunModelPath(t *testing.T) {
 		called := false
 		res := runModelPath(scanOptions{},
 			func() (investigate.Report, error) { called = true; return investigate.Report{}, nil },
-			func() (string, error) { called = true; return "", nil },
+			func() (explain.Explanation, error) { called = true; return explain.Explanation{}, nil },
 		)
 		if called {
 			t.Error("neither --explain nor --investigate set: no call should be made")
@@ -110,7 +111,10 @@ func TestRunModelPath(t *testing.T) {
 		want := investigate.Report{Narrative: "the pod is crashlooping", Consulted: []string{"describe pod shop/web"}}
 		res := runModelPath(scanOptions{investigate: true, explain: true},
 			func() (investigate.Report, error) { investigateCalled = true; return want, nil },
-			func() (string, error) { explainCalled = true; return "should not run", nil },
+			func() (explain.Explanation, error) {
+				explainCalled = true
+				return explain.Explanation{Text: "should not run"}, nil
+			},
 		)
 		if !investigateCalled || explainCalled {
 			t.Errorf("investigateCalled=%v explainCalled=%v, want investigate only", investigateCalled, explainCalled)
@@ -128,7 +132,7 @@ func TestRunModelPath(t *testing.T) {
 			func() (investigate.Report, error) {
 				return investigate.Report{}, errors.New("investigating: model returned no text")
 			},
-			func() (string, error) { return "", nil },
+			func() (explain.Explanation, error) { return explain.Explanation{}, nil },
 		)
 		if !strings.Contains(res.notice, "--investigate") {
 			t.Errorf("notice = %q, want it to name --investigate", res.notice)
@@ -144,7 +148,7 @@ func TestRunModelPath(t *testing.T) {
 	t.Run("explain failure produces a notice naming --explain instead of an error", func(t *testing.T) {
 		res := runModelPath(scanOptions{explain: true},
 			func() (investigate.Report, error) { return investigate.Report{}, nil },
-			func() (string, error) { return "", errors.New("boom") },
+			func() (explain.Explanation, error) { return explain.Explanation{}, errors.New("boom") },
 		)
 		if !strings.Contains(res.notice, "--explain") {
 			t.Errorf("notice = %q, want it to name --explain", res.notice)
@@ -160,13 +164,34 @@ func TestRunModelPath(t *testing.T) {
 	t.Run("explain success populates explanation with no notice", func(t *testing.T) {
 		res := runModelPath(scanOptions{explain: true},
 			func() (investigate.Report, error) { return investigate.Report{}, nil },
-			func() (string, error) { return "summary text", nil },
+			func() (explain.Explanation, error) { return explain.Explanation{Text: "summary text"}, nil },
 		)
 		if res.explanation != "summary text" {
 			t.Errorf("explanation = %q, want %q", res.explanation, "summary text")
 		}
 		if res.notice != "" {
 			t.Errorf("notice = %q, want empty", res.notice)
+		}
+		if res.explanationTruncated {
+			t.Error("explanationTruncated = true, want false when the explainFn reports no truncation")
+		}
+	})
+
+	t.Run("explain success with a truncated reply carries the flag into explanationTruncated", func(t *testing.T) {
+		res := runModelPath(scanOptions{explain: true},
+			func() (investigate.Report, error) { return investigate.Report{}, nil },
+			func() (explain.Explanation, error) {
+				return explain.Explanation{Text: "cut off mid-sentence", Truncated: true}, nil
+			},
+		)
+		if res.explanation != "cut off mid-sentence" {
+			t.Errorf("explanation = %q, want %q", res.explanation, "cut off mid-sentence")
+		}
+		if !res.explanationTruncated {
+			t.Error("explanationTruncated = false, want true when the explainFn reports truncation")
+		}
+		if res.notice != "" {
+			t.Errorf("notice = %q, want empty: truncation is not a failure", res.notice)
 		}
 	})
 }

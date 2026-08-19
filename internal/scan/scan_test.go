@@ -358,6 +358,46 @@ func TestEvaluate_LogsEnrichCrashFindings(t *testing.T) {
 	}
 }
 
+// TestEvaluate_LogsExcerptRedactsAddress proves that --logs enrichment
+// redacts a network address embedded in the container's own log line before
+// it reaches a finding's LogExcerpt. internal/logscan.Classify returns the
+// raw matched line in Clue.Excerpt (sanitized for control characters and
+// truncated, but with any address intact); it is internal/scan's job, at the
+// point the excerpt is assigned to a finding, to strip the address too.
+// LogExcerpt ships in scan --output json as well as the text report, and the
+// JSON report is a document explicitly designed to be forwarded off the
+// operator's machine.
+func TestEvaluate_LogsExcerptRedactsAddress(t *testing.T) {
+	const rawLine = "dial tcp 203.0.113.5:5432: connect: connection refused"
+	crashPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "web-1", Namespace: "shop", Labels: map[string]string{"app": "web"}},
+		Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
+			Name: "web", RestartCount: 1,
+			State:                corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+			LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 1, Reason: "Error"}},
+		}}},
+	}
+	client := podLogsFailingClient{
+		Interface: fake.NewSimpleClientset(crashPod),
+		rest:      previousLogBodyServer(t, rawLine),
+	}
+	res, err := Evaluate(context.Background(), client, Options{Logs: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	excerpt := findLogExcerpt(res, "shop/web-1")
+	if excerpt == "" {
+		t.Fatalf("with --logs a crash finding should carry a LogExcerpt, got none:\n%+v", res.Inventory.Workloads)
+	}
+	if strings.Contains(excerpt, "203.0.113.5") {
+		t.Errorf("LogExcerpt = %q, want the dialed address redacted — LogExcerpt ships in scan --output json", excerpt)
+	}
+	if !strings.Contains(excerpt, "<redacted>") {
+		t.Errorf("LogExcerpt = %q, want the address replaced with <redacted>", excerpt)
+	}
+}
+
 // TestEvaluate_LogsDedupPerContainer guards against enriching the same container
 // twice. A container in CrashLoopBackOff whose last exit was OOMKilled fires BOTH
 // the CrashLoop and OOMKilled detectors — two findings for one container. --logs
@@ -503,6 +543,18 @@ func TestEvaluate_LogsFirstFindingWinsWithoutAMatchingTerminationReason(t *testi
 	if n := countPodsLogReads(client); n != 1 {
 		t.Errorf("pods/log reads = %d, want 1 (one fetch per container, regardless of how many findings it trips)", n)
 	}
+}
+
+// findLogExcerpt returns the first finding's LogExcerpt for the given "ns/pod".
+func findLogExcerpt(r Result, pod string) string {
+	for _, w := range r.Inventory.Workloads {
+		for _, f := range w.Findings {
+			if f.Pod == pod && f.LogExcerpt != "" {
+				return f.LogExcerpt
+			}
+		}
+	}
+	return ""
 }
 
 // findLogCause returns the first finding's LogCause for the given "ns/pod".
@@ -2131,6 +2183,24 @@ func previousLogNotFoundServer(t *testing.T) rest.Interface {
 	real, err := kubernetes.NewForConfig(&rest.Config{Host: server.URL})
 	if err != nil {
 		t.Fatalf("building a client for the fake bad-request server: %v", err)
+	}
+	return real.CoreV1().RESTClient()
+}
+
+// previousLogBodyServer starts an httptest server that answers a previous-log
+// read with a 200 and the given raw body. The fake clientset's own GetLogs
+// ignores PodLogOptions and always returns the fixed string "fake logs", so a
+// test that needs to control the log content routes through a real REST
+// client the same way previousLogNotFoundServer does.
+func previousLogBodyServer(t *testing.T, body string) rest.Interface {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(server.Close)
+	real, err := kubernetes.NewForConfig(&rest.Config{Host: server.URL})
+	if err != nil {
+		t.Fatalf("building a client for the fake log-body server: %v", err)
 	}
 	return real.CoreV1().RESTClient()
 }

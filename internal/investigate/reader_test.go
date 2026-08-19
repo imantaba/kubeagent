@@ -409,3 +409,46 @@ func TestReader_GetEvents_SanitizesReasonAndMessage(t *testing.T) {
 		t.Errorf("want 2 redactions (event reason and message), got %d in: %q", n, res.Content)
 	}
 }
+
+// TestReader_GetRelated_Owner_SanitizesKindAndName proves the "owner" arm of
+// getRelated runs OwnerReference.Kind and .Name through safetext.Line before
+// either reaches the rendered tool result or the Scope entry added for the
+// resolved owner. Both must agree on the sanitized form: a scope entry built
+// from the raw name and a rendered line built from the sanitized one would
+// disagree about what is in scope, which is worse than skipping sanitizing
+// altogether.
+func TestReader_GetRelated_Owner_SanitizesKindAndName(t *testing.T) {
+	const bel = "\a" // a control character (BEL); safetext.Line drops it.
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "web-abc", Namespace: "shop",
+			OwnerReferences: []metav1.OwnerReference{{
+				Kind: "Replica" + bel + "Set",
+				Name: "web-5f" + bel + "x",
+			}},
+		},
+	}
+	r := Reader{client: fake.NewSimpleClientset(pod)}
+	s := NewScope(nil)
+	s.Add("pod", "shop", "web-abc")
+
+	res := r.execute(context.Background(), call("get_related", map[string]string{
+		"namespace": "shop", "name": "web-abc", "relation": "owner",
+	}), s)
+
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", res.Content)
+	}
+	if strings.Contains(res.Content, bel) {
+		t.Errorf("control character leaked unsanitized into tool result: %q", res.Content)
+	}
+	if !strings.Contains(res.Content, "ReplicaSet") || !strings.Contains(res.Content, "web-5fx") {
+		t.Errorf("expected the sanitized owner Kind and Name in the tool result, got: %q", res.Content)
+	}
+	if !s.Allowed("replicaset", "shop", "web-5fx") {
+		t.Error("scope entry must use the sanitized name, not the raw one")
+	}
+	if s.Allowed("replica"+bel+"set", "shop", "web-5f"+bel+"x") {
+		t.Error("scope must not contain an entry built from the raw, unsanitized owner reference")
+	}
+}

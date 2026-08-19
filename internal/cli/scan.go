@@ -336,7 +336,7 @@ func runScan(o scanOptions) error {
 			return investigate.New(explain.ResolveModel(o.model, os.Getenv("KUBEAGENT_MODEL"))).
 				Investigate(ctx, health, &summary, &facts, serviceIssues, result.Workloads, client)
 		},
-		func() (string, error) {
+		func() (explain.Explanation, error) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			return explain.NewFromConfig(explainModel, explainEndpoint, os.Getenv("KUBEAGENT_EXPLAIN_API_KEY")).
@@ -403,6 +403,7 @@ func runScan(o scanOptions) error {
 	in.SecurityRequested = o.security
 	in.Suggest = o.suggest
 	in.Explanation = explanation
+	in.ExplanationTruncated = modelRes.explanationTruncated
 	in.Investigation = investigationReport.Narrative
 	in.InvestigationConsulted = investigationReport.Consulted
 	in.InvestigationTruncated = investigationReport.Truncated

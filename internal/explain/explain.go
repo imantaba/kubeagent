@@ -66,13 +66,41 @@ func ResolveModel(flagVal, envVal string) string {
 	return DefaultModel
 }
 
+// Explanation is a summarizer call's result: the narrative text plus whether
+// it was cut short at the model's own output-length ceiling rather than
+// because the model chose to stop. It carries the same pair of values
+// investigate.Report does (Narrative/Truncated there, Text/Truncated here);
+// that type also has a Consulted evidence trail, which this one has no
+// counterpart for.
+type Explanation struct {
+	Text      string
+	Truncated bool
+}
+
 // summarizer turns a system prompt plus a user prompt into a single plain-text
 // completion. The Anthropic-backed implementation lives in this package; tests
 // use a fake. The system prompt is a parameter rather than a constant because
 // a one-object incident follow-up and a whole-cluster scan summary want
 // different instructions.
 type summarizer interface {
-	summarize(ctx context.Context, system, prompt string) (string, error)
+	summarize(ctx context.Context, system, prompt string) (Explanation, error)
+}
+
+// toExplanation turns an *anthropic.Message into an Explanation: the
+// concatenated text blocks, plus whether the reply was cut short at the
+// model's own output-length ceiling (StopReasonMaxTokens) rather than
+// because the model chose to stop. Pure, no network — the seam
+// anthropicSummarizer.summarize calls, and TestToExplanation_* exercises
+// directly with a bare composite literal.
+func toExplanation(resp *anthropic.Message) Explanation {
+	var e Explanation
+	for _, block := range resp.Content {
+		if tb, ok := block.AsAny().(anthropic.TextBlock); ok {
+			e.Text += tb.Text
+		}
+	}
+	e.Truncated = resp.StopReason == anthropic.StopReasonMaxTokens
+	return e
 }
 
 // Client explains findings via one Claude API call.
@@ -100,19 +128,20 @@ func NewFromConfig(model, endpoint, apiKey string) *Client {
 }
 
 // ExplainInventory summarizes the cluster verdict (when degraded) and the given
-// (already-prioritized) workloads. It skips the API call and returns "" when the
-// cluster is healthy and there are no workloads or service issues to explain.
-func (c *Client) ExplainInventory(ctx context.Context, cluster clusterhealth.ClusterHealth, summary *resources.Summary, facts *platform.Facts, serviceIssues []svchealth.Issue, workloads []inventory.Workload) (string, error) {
+// (already-prioritized) workloads. It skips the API call and returns a zero
+// Explanation when the cluster is healthy and there are no workloads or
+// service issues to explain.
+func (c *Client) ExplainInventory(ctx context.Context, cluster clusterhealth.ClusterHealth, summary *resources.Summary, facts *platform.Facts, serviceIssues []svchealth.Issue, workloads []inventory.Workload) (Explanation, error) {
 	if cluster.Verdict != "Degraded" && len(workloads) == 0 && len(serviceIssues) == 0 {
-		return "", nil
+		return Explanation{}, nil
 	}
 	out, err := c.s.summarize(ctx, SystemPrompt, BuildInventoryPrompt(cluster, summary, facts, serviceIssues, workloads))
 	if err != nil {
-		return "", fmt.Errorf("explaining workloads: %w", err)
+		return Explanation{}, fmt.Errorf("explaining workloads: %w", err)
 	}
-	out = strings.TrimSpace(out)
-	if out == "" {
-		return "", fmt.Errorf("explaining workloads: model returned no text")
+	out.Text = strings.TrimSpace(out.Text)
+	if out.Text == "" {
+		return Explanation{}, fmt.Errorf("explaining workloads: model returned no text")
 	}
 	return out, nil
 }
@@ -201,10 +230,11 @@ func BuildInventoryPrompt(cluster clusterhealth.ClusterHealth, summary *resource
 }
 
 // maxFindingBlocksPerWorkload caps how many finding blocks BuildInventoryPrompt
-// writes per workload, after collapsing. It bounds the request the same way
-// R225's raised MaxTokens bounds the model's response — the two act on
-// opposite sides of the same API call, and neither makes the other
-// unnecessary.
+// writes per workload, after collapsing. It bounds what the request costs; the
+// summarizer's own output cap bounds what the response may cost. The two act
+// on opposite sides of the same API call and neither makes the other
+// unnecessary — a prompt small enough to send can still ask for an answer
+// longer than the model is allowed to write.
 const maxFindingBlocksPerWorkload = 3
 
 // writeFindingBlocks renders w.Findings as the prompt's per-finding blocks. It
@@ -257,9 +287,11 @@ func writeFindingBlocks(b *strings.Builder, w inventory.Workload) {
 func findingBlock(f diagnose.Finding, w inventory.Workload) string {
 	var blk strings.Builder
 	fmt.Fprintf(&blk, "    issue: %s — %s (%s)\n", f.Issue, f.Reason, f.Evidence)
-	// LogCause is built from the container's own log, so it can carry an
-	// in-cluster address. The report may show it; a prompt leaves the
-	// process, so redact it here.
+	// LogCause is one of logscan's fixed classifier strings — every signature
+	// discards its submatches — so it cannot carry an in-cluster address
+	// today. This call is defence in depth at the boundary where a prompt
+	// leaves the process: it holds even if a future signature interpolates
+	// the line it matched.
 	if f.LogCause != "" {
 		fmt.Fprintf(&blk, "      log cause: %s\n", redact.Addresses(f.LogCause))
 	}
@@ -292,23 +324,20 @@ type anthropicSummarizer struct {
 	model  string
 }
 
-func (a anthropicSummarizer) summarize(ctx context.Context, system, prompt string) (string, error) {
+func (a anthropicSummarizer) summarize(ctx context.Context, system, prompt string) (Explanation, error) {
 	resp, err := a.client.Messages.New(ctx, anthropic.MessageNewParams{
-		Model:     anthropic.Model(a.model),
-		MaxTokens: 2048,
+		Model: anthropic.Model(a.model),
+		// The hard ceiling on the narrative, not a target. 2048 cut a
+		// many-workload summary off mid-sentence; 8192 matches what
+		// internal/investigate asks for on the same model.
+		MaxTokens: 8192,
 		System:    []anthropic.TextBlockParam{{Text: system}},
 		Messages: []anthropic.MessageParam{
 			anthropic.NewUserMessage(anthropic.NewTextBlock(prompt)),
 		},
 	})
 	if err != nil {
-		return "", err
+		return Explanation{}, err
 	}
-	var out strings.Builder
-	for _, block := range resp.Content {
-		if tb, ok := block.AsAny().(anthropic.TextBlock); ok {
-			out.WriteString(tb.Text)
-		}
-	}
-	return out.String(), nil
+	return toExplanation(resp), nil
 }

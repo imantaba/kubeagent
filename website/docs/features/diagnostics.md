@@ -1362,7 +1362,7 @@ NEEDS ATTENTION
     ⚠ ImagePullBackOff: Bad image reference or registry authentication
       ↳ container "web": Back-off pulling image "nginx:bad": not found
     ↳ changed: rollout to revision 6, 4d ago · image nginx:1.27 → nginx:bad
-    web-5b8-2wplt  0/1  ImagePullBackOff  restarts=0  worker-1  10.244.2.4  4d
+    web-5b8-2wplt  0/1  ImagePullBackOff  restarts=0  worker-1  203.0.113.4  4d
 ```
 
 ## What changed

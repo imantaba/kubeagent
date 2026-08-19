@@ -29,8 +29,11 @@ func TestOpenAISummarizer_PostsAndParses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out != "two nodes NotReady" {
-		t.Errorf("out = %q, want the response content", out)
+	if out.Text != "two nodes NotReady" {
+		t.Errorf("out.Text = %q, want the response content", out.Text)
+	}
+	if out.Truncated {
+		t.Error("Truncated = true, want false when finish_reason is absent")
 	}
 	if gotPath != "/chat/completions" {
 		t.Errorf("path = %q, want /chat/completions", gotPath)
@@ -114,7 +117,45 @@ func TestNewFromConfig_LocalBackendEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out != "local says degraded" {
-		t.Errorf("out = %q, want the local endpoint's content", out)
+	if out.Text != "local says degraded" {
+		t.Errorf("out.Text = %q, want the local endpoint's content", out.Text)
+	}
+}
+
+// TestOpenAISummarizer_FinishReasonLength proves the positive half of the
+// local arm's truncation mapping: a response whose finish_reason is "length"
+// (the OpenAI-compatible value for "cut at the output limit") maps to
+// Truncated.
+func TestOpenAISummarizer_FinishReasonLength(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"choices":[{"message":{"content":"cut off mid"},"finish_reason":"length"}]}`)
+	}))
+	defer srv.Close()
+
+	o := openaiSummarizer{endpoint: srv.URL, model: "m", http: srv.Client()}
+	out, err := o.summarize(context.Background(), SystemPrompt, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Truncated {
+		t.Error("Truncated = false, want true when finish_reason is \"length\"")
+	}
+}
+
+// TestOpenAISummarizer_FinishReasonStop is the negative case: a normal
+// finish_reason must not be mapped to Truncated.
+func TestOpenAISummarizer_FinishReasonStop(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"choices":[{"message":{"content":"a complete answer"},"finish_reason":"stop"}]}`)
+	}))
+	defer srv.Close()
+
+	o := openaiSummarizer{endpoint: srv.URL, model: "m", http: srv.Client()}
+	out, err := o.summarize(context.Background(), SystemPrompt, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Truncated {
+		t.Error("Truncated = true, want false when finish_reason is \"stop\"")
 	}
 }

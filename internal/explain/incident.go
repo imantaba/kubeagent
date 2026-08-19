@@ -68,9 +68,12 @@ func BuildIncidentPrompt(object string, issues []string, cluster clusterhealth.C
 				w.Namespace, w.Name, w.Kind, w.Ready, w.Desired, w.Status, w.Restarts)
 			for _, f := range w.Findings {
 				fmt.Fprintf(&b, "    issue: %s — %s (%s)\n", f.Issue, f.Reason, f.Evidence)
-				// LogCause is built from the container's own log, so it can
-				// carry an in-cluster address. The report may show it; a
-				// prompt leaves the process, so redact it here.
+				// LogCause is one of logscan's fixed classifier strings —
+				// every signature discards its submatches — so it cannot
+				// carry an in-cluster address today. This call is defence in
+				// depth at the boundary where a prompt leaves the process: it
+				// holds even if a future signature interpolates the line it
+				// matched.
 				if f.LogCause != "" {
 					fmt.Fprintf(&b, "      log cause: %s\n", redact.Addresses(f.LogCause))
 				}
@@ -117,9 +120,15 @@ func (c *Client) ExplainIncident(ctx context.Context, prompt string) (string, er
 	if err != nil {
 		return "", fmt.Errorf("explaining incident: %w", err)
 	}
-	out = strings.TrimSpace(out)
-	if out == "" {
+	// out.Truncated is discarded here, not detected: internal/oncall depends
+	// on ExplainIncident's (string, error) signature and WatchVersion stays
+	// 1.0, so this path's own truncation goes unrecorded rather than being
+	// surfaced. That is an accepted cost of keeping the interface and the
+	// schema version fixed, not a claim that the incident narrative cannot
+	// be cut.
+	text := strings.TrimSpace(out.Text)
+	if text == "" {
 		return "", fmt.Errorf("explaining incident: model returned no text")
 	}
-	return out, nil
+	return text, nil
 }

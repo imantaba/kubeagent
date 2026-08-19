@@ -281,9 +281,21 @@ func (r Reader) getRelated(ctx context.Context, c toolCall, scope *Scope) toolRe
 			return okResult(c.ID, fmt.Sprintf("pod %s/%s has no owner", in.Namespace, in.Name))
 		}
 		var b strings.Builder
+		// Kind and Name go through safetext.Line, not this file's sanitize
+		// helper. sanitize also runs redact.Addresses, and of its three
+		// alternatives only the dotted-quad IPv4 one has an optional port --
+		// the bracketed IPv6 alternative requires a port besides its
+		// brackets, and the dotted-DNS-name alternative requires one too. A
+		// DNS-1123 object name can never contain the ':' either of those two
+		// need, so the IPv4 alternative is the only one that can ever match
+		// it, and it can match with no port present. A legal name that looks
+		// like an IPv4 address, e.g. "192.0.2.1", would therefore be
+		// rewritten to "<redacted>", breaking the scope match. Both places
+		// below are built from the same sanitized values.
 		for _, o := range p.OwnerReferences {
-			scope.Add(o.Kind, in.Namespace, o.Name)
-			fmt.Fprintf(&b, "owner of %s: %s %s\n", in.Name, o.Kind, o.Name)
+			kind, name := safetext.Line(o.Kind), safetext.Line(o.Name)
+			scope.Add(kind, in.Namespace, name)
+			fmt.Fprintf(&b, "owner of %s: %s %s\n", in.Name, kind, name)
 		}
 		return okResult(c.ID, b.String())
 	case "node":

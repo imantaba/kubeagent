@@ -146,7 +146,7 @@ walking the table directly instead.)
 | `credlint` | `--lint-secrets` | nothing beyond core |
 | `cronjobs` | `--include-cron` | nothing beyond core |
 | `restarts` | `--include-restarts` | nothing beyond core |
-| `investigate` | `--investigate` | nothing beyond core |
+| `investigate` | `--investigate` | nothing beyond core; the log-cause tool uses the `logs` grant (`pods/log`) when present and refuses cleanly without it |
 
 `operators` and `gitops` are `list`-only and scan-only: the watch daemon
 never reads these custom resources, so neither is wired into the Helm chart —

@@ -104,6 +104,8 @@ func label(c toolCall) string {
 		return fmt.Sprintf("events %s/%s", m["namespace"], m["name"])
 	case "get_related":
 		return fmt.Sprintf("related %s/%s→%s", m["namespace"], m["name"], m["relation"])
+	case "get_log_causes":
+		return fmt.Sprintf("log causes %s/%s container %s", m["namespace"], m["pod"], m["container"])
 	default:
 		return c.Name
 	}
@@ -114,8 +116,9 @@ func label(c toolCall) string {
 const investigateSuffix = `
 
 You may call the provided read-only tools to gather more evidence about a finding
-before you conclude — describe an object, list its events, or resolve a related
-object (owner, node, PVC). Investigate only what the findings point to. Use only
+before you conclude — describe an object, list its events, resolve a related
+object (owner, node, PVC, Service), or classify a crashed container's previous log into
+a cause. Investigate only what the findings point to. Use only
 the facts you observe. When you have enough, stop calling tools and give the
 explanation in the required structure.
 
@@ -164,6 +167,7 @@ func (c *Client) Investigate(ctx context.Context, cluster clusterhealth.ClusterH
 	}
 	system := explain.SystemPrompt + investigateSuffix
 	firstUser := explain.BuildInventoryPrompt(cluster, summary, facts, serviceIssues, workloads) +
+		renderTrace(workloads) +
 		"\n\nInvestigate the findings with the read-only tools, then explain."
 	conv := c.newConversation(system, firstUser, toolSpecs())
 	narrative, trail, truncated, err := runLoop(ctx, conv, Reader{client: client}, NewScope(workloads))

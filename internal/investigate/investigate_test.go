@@ -11,6 +11,7 @@ import (
 
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/diagnose"
+	"github.com/imantaba/kubeagent/internal/explain"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/svchealth"
 )
@@ -24,8 +25,8 @@ func TestInvestigate_RunsLoopAndReturnsReport(t *testing.T) {
 		if !strings.Contains(system, "read-only tools") {
 			t.Error("system prompt should carry the investigation instruction")
 		}
-		if len(specs) != 3 {
-			t.Errorf("expected 3 tool specs, got %d", len(specs))
+		if len(specs) != 4 {
+			t.Errorf("expected 4 tool specs, got %d", len(specs))
 		}
 		return &fakeConv{t: t, replies: []reply{
 			{Calls: []toolCall{mkCall("describe", map[string]string{"kind": "pod", "namespace": "shop", "name": "web-abc"})}},
@@ -167,5 +168,64 @@ func TestInvestigate_RunsWhenOnlyServiceIssues(t *testing.T) {
 	}
 	if rep.Narrative != "svc root cause" {
 		t.Errorf("narrative = %q, want %q", rep.Narrative, "svc root cause")
+	}
+}
+
+// TestInvestigate_PrimesFirstUserWithTrace proves the spec's trace-primed
+// opening: the first user message carries the deterministic hypothesis trace
+// after the inventory prompt and before the closing instruction.
+func TestInvestigate_PrimesFirstUserWithTrace(t *testing.T) {
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "web-abc", Namespace: "shop"}}
+	client := fake.NewSimpleClientset(pod)
+
+	var gotFirstUser string
+	c := &Client{newConversation: func(system, firstUser string, specs []toolSpec) conversation {
+		gotFirstUser = firstUser
+		return &fakeConv{t: t, replies: []reply{{Text: "done", Done: true}}}
+	}}
+
+	wl := []inventory.Workload{{
+		Kind: "Deployment", Namespace: "shop", Name: "web",
+		Pods:     []inventory.PodRow{{Name: "web-abc"}},
+		Findings: []diagnose.Finding{{Pod: "shop/web-abc", Issue: "Pending", Reason: "node down", Evidence: "NotReady"}},
+		RootCauseTrace: []inventory.Hypothesis{
+			{Cause: "node worker-3 (NotReady)", Kind: "node", Verdict: inventory.VerdictAttributed, Reason: "pod web-abc is scheduled on it"},
+		},
+		RootCauseConfidence: "high",
+	}}
+	if _, err := c.Investigate(context.Background(), clusterhealth.ClusterHealth{Verdict: "Healthy"}, nil, nil, nil, wl, client); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(gotFirstUser, "considered node worker-3 (NotReady): attributed — pod web-abc is scheduled on it") {
+		t.Errorf("first user message missing the hypothesis trace:\n%s", gotFirstUser)
+	}
+	if !strings.HasSuffix(gotFirstUser, "Investigate the findings with the read-only tools, then explain.") {
+		t.Errorf("first user message must still end with the investigate instruction:\n%s", gotFirstUser)
+	}
+}
+
+// TestInvestigate_FirstUserUnchangedWithoutTrace pins the no-trace case to the
+// pre-slice bytes: priming must cost nothing when there is nothing to prime.
+func TestInvestigate_FirstUserUnchangedWithoutTrace(t *testing.T) {
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "web-abc", Namespace: "shop"}}
+	client := fake.NewSimpleClientset(pod)
+
+	var gotFirstUser string
+	c := &Client{newConversation: func(system, firstUser string, specs []toolSpec) conversation {
+		gotFirstUser = firstUser
+		return &fakeConv{t: t, replies: []reply{{Text: "done", Done: true}}}
+	}}
+
+	wl := []inventory.Workload{{
+		Kind: "Deployment", Namespace: "shop", Name: "web",
+		Findings: []diagnose.Finding{{Pod: "shop/web-abc", Issue: "ImagePullBackOff", Reason: "bad tag", Evidence: "ErrImagePull"}},
+	}}
+	if _, err := c.Investigate(context.Background(), clusterhealth.ClusterHealth{Verdict: "Healthy"}, nil, nil, nil, wl, client); err != nil {
+		t.Fatal(err)
+	}
+	want := explain.BuildInventoryPrompt(clusterhealth.ClusterHealth{Verdict: "Healthy"}, nil, nil, nil, wl) +
+		"\n\nInvestigate the findings with the read-only tools, then explain."
+	if gotFirstUser != want {
+		t.Errorf("a traceless run's first message must be byte-identical to the pre-slice shape:\n%s", gotFirstUser)
 	}
 }

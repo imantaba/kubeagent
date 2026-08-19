@@ -3,14 +3,23 @@ package investigate
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net/url"
 	"strings"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 
+	"github.com/imantaba/kubeagent/internal/rbacprofile"
 	"github.com/imantaba/kubeagent/internal/redact"
 	"github.com/imantaba/kubeagent/internal/safetext"
 )
@@ -525,5 +534,439 @@ func TestReader_GetRelated_PVC_SanitizesClaimName(t *testing.T) {
 	}
 	if s.Allowed("pvc", "shop", "data"+bel+"-0") {
 		t.Error("scope must not contain an entry built from the raw, unsanitized claim name")
+	}
+}
+
+// TestReader_FailedReads_ReduceViaRedactError proves the reader.go doc
+// comment's closed gap: a failed client-go read reaches the model as
+// op + scheme://host + cause — never the request path or query.
+func TestReader_FailedReads_ReduceViaRedactError(t *testing.T) {
+	failure := &url.Error{
+		Op:  "Get",
+		URL: "https://10.96.0.1:6443/api/v1/namespaces/shop/pods/web-abc?timeout=30s",
+		Err: errors.New("connection refused"),
+	}
+	tests := []struct {
+		name     string
+		resource string // the fake clientset resource the reactor intercepts
+		verb     string
+		call     toolCall
+	}{
+		{"describe pod", "pods", "get", call("describe", map[string]string{"kind": "pod", "namespace": "shop", "name": "web-abc"})},
+		{"describe node", "nodes", "get", call("describe", map[string]string{"kind": "node", "namespace": "", "name": "worker-1"})},
+		{"describe pvc", "persistentvolumeclaims", "get", call("describe", map[string]string{"kind": "pvc", "namespace": "shop", "name": "data-0"})},
+		{"describe deployment", "deployments", "get", call("describe", map[string]string{"kind": "deployment", "namespace": "shop", "name": "web"})},
+		{"describe replicaset", "replicasets", "get", call("describe", map[string]string{"kind": "replicaset", "namespace": "shop", "name": "web-rs"})},
+		{"describe statefulset", "statefulsets", "get", call("describe", map[string]string{"kind": "statefulset", "namespace": "shop", "name": "db"})},
+		{"describe daemonset", "daemonsets", "get", call("describe", map[string]string{"kind": "daemonset", "namespace": "shop", "name": "logger"})},
+		{"describe job", "jobs", "get", call("describe", map[string]string{"kind": "job", "namespace": "shop", "name": "migrate"})},
+		{"get_events", "events", "list", call("get_events", map[string]string{"namespace": "shop", "name": "web-abc"})},
+		{"get_related", "pods", "get", call("get_related", map[string]string{"namespace": "shop", "name": "web-abc", "relation": "owner"})},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := fake.NewSimpleClientset()
+			client.PrependReactor(tt.verb, tt.resource, func(k8stesting.Action) (bool, runtime.Object, error) {
+				return true, nil, failure
+			})
+			s := NewScope(nil)
+			s.Add("pod", "shop", "web-abc")
+			s.Add("node", "", "worker-1")
+			s.Add("pvc", "shop", "data-0")
+			s.Add("deployment", "shop", "web")
+			s.Add("replicaset", "shop", "web-rs")
+			s.Add("statefulset", "shop", "db")
+			s.Add("daemonset", "shop", "logger")
+			s.Add("job", "shop", "migrate")
+			r := Reader{client: client}
+			res := r.execute(context.Background(), tt.call, s)
+			if !res.IsError {
+				t.Fatalf("expected an error result, got %+v", res)
+			}
+			if !strings.Contains(res.Content, "https://10.96.0.1:6443") || !strings.Contains(res.Content, "connection refused") {
+				t.Errorf("want op + scheme://host + cause to survive, got %q", res.Content)
+			}
+			for _, leaked := range []string{"/api/v1/namespaces", "timeout=30s"} {
+				if strings.Contains(res.Content, leaked) {
+					t.Errorf("request path/query leaked into the tool result: %q", res.Content)
+				}
+			}
+		})
+	}
+}
+
+// logCauseResult is pure so every arm is testable: the fake clientset's
+// GetLogs serves a fixed body, so content-dependent arms cannot be driven
+// through it.
+func TestLogCauseResult_RefusalNamesPodsLogPermission(t *testing.T) {
+	for _, err := range []error{
+		apierrors.NewForbidden(schema.GroupResource{Resource: "pods/log"}, "web-abc", errors.New("no access")),
+		apierrors.NewUnauthorized("no bearer token"),
+	} {
+		res := logCauseResult("t1", "shop", "web-abc", "app", "", false, err)
+		if !res.IsError {
+			t.Fatalf("expected an error result for %v", err)
+		}
+		want := "reading the previous log of shop/web-abc was refused: this identity lacks the pods/log get permission"
+		if res.Content != want {
+			t.Errorf("content = %q, want %q", res.Content, want)
+		}
+	}
+}
+
+func TestLogCauseResult_OtherErrorReducesViaRedactError(t *testing.T) {
+	err := &url.Error{
+		Op:  "Get",
+		URL: "https://10.96.0.1:6443/api/v1/namespaces/shop/pods/web-abc/log?previous=true",
+		Err: errors.New("connection refused"),
+	}
+	res := logCauseResult("t1", "shop", "web-abc", "app", "", false, err)
+	if !res.IsError {
+		t.Fatal("expected an error result")
+	}
+	if !strings.Contains(res.Content, "https://10.96.0.1:6443") || strings.Contains(res.Content, "/api/v1/") {
+		t.Errorf("want scheme://host only, got %q", res.Content)
+	}
+}
+
+func TestLogCauseResult_NoPreviousInstance(t *testing.T) {
+	res := logCauseResult("t1", "shop", "web-abc", "app", "", false, nil)
+	if res.IsError {
+		t.Fatalf("no previous instance is not an error: %q", res.Content)
+	}
+	want := `no previous-instance log for shop/web-abc container "app" (nothing was refused; the container may not have restarted)`
+	if res.Content != want {
+		t.Errorf("content = %q, want %q", res.Content, want)
+	}
+}
+
+// TestLogCauseResult_ExcerptNeverCrosses is the boundary proof: a classified
+// log returns ONLY the fixed-vocabulary cause. No line of the log itself —
+// addresses, tokens, anything — reaches the result.
+func TestLogCauseResult_ExcerptNeverCrosses(t *testing.T) {
+	log := "dial tcp 10.96.0.10:6379: connect: connection refused\ntoken=not-a-real-routing-key"
+	res := logCauseResult("t1", "shop", "web-abc", "app", log, true, nil)
+	if res.IsError {
+		t.Fatalf("unexpected error: %q", res.Content)
+	}
+	if !strings.HasPrefix(res.Content, "log cause: ") {
+		t.Errorf("want a classified cause, got %q", res.Content)
+	}
+	for _, leaked := range []string{"10.96.0.10", "dial tcp", "not-a-real-routing-key", "token="} {
+		if strings.Contains(res.Content, leaked) {
+			t.Errorf("raw log content crossed the boundary: %q in %q", leaked, res.Content)
+		}
+	}
+}
+
+func TestLogCauseResult_FallbackCauseOnly(t *testing.T) {
+	res := logCauseResult("t1", "shop", "web-abc", "app", "something odd happened", true, nil)
+	want := "log cause: last output before exit (no signature in the last 25 lines)"
+	if res.Content != want {
+		t.Errorf("content = %q, want %q", res.Content, want)
+	}
+	if strings.Contains(res.Content, "something odd happened") {
+		t.Errorf("the last line itself must not cross: %q", res.Content)
+	}
+}
+
+func TestLogCauseResult_UnclassifiableLog(t *testing.T) {
+	// A placeholder-only log classifies to the zero Clue (Cause == "").
+	log := "unable to retrieve container logs for containerd://0123456789abcdef"
+	res := logCauseResult("t1", "shop", "web-abc", "app", log, true, nil)
+	if res.IsError {
+		t.Fatalf("unexpected error: %q", res.Content)
+	}
+	want := `the previous log of shop/web-abc container "app" has no classifiable output`
+	if res.Content != want {
+		t.Errorf("content = %q, want %q", res.Content, want)
+	}
+}
+
+func TestReader_GetLogCauses_OutOfScopeIsRefused(t *testing.T) {
+	r := Reader{client: fake.NewSimpleClientset()}
+	s := NewScope(nil)
+	res := r.execute(context.Background(), call("get_log_causes", map[string]string{"namespace": "shop", "pod": "web-abc", "container": "app"}), s)
+	if !res.IsError || !strings.Contains(res.Content, "not in scope") {
+		t.Errorf("out-of-scope pod must be refused, got %+v", res)
+	}
+}
+
+// TestReader_GetLogCauses_WiredThroughExecute drives the real path: the fake
+// clientset serves its fixed "fake logs" body, which classifies to the
+// fallback cause — and the body itself must not appear in the result.
+func TestReader_GetLogCauses_WiredThroughExecute(t *testing.T) {
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "web-abc", Namespace: "shop"}}
+	r := Reader{client: fake.NewSimpleClientset(pod)}
+	s := NewScope(nil)
+	s.Add("pod", "shop", "web-abc")
+	res := r.execute(context.Background(), call("get_log_causes", map[string]string{"namespace": "shop", "pod": "web-abc", "container": "app"}), s)
+	if res.IsError {
+		t.Fatalf("unexpected error: %q", res.Content)
+	}
+	if res.Content != "log cause: last output before exit (no signature in the last 25 lines)" {
+		t.Errorf("content = %q", res.Content)
+	}
+	if strings.Contains(res.Content, "fake logs") {
+		t.Errorf("the raw log body crossed the boundary: %q", res.Content)
+	}
+}
+
+func TestReader_GetLogCauses_ForbiddenViaReactor(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	client.PrependReactor("get", "pods", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "pods/log"}, "web-abc", errors.New("no access"))
+	})
+	r := Reader{client: client}
+	s := NewScope(nil)
+	s.Add("pod", "shop", "web-abc")
+	res := r.execute(context.Background(), call("get_log_causes", map[string]string{"namespace": "shop", "pod": "web-abc", "container": "app"}), s)
+	if !res.IsError || !strings.Contains(res.Content, "pods/log get permission") {
+		t.Errorf("a forbidden read must name the missing permission, got %+v", res)
+	}
+	if strings.Contains(res.Content, "no access") {
+		t.Errorf("the API error's own text must not pass through the refusal arm: %q", res.Content)
+	}
+}
+
+func TestReader_DescribeService_RendersStructuredShape(t *testing.T) {
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "frontend", Namespace: "shop"},
+		Spec: corev1.ServiceSpec{
+			Type:      corev1.ServiceTypeClusterIP,
+			ClusterIP: "10.96.14.203",
+			Selector:  map[string]string{"tier": "frontend", "app": "web"},
+			Ports: []corev1.ServicePort{
+				{Name: "http", Port: 80, Protocol: corev1.ProtocolTCP, TargetPort: intstr.FromInt(8080)},
+			},
+		},
+	}
+	ready, notReady := true, false
+	slice := &discoveryv1.EndpointSlice{
+		ObjectMeta:  metav1.ObjectMeta{Name: "frontend-abc", Namespace: "shop", Labels: map[string]string{discoveryv1.LabelServiceName: "frontend"}},
+		AddressType: discoveryv1.AddressTypeIPv4,
+		Endpoints: []discoveryv1.Endpoint{
+			{Addresses: []string{"10.244.1.5"}, Conditions: discoveryv1.EndpointConditions{Ready: &ready}},
+			{Addresses: []string{"10.244.2.6"}, Conditions: discoveryv1.EndpointConditions{Ready: &ready}},
+			{Addresses: []string{"10.244.3.7"}, Conditions: discoveryv1.EndpointConditions{Ready: &notReady}},
+		},
+	}
+	r := Reader{client: fake.NewSimpleClientset(svc, slice)}
+	s := NewScope(nil)
+	s.Add("service", "shop", "frontend")
+	res := r.execute(context.Background(), call("describe", map[string]string{"kind": "service", "namespace": "shop", "name": "frontend"}), s)
+	if res.IsError {
+		t.Fatalf("unexpected error: %q", res.Content)
+	}
+	for _, want := range []string{
+		"service shop/frontend: type=ClusterIP",
+		"port http 80/TCP -> 8080",
+		"selector: app=web,tier=frontend", // sorted keys
+		"ready endpoints: 2",              // not-ready addresses excluded
+	} {
+		if !strings.Contains(res.Content, want) {
+			t.Errorf("describe service missing %q, got:\n%s", want, res.Content)
+		}
+	}
+	if strings.Contains(res.Content, "10.96.14.203") {
+		t.Errorf("ClusterIP must never render: %q", res.Content)
+	}
+	if strings.Contains(res.Content, "10.244.") {
+		t.Errorf("endpoint addresses must never render: %q", res.Content)
+	}
+}
+
+func TestReader_DescribeService_NoEndpointSlicesIsZero(t *testing.T) {
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "frontend", Namespace: "shop"},
+		Spec:       corev1.ServiceSpec{Type: corev1.ServiceTypeClusterIP},
+	}
+	r := Reader{client: fake.NewSimpleClientset(svc)}
+	s := NewScope(nil)
+	s.Add("service", "shop", "frontend")
+	res := r.execute(context.Background(), call("describe", map[string]string{"kind": "service", "namespace": "shop", "name": "frontend"}), s)
+	if res.IsError {
+		t.Fatalf("unexpected error: %q", res.Content)
+	}
+	for _, want := range []string{"selector: (none)", "ready endpoints: 0"} {
+		if !strings.Contains(res.Content, want) {
+			t.Errorf("missing %q, got:\n%s", want, res.Content)
+		}
+	}
+}
+
+func TestReader_DescribeService_OutOfScopeIsRefused(t *testing.T) {
+	svc := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "frontend", Namespace: "shop"}}
+	r := Reader{client: fake.NewSimpleClientset(svc)}
+	res := r.execute(context.Background(), call("describe", map[string]string{"kind": "service", "namespace": "shop", "name": "frontend"}), NewScope(nil))
+	if !res.IsError || !strings.Contains(res.Content, "not in scope") {
+		t.Errorf("an out-of-scope service must be refused, got %+v", res)
+	}
+}
+
+// TestReader_GetRelated_Service_AddsMatchesToScope proves the hop and its
+// load-bearing guard: labels.SelectorFromSet of an EMPTY selector matches
+// every pod, so a selectorless Service must be skipped explicitly.
+func TestReader_GetRelated_Service_AddsMatchesToScope(t *testing.T) {
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "web-abc", Namespace: "shop", Labels: map[string]string{"app": "web"}}}
+	matching := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "frontend", Namespace: "shop"},
+		Spec:       corev1.ServiceSpec{Selector: map[string]string{"app": "web"}},
+	}
+	other := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "backend", Namespace: "shop"},
+		Spec:       corev1.ServiceSpec{Selector: map[string]string{"app": "db"}},
+	}
+	selectorless := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "external", Namespace: "shop"},
+	}
+	r := Reader{client: fake.NewSimpleClientset(pod, matching, other, selectorless)}
+	s := NewScope(nil)
+	s.Add("pod", "shop", "web-abc")
+	res := r.execute(context.Background(), call("get_related", map[string]string{"namespace": "shop", "name": "web-abc", "relation": "service"}), s)
+	if res.IsError {
+		t.Fatalf("unexpected error: %q", res.Content)
+	}
+	if !strings.Contains(res.Content, "Services selecting web-abc: frontend") {
+		t.Errorf("matching service missing, got %q", res.Content)
+	}
+	for _, absent := range []string{"backend", "external"} {
+		if strings.Contains(res.Content, absent) {
+			t.Errorf("%q must not match, got %q", absent, res.Content)
+		}
+	}
+	if !s.Allowed("service", "shop", "frontend") {
+		t.Error("the matching service must enter scope")
+	}
+	for _, name := range []string{"backend", "external"} {
+		if s.Allowed("service", "shop", name) {
+			t.Errorf("service %q must not enter scope", name)
+		}
+	}
+}
+
+func TestReader_GetRelated_Service_NoMatchIsNotAnError(t *testing.T) {
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "web-abc", Namespace: "shop", Labels: map[string]string{"app": "web"}}}
+	other := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "backend", Namespace: "shop"},
+		Spec:       corev1.ServiceSpec{Selector: map[string]string{"app": "db"}},
+	}
+	r := Reader{client: fake.NewSimpleClientset(pod, other)}
+	s := NewScope(nil)
+	s.Add("pod", "shop", "web-abc")
+	res := r.execute(context.Background(), call("get_related", map[string]string{"namespace": "shop", "name": "web-abc", "relation": "service"}), s)
+	if res.IsError {
+		t.Fatalf("no match is not an error: %q", res.Content)
+	}
+	if res.Content != "no Service in shop selects pod web-abc" {
+		t.Errorf("content = %q", res.Content)
+	}
+}
+
+func TestReader_GetRelated_UnknownRelationNamesService(t *testing.T) {
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "web-abc", Namespace: "shop"}}
+	r := Reader{client: fake.NewSimpleClientset(pod)}
+	s := NewScope(nil)
+	s.Add("pod", "shop", "web-abc")
+	res := r.execute(context.Background(), call("get_related", map[string]string{"namespace": "shop", "name": "web-abc", "relation": "secrets"}), s)
+	if !res.IsError || !strings.Contains(res.Content, "want owner|node|pvc|service") {
+		t.Errorf("the default arm must name the full relation set, got %+v", res)
+	}
+}
+
+// Every read the tool loop can issue must stay within the grants kubeagent's
+// own RBAC ships: the core rules plus the logs feature's pods/log. The
+// Endpoints regression showed why this pin must exist — reader tests against
+// a permissive fake clientset stay green even when a read touches a resource
+// no shipped manifest grants.
+func TestReaderReadsStayWithinGrantedRBAC(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "web-abc", Namespace: "shop",
+			Labels:          map[string]string{"app": "web"},
+			OwnerReferences: []metav1.OwnerReference{{Kind: "ReplicaSet", Name: "web-5f"}},
+		},
+		Spec: corev1.PodSpec{
+			NodeName: "node-1",
+			Volumes: []corev1.Volume{{
+				Name: "data",
+				VolumeSource: corev1.VolumeSource{
+					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "data-pvc"},
+				},
+			}},
+		},
+	}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-1"}}
+	pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "data-pvc", Namespace: "shop"}}
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "frontend", Namespace: "shop"},
+		Spec:       corev1.ServiceSpec{Selector: map[string]string{"app": "web"}},
+	}
+	ready := true
+	slice := &discoveryv1.EndpointSlice{
+		ObjectMeta:  metav1.ObjectMeta{Name: "frontend-abc", Namespace: "shop", Labels: map[string]string{discoveryv1.LabelServiceName: "frontend"}},
+		AddressType: discoveryv1.AddressTypeIPv4,
+		Endpoints:   []discoveryv1.Endpoint{{Addresses: []string{"10.244.1.5"}, Conditions: discoveryv1.EndpointConditions{Ready: &ready}}},
+	}
+	event := &corev1.Event{
+		ObjectMeta:     metav1.ObjectMeta{Name: "web-abc.1", Namespace: "shop"},
+		InvolvedObject: corev1.ObjectReference{Name: "web-abc", Namespace: "shop"},
+		Reason:         "Started", Message: "started container", Count: 1,
+	}
+
+	client := fake.NewSimpleClientset(pod, node, pvc, svc, slice, event)
+	r := Reader{client: client}
+
+	s := NewScope(nil)
+	s.Add("pod", "shop", "web-abc")
+	s.Add("node", "", "node-1")
+	s.Add("pvc", "shop", "data-pvc")
+	s.Add("service", "shop", "frontend")
+
+	calls := []toolCall{
+		call("describe", map[string]string{"kind": "pod", "namespace": "shop", "name": "web-abc"}),
+		call("describe", map[string]string{"kind": "node", "namespace": "", "name": "node-1"}),
+		call("describe", map[string]string{"kind": "pvc", "namespace": "shop", "name": "data-pvc"}),
+		call("describe", map[string]string{"kind": "service", "namespace": "shop", "name": "frontend"}),
+		call("get_events", map[string]string{"namespace": "shop", "name": "web-abc"}),
+		call("get_related", map[string]string{"namespace": "shop", "name": "web-abc", "relation": "owner"}),
+		call("get_related", map[string]string{"namespace": "shop", "name": "web-abc", "relation": "node"}),
+		call("get_related", map[string]string{"namespace": "shop", "name": "web-abc", "relation": "pvc"}),
+		call("get_related", map[string]string{"namespace": "shop", "name": "web-abc", "relation": "service"}),
+		call("get_log_causes", map[string]string{"namespace": "shop", "pod": "web-abc", "container": "app"}),
+	}
+	for _, c := range calls {
+		if res := r.execute(context.Background(), c, s); res.IsError {
+			t.Fatalf("tool %q unexpectedly refused: %q", c.Name, res.Content)
+		}
+	}
+
+	granted := map[string]bool{}
+	for _, name := range []string{"core", "logs"} {
+		f, ok := rbacprofile.Lookup(name)
+		if !ok {
+			t.Fatalf("no %q feature in rbacprofile", name)
+		}
+		for _, rule := range f.Rules {
+			for _, res := range rule.Resources {
+				granted[rule.APIGroup+"/"+res] = true
+			}
+		}
+	}
+
+	for _, a := range client.Actions() {
+		verb := a.GetVerb()
+		if verb != "get" && verb != "list" {
+			t.Errorf("action %s %s uses verb %q; only get/list are ever granted", verb, a.GetResource(), verb)
+			continue
+		}
+		gvr := a.GetResource()
+		resource := gvr.Group + "/" + gvr.Resource
+		if sub := a.GetSubresource(); sub != "" {
+			resource += "/" + sub
+		}
+		if !granted[resource] {
+			t.Errorf("action %s %s touches %q, which no shipped RBAC grant (core or logs) covers", verb, gvr, resource)
+		}
 	}
 }

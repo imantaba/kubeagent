@@ -4,14 +4,20 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/imantaba/kubeagent/internal/collect"
+	"github.com/imantaba/kubeagent/internal/logscan"
 	"github.com/imantaba/kubeagent/internal/redact"
 	"github.com/imantaba/kubeagent/internal/safetext"
+	"github.com/imantaba/kubeagent/internal/svchealth"
 )
 
 // toolCall is one model-requested read (backend-agnostic; the Anthropic backend
@@ -31,8 +37,10 @@ type toolResult struct {
 }
 
 // Reader executes an allowed tool call via read-only client-go calls, rendering
-// only structured fields — never env, secret data, container args, or logs —
-// and never an address it chose: no PodIP, HostIP, or ClusterIP field is ever
+// only structured fields — never env, secret data, container args, or a raw
+// log line (get_log_causes reads a bounded previous-instance tail but returns
+// only its classified cause) — and never an address it chose: no PodIP,
+// HostIP, or ClusterIP field is ever
 // printed. A condition, waiting/terminated, or event Reason and Message is
 // free text the API server does not validate, so it passes through sanitize on
 // its way out (see describePod), which catches a network address embedded in
@@ -40,11 +48,15 @@ type toolResult struct {
 // still carry one, path and all.
 //
 // That does not make a tool result address-free. When a client-go Get or List
-// call in this file fails, the error is returned to the model as err.Error(),
-// unfiltered by sanitize or by anything else -- a *url.Error from a failed
-// call names the API server's own host:port in its dial failure, and the
-// request path it was reaching for besides. This is a known gap: no decision
-// in this package closes it.
+// call in this file fails, the error reaches the model through redact.Error,
+// which walks any *url.Error chain and reduces the URL at every level to
+// scheme://host: the request path and query are dropped, and the API server's
+// address survives only in that reduced form -- the same shape the CLI's own
+// enrichment-failure notice uses. What redact.Error does not rewrite is error
+// text outside a *url.Error -- an API status message, say -- which is the
+// cluster's own text and can quote whatever it likes. The unfiltered
+// err.Error() gap this paragraph used to record is closed; what remains is
+// the scheme://host reduction itself and that non-URL cause text.
 type Reader struct {
 	client kubernetes.Interface
 }
@@ -85,6 +97,8 @@ func (r Reader) execute(ctx context.Context, c toolCall, scope *Scope) toolResul
 		return r.getEvents(ctx, c, scope)
 	case "get_related":
 		return r.getRelated(ctx, c, scope)
+	case "get_log_causes":
+		return r.getLogCauses(ctx, c, scope)
 	default:
 		return errResult(c.ID, fmt.Sprintf("unknown tool %q", c.Name))
 	}
@@ -109,7 +123,7 @@ func (r Reader) describe(ctx context.Context, c toolCall, scope *Scope) toolResu
 	case "pod":
 		p, err := r.client.CoreV1().Pods(in.Namespace).Get(ctx, in.Name, metav1.GetOptions{})
 		if err != nil {
-			return errResult(c.ID, err.Error())
+			return errResult(c.ID, redact.Error(err))
 		}
 		return okResult(c.ID, describePod(p))
 	case "deployment", "replicaset", "statefulset", "daemonset", "job":
@@ -117,15 +131,21 @@ func (r Reader) describe(ctx context.Context, c toolCall, scope *Scope) toolResu
 	case "node":
 		n, err := r.client.CoreV1().Nodes().Get(ctx, in.Name, metav1.GetOptions{})
 		if err != nil {
-			return errResult(c.ID, err.Error())
+			return errResult(c.ID, redact.Error(err))
 		}
 		return okResult(c.ID, describeNode(n))
 	case "pvc":
 		pvc, err := r.client.CoreV1().PersistentVolumeClaims(in.Namespace).Get(ctx, in.Name, metav1.GetOptions{})
 		if err != nil {
-			return errResult(c.ID, err.Error())
+			return errResult(c.ID, redact.Error(err))
 		}
 		return okResult(c.ID, describePVC(pvc))
+	case "service":
+		svc, err := r.client.CoreV1().Services(in.Namespace).Get(ctx, in.Name, metav1.GetOptions{})
+		if err != nil {
+			return errResult(c.ID, redact.Error(err))
+		}
+		return okResult(c.ID, r.describeService(ctx, svc))
 	default:
 		return errResult(c.ID, fmt.Sprintf("kind %q is not supported for describe", in.Kind))
 	}
@@ -178,7 +198,7 @@ func (r Reader) describeWorkload(ctx context.Context, id, kind, ns, name string)
 	case "deployment":
 		d, err := r.client.AppsV1().Deployments(ns).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
-			return errResult(id, err.Error())
+			return errResult(id, redact.Error(err))
 		}
 		fmt.Fprintf(&b, "deployment %s/%s: ready=%d/%d updated=%d available=%d\n",
 			ns, name, d.Status.ReadyReplicas, d.Status.Replicas, d.Status.UpdatedReplicas, d.Status.AvailableReplicas)
@@ -188,27 +208,27 @@ func (r Reader) describeWorkload(ctx context.Context, id, kind, ns, name string)
 	case "replicaset":
 		rs, err := r.client.AppsV1().ReplicaSets(ns).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
-			return errResult(id, err.Error())
+			return errResult(id, redact.Error(err))
 		}
 		fmt.Fprintf(&b, "replicaset %s/%s: ready=%d/%d available=%d\n", ns, name,
 			rs.Status.ReadyReplicas, rs.Status.Replicas, rs.Status.AvailableReplicas)
 	case "statefulset":
 		ss, err := r.client.AppsV1().StatefulSets(ns).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
-			return errResult(id, err.Error())
+			return errResult(id, redact.Error(err))
 		}
 		fmt.Fprintf(&b, "statefulset %s/%s: ready=%d/%d\n", ns, name, ss.Status.ReadyReplicas, ss.Status.Replicas)
 	case "daemonset":
 		ds, err := r.client.AppsV1().DaemonSets(ns).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
-			return errResult(id, err.Error())
+			return errResult(id, redact.Error(err))
 		}
 		fmt.Fprintf(&b, "daemonset %s/%s: ready=%d desired=%d available=%d unavailable=%d\n", ns, name,
 			ds.Status.NumberReady, ds.Status.DesiredNumberScheduled, ds.Status.NumberAvailable, ds.Status.NumberUnavailable)
 	case "job":
 		j, err := r.client.BatchV1().Jobs(ns).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
-			return errResult(id, err.Error())
+			return errResult(id, redact.Error(err))
 		}
 		fmt.Fprintf(&b, "job %s/%s: active=%d succeeded=%d failed=%d\n", ns, name, j.Status.Active, j.Status.Succeeded, j.Status.Failed)
 	}
@@ -236,6 +256,42 @@ func describePVC(p *corev1.PersistentVolumeClaim) string {
 		p.Namespace, p.Name, p.Status.Phase, sc, p.Spec.VolumeName)
 }
 
+// describeService renders a Service's structured shape: type, ports, selector
+// and the count of ready endpoints behind it. It never renders an address
+// kubeagent chose: no ClusterIP, no LoadBalancer ingress address, no endpoint
+// IP. Port names, selector keys and values, and targetPort are API-validated
+// syntax, so none pass through sanitize -- the same reasoning as describePod's
+// pod and node names. It is a method, not a free function like the other
+// describe renderers, because the ready-endpoint count needs a second read --
+// EndpointSlices, the resource core RBAC already grants, never the legacy
+// Endpoints resource, which no shipped kubeagent role covers. The count reuses
+// svchealth.ReadyEndpoints, the same logic every other ready-endpoint answer
+// in kubeagent uses (svchealth, webhookhealth, ingresshealth).
+func (r Reader) describeService(ctx context.Context, svc *corev1.Service) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "service %s/%s: type=%s\n", svc.Namespace, svc.Name, svc.Spec.Type)
+	for _, p := range svc.Spec.Ports {
+		fmt.Fprintf(&b, "  port %s %d/%s -> %s\n", p.Name, p.Port, p.Protocol, p.TargetPort.String())
+	}
+	if len(svc.Spec.Selector) == 0 {
+		b.WriteString("  selector: (none)\n")
+	} else {
+		pairs := make([]string, 0, len(svc.Spec.Selector))
+		for k, v := range svc.Spec.Selector {
+			pairs = append(pairs, k+"="+v)
+		}
+		sort.Strings(pairs)
+		fmt.Fprintf(&b, "  selector: %s\n", strings.Join(pairs, ","))
+	}
+	slices, err := collect.EndpointSlices(ctx, r.client, svc.Namespace)
+	if err != nil {
+		fmt.Fprintf(&b, "  ready endpoints: unknown (%s)\n", redact.Error(err))
+	} else {
+		fmt.Fprintf(&b, "  ready endpoints: %d\n", svchealth.ReadyEndpoints(*svc, slices))
+	}
+	return b.String()
+}
+
 type eventsInput struct{ Namespace, Name string }
 
 func (r Reader) getEvents(ctx context.Context, c toolCall, scope *Scope) toolResult {
@@ -250,7 +306,7 @@ func (r Reader) getEvents(ctx context.Context, c toolCall, scope *Scope) toolRes
 		FieldSelector: "involvedObject.name=" + in.Name,
 	})
 	if err != nil {
-		return errResult(c.ID, err.Error())
+		return errResult(c.ID, redact.Error(err))
 	}
 	if len(evs.Items) == 0 {
 		return okResult(c.ID, fmt.Sprintf("no events for %s/%s", in.Namespace, in.Name))
@@ -276,7 +332,7 @@ func (r Reader) getRelated(ctx context.Context, c toolCall, scope *Scope) toolRe
 	}
 	p, err := r.client.CoreV1().Pods(in.Namespace).Get(ctx, in.Name, metav1.GetOptions{})
 	if err != nil {
-		return errResult(c.ID, err.Error())
+		return errResult(c.ID, redact.Error(err))
 	}
 	switch in.Relation {
 	case "owner":
@@ -327,7 +383,77 @@ func (r Reader) getRelated(ctx context.Context, c toolCall, scope *Scope) toolRe
 			return okResult(c.ID, fmt.Sprintf("pod %s/%s has no PersistentVolumeClaims", in.Namespace, in.Name))
 		}
 		return okResult(c.ID, fmt.Sprintf("PVCs of %s: %s\n", in.Name, strings.Join(names, ", ")))
+	case "service":
+		svcs, err := r.client.CoreV1().Services(in.Namespace).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return errResult(c.ID, redact.Error(err))
+		}
+		var names []string
+		for _, svc := range svcs.Items {
+			// A selectorless Service selects no pods, but
+			// labels.SelectorFromSet of an empty set matches everything —
+			// skip it explicitly or every Service in the namespace matches.
+			if len(svc.Spec.Selector) == 0 {
+				continue
+			}
+			if !labels.SelectorFromSet(svc.Spec.Selector).Matches(labels.Set(p.Labels)) {
+				continue
+			}
+			// svc.Name is the listed object's own metadata.name — unlike the
+			// owner/node/pvc arms above, which read a name out of another
+			// object's fields and sanitize it at that ingress — so no
+			// safetext.Line here. Both sinks get the same value.
+			scope.Add("service", in.Namespace, svc.Name)
+			names = append(names, svc.Name)
+		}
+		if len(names) == 0 {
+			return okResult(c.ID, fmt.Sprintf("no Service in %s selects pod %s", in.Namespace, in.Name))
+		}
+		sort.Strings(names)
+		return okResult(c.ID, fmt.Sprintf("Services selecting %s: %s\n", in.Name, strings.Join(names, ", ")))
 	default:
-		return errResult(c.ID, fmt.Sprintf("unknown relation %q (want owner|node|pvc)", in.Relation))
+		return errResult(c.ID, fmt.Sprintf("unknown relation %q (want owner|node|pvc|service)", in.Relation))
 	}
+}
+
+// logCausesInput is the wire shape of a get_log_causes call.
+type logCausesInput struct{ Namespace, Pod, Container string }
+
+// getLogCauses classifies the previous-instance log tail of an in-scope pod's
+// container and returns only the classified cause. The raw excerpt never
+// crosses the model boundary: logscan.Clue.Excerpt is deliberately discarded,
+// matching the report's policy split — a LogCause may cross after redaction, a
+// LogExcerpt never does.
+func (r Reader) getLogCauses(ctx context.Context, c toolCall, scope *Scope) toolResult {
+	var in logCausesInput
+	if err := json.Unmarshal(c.Input, &in); err != nil {
+		return errResult(c.ID, "invalid input: "+err.Error())
+	}
+	if !scope.Allowed("pod", in.Namespace, in.Pod) {
+		return errResult(c.ID, fmt.Sprintf("pod %s/%s is not in scope for this investigation", in.Namespace, in.Pod))
+	}
+	log, ok, err := collect.PreviousLogs(ctx, r.client, in.Namespace, in.Pod, in.Container)
+	return logCauseResult(c.ID, in.Namespace, in.Pod, in.Container, log, ok, err)
+}
+
+// logCauseResult turns one PreviousLogs answer into a tool result. It is split
+// from the fetch so every arm is unit-testable: the fake clientset serves a
+// fixed body for GetLogs, so only errors can be injected through it. The
+// refusal arm's text is fixed — the API error's own message never passes
+// through it — and the other-error arm reduces via redact.Error like every
+// failed read in this file.
+func logCauseResult(id, namespace, pod, container, log string, ok bool, err error) toolResult {
+	switch {
+	case apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err):
+		return errResult(id, fmt.Sprintf("reading the previous log of %s/%s was refused: this identity lacks the pods/log get permission", namespace, pod))
+	case err != nil:
+		return errResult(id, redact.Error(err))
+	case !ok:
+		return okResult(id, fmt.Sprintf("no previous-instance log for %s/%s container %q (nothing was refused; the container may not have restarted)", namespace, pod, container))
+	}
+	clue := logscan.Classify(log)
+	if clue.Cause == "" {
+		return okResult(id, fmt.Sprintf("the previous log of %s/%s container %q has no classifiable output", namespace, pod, container))
+	}
+	return okResult(id, "log cause: "+redact.Addresses(clue.Cause))
 }

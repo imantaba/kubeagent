@@ -92,10 +92,15 @@ func TestSecuritySummaryNamesCategories(t *testing.T) {
 	}
 }
 
-// --investigate makes a model call but reads nothing beyond what core
-// already grants. The row exists so an operator can see that cost is zero
-// before enabling a model path against production, not because the feature
-// needs a grant.
+// --investigate makes a model call, but every read the tool loop can issue
+// stays within core's grants: EndpointSlices for a Service's ready-endpoint
+// count, never the legacy Endpoints resource — pinned from the other side by
+// TestReaderReadsStayWithinGrantedRBAC in internal/investigate, which drives
+// one call of every tool/arm and checks each recorded action's resource
+// against what core and logs actually ship. The one extra-grant dependency,
+// get_log_causes reading pods/log, has its home in the logs feature: used
+// when present, refused cleanly when not — which is why Rules stays empty
+// here rather than duplicating logs' grant.
 func TestInvestigateFeatureNeedsNoGrant(t *testing.T) {
 	f, ok := Lookup("investigate")
 	if !ok {
@@ -106,6 +111,10 @@ func TestInvestigateFeatureNeedsNoGrant(t *testing.T) {
 	}
 	if len(f.Rules) != 0 {
 		t.Errorf("investigate declares %d rules; it needs no grant beyond core", len(f.Rules))
+	}
+	want := "read-only agentic investigation of findings via a model tool-use loop — no grant beyond core; its log-cause tool uses the logs feature's pods/log grant when present and refuses cleanly without it"
+	if f.Summary != want {
+		t.Errorf("investigate Summary = %q, want %q", f.Summary, want)
 	}
 }
 

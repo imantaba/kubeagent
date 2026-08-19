@@ -250,7 +250,7 @@ into the Helm chart. list only — kubeagent never writes to a CRD.`,
 	{Name: "credlint", Flag: "--lint-secrets", Summary: "credentials visible in workload env vars — no grant beyond core"},
 	{Name: "cronjobs", Flag: "--include-cron", Summary: "CronJob and Job history in the inventory — no grant beyond core"},
 	{Name: "restarts", Flag: "--include-restarts", Summary: "containers restarting without crash-looping — no grant beyond core"},
-	{Name: "investigate", Flag: "--investigate", Summary: "read-only agentic investigation of findings via a model tool-use loop — no grant beyond core"},
+	{Name: "investigate", Flag: "--investigate", Summary: "read-only agentic investigation of findings via a model tool-use loop — no grant beyond core; its log-cause tool uses the logs feature's pods/log grant when present and refuses cleanly without it"},
 }
 
 // Features returns the table. The slice and its rules are copies: a caller that

@@ -18,6 +18,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/fleet"
 	"github.com/imantaba/kubeagent/internal/gate"
 	"github.com/imantaba/kubeagent/internal/gitops"
+	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/jsonschema"
 	"github.com/imantaba/kubeagent/internal/operators"
 	"github.com/imantaba/kubeagent/internal/policy"
@@ -114,6 +115,10 @@ var enums = map[string][]string{
 	},
 	"policy.Level": {
 		string(policy.LevelInfo), string(policy.LevelWarning), string(policy.LevelCritical),
+	},
+	"inventory.Verdict": {
+		string(inventory.VerdictAttributed), string(inventory.VerdictRuledOut),
+		string(inventory.VerdictOutranked),
 	},
 }
 

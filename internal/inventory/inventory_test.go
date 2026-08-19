@@ -1,6 +1,7 @@
 package inventory
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
 	"testing"
@@ -991,4 +992,43 @@ func safe(s string) bool {
 		}
 	}
 	return true
+}
+
+func TestWorkloadTraceFieldsOmittedWhenEmpty(t *testing.T) {
+	b, err := json.Marshal(Workload{Namespace: "shop", Name: "api", Kind: "Deployment"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, key := range []string{"rootCauseTrace", "rootCauseConfidence"} {
+		if strings.Contains(string(b), key) {
+			t.Errorf("workload with no trace encodes %q: %s", key, b)
+		}
+	}
+}
+
+func TestWorkloadTraceRoundTrips(t *testing.T) {
+	want := Workload{
+		Namespace: "shop", Name: "api", Kind: "Deployment",
+		RootCauseTrace: []Hypothesis{{
+			Cause:   "node worker-2 (NotReady)",
+			Kind:    "node",
+			Verdict: VerdictAttributed,
+			Reason:  "pod api-a is scheduled on it",
+		}},
+		RootCauseConfidence: "high",
+	}
+	b, err := json.Marshal(want)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got Workload
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(got.RootCauseTrace) != 1 || got.RootCauseTrace[0] != want.RootCauseTrace[0] {
+		t.Errorf("trace = %+v, want %+v", got.RootCauseTrace, want.RootCauseTrace)
+	}
+	if got.RootCauseConfidence != "high" {
+		t.Errorf("rootCauseConfidence = %q, want high", got.RootCauseConfidence)
+	}
 }

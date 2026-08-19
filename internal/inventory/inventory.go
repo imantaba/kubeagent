@@ -36,23 +36,25 @@ type PodRow struct {
 
 // Workload is one controller (or bare pod) and its aggregated health.
 type Workload struct {
-	Namespace       string             `json:"namespace"`
-	Name            string             `json:"name"`
-	Kind            string             `json:"kind"` // Deployment | StatefulSet | DaemonSet | ReplicaSet | Job | CronJob | Pod
-	Desired         int                `json:"desired"`
-	Ready           int                `json:"ready"`
-	Status          string             `json:"status"` // Running | Degraded | Scaled Down | Complete | Failed | Pending | Active(N) | Idle | Last run failed (set by batchhealth.Annotate)
-	Restarts        int                `json:"restarts"`
-	LastRestart     string             `json:"lastRestart,omitempty"`
-	Image           string             `json:"image"`
-	Pods            []PodRow           `json:"pods"`
-	Findings        []diagnose.Finding `json:"findings,omitempty"`
-	PodsOmitted     int                `json:"podsOmitted,omitempty"`
-	Schedule        string             `json:"schedule,omitempty"`
-	Priority        int                `json:"priority,omitempty"`        // 2 problem | 3 restart-only | 4 cron (set by Prioritize)
-	NetworkPolicies []string           `json:"networkPolicies,omitempty"` // names of NPs selecting this workload's pods (hint; set by netpolicy.Annotate)
-	Rollout         *RolloutChange     `json:"rollout,omitempty"`         // recent-rollout correlation (hint; set by rollout.Annotate)
-	RootCause       string             `json:"rootCause,omitempty"`       // "node X (reason)", "registry Y (N workloads failing to pull)", or "PVC Z (reason)" — root-cause attribution (hint; set by rootcause.Annotate/AnnotatePVC/AnnotateRegistry)
+	Namespace           string             `json:"namespace"`
+	Name                string             `json:"name"`
+	Kind                string             `json:"kind"` // Deployment | StatefulSet | DaemonSet | ReplicaSet | Job | CronJob | Pod
+	Desired             int                `json:"desired"`
+	Ready               int                `json:"ready"`
+	Status              string             `json:"status"` // Running | Degraded | Scaled Down | Complete | Failed | Pending | Active(N) | Idle | Last run failed (set by batchhealth.Annotate)
+	Restarts            int                `json:"restarts"`
+	LastRestart         string             `json:"lastRestart,omitempty"`
+	Image               string             `json:"image"`
+	Pods                []PodRow           `json:"pods"`
+	Findings            []diagnose.Finding `json:"findings,omitempty"`
+	PodsOmitted         int                `json:"podsOmitted,omitempty"`
+	Schedule            string             `json:"schedule,omitempty"`
+	Priority            int                `json:"priority,omitempty"`            // 2 problem | 3 restart-only | 4 cron (set by Prioritize)
+	NetworkPolicies     []string           `json:"networkPolicies,omitempty"`     // names of NPs selecting this workload's pods (hint; set by netpolicy.Annotate)
+	Rollout             *RolloutChange     `json:"rollout,omitempty"`             // recent-rollout correlation (hint; set by rollout.Annotate)
+	RootCause           string             `json:"rootCause,omitempty"`           // "node X (reason)", "registry Y (N workloads failing to pull)", or "PVC Z (reason)" — root-cause attribution (hint; set by rootcause.Annotate/AnnotatePVC/AnnotateRegistry)
+	RootCauseTrace      []Hypothesis       `json:"rootCauseTrace,omitempty"`      // every root-cause candidate the attribution pass evaluated, whatever the verdict (set by the same three annotators; empty when no candidate existed)
+	RootCauseConfidence string             `json:"rootCauseConfidence,omitempty"` // confidence of the RootCause attribution ("high" | "medium"; set by confidence.Annotate, empty when RootCause is)
 }
 
 // RolloutChange is a recent-rollout correlation for a flagged Deployment: what
@@ -64,6 +66,31 @@ type RolloutChange struct {
 	OldImage  string `json:"oldImage,omitempty"`
 	NewImage  string `json:"newImage,omitempty"`
 	Container string `json:"-"` // set by rollout.Annotate only when the matched container is not the template's first (matching/render only, not serialized)
+}
+
+// A Verdict says what the attribution pass concluded about one candidate
+// cause. The vocabulary is closed: attributed (this candidate is the
+// workload's RootCause), ruled_out (its evidence did not match this
+// workload), outranked (its evidence matched, but precedence chose a
+// stronger cause).
+type Verdict string
+
+const (
+	VerdictAttributed Verdict = "attributed"
+	VerdictRuledOut   Verdict = "ruled_out"
+	VerdictOutranked  Verdict = "outranked"
+)
+
+// A Hypothesis is one candidate root cause the attribution pass evaluated for
+// a workload, kept whatever the verdict was. The trace exists so an operator
+// can see what was considered and rejected, not only what won: "ruled out"
+// and "outranked" are answers, not omissions. Kind is one of "node", "pvc",
+// "registry".
+type Hypothesis struct {
+	Cause   string  `json:"cause"`
+	Kind    string  `json:"kind"`
+	Verdict Verdict `json:"verdict"`
+	Reason  string  `json:"reason"`
 }
 
 // Flagged reports whether the workload needs attention.

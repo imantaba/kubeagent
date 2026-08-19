@@ -201,10 +201,11 @@ func BuildInventoryPrompt(cluster clusterhealth.ClusterHealth, summary *resource
 }
 
 // maxFindingBlocksPerWorkload caps how many finding blocks BuildInventoryPrompt
-// writes per workload, after collapsing. It bounds the request the same way
-// R225's raised MaxTokens bounds the model's response — the two act on
-// opposite sides of the same API call, and neither makes the other
-// unnecessary.
+// writes per workload, after collapsing. It bounds what the request costs; the
+// summarizer's own output cap bounds what the response may cost. The two act
+// on opposite sides of the same API call and neither makes the other
+// unnecessary — a prompt small enough to send can still ask for an answer
+// longer than the model is allowed to write.
 const maxFindingBlocksPerWorkload = 3
 
 // writeFindingBlocks renders w.Findings as the prompt's per-finding blocks. It
@@ -296,8 +297,11 @@ type anthropicSummarizer struct {
 
 func (a anthropicSummarizer) summarize(ctx context.Context, system, prompt string) (string, error) {
 	resp, err := a.client.Messages.New(ctx, anthropic.MessageNewParams{
-		Model:     anthropic.Model(a.model),
-		MaxTokens: 2048,
+		Model: anthropic.Model(a.model),
+		// The hard ceiling on the narrative, not a target. 2048 cut a
+		// many-workload summary off mid-sentence; 8192 matches what
+		// internal/investigate asks for on the same model.
+		MaxTokens: 8192,
 		System:    []anthropic.TextBlockParam{{Text: system}},
 		Messages: []anthropic.MessageParam{
 			anthropic.NewUserMessage(anthropic.NewTextBlock(prompt)),

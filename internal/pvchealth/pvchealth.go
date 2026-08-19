@@ -110,9 +110,20 @@ func matchOutcome(c corev1.PersistentVolumeClaim, pvs []corev1.PersistentVolume)
 		return "", "", false
 	}
 	if excludedBySelector > 0 {
-		return "PVSelectorMismatch", fmt.Sprintf("no available PersistentVolume matches its selector (%d otherwise-suitable volume(s) excluded)", excludedBySelector), true
+		return "PVSelectorMismatch", fmt.Sprintf("no available PersistentVolume matches its selector (%d otherwise-suitable %s excluded)", excludedBySelector, plural(excludedBySelector, "volume", "volumes")), true
 	}
 	return "NoMatchingPV", fmt.Sprintf("no available PersistentVolume matches its request (%s, %s)", requestSize(c), modeList(c)), true
+}
+
+// plural picks the singular or plural form for a count. A sibling of the same
+// three-line helper in internal/report (report.go); duplicated because report
+// renders scan output and this package must not import it — the dependency
+// runs the other way.
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 func classExists(name string, scs []storagev1.StorageClass) bool {

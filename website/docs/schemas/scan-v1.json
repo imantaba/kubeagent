@@ -531,6 +531,9 @@
         "issue": {
           "type": "string"
         },
+        "kind": {
+          "type": "string"
+        },
         "logCause": {
           "type": "string"
         },

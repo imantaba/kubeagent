@@ -67,9 +67,12 @@ type Reader struct {
 // usual concern: text past safetext.MaxLine is discarded, never rendered, so
 // an address in the dropped tail leaks nothing either way.
 //
-// sanitize does not catch everything: redact.Addresses matches a bare
-// host:port or IP:port shape, not an arbitrary URL, so a registry address
-// quoted inside an image-pull failure keeps its scheme and path intact.
+// sanitize does not catch everything: redact.Addresses matches a bracketed
+// IPv6 address with its port, a dotted-quad IPv4 address with or without one,
+// or a dotted DNS name with its port -- never an arbitrary URL, so a registry
+// address quoted inside an image-pull failure keeps its scheme and path
+// intact. The DNS alternative needs that dot: a single-label service host
+// with a port ("redis:6379") passes through as well (R248).
 func sanitize(s string) string {
 	return redact.Addresses(safetext.Line(s))
 }
@@ -302,13 +305,20 @@ func (r Reader) getRelated(ctx context.Context, c toolCall, scope *Scope) toolRe
 		if p.Spec.NodeName == "" {
 			return okResult(c.ID, fmt.Sprintf("pod %s/%s is not scheduled to a node", in.Namespace, in.Name))
 		}
-		scope.Add("node", "", p.Spec.NodeName)
-		return okResult(c.ID, fmt.Sprintf("node of %s: %s\n", in.Name, p.Spec.NodeName))
+		// safetext.Line, not sanitize, for the same reason as the owner arm
+		// above: a legal node name that looks like an IPv4 address would be
+		// rewritten by redact.Addresses, breaking the scope match. Both
+		// sinks get the same sanitized value.
+		node := safetext.Line(p.Spec.NodeName)
+		scope.Add("node", "", node)
+		return okResult(c.ID, fmt.Sprintf("node of %s: %s\n", in.Name, node))
 	case "pvc":
 		var names []string
 		for _, v := range p.Spec.Volumes {
 			if v.PersistentVolumeClaim != nil {
-				n := v.PersistentVolumeClaim.ClaimName
+				// safetext.Line, not sanitize — same rule as the owner and
+				// node arms above, same sanitized value in both sinks.
+				n := safetext.Line(v.PersistentVolumeClaim.ClaimName)
 				scope.Add("pvc", in.Namespace, n)
 				names = append(names, n)
 			}

@@ -325,10 +325,10 @@ func runScan(o scanOptions) error {
 	// the deterministic report below still renders on stdout with exit 0, and
 	// runModelPath reduces the failure to one stderr notice naming which flag
 	// failed and why (via enrichmentFailure, R227) instead of returning an
-	// error. This also covers R220: a narrative-less investigation reaches
-	// runModelPath as just another error and gets the same notice-not-failure
-	// treatment, so the report renders with no Investigation section rather
-	// than nothing at all.
+	// error. A narrative-less investigation is covered by the same rule
+	// (R220): it reaches runModelPath as just another error and gets the
+	// same notice-not-failure treatment, so the report renders with no
+	// Investigation section rather than nothing at all.
 	modelRes := runModelPath(o,
 		func() (investigate.Report, error) {
 			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -416,6 +416,16 @@ func runScan(o scanOptions) error {
 	// empty report for that case. So this conjunction is exactly the skip
 	// and nothing else.
 	in.InvestigationSkipped = o.investigate && modelRes.notice == "" && investigationReport.Narrative == ""
+	// ExplanationSkipped follows the same argument one flag over: with
+	// o.explain set and o.investigate clear, runModelPath enters the explain
+	// arm; a failure sets modelRes.notice (handled above); and a success with
+	// an empty explanation happens only through ExplainInventory's clean-scan
+	// guard, because a real run that produced no text returns an error rather
+	// than an empty explanation. --investigate supersedes --explain in
+	// runModelPath, so o.investigate is excluded — that path never entered
+	// the explain arm at all. So this conjunction is exactly the skip and
+	// nothing else.
+	in.ExplanationSkipped = o.explain && !o.investigate && modelRes.notice == "" && explanation == ""
 	in.RemediationPlan = fixPlan
 	if err := renderScan(os.Stdout, o.output, in, res, o.namespace); err != nil {
 		return err

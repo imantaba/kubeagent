@@ -34,6 +34,13 @@ func URL(raw string) string {
 // from a bare hostname, and redacting a version string would cost the reader
 // signal while protecting nothing. Every address this package exists to catch
 // arrives from Go's dialer, which always formats host:port.
+//
+// Not every address is caught. The dotted-hostname alternative requires a
+// dot, so a single-label service host with a port ("redis:6379") passes
+// through (R248). Widening the pattern to catch it would change redaction for
+// every caller — the two prompt paths included — and wants its own fixture
+// set and review, so the gap stays open behind this sentence rather than
+// behind a claim that it does not exist.
 var addr = regexp.MustCompile(
 	`\[[0-9a-fA-F:]+\]:\d+` +
 		`|\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?` +

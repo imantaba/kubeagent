@@ -56,3 +56,41 @@ func TestInventoryPromptDoesNotCarryTheLoggedAddress(t *testing.T) {
 		t.Error("scan --explain prompt dropped the log cause instead of redacting the address")
 	}
 }
+
+// Evidence, unlike LogCause, is API text that quotes addresses outright — a
+// probe finding's evidence carries the kubelet's own "Get http://<pod-ip>/…"
+// message, and a DNS finding's evidence names the resolver it asked. The same
+// boundary rule applies: redact where the prompt is assembled, whatever
+// produced the value.
+func workloadWithEvidenceAddress() inventory.Workload {
+	return inventory.Workload{
+		Namespace: "chaos-explain", Name: "web", Kind: "Deployment",
+		Ready: 0, Desired: 2, Status: "CrashLoopBackOff", Restarts: 5,
+		Findings: []diagnose.Finding{{
+			Issue: "ProbeFailure", Reason: "readiness probe failing",
+			Evidence: `Get "http://` + leakedAddr + `/healthz": connection refused`,
+		}},
+	}
+}
+
+func TestIncidentPromptDoesNotCarryAnEvidenceAddress(t *testing.T) {
+	p := BuildIncidentPrompt("Deployment/chaos-explain/web", []string{"ProbeFailure"},
+		clusterhealth.ClusterHealth{}, []inventory.Workload{workloadWithEvidenceAddress()}, nil)
+	if strings.Contains(p, leakedAddr) {
+		t.Errorf("incident prompt carries the address quoted in a finding's evidence: %q", leakedAddr)
+	}
+	if !strings.Contains(p, "connection refused") {
+		t.Error("incident prompt dropped the evidence instead of redacting the address")
+	}
+}
+
+func TestInventoryPromptDoesNotCarryAnEvidenceAddress(t *testing.T) {
+	p := BuildInventoryPrompt(clusterhealth.ClusterHealth{}, nil, nil, nil,
+		[]inventory.Workload{workloadWithEvidenceAddress()})
+	if strings.Contains(p, leakedAddr) {
+		t.Errorf("scan --explain prompt carries the address quoted in a finding's evidence: %q", leakedAddr)
+	}
+	if !strings.Contains(p, "connection refused") {
+		t.Error("scan --explain prompt dropped the evidence instead of redacting the address")
+	}
+}

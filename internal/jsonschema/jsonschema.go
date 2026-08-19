@@ -37,17 +37,21 @@ const (
 	// count selected) so a partial read is visible in the JSON the same way it
 	// already is in the text report; 1.6 added `suggestion` on a finding, the
 	// deterministic next step `scan --suggest` already prints in the text
-	// report, populated only when the flag is set. All six are additive: every
+	// report, populated only when the flag is set; 1.7 added `kind` on a
+	// finding, the kind of the object the finding's `pod` names when it is
+	// not a pod ("Job" or "CronJob"), set only by the JobFailed producer.
+	// All seven are additive: every
 	// added property is omitempty and absent from `required`, so a document
 	// produced without them still validates against the older schema. `state`,
-	// `unreachable`, `podsAnswered` and `suggestion` are omitempty for that
-	// reason and no other — `state` is set on every row of every real scan,
-	// `podsAnswered` is set anywhere `podsProbed` is on a real scan, a run
-	// with no unreachable kubelet legitimately encodes no `unreachable` key, a
-	// scan without `--suggest` legitimately encodes no `suggestion` key, but a
+	// `unreachable`, `podsAnswered`, `suggestion` and `kind` are omitempty for
+	// that reason and no other — `state` is set on every row of every real
+	// scan, `podsAnswered` is set anywhere `podsProbed` is on a real scan, a
+	// run with no unreachable kubelet legitimately encodes no `unreachable`
+	// key, a scan without `--suggest` legitimately encodes no `suggestion`
+	// key, a pod-level finding legitimately encodes no `kind` key, but a
 	// property in `required` is a MAJOR change however new or however often
 	// it is set.
-	ScanVersion     = "1.6"
+	ScanVersion     = "1.7"
 	GateVersion     = "1.1"
 	RBACVersion     = "1.0"
 	WatchVersion    = "1.0"

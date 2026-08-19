@@ -2334,6 +2334,74 @@ func TestPrintInventory_CertificatesNotesBullet(t *testing.T) {
 			t.Errorf("must not render the confirmation bullet when --certs was not given, got:\n%s", out)
 		}
 	})
+
+	t.Run("one checked: singular", func(t *testing.T) {
+		var buf bytes.Buffer
+		if err := PrintInventory(Input{Cluster: cluster,
+			Certificates: &certhealth.Report{Checked: 1, WarnDays: 30}}, "text", &buf); err != nil {
+			t.Fatal(err)
+		}
+		if out := buf.String(); !strings.Contains(out, "1 certificate checked, none expired or expiring within 30d") {
+			t.Errorf("missing the singular confirmation bullet, got:\n%s", out)
+		}
+	})
+
+	t.Run("zero checked: says none were found, not that none expired", func(t *testing.T) {
+		var buf bytes.Buffer
+		if err := PrintInventory(Input{Cluster: cluster,
+			Certificates: &certhealth.Report{Checked: 0, WarnDays: 30}}, "text", &buf); err != nil {
+			t.Fatal(err)
+		}
+		out := buf.String()
+		if !strings.Contains(out, "no TLS certificates found to check") {
+			t.Errorf("missing the zero-checked bullet, got:\n%s", out)
+		}
+		if strings.Contains(out, "none expired or expiring") {
+			t.Errorf("a run that checked nothing must not claim none expired, got:\n%s", out)
+		}
+	})
+}
+
+// R-explain-skip: --explain on a clean scan makes no model call, and until
+// this notice the output was indistinguishable from --explain never having
+// been passed. The Investigation section already renders a skip notice for
+// the same situation; the Explanation section now does too.
+func TestPrintInventory_ExplanationSkipped(t *testing.T) {
+	cluster := clusterhealth.ClusterHealth{Verdict: "Healthy", NodesReady: 1, NodesTotal: 1}
+
+	t.Run("skipped: heading plus notice", func(t *testing.T) {
+		var buf bytes.Buffer
+		if err := PrintInventory(Input{Cluster: cluster, ExplanationSkipped: true}, "text", &buf); err != nil {
+			t.Fatal(err)
+		}
+		out := buf.String()
+		if !strings.Contains(out, "── Explanation ──") {
+			t.Errorf("want the Explanation heading, got:\n%s", out)
+		}
+		if !strings.Contains(out, "Explanation skipped — no findings to explain.") {
+			t.Errorf("want the skip notice, got:\n%s", out)
+		}
+	})
+
+	t.Run("explanation present: no skip notice", func(t *testing.T) {
+		var buf bytes.Buffer
+		if err := PrintInventory(Input{Cluster: cluster, Explanation: "all good"}, "text", &buf); err != nil {
+			t.Fatal(err)
+		}
+		if out := buf.String(); strings.Contains(out, "Explanation skipped") {
+			t.Errorf("a rendered explanation must not carry the skip notice, got:\n%s", out)
+		}
+	})
+
+	t.Run("neither: no Explanation section at all", func(t *testing.T) {
+		var buf bytes.Buffer
+		if err := PrintInventory(Input{Cluster: cluster}, "text", &buf); err != nil {
+			t.Fatal(err)
+		}
+		if out := buf.String(); strings.Contains(out, "── Explanation ──") {
+			t.Errorf("no --explain and no skip must render no Explanation section, got:\n%s", out)
+		}
+	})
 }
 
 func TestPrintInventory_ConfidenceTags(t *testing.T) {

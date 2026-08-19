@@ -45,6 +45,9 @@ func For(f diagnose.Finding) Suggestion {
 	case "FailedCreate":
 		return Suggestion{"the controller can't create pods — check for quota, LimitRange, or a rejecting admission webhook", eventsCmd(ns, "FailedCreate")}
 	case "JobFailed":
+		if f.Kind == "CronJob" {
+			return Suggestion{"the most recent scheduled run failed — inspect that run and the schedule", describeCronJobCmd(ns, pod)}
+		}
 		return Suggestion{"the Job exhausted its retries — inspect the failed pod's logs", jobLogsCmd(ns, pod)}
 	case "RolloutStuck":
 		return Suggestion{"the rollout is wedged — inspect the workload's pods and its events", objectEventsCmd(ns, pod)}
@@ -81,11 +84,22 @@ func describeCmd(ns, pod string) string {
 	return fmt.Sprintf("kubectl -n %s describe pod %s", ns, pod)
 }
 
+// describeCronJobCmd addresses the CronJob itself. A CronJob-sourced JobFailed
+// finding carries the CronJob's name in Pod, and no Job by that name exists —
+// the failed run is named "<name>-<minute>", and failedJobsHistoryLimit rotates
+// it away besides — so a job/ reference could never resolve. describe cronjob
+// shows the schedule, the last schedule time and the recent runs, which is
+// where the investigation starts.
+func describeCronJobCmd(ns, name string) string {
+	return fmt.Sprintf("kubectl -n %s describe cronjob %s", ns, name)
+}
+
 // objectEventsCmd lists the events recorded against one object, by name.
 //
-// A RolloutStuck finding names a Deployment, a StatefulSet or a DaemonSet, and a
-// Finding carries no kind — so `describe <kind> <name>` cannot be built without
-// guessing one, and the guess would be wrong two times in three. An event is
+// A RolloutStuck finding names a Deployment, a StatefulSet or a DaemonSet, and
+// its Kind field is empty — only the JobFailed producer sets one — so
+// `describe <kind> <name>` cannot be built without guessing one, and the guess
+// would be wrong two times in three. An event is
 // addressable by name alone, so this command resolves whichever kind fired.
 // It is addressable, not explanatory: a controller records few events of its
 // own, and a stall is usually visible on its ReplicaSet's or its pods' events

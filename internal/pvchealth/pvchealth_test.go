@@ -392,7 +392,7 @@ func TestAssess_PVSelectorMismatch_ExcludesOtherwiseSuitablePV(t *testing.T) {
 	if got.Reason != "PVSelectorMismatch" {
 		t.Fatalf("reason = %q, want PVSelectorMismatch", got.Reason)
 	}
-	if got.Detail != "no available PersistentVolume matches its selector (1 otherwise-suitable volume(s) excluded)" {
+	if got.Detail != "no available PersistentVolume matches its selector (1 otherwise-suitable volume excluded)" {
 		t.Fatalf("detail = %q", got.Detail)
 	}
 }
@@ -451,7 +451,7 @@ func TestAssess_PVSelectorMismatch_CountsAllExcluded(t *testing.T) {
 	if got.Reason != "PVSelectorMismatch" {
 		t.Fatalf("reason = %q, want PVSelectorMismatch", got.Reason)
 	}
-	if got.Detail != "no available PersistentVolume matches its selector (2 otherwise-suitable volume(s) excluded)" {
+	if got.Detail != "no available PersistentVolume matches its selector (2 otherwise-suitable volumes excluded)" {
 		t.Fatalf("detail = %q", got.Detail)
 	}
 }

@@ -235,7 +235,13 @@ type Input struct {
 	// json tag by design, the same rule InvestigationTruncated follows below
 	// — a truncation flag on ScanReport would move a schemaVersion, which
 	// this decision refuses.
-	ExplanationTruncated   bool
+	ExplanationTruncated bool
+	// ExplanationSkipped is true when --explain was passed but the scan found
+	// nothing to explain, so no model call was made. Rendered, not exported:
+	// no json tag by design, the same rule as the field above it — a
+	// skipped-explanation flag on ScanReport would move a schemaVersion,
+	// which this decision refuses.
+	ExplanationSkipped     bool
 	Investigation          string
 	InvestigationConsulted []string
 	// InvestigationTruncated is true when Investigation was cut short at the
@@ -497,6 +503,13 @@ func printInventoryText(in Input, w io.Writer) error {
 				return err
 			}
 		}
+	} else if in.ExplanationSkipped {
+		// No model-written caveat here — no model was called, so there is
+		// nothing to verify. The heading still renders so this reads as a
+		// section like every other, not a bare floating sentence.
+		if _, err := fmt.Fprintf(w, "\n── Explanation ──\nExplanation skipped — no findings to explain.\n"); err != nil {
+			return err
+		}
 	}
 	if in.Investigation != "" {
 		if _, err := fmt.Fprintf(w, "\n── Investigation ──\n"); err != nil {
@@ -742,8 +755,12 @@ func printNotes(in Input, expected []svchealth.Issue, expectedIng []ingresshealt
 	// silent about it. A run with findings renders the CERTIFICATES section
 	// instead, so this bullet and that section never both appear.
 	if rep := in.Certificates; rep != nil && !certificatesRender(rep) {
-		fmt.Fprintf(&b, "  • %d certificates checked, none expired or expiring within %dd\n",
-			rep.Checked, rep.WarnDays)
+		if rep.Checked == 0 {
+			fmt.Fprintf(&b, "  • no TLS certificates found to check\n")
+		} else {
+			fmt.Fprintf(&b, "  • %d %s checked, none expired or expiring within %dd\n",
+				rep.Checked, plural(rep.Checked, "certificate", "certificates"), rep.WarnDays)
+		}
 	}
 	if b.Len() == 0 {
 		return nil

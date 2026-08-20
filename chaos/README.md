@@ -391,8 +391,11 @@ A row:
 
 Field semantics, which are a contract:
 
-- `scenario` — the report heading, from `scenario_title`, so the two artifacts
-  can never disagree about a scenario's name.
+- `scenario` — the scenario's number and function-name slug, from
+  `scenario_title` (`"5. coredns"`), NOT the report's descriptive heading
+  (`"5. Broken DNS (CoreDNS crash)"`, hand-written in each scenario body).
+  The numeric prefix is what the two artifacts share — join on it, or group
+  rows by `fault`, the field built for programmatic use.
 - `fault` — a fixed slug naming the fault the scenario INJECTS, never the
   feature it tests: scenarios 9, 12, 13, 14, 15 and 23 inject the literal same
   bad-image fault against six different features and share

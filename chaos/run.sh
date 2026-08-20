@@ -2840,8 +2840,9 @@ run_scenarios() {
       # Corpus bookkeeping: where this scenario's slice of the two logs
       # begins. This loop runs in the main shell — a pipeline would lose
       # these variables — and both files exist (assert_init made them).
-      abefore="$(wc -l < "$ASSERTLOG" | tr -d ' ')"
-      sbefore="$(wc -l < "$SKIPLOG" | tr -d ' ')"
+      # A failed read falls back to 0: a whole-file slice, never an abort.
+      abefore="$(wc -l < "$ASSERTLOG" | tr -d ' ')" || abefore=0
+      sbefore="$(wc -l < "$SKIPLOG" | tr -d ' ')" || sbefore=0
       "scenario_$s"
       # `|| true` makes the never-fail contract structural: a tested call
       # suppresses set -e for capture's whole body, so no corpus problem can

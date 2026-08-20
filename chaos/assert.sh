@@ -21,9 +21,13 @@
 assert_init() {
   ASSERTLOG="${ASSERTLOG:-$(mktemp)}"
   SKIPLOG="${SKIPLOG:-$(mktemp)}"
+  # The corpus's scratch shares this lifecycle deliberately: same mktemp, same
+  # single trap line. A second `trap ... EXIT` anywhere would clobber this one.
+  CORPUSTMP="${CORPUSTMP:-$(mktemp)}"
   : > "$ASSERTLOG"
   : > "$SKIPLOG"
-  trap 'rm -f "${ASSERTLOG:-}" "${SKIPLOG:-}"' EXIT
+  : > "$CORPUSTMP"
+  trap 'rm -f "${ASSERTLOG:-}" "${SKIPLOG:-}" "${CORPUSTMP:-}"' EXIT
 }
 
 # _assert_record <PASS|FAIL> <label> <detail>

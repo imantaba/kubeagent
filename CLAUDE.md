@@ -576,6 +576,20 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   Every failed read inside the loop now reduces through `redact.Error`
   instead of returning the raw client-go error. Loop bounds are unchanged
   (8 reads, 6 turns), Anthropic-only and never-fatal are unchanged, and no
-  JSON schema moves. Only slice 3, the chaos correctness corpus, remains.
-  The remaining post-1.0 work is other baseline dimensions and the
-  hypothesis engine's last slice, the chaos correctness corpus.
+  JSON schema moves.
+  Slice 3 has since shipped, and **the hypothesis engine is complete**: every
+  chaos run writes a correctness corpus beside its report —
+  `chaos-corpus-<minor>-<distro>.jsonl`, one JSON row per scenario carrying
+  the injected fault's slug from a closed 23-entry vocabulary (a CI selftest
+  extracts `run_scenarios`' list and fails on any scenario without a slug),
+  the scenario's verbatim assertion lines, and whether it was skipped and
+  why. Rows pass `redact_nodes` BEFORE they are JSON-encoded (the assertion
+  log is not pre-redacted), the file is promoted only when the run completes
+  so an aborted run leaves nothing rather than a truncated corpus, a corpus
+  problem costs the row and never the run (`record()`'s contract), and the
+  nightly matrix credential-scans and uploads it beside the report. A row's
+  `rc` is the scenario's machine verdict — 0 when no assertion in its slice
+  failed — not a process exit code. No production Go code: the corpus is a
+  training contract for consumers outside this repository, and nothing in
+  kubeagent reads it.
+  The remaining post-1.0 work is other baseline dimensions.

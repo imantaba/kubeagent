@@ -577,7 +577,7 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   instead of returning the raw client-go error. Loop bounds are unchanged
   (8 reads, 6 turns), Anthropic-only and never-fatal are unchanged, and no
   JSON schema moves.
-  Slice 3 has since shipped, and **the hypothesis engine is complete**: every
+  Slice 3 has since shipped (v1.22.0), and **the hypothesis engine is complete**: every
   chaos run writes a correctness corpus beside its report —
   `chaos-corpus-<minor>-<distro>.jsonl`, one JSON row per scenario carrying
   the injected fault's slug from a closed 23-entry vocabulary (a CI selftest

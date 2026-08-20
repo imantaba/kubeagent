@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.22.0] - 2026-08-20
+
 ### Added
 
 - Chaos correctness corpus, the hypothesis engine's final slice: every
@@ -3002,7 +3004,8 @@ infrastructure (a documentation site and a pre-release chaos-test harness).
 - CI (vet/test/build on push & PR) and a release workflow publishing a
   linux/amd64 tarball + `SHA256SUMS` to a GitHub Release.
 
-[Unreleased]: https://github.com/imantaba/kubeagent/compare/v1.21.0...HEAD
+[Unreleased]: https://github.com/imantaba/kubeagent/compare/v1.22.0...HEAD
+[1.22.0]: https://github.com/imantaba/kubeagent/compare/v1.21.0...v1.22.0
 [1.21.0]: https://github.com/imantaba/kubeagent/compare/v1.20.0...v1.21.0
 [1.20.0]: https://github.com/imantaba/kubeagent/compare/v1.19.0...v1.20.0
 [1.19.0]: https://github.com/imantaba/kubeagent/compare/v1.18.0...v1.19.0

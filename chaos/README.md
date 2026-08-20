@@ -374,6 +374,69 @@ it up unless `--teardown` is passed), so `./chaos/run.sh --only NN --out
 scenarios — proving each helper both passes and fails correctly, in under a
 second.
 
+## Corpus
+
+Every run also writes a machine-readable twin of the report: one JSON line per
+scenario, in `chaos-corpus-<minor>-<distro>.jsonl` beside the report —
+`chaos-corpus-v1.34-kind.jsonl`; `chaos-corpus-kind.jsonl` when no
+`--k8s-version` was given; `chaos-corpus-portable.jsonl` in portable mode.
+Note the axis order: the corpus is named minor-then-distro even on the k3s
+path, where the report is named `chaos-results-k3s-<minor>.md`.
+
+A row:
+
+```json
+{"scenario": "5. coredns", "fault": "coredns-corefile-broken", "k8s": "v1.34", "distro": "kind", "rc": 0, "assertions": ["PASS\tCluster: Degraded named (found '5/5 pods affected')"], "skipped": false, "skip_reason": ""}
+```
+
+Field semantics, which are a contract:
+
+- `scenario` — the report heading, from `scenario_title`, so the two artifacts
+  can never disagree about a scenario's name.
+- `fault` — a fixed slug naming the fault the scenario INJECTS, never the
+  feature it tests: scenarios 9, 12, 13, 14, 15 and 23 inject the literal same
+  bad-image fault against six different features and share
+  `deployment-bad-image-tag` — the `scenario` field is what tells their rows
+  apart. A scenario that injects nothing says so (`no-fault-healthy-readyz`),
+  and scenario 2's slug names the fault that cannot be injected quickly or
+  safely (`control-plane-cert-expiry`). The vocabulary is closed: a selftest
+  extracts `run_scenarios`' list and fails CI on any scenario without a slug.
+- `k8s`, `distro` — the run's axes. Both empty in portable mode: the harness
+  will not stamp facts it cannot know about a cluster it did not create.
+- `rc` — the scenario's machine verdict: `0` when no assertion in the
+  scenario's slice of the log failed, `1` otherwise. It is NOT a process exit
+  code — each scenario holds its scan exit codes in locals and asserts on
+  them there, so the assertion outcomes are the only per-scenario verdict
+  that exists outside the scenario's body.
+- `assertions` — the scenario's `PASS`/`FAIL` lines, verbatim, tab included.
+  The baseline healthy scan is not a scenario and writes no row.
+- `skipped`, `skip_reason` — a scenario that did not run says so and why, so
+  a partial run can never masquerade as a full corpus. A scenario that ran
+  some assertions before a mid-body capability guard carries both its
+  assertions and `skipped: true`.
+
+Three properties hold by construction:
+
+- **Redacted at capture.** Each row's text passes `redact_nodes` BEFORE it is
+  JSON-encoded — encoding first could split a redaction needle's bytes across
+  escape sequences. The assertion log itself is not pre-redacted (the
+  report's summary takes the same detour), so capture is where the corpus's
+  redaction promise is kept: one seam, shared with the report, including the
+  withhold-on-failure behavior.
+- **Complete or absent.** Rows accumulate in a scratch file and are promoted
+  beside the report only after the last scenario returns: an aborted run
+  leaves no corpus at all rather than a truncated one that could be mistaken
+  for complete. An `--only NN` run writes a one-row corpus, which is
+  self-evidently partial.
+- **Never the gate.** A corpus problem costs the row (with a stderr note),
+  never the run — the same contract as `record()` — and the exit code still
+  comes from the assertion summary alone.
+
+The nightly matrix uploads the corpus inside the same artifact as the report,
+after the same credential grep clears both files. The corpus is a data
+contract for training and evaluation OUTSIDE this repository; no Go code in
+kubeagent reads it.
+
 ## Scenarios
 
 | # | Outage | How it's injected | Expected kubeagent signal |

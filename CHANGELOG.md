@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Chaos correctness corpus, the hypothesis engine's final slice: every
+  `./chaos/run.sh` run now writes `chaos-corpus-<minor>-<distro>.jsonl` beside
+  its report — one JSON row per scenario naming the injected fault (a fixed
+  23-entry vocabulary kept closed by a CI selftest), the scenario's verbatim
+  assertion lines, and whether it was skipped and why, so a partial run can
+  never masquerade as a full corpus. Rows pass the harness's one redaction
+  seam before they are JSON-encoded, the file appears only when the run
+  completes, and the nightly chaos matrix credential-scans and uploads it
+  beside the report. No production Go code: the corpus is a training contract
+  for consumers outside this repository, and nothing in kubeagent reads it.
+
 ## [1.21.0] - 2026-08-19
 
 ### Added

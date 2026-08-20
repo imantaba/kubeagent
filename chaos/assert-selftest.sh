@@ -489,6 +489,62 @@ check 'a redaction failure withholds the section, never the raw credential' \
 check 'a redaction failure logs a line on stderr' \
   "$(printf '%s' "$redact_failure_result" | cut -d'|' -f3)" 1
 
+# --- corpus_row: the corpus's JSON encoder, from the real run.sh -------------
+# corpus_row is pure: redacted plaintext block in, one JSON line out. Same
+# guarded-source pattern as requires_probe above.
+corpus_row_probe() {   # corpus_row_probe  (block on stdin) -> JSON line
+  (
+    set --
+    . chaos/run.sh
+    corpus_row
+  )
+}
+
+row="$(
+  {
+    printf '%s\n' '5. coredns' 'coredns-corefile-broken' 'v1.34' 'kind' '0' 'false' ''
+    printf 'PASS\tCluster: Degraded named (found)\n'
+    printf 'FAIL\tscan exit code (got 0, want 2)\n'
+  } | corpus_row_probe
+)"
+check 'corpus_row emits exactly one line' \
+  "$(printf '%s\n' "$row" | wc -l | tr -d ' ')" 1
+check 'corpus_row maps the seven fixed fields and the assertion tail' \
+  "$(printf '%s' "$row" | python3 -c '
+import json, sys
+r = json.loads(sys.stdin.read())
+print("|".join([r["scenario"], r["fault"], r["k8s"], r["distro"], str(r["rc"]),
+                str(len(r["assertions"])), str(r["skipped"]).lower(), r["skip_reason"]]))
+')" '5. coredns|coredns-corefile-broken|v1.34|kind|0|2|false|'
+check 'corpus_row keys follow the spec order' \
+  "$(printf '%s' "$row" | python3 -c '
+import json, sys
+print(",".join(json.loads(sys.stdin.read()).keys()))
+')" 'scenario,fault,k8s,distro,rc,assertions,skipped,skip_reason'
+check 'corpus_row preserves the tab inside an assertion line' \
+  "$(printf '%s' "$row" | python3 -c '
+import json, sys
+r = json.loads(sys.stdin.read())
+print("yes" if r["assertions"][0] == "PASS\tCluster: Degraded named (found)" else "no")
+')" yes
+
+skiprow="$(printf '%s\n' '2. certs' 'control-plane-cert-expiry' '' '' '0' 'true' \
+  'control-plane certificate expiry cannot be forced quickly or safely' | corpus_row_probe)"
+check 'corpus_row encodes a skipped scenario: empty axes, no assertions, the reason' \
+  "$(printf '%s' "$skiprow" | python3 -c '
+import json, sys
+r = json.loads(sys.stdin.read())
+print("|".join([r["k8s"], r["distro"], str(r["skipped"]).lower(),
+                str(len(r["assertions"])), r["skip_reason"]]))
+')" '||true|0|control-plane certificate expiry cannot be forced quickly or safely'
+
+# A malformed block (fewer than 7 header lines) is refused, not guessed at:
+# the caller withholds the row. Same for a non-integer rc.
+short_rc="$( (printf 'only\nthree\nlines\n' | corpus_row_probe) >/dev/null 2>&1 && echo 0 || echo 1 )"
+check 'corpus_row refuses a block with fewer than 7 header lines' "$short_rc" 1
+badrc_rc="$( (printf '%s\n' 't' 'f' '' '' 'NaN' 'false' '' | corpus_row_probe) >/dev/null 2>&1 && echo 0 || echo 1 )"
+check 'corpus_row refuses a non-integer rc' "$badrc_rc" 1
+
 printf '\n%s\n' "$([ "$fails" -eq 0 ] && echo 'assert-selftest: all checks passed' \
                                      || echo "assert-selftest: $fails check(s) failed")"
 [ "$fails" -eq 0 ]

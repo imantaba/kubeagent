@@ -859,6 +859,52 @@ record() {
   } | redact_nodes >> "$OUT"
 }
 
+# --- corpus ------------------------------------------------------------------
+#
+# Beside the human-facing report, every run writes a machine-readable corpus:
+# one JSON line per scenario, promoted next to $OUT only when the run
+# completes. The corpus is a data contract for training and evaluation OUTSIDE
+# this repository; no Go code in kubeagent reads it. chaos/README.md ("Corpus")
+# is the written form of the contract.
+
+# corpus_row — one redacted plaintext block on stdin, one JSON line on stdout.
+#
+# The block's first seven lines are fixed fields (scenario title, fault slug,
+# k8s version, distro, rc, skipped, skip reason — the middle two and the last
+# may be empty); every remaining line is one verbatim assertion outcome.
+# Redaction has ALREADY happened by the time bytes reach this function —
+# encoding first could split a redaction needle across JSON escape sequences,
+# which is why capture() pipes through redact_nodes before corpus_row, never
+# after.
+#
+# A malformed block (fewer than seven lines, a non-integer rc) exits non-zero
+# and the caller withholds the row: a corpus is allowed to lose a row, never
+# to carry a guessed one.
+corpus_row() {
+  python3 -c '
+import json, sys
+
+lines = sys.stdin.read().split("\n")
+if lines and lines[-1] == "":
+    lines.pop()
+if len(lines) < 7:
+    sys.exit(1)
+row = {
+    "scenario": lines[0],
+    "fault": lines[1],
+    "k8s": lines[2],
+    "distro": lines[3],
+    "rc": int(lines[4]),
+    "assertions": lines[7:],
+    "skipped": lines[5] == "true",
+    "skip_reason": lines[6],
+}
+row = {k: row[k] for k in ("scenario", "fault", "k8s", "distro", "rc",
+                           "assertions", "skipped", "skip_reason")}
+sys.stdout.write(json.dumps(row, separators=(",", ":")) + "\n")
+'
+}
+
 # --- capabilities -----------------------------------------------------------
 #
 # A scenario declares what it needs; the run decides what it has. The

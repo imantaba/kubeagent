@@ -905,6 +905,47 @@ sys.stdout.write(json.dumps(row, separators=(",", ":")) + "\n")
 '
 }
 
+# scenario_fault <scenario name> — the fixed slug of the fault the named
+# scenario INJECTS, for the corpus row. The slug names the fault, never the
+# feature under test: scenarios 9, 12, 13, 14, 15 and 23 inject the literal
+# same bad-image fault against six different features and share a slug — the
+# row's scenario field is what tells them apart. A scenario that injects
+# nothing says so explicitly (21), and scenario 2's slug names the fault that
+# cannot be injected quickly or safely.
+#
+# An unknown name yields "unknown-scenario" and rc 0 — never-fail, because
+# capture() must not be able to abort a forty-minute run. What keeps the
+# vocabulary closed is chaos/assert-selftest.sh's completeness check, which
+# extracts run_scenarios' list and fails CI on any entry without a real slug.
+scenario_fault() {
+  case "$1" in
+    01_etcd)          echo control-plane-docker-stop ;;
+    02_certs)         echo control-plane-cert-expiry ;;
+    03_diskfull)      echo node-cordon-diskfull ;;
+    04_networkpolicy) echo networkpolicy-deny-all ;;
+    05_coredns)       echo coredns-corefile-broken ;;
+    06_lb)            echo loadbalancer-no-provider ;;
+    07_oom)           echo memory-limit-oomkill ;;
+    08_nsdelete)      echo namespace-deletion ;;
+    09_rollout)       echo deployment-bad-image-tag ;;
+    10_credleak)      echo configmap-aws-key-leak ;;
+    11_kubelet)       echo worker-containerd-stop ;;
+    12_watch)         echo deployment-bad-image-tag ;;
+    13_slo)           echo deployment-bad-image-tag ;;
+    14)               echo deployment-bad-image-tag ;;
+    15_multicluster)  echo deployment-bad-image-tag ;;
+    16_operators)     echo certmanager-bad-issuer-ref ;;
+    17_gitops)        echo flux-gitrepo-dns-failure ;;
+    18_capacity)      echo oversized-job-unschedulable ;;
+    19_mcp)           echo crashloop-pod ;;
+    20_rbac)          echo crashloop-pod ;;
+    21_controlplane)  echo no-fault-healthy-readyz ;;
+    22_dnshealth)     echo coredns-servfail-template ;;
+    23_pagerduty)     echo deployment-bad-image-tag ;;
+    *)                echo unknown-scenario ;;
+  esac
+}
+
 # --- capabilities -----------------------------------------------------------
 #
 # A scenario declares what it needs; the run decides what it has. The

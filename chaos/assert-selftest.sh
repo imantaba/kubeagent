@@ -545,6 +545,46 @@ check 'corpus_row refuses a block with fewer than 7 header lines' "$short_rc" 1
 badrc_rc="$( (printf '%s\n' 't' 'f' '' '' 'NaN' 'false' '' | corpus_row_probe) >/dev/null 2>&1 && echo 0 || echo 1 )"
 check 'corpus_row refuses a non-integer rc' "$badrc_rc" 1
 
+# --- scenario_fault: the corpus's fault vocabulary ----------------------------
+# The slug names the INJECTED FAULT, not the feature under test: six scenarios
+# inject the literal same bad-image fault against six different features and
+# share a slug — the scenario field is what tells their rows apart.
+check 'scenario 05 fault slug is pinned by the spec' \
+  "$( ( set --; . chaos/run.sh; scenario_fault 05_coredns ) )" coredns-corefile-broken
+check 'a no-fault scenario says so instead of inventing a fault' \
+  "$( ( set --; . chaos/run.sh; scenario_fault 21_controlplane ) )" no-fault-healthy-readyz
+check 'the shared bad-image fault carries one slug across its six scenarios' \
+  "$( ( set --; . chaos/run.sh
+       for s in 09_rollout 12_watch 13_slo 14 15_multicluster 23_pagerduty; do
+         scenario_fault "$s"
+       done | sort -u ) )" deployment-bad-image-tag
+check 'an unknown scenario name yields the sentinel and does not fail' \
+  "$( ( set --; . chaos/run.sh; scenario_fault 99_nope && echo "|rc0" ) )" 'unknown-scenario
+|rc0'
+
+# Completeness: every scenario run_scenarios names must map to a real slug.
+# The list is extracted from run.sh's own text, so adding a 24th scenario
+# without a fault slug fails CI here rather than writing "unknown-scenario"
+# into a published corpus.
+fault_completeness="$(
+  ( set --
+    . chaos/run.sh
+    names="$(sed -n 's/^  local all=(\(.*\))$/\1/p' chaos/run.sh)"
+    [ -n "$names" ] || { echo 'LIST-NOT-FOUND'; exit 0; }
+    bad=0
+    for s in $names; do
+      slug="$(scenario_fault "$s")"
+      case "$slug" in
+        ''|unknown-scenario) echo "NO-SLUG:$s"; bad=1 ;;
+      esac
+    done
+    [ "$bad" = 0 ] && echo OK
+  )
+)"
+check 'every scenario in run_scenarios has a fault slug' "$fault_completeness" OK
+check 'run_scenarios names 23 scenarios' \
+  "$(sed -n 's/^  local all=(\(.*\))$/\1/p' chaos/run.sh | wc -w | tr -d ' ')" 23
+
 printf '\n%s\n' "$([ "$fails" -eq 0 ] && echo 'assert-selftest: all checks passed' \
                                      || echo "assert-selftest: $fails check(s) failed")"
 [ "$fails" -eq 0 ]

@@ -111,8 +111,8 @@ func FuzzClusterAssess(f *testing.F) {
 		for _, dn := range got.DownNodes {
 			fuzzgen.AssertSafe(t, "downNode.name", dn.Name)
 			fuzzgen.AssertSafe(t, "downNode.reason", dn.Reason)
-			if dn.Reason != "NotReady" && dn.Reason != "kubelet not heartbeating" {
-				t.Errorf("DownNode.Reason = %q, want one of this package's two literals", dn.Reason)
+			if dn.Reason != "NotReady" && dn.Reason != "kubelet not heartbeating" && dn.Reason != "no kubelet lease" {
+				t.Errorf("DownNode.Reason = %q, want one of this package's three literals", dn.Reason)
 			}
 		}
 

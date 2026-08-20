@@ -163,6 +163,10 @@ jobs:
           else
             printf 'path=docs/testing/chaos-results-%s.md\n' "$VERSION" >> "$GITHUB_OUTPUT"
           fi
+          # The corpus is named minor-then-distro on BOTH paths (the spec's
+          # order), unlike the k3s report above — chaos/README.md "Corpus"
+          # documents the asymmetry.
+          printf 'corpus=docs/testing/chaos-corpus-%s-%s.jsonl\n' "$VERSION" "$DISTRO" >> "$GITHUB_OUTPUT"
 
       - name: Run the chaos suite on ${{ matrix.distro }} ${{ matrix.version }}
         run: ./chaos/run.sh --distro '${{ matrix.distro }}' --k8s-version '${{ matrix.version }}' --recreate --teardown
@@ -172,8 +176,8 @@ jobs:
       # kubeagent's own words and never carries the ServiceAccount's bearer
       # token or certificate material the way the raw API server message would.
       # This is the independent second check on the one artifact that actually
-      # travels — belt and braces, because a report is worth publishing only if
-      # publishing it is safe.
+      # travels — belt and braces, because an artifact is worth publishing only if
+      # publishing it is safe — and the corpus travels beside the report.
       #
       # `if: always()` because a FAILED run's report is the one worth reading,
       # and a failed run is exactly when nobody is watching the scan.
@@ -183,14 +187,22 @@ jobs:
         run: |
           set -uo pipefail
           rep='${{ steps.report.outputs.path }}'
-          [ -f "$rep" ] || { echo "no report at $rep — nothing to scan"; exit 0; }
+          corpus='${{ steps.report.outputs.corpus }}'
+          files=()
+          for f in "$rep" "$corpus"; do
+            if [ -f "$f" ]; then files+=("$f"); else echo "no file at $f — skipping it"; fi
+          done
+          if [ "${#files[@]}" -eq 0 ]; then echo "nothing to scan"; exit 0; fi
           hits=0
           scan() {   # scan <what> <extended-regexp>
             local n
             # `--` stops option parsing: the PEM pattern below begins with a
             # literal `-`, which grep would otherwise read as an option string
-            # and refuse to run at all.
-            n="$(grep -acE -- "$2" "$rep" || true)"
+            # and refuse to run at all. cat feeds every artifact through one
+            # count — JSON escaping never splits these patterns' bytes, and
+            # redaction ran before encoding, so the same regexes hold for the
+            # corpus.
+            n="$(cat "${files[@]}" | grep -acE -- "$2" || true)"
             printf '%-34s %s\n' "$1" "$n"
             [ "$n" = 0 ] || hits=$((hits + 1))
           }
@@ -205,14 +217,14 @@ jobs:
           # not one negative lookahead: POSIX ERE has no lookahead, and
           # `grep -E 'AKIA(?!...)'` does not fail loudly — it warns, matches
           # nothing, and would report a genuinely leaked key as 0.
-          n="$(grep -aoE 'AKIA[A-Z0-9]{16}' "$rep" | grep -vxF 'AKIAIOSFODNN7EXAMPLE' | grep -ac . || true)"
+          n="$(cat "${files[@]}" | grep -aoE 'AKIA[A-Z0-9]{16}' | grep -vxF 'AKIAIOSFODNN7EXAMPLE' | grep -ac . || true)"
           printf '%-34s %s\n' 'unexpected AWS keys' "$n"
           [ "$n" = 0 ] || hits=$((hits + 1))
           if [ "$hits" -ne 0 ]; then
-            echo "refusing to upload: the report matched $hits credential pattern(s)" >&2
+            echo "refusing to upload: the artifacts matched $hits credential pattern(s)" >&2
             exit 1
           fi
-          echo "report is clean — safe to upload"
+          echo "artifacts are clean — safe to upload"
 
       # `always()` on the scan step above means it runs whether the chaos
       # suite passed or failed, but `always()` here would be wrong: it
@@ -225,10 +237,12 @@ jobs:
       # `outcome` is the one that stays correct if that ever changes) — and
       # skip entirely on cancellation, so a cancelled run uploads nothing
       # rather than whatever happened to be on disk when the signal arrived.
-      - name: Upload the report
+      - name: Upload the report and corpus
         if: ${{ !cancelled() && steps.scan.outcome != 'failure' }}
         uses: actions/upload-artifact@v4
         with:
           name: chaos-report-${{ matrix.distro }}-${{ matrix.version }}
-          path: ${{ steps.report.outputs.path }}
+          path: |
+            ${{ steps.report.outputs.path }}
+            ${{ steps.report.outputs.corpus }}
           if-no-files-found: warn

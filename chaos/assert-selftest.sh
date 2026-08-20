@@ -585,6 +585,110 @@ check 'every scenario in run_scenarios has a fault slug' "$fault_completeness" O
 check 'run_scenarios names 23 scenarios' \
   "$(sed -n 's/^  local all=(\(.*\))$/\1/p' chaos/run.sh | wc -w | tr -d ' ')" 23
 
+# --- capture: one scenario, one redacted corpus row ---------------------------
+# capture slices the scenario's fresh lines out of the two logs by line-count
+# delta, redacts them, and hands them to corpus_row. Same guarded-source
+# pattern as requires_probe; each probe owns its scratch files and its
+# subshell-local trap.
+capture_probe() {   # capture_probe <mode> -> the captured row, or "EMPTY"
+  local mode="$1"
+  (
+    set --
+    . chaos/run.sh
+    ASSERTLOG="$(mktemp)"; SKIPLOG="$(mktemp)"; CORPUSTMP="$(mktemp)"
+    trap 'rm -f "$ASSERTLOG" "$SKIPLOG" "$CORPUSTMP"' EXIT
+    : > "$ASSERTLOG"; : > "$SKIPLOG"; : > "$CORPUSTMP"
+    K8S_VERSION='v1.34'; CORPUS_DISTRO='kind'
+    NODE_NAMES=''; CTX='kind-kubeagent-chaos'
+    scenario='05_coredns'; abefore=0; sbefore=0
+    case "$mode" in
+      pass)
+        # One stale line from an earlier scenario proves the delta slicing.
+        printf 'PASS\tstale line from an earlier scenario (ok)\n' >> "$ASSERTLOG"
+        abefore=1
+        printf 'PASS\tCluster: Degraded named (found)\n' >> "$ASSERTLOG"
+        printf 'PASS\tscan exit code (2)\n' >> "$ASSERTLOG"
+        ;;
+      fail)
+        printf 'PASS\tscan exit code (2)\n' >> "$ASSERTLOG"
+        printf 'FAIL\tCluster: Degraded named (missing)\n' >> "$ASSERTLOG"
+        ;;
+      skip)
+        scenario='02_certs'
+        printf 'SKIP\t2. certs — control-plane certificate expiry cannot be forced quickly or safely\n' >> "$SKIPLOG"
+        ;;
+      redact)
+        NODE_NAMES='worker-9.internal.example'
+        CTX='top-secret-ctx'
+        printf 'PASS\tnode worker-9.internal.example seen from top-secret-ctx (ok)\n' >> "$ASSERTLOG"
+        ;;
+      rowfail)
+        printf 'PASS\tsomething (ok)\n' >> "$ASSERTLOG"
+        corpus_row() { return 1; }
+        ;;
+    esac
+    capture "$scenario" "$abefore" "$sbefore" 2>/dev/null
+    if [ -s "$CORPUSTMP" ]; then cat "$CORPUSTMP"; else echo EMPTY; fi
+  )
+}
+
+check 'capture slices only the scenario delta and stamps the axes' \
+  "$(capture_probe pass | python3 -c '
+import json, sys
+r = json.loads(sys.stdin.read())
+print("|".join([r["scenario"], r["fault"], r["k8s"], r["distro"], str(r["rc"]),
+                str(len(r["assertions"])), r["assertions"][0],
+                str(r["skipped"]).lower(), r["skip_reason"]]))
+')" '5. coredns|coredns-corefile-broken|v1.34|kind|0|2|PASS	Cluster: Degraded named (found)|false|'
+check 'capture sets rc 1 when the slice carries a FAIL line' \
+  "$(capture_probe fail | python3 -c '
+import json, sys; print(json.loads(sys.stdin.read())["rc"])')" 1
+check 'capture flags a skipped scenario with its reason and no assertions' \
+  "$(capture_probe skip | python3 -c '
+import json, sys
+r = json.loads(sys.stdin.read())
+print("|".join([r["scenario"], str(r["skipped"]).lower(),
+                str(len(r["assertions"])), str(r["rc"]), r["skip_reason"]]))
+')" '2. certs|true|0|0|control-plane certificate expiry cannot be forced quickly or safely'
+check 'capture redacts node and context names before encoding' \
+  "$(capture_probe redact | python3 -c '
+import json, sys
+r = json.loads(sys.stdin.read())
+a = r["assertions"][0]
+print("|".join(["node-raw" if "worker-9.internal.example" in a else "node-gone",
+                "ctx-raw" if "top-secret-ctx" in a else "ctx-gone",
+                "yes" if "<node-1>" in a and "<context>" in a else "no"]))
+')" 'node-gone|ctx-gone|yes'
+check 'a corpus_row failure costs the row, never the run' \
+  "$(capture_probe rowfail)" EMPTY
+
+# --- assert_init owns the corpus scratch on its single trap line --------------
+assert_init
+check 'assert_init creates the corpus scratch' "$([ -f "$CORPUSTMP" ] && echo yes)" yes
+check 'assert.sh still holds exactly one EXIT trap' \
+  "$(grep -c "trap 'rm -f" chaos/assert.sh)" 1
+
+# --- the corpus path derives beside the report, per axis ----------------------
+corpus_path_probe() {   # corpus_path_probe <run.sh args...> -> "<CORPUS_OUT>|<CORPUS_DISTRO>"
+  local args=("$@")
+  (
+    . chaos/run.sh "${args[@]}"
+    printf '%s|%s\n' "$CORPUS_OUT" "$CORPUS_DISTRO"
+  ) 2>/dev/null || printf 'rc=%s|\n' "$?"
+}
+check 'default kind corpus path' \
+  "$(corpus_path_probe)" 'docs/testing/chaos-corpus-kind.jsonl|kind'
+check 'versioned kind corpus path is minor-then-distro' \
+  "$(corpus_path_probe --k8s-version v1.34)" 'docs/testing/chaos-corpus-v1.34-kind.jsonl|kind'
+check 'k3s corpus path' \
+  "$(corpus_path_probe --distro k3s)" 'docs/testing/chaos-corpus-k3s.jsonl|k3s'
+check 'versioned k3s corpus path is minor-then-distro' \
+  "$(corpus_path_probe --distro k3s --k8s-version v1.34)" 'docs/testing/chaos-corpus-v1.34-k3s.jsonl|k3s'
+check 'portable corpus path claims neither a distro nor a version' \
+  "$(corpus_path_probe --context some-ctx)" 'docs/testing/chaos-corpus-portable.jsonl|'
+check 'the corpus lands beside a user-chosen --out report' \
+  "$(corpus_path_probe --out /tmp/elsewhere/report.md)" '/tmp/elsewhere/chaos-corpus-kind.jsonl|kind'
+
 printf '\n%s\n' "$([ "$fails" -eq 0 ] && echo 'assert-selftest: all checks passed' \
                                      || echo "assert-selftest: $fails check(s) failed")"
 [ "$fails" -eq 0 ]

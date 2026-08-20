@@ -123,6 +123,20 @@ if [ "$PORTABLE" = 0 ]; then
   COREDNS_BACKUP="/tmp/$CLUSTER-coredns.yaml"
 fi
 
+# The corpus lands beside the report — same directory, fixed name per axis,
+# minor-then-distro per the spec (chaos-corpus-v1.34-kind.jsonl), which on the
+# k3s path deliberately differs from the report's distro-first name. Portable
+# mode gets its own name and claims neither a distro nor a version: the
+# harness will not stamp facts it cannot know about a cluster it did not
+# create into a corpus row.
+if [ "$PORTABLE" = 1 ]; then
+  CORPUS_OUT="$(dirname "$OUT")/chaos-corpus-portable.jsonl"
+  CORPUS_DISTRO=""
+else
+  CORPUS_OUT="$(dirname "$OUT")/chaos-corpus${K8S_VERSION:+-$K8S_VERSION}-$DISTRO.jsonl"
+  CORPUS_DISTRO="$DISTRO"
+fi
+
 # Assertion helpers (expect_eq / expect_ge / expect_contains / expect_absent) and
 # the summary that turns their outcomes into this script's exit code.
 # shellcheck source=chaos/assert.sh
@@ -944,6 +958,49 @@ scenario_fault() {
     23_pagerduty)     echo deployment-bad-image-tag ;;
     *)                echo unknown-scenario ;;
   esac
+}
+
+# capture <scenario name> <assertlog lines before> <skiplog lines before> —
+# append one corpus row for the scenario that just returned.
+#
+# The scenario's slice of $ASSERTLOG is everything after line <before>: the
+# log's lines carry no scenario prefix, so the delta IS the attribution. rc is
+# the scenario's machine verdict — 0 when no assertion in its slice failed,
+# 1 otherwise — NOT a process exit code: each scenario holds its scan exit
+# codes in locals and asserts on them there, so the assertion outcomes are the
+# only per-scenario verdict that exists outside the scenario's body.
+#
+# The plaintext block is redacted BEFORE it is JSON-encoded: encoding first
+# could split a redaction needle's bytes across escape sequences. $ASSERTLOG
+# is NOT pre-redacted (main()'s assert_summary detour redacts it into $OUT for
+# the same reason), so this pipeline is where the corpus's redaction promise
+# is kept — one seam, shared with the report.
+#
+# Same never-fail contract as record(): a corpus problem costs the row, with a
+# stderr note, never the run. Every step is guarded, the function returns 0,
+# and run_scenarios tests the call, which suppresses set -e for the body.
+capture() {
+  local s="$1" abefore="$2" sbefore="$3"
+  local title fault alines rc=0 skipped=false reason="" safter
+  title="$(scenario_title "scenario_$s")" || title="$s"
+  fault="$(scenario_fault "$s")" || fault="unknown-scenario"
+  alines="$(tail -n "+$((abefore + 1))" "$ASSERTLOG" 2>/dev/null || true)"
+  if printf '%s\n' "$alines" | grep -q '^FAIL'; then rc=1; fi
+  safter="$(wc -l < "$SKIPLOG" | tr -d ' ' || echo 0)"
+  if [ "$safter" -gt "$sbefore" ] 2>/dev/null; then
+    skipped=true
+    # SKIPLOG lines read "SKIP\t<title> — <reason>"; strip through the first
+    # " — " (assert_skip's em dash) to keep the reason alone.
+    reason="$(tail -n 1 "$SKIPLOG" 2>/dev/null || true)"
+    reason="${reason#* — }"
+  fi
+  {
+    printf '%s\n' "$title" "$fault" "$K8S_VERSION" "$CORPUS_DISTRO" "$rc" "$skipped" "$reason"
+    if [ -n "$alines" ]; then printf '%s\n' "$alines"; fi
+  } | redact_nodes | corpus_row >> "$CORPUSTMP" || {
+    printf 'chaos/run.sh: corpus capture failed for scenario %s; row withheld.\n' "$s" >&2
+  }
+  return 0
 }
 
 # --- capabilities -----------------------------------------------------------
@@ -2777,8 +2834,20 @@ run_scenarios() {
   # `kubectl wait` can't settle it). Running it last keeps that recovery noise from
   # contaminating the other scenarios' scans.
   local all=(02_certs 03_diskfull 04_networkpolicy 05_coredns 06_lb 07_oom 08_nsdelete 09_rollout 10_credleak 11_kubelet 12_watch 13_slo 14 15_multicluster 16_operators 17_gitops 18_capacity 19_mcp 20_rbac 21_controlplane 22_dnshealth 23_pagerduty 01_etcd)
+  local abefore sbefore
   for s in "${all[@]}"; do
-    if [ -z "$ONLY" ] || [ "$ONLY" = "${s%%_*}" ]; then "scenario_$s"; fi
+    if [ -z "$ONLY" ] || [ "$ONLY" = "${s%%_*}" ]; then
+      # Corpus bookkeeping: where this scenario's slice of the two logs
+      # begins. This loop runs in the main shell — a pipeline would lose
+      # these variables — and both files exist (assert_init made them).
+      abefore="$(wc -l < "$ASSERTLOG" | tr -d ' ')"
+      sbefore="$(wc -l < "$SKIPLOG" | tr -d ' ')"
+      "scenario_$s"
+      # `|| true` makes the never-fail contract structural: a tested call
+      # suppresses set -e for capture's whole body, so no corpus problem can
+      # abort a forty-minute run.
+      capture "$s" "$abefore" "$sbefore" || true
+    fi
   done
 }
 
@@ -2867,6 +2936,17 @@ main() {
   probe_capabilities
 
   run_scenarios
+
+  # Promote the corpus only now, when every selected scenario has run: an
+  # aborted run leaves NO corpus file rather than a truncated one that could
+  # be mistaken for complete. Rows were redacted at capture time, so this copy
+  # moves no unredacted byte. Never the gate: a failed promote costs the file,
+  # with a stderr note, and the exit code still comes from assert_summary.
+  if cp "$CORPUSTMP" "$CORPUS_OUT" 2>/dev/null; then
+    log "corpus: $CORPUS_OUT ($(wc -l < "$CORPUS_OUT" | tr -d ' ') rows)"
+  else
+    printf 'chaos/run.sh: corpus promote failed; no corpus written.\n' >&2
+  fi
 
   log "done — report: $OUT"
   if [ "$PORTABLE" = 1 ]; then

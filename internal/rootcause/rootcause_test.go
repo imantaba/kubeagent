@@ -1,6 +1,9 @@
 package rootcause
 
 import (
+	"bytes"
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
@@ -376,6 +379,7 @@ func TestAnnotate_TraceAttributed(t *testing.T) {
 		Kind:    "node",
 		Verdict: inventory.VerdictAttributed,
 		Reason:  "pod api-a is scheduled on it",
+		Object:  "worker-2",
 	}
 	if len(ws[0].RootCauseTrace) != 1 || ws[0].RootCauseTrace[0] != want {
 		t.Errorf("trace = %+v, want [%+v]", ws[0].RootCauseTrace, want)
@@ -393,6 +397,7 @@ func TestAnnotate_TraceRuledOutNodeNotHosting(t *testing.T) {
 		Kind:    "node",
 		Verdict: inventory.VerdictRuledOut,
 		Reason:  "no pod of this workload is scheduled on it",
+		Object:  "worker-2",
 	}
 	if len(ws[0].RootCauseTrace) != 1 || ws[0].RootCauseTrace[0] != want {
 		t.Errorf("trace = %+v, want [%+v]", ws[0].RootCauseTrace, want)
@@ -416,6 +421,7 @@ func TestAnnotate_TraceOutrankedSameKindTie(t *testing.T) {
 		Kind:    "node",
 		Verdict: inventory.VerdictOutranked,
 		Reason:  "node worker-2 (NotReady) is the stronger cause",
+		Object:  "worker-5",
 	}
 	if ws[0].RootCauseTrace[1] != wantSecond {
 		t.Errorf("trace[1] = %+v, want %+v", ws[0].RootCauseTrace[1], wantSecond)
@@ -460,6 +466,7 @@ func TestAnnotatePVC_TraceAttributedNamesMountingPod(t *testing.T) {
 		Kind:    "pvc",
 		Verdict: inventory.VerdictAttributed,
 		Reason:  "pod reports-1 mounts it",
+		Object:  "reports-data",
 	}
 	if len(ws[0].RootCauseTrace) != 1 || ws[0].RootCauseTrace[0] != want {
 		t.Errorf("trace = %+v, want [%+v]", ws[0].RootCauseTrace, want)
@@ -479,6 +486,7 @@ func TestAnnotatePVC_TraceRuledOutNotMounted(t *testing.T) {
 		Kind:    "pvc",
 		Verdict: inventory.VerdictRuledOut,
 		Reason:  "not mounted by this workload's pods",
+		Object:  "reports-data",
 	}
 	if len(ws[0].RootCauseTrace) != 1 || ws[0].RootCauseTrace[0] != want {
 		t.Errorf("trace = %+v, want [%+v]", ws[0].RootCauseTrace, want)
@@ -500,6 +508,7 @@ func TestAnnotatePVC_TraceOutrankedByNodeAttribution(t *testing.T) {
 		Kind:    "pvc",
 		Verdict: inventory.VerdictOutranked,
 		Reason:  "node worker-2 (NotReady) is the stronger cause",
+		Object:  "reports-data",
 	}
 	if len(ws[0].RootCauseTrace) != 1 || ws[0].RootCauseTrace[0] != want {
 		t.Errorf("trace = %+v, want [%+v]", ws[0].RootCauseTrace, want)
@@ -527,6 +536,7 @@ func TestAnnotatePVC_TraceOutrankedSameKindTie(t *testing.T) {
 		Kind:    "pvc",
 		Verdict: inventory.VerdictOutranked,
 		Reason:  "PVC alpha-data (FailedBinding) is the stronger cause",
+		Object:  "zeta-data",
 	}
 	if ws[0].RootCauseTrace[1] != wantSecond {
 		t.Errorf("trace[1] = %+v, want %+v", ws[0].RootCauseTrace[1], wantSecond)
@@ -554,6 +564,7 @@ func TestAnnotateRegistry_TraceAttributedGroup(t *testing.T) {
 		Kind:    "registry",
 		Verdict: inventory.VerdictAttributed,
 		Reason:  "2 workloads failing to pull from this host clear the threshold of 2",
+		Object:  "ghcr.io",
 	}
 	for i := range ws {
 		if ws[i].RootCause != "registry ghcr.io (2 workloads failing to pull)" {
@@ -576,6 +587,7 @@ func TestAnnotateRegistry_TraceRuledOutBelowThreshold(t *testing.T) {
 		Kind:    "registry",
 		Verdict: inventory.VerdictRuledOut,
 		Reason:  "only workload failing to pull from this host; threshold is 2",
+		Object:  "ghcr.io",
 	}
 	if len(ws[0].RootCauseTrace) != 1 || ws[0].RootCauseTrace[0] != want {
 		t.Errorf("trace = %+v, want [%+v]", ws[0].RootCauseTrace, want)
@@ -595,6 +607,7 @@ func TestAnnotateRegistry_TraceOutrankedByEarlierAttribution(t *testing.T) {
 		Kind:    "registry",
 		Verdict: inventory.VerdictOutranked,
 		Reason:  "node worker-2 (NotReady) is the stronger cause",
+		Object:  "ghcr.io",
 	}
 	if len(ws[0].RootCauseTrace) != 1 || ws[0].RootCauseTrace[0] != want {
 		t.Errorf("trace = %+v, want [%+v]", ws[0].RootCauseTrace, want)
@@ -657,5 +670,31 @@ func TestTraceAcrossAnnotatorsKeepsScanOrder(t *testing.T) {
 		if h.Reason != "node worker-2 (NotReady) is the stronger cause" {
 			t.Errorf("trace[%d] outranked reason = %q", i+1, h.Reason)
 		}
+	}
+}
+
+func TestHypothesisJSONNeverEncodesObject(t *testing.T) {
+	with := inventory.Hypothesis{
+		Cause:   "node worker-2 (NotReady)",
+		Kind:    "node",
+		Verdict: inventory.VerdictAttributed,
+		Reason:  "pod api-a is scheduled on it",
+		Object:  "worker-2",
+	}
+	without := with
+	without.Object = ""
+	a, err := json.Marshal(with)
+	if err != nil {
+		t.Fatalf("marshal with Object: %v", err)
+	}
+	b, err := json.Marshal(without)
+	if err != nil {
+		t.Fatalf("marshal without Object: %v", err)
+	}
+	if !bytes.Equal(a, b) {
+		t.Errorf("Object must be JSON-invisible:\nwith:    %s\nwithout: %s", a, b)
+	}
+	if strings.Contains(strings.ToLower(string(a)), `"object"`) {
+		t.Errorf("an object key reached the JSON: %s", a)
 	}
 }

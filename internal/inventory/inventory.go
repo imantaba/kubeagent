@@ -91,6 +91,11 @@ type Hypothesis struct {
 	Kind    string  `json:"kind"`
 	Verdict Verdict `json:"verdict"`
 	Reason  string  `json:"reason"`
+	// Object is the candidate's bare object name — the node name, PVC name,
+	// or registry host inside Cause — for local verdict mode's evidence
+	// gather. Never marshalled: the eight JSON documents are a versioned
+	// contract and this field is not part of any of them.
+	Object string `json:"-"`
 }
 
 // Flagged reports whether the workload needs attention.

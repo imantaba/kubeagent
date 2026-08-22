@@ -501,7 +501,7 @@ func TestErrorStrings(t *testing.T) {
 		{
 			name:     "scan investigate without a key",
 			args:     []string{"scan", "--investigate"},
-			wantErr:  "--investigate needs ANTHROPIC_API_KEY (local endpoints do not support the tool-use loop yet)",
+			wantErr:  "--investigate needs ANTHROPIC_API_KEY, or set KUBEAGENT_EXPLAIN_ENDPOINT for a local OpenAI-compatible model",
 			wantCode: 1,
 		},
 		{
@@ -636,4 +636,44 @@ func TestInvokedAsReachesUsageAndWarnings(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestInvestigateLocalModeGuards(t *testing.T) {
+	t.Run("endpoint without a model name", func(t *testing.T) {
+		t.Setenv("ANTHROPIC_API_KEY", "")
+		t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "http://localhost:11434/v1")
+		t.Setenv("KUBEAGENT_MODEL", "")
+		err := Run([]string{"scan", "--investigate"})
+		if err == nil || !strings.Contains(err.Error(),
+			"--investigate with KUBEAGENT_EXPLAIN_ENDPOINT needs --model (or KUBEAGENT_MODEL) set to the local model name") {
+			t.Fatalf("err = %v", err)
+		}
+		if code := exitCodeFor(err); code != 1 {
+			t.Errorf("exit code = %d, want 1", code)
+		}
+	})
+	t.Run("key wins over endpoint", func(t *testing.T) {
+		t.Setenv("ANTHROPIC_API_KEY", "test-key")
+		t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "http://localhost:11434/v1")
+		t.Setenv("KUBEAGENT_MODEL", "")
+		err := Run([]string{"scan", "--investigate", "--kubeconfig", "/nonexistent"})
+		if err == nil {
+			t.Fatal("want a kubeconfig error")
+		}
+		if strings.Contains(err.Error(), "needs --model") || strings.Contains(err.Error(), "needs ANTHROPIC_API_KEY") {
+			t.Errorf("with the key set, no local-mode guard may fire: %v", err)
+		}
+	})
+	t.Run("endpoint plus model passes the guard", func(t *testing.T) {
+		t.Setenv("ANTHROPIC_API_KEY", "")
+		t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "http://localhost:11434/v1")
+		t.Setenv("KUBEAGENT_MODEL", "tiny-model")
+		err := Run([]string{"scan", "--investigate", "--kubeconfig", "/nonexistent"})
+		if err == nil {
+			t.Fatal("want a kubeconfig error")
+		}
+		if strings.Contains(err.Error(), "--investigate") {
+			t.Errorf("guard must pass and fail later on the kubeconfig: %v", err)
+		}
+	})
 }

@@ -90,8 +90,8 @@ func bindScanFlags(cmd *cobra.Command, o *scanOptions) {
 	f.StringVar(&o.contextName, "context", "", "kubeconfig context to use (default: current-context)")
 	f.StringVar(&o.output, "output", "text", "output format: text | json | html")
 	f.BoolVar(&o.explain, "explain", false, "summarize findings via one LLM call (needs ANTHROPIC_API_KEY, or KUBEAGENT_EXPLAIN_ENDPOINT for a local OpenAI-compatible model)")
-	f.BoolVar(&o.investigate, "investigate", false, "agentic read-only investigation of findings via a bounded tool-use loop (needs ANTHROPIC_API_KEY; supersedes --explain)")
-	f.StringVar(&o.model, "model", "", "model for --explain / --investigate (default: $KUBEAGENT_MODEL, else claude-opus-4-8). --explain with KUBEAGENT_EXPLAIN_ENDPOINT set takes the local model name here instead; --investigate is Anthropic-only and always sends this value to the Anthropic API.")
+	f.BoolVar(&o.investigate, "investigate", false, "agentic read-only investigation of findings (ANTHROPIC_API_KEY: bounded tool-use loop; else KUBEAGENT_EXPLAIN_ENDPOINT: local-model verdicts over pre-fetched evidence; supersedes --explain)")
+	f.StringVar(&o.model, "model", "", "model for --explain / --investigate (default: $KUBEAGENT_MODEL, else claude-opus-4-8). With KUBEAGENT_EXPLAIN_ENDPOINT set, --explain takes the local model name here instead; --investigate does too when ANTHROPIC_API_KEY is not set (required, no default) and otherwise still sends this value to the Anthropic API.")
 	f.BoolVar(&o.includeCron, "include-cron", false, "include CronJobs in the report")
 	f.BoolVar(&o.includeRestarts, "include-restarts", false, "include workloads that are healthy now but have restarted")
 	f.BoolVar(&o.lintSecrets, "lint-secrets", false, "scan ConfigMaps and pod env for credentials stored in the clear (never prints values)")
@@ -192,10 +192,16 @@ func runScan(o scanOptions) error {
 	if !o.investigate && o.explain && explainEndpoint == "" && os.Getenv("ANTHROPIC_API_KEY") == "" {
 		return fmt.Errorf("--explain needs ANTHROPIC_API_KEY, or set KUBEAGENT_EXPLAIN_ENDPOINT for a local OpenAI-compatible model")
 	}
-	// --investigate requires the Anthropic API key directly; local endpoints do not
-	// support the tool-use loop in v1.
+	// --investigate needs a model: the Anthropic key selects the tool-use
+	// loop; without it, a local OpenAI-compatible endpoint selects the
+	// evidence-first verdict mode, which needs the local model's name.
 	if o.investigate && os.Getenv("ANTHROPIC_API_KEY") == "" {
-		return fmt.Errorf("--investigate needs ANTHROPIC_API_KEY (local endpoints do not support the tool-use loop yet)")
+		if explainEndpoint == "" {
+			return fmt.Errorf("--investigate needs ANTHROPIC_API_KEY, or set KUBEAGENT_EXPLAIN_ENDPOINT for a local OpenAI-compatible model")
+		}
+		if firstNonEmpty(o.model, os.Getenv("KUBEAGENT_MODEL")) == "" {
+			return fmt.Errorf("--investigate with KUBEAGENT_EXPLAIN_ENDPOINT needs --model (or KUBEAGENT_MODEL) set to the local model name")
+		}
 	}
 	if o.rollback && o.fix {
 		return fmt.Errorf("--rollback and --fix are mutually exclusive")
@@ -206,10 +212,9 @@ func runScan(o scanOptions) error {
 	var explainModel string
 	if explainEndpoint != "" {
 		explainModel = firstNonEmpty(o.model, os.Getenv("KUBEAGENT_MODEL")) // no Anthropic default for a local model
-		// Same reasoning as the guard above: --investigate never reads
-		// explainModel (the tool-use loop is Anthropic-only), so this
-		// requirement is --explain's alone and must not fire when
-		// --investigate is what actually selected the model path.
+		// The --explain error below must not fire when --investigate selected
+		// the model path: local verdict mode has its own guard above, with its
+		// own message naming --investigate.
 		if !o.investigate && o.explain && explainModel == "" {
 			return fmt.Errorf("--explain with KUBEAGENT_EXPLAIN_ENDPOINT needs --model (or KUBEAGENT_MODEL) set to the local model name")
 		}
@@ -333,6 +338,14 @@ func runScan(o scanOptions) error {
 	// Investigation section rather than nothing at all.
 	modelRes := runModelPath(o,
 		func() (investigate.Report, error) {
+			if os.Getenv("ANTHROPIC_API_KEY") == "" && explainEndpoint != "" {
+				// Local verdict mode: a small model adjudicating pre-fetched
+				// evidence needs more wall clock than one Anthropic tool loop.
+				ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
+				defer cancel()
+				return investigate.NewLocal(explainEndpoint, explainModel, os.Getenv("KUBEAGENT_EXPLAIN_API_KEY")).
+					Investigate(ctx, health, &summary, &facts, serviceIssues, result.Workloads, client)
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 			defer cancel()
 			return investigate.New(explain.ResolveModel(o.model, os.Getenv("KUBEAGENT_MODEL"))).

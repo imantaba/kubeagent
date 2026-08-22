@@ -1314,12 +1314,20 @@ func TestRun_InvestigateNeedsAPIKey(t *testing.T) {
 	}
 }
 
-func TestRun_InvestigateRejectsLocalOnlyEndpoint(t *testing.T) {
+// TestRun_InvestigateLocalEndpointNeedsModel pins the current contract for a
+// local endpoint with no model name: local verdict mode now accepts
+// KUBEAGENT_EXPLAIN_ENDPOINT without an Anthropic key, but still refuses
+// without a model name, naming --model rather than ANTHROPIC_API_KEY.
+func TestRun_InvestigateLocalEndpointNeedsModel(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("KUBEAGENT_EXPLAIN_ENDPOINT", "http://localhost:11434/v1")
+	t.Setenv("KUBEAGENT_MODEL", "")
 	err := Run([]string{"scan", "--investigate"})
-	if err == nil || !strings.Contains(err.Error(), "ANTHROPIC_API_KEY") {
-		t.Errorf("investigate must require an Anthropic key even when a local endpoint is set, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "needs --model") {
+		t.Errorf("investigate with a local endpoint but no model must name --model, got %v", err)
+	}
+	if err != nil && strings.Contains(err.Error(), "ANTHROPIC_API_KEY") {
+		t.Errorf("with a local endpoint set, the guard must not ask for ANTHROPIC_API_KEY: %v", err)
 	}
 }
 

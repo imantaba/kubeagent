@@ -592,4 +592,23 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   failed — not a process exit code. No production Go code: the corpus is a
   training contract for consumers outside this repository, and nothing in
   kubeagent reads it.
+  A further slice ships `--investigate`'s local verdict mode: with no
+  `ANTHROPIC_API_KEY`, setting `KUBEAGENT_EXPLAIN_ENDPOINT` plus a model name
+  (`--model` or `KUBEAGENT_MODEL`, no default) selects it instead of
+  refusing; the key still wins whenever it is set, and both refusals — no
+  key and no endpoint, or an endpoint with no model name — fire before any
+  cluster connection. The mode inverts the tool loop: kubeagent chooses
+  every read and the model only adjudicates, in exactly one
+  `/chat/completions` call to the same endpoint and bearer key `--explain`'s
+  local path already uses. The gather shares the tool loop's 8-read global
+  budget and its trail-label format, over at most 10 flagged workloads. The
+  model answers with verdict contract v1 — `workload`, `cause`,
+  `confidence` and `rationale` per row plus a `summary` — a prose contract
+  versioned in `website/docs/features/diagnostics.md`, never a ninth
+  `schemaVersion` surface. Every input and output dimension is bounded
+  (4 KiB per read, 8 candidates per workload, 10 service issues, a 64 KiB
+  prompt, a 1 MiB response, 512 runes per model-written line), and model
+  output is untrusted: sanitized, capped, and matched against the
+  flagged-workload set before it can enter the report. `--explain` is
+  untouched in both modes, and `scan` stays at schema 1.8.
   The remaining post-1.0 work is other baseline dimensions.

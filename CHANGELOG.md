@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `scan --investigate` now works without `ANTHROPIC_API_KEY`: setting
+  `KUBEAGENT_EXPLAIN_ENDPOINT` plus a model name (`--model` or
+  `KUBEAGENT_MODEL`) selects local verdict mode — kubeagent gathers a
+  bounded evidence bundle deterministically (same 8-read budget and label
+  format as the tool loop) and one local OpenAI-compatible model call
+  adjudicates the deterministic pass's root-cause candidates, answering
+  with JSON verdicts (verdict contract v1, documented in
+  `website/docs/features/diagnostics.md`). The Anthropic key still wins
+  when both are set, and the tool-use loop is byte-identical. Evidence
+  rides in delimited sections with explicit size bounds and an
+  injection-hardened system prompt; model output is sanitized, capped,
+  and matched against the flagged-workload set. No JSON schema moves.
+
 ## [1.22.0] - 2026-08-20
 
 ### Added

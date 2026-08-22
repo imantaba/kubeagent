@@ -1318,15 +1318,26 @@ cause, on top of the tool loop's direct node reads (`describe` on a node,
 
 **Constraints and requirements:**
 
-- **Anthropic-only** — requires `ANTHROPIC_API_KEY`. Tool-use is not available
-  through the local-model path (`KUBEAGENT_EXPLAIN_ENDPOINT`); if only that
-  endpoint is set, `--investigate` errors clearly.
+- **Two modes, chosen by environment.** With `ANTHROPIC_API_KEY` set,
+  `--investigate` runs the bounded Anthropic tool-use loop described above —
+  byte-identical to before, and the key always wins even when a local
+  endpoint is also set. Without the key, setting `KUBEAGENT_EXPLAIN_ENDPOINT`
+  selects **local verdict mode** (below); the model name is required via
+  `--model` or `KUBEAGENT_MODEL`, with no default. With neither key nor
+  endpoint the flag refuses: `--investigate needs ANTHROPIC_API_KEY, or set
+  KUBEAGENT_EXPLAIN_ENDPOINT for a local OpenAI-compatible model`. An
+  endpoint without a model name refuses too: `--investigate with
+  KUBEAGENT_EXPLAIN_ENDPOINT needs --model (or KUBEAGENT_MODEL) set to the
+  local model name`. Both refusals fire before any cluster connection.
 - **Supersedes `--explain`** — `--investigate` is the agentic superset.
   Running both flags is unnecessary; `--investigate` includes the grounded
   narrative that `--explain` provides, plus the follow-up reads. When both
   flags are passed, `--investigate` runs and `--explain` is silently ignored.
 - **Capped** — one loop per scan, bounded at **8 reads** and **6 turns** in
-  total, shared across every finding. The budget does not grow with the
+  total, shared across every finding, within a 90-second context budget;
+  local verdict mode runs on a 300-second budget instead — a small model
+  adjudicating a full evidence bundle needs more wall clock than one
+  Anthropic turn. The budget does not grow with the
   number of findings: on a cluster with many problems the loop will
   investigate a few of them in depth rather than all of them shallowly. That
   bound is on the number of reads and turns, not on their size — a turn's
@@ -1356,6 +1367,106 @@ cause, on top of the tool loop's direct node reads (`describe` on a node,
   invariant is not relaxed.
 - **Model selection** — reuses `--model` / `KUBEAGENT_MODEL` (default
   `claude-opus-4-8`).
+
+#### Local verdict mode
+
+In the Anthropic tool-use loop above, the model chooses which reads to make.
+Local verdict mode inverts that: kubeagent chooses the reads, and the model
+does nothing but adjudicate them. It makes exactly one call to
+`/chat/completions` on the OpenAI-compatible endpoint `KUBEAGENT_EXPLAIN_ENDPOINT`
+names — the same endpoint and `KUBEAGENT_EXPLAIN_API_KEY` bearer key
+`--explain`'s local path already uses — sending one prompt built from three
+delimited sections (inventory, candidates, evidence) and reading back JSON
+verdicts. There is no tool loop and no back-and-forth: kubeagent gathers,
+then asks once.
+
+**The deterministic gather.** The pre-fetch draws on the same reads the tool
+loop could make, under the same global budget of **8**, over at most the
+**10** flagged workloads in report order. Per workload, in order: that
+workload's events (the first finding's pod when there is one, the workload
+name otherwise); a `describe` for each surviving root-cause candidate that
+names a node or a PVC, deduplicated across workloads (a registry candidate
+has nothing to read); and, for each crash-family finding, a classified
+previous-instance log cause — the same bounded 25-line read `--logs` and
+`get_log_causes` use, deduplicated per pod and container, with only the
+classified, address-redacted cause string crossing the model boundary. A
+failed read is reduced through `redact.Error` rather than surfaced raw, and
+it still counts against the budget — a refusal is evidence too. The
+report's `consulted:` trail shows every read that was made, in the same
+label format the tool loop's trail uses.
+
+**Verdict contract v1.** The model answers with one JSON object:
+
+```json
+{
+  "verdicts": [
+    {
+      "workload": "shop/web",
+      "cause": "node worker-1 (NotReady)",
+      "confidence": "high",
+      "rationale": "events show the pod stuck on the down node"
+    }
+  ],
+  "summary": "One node down; one workload stuck on it."
+}
+```
+
+`cause` is a candidate's text verbatim, `none_of_these`, or a cause the
+model grounds in its own reading of the evidence; `confidence` is `low`,
+`medium` or `high` — anything else renders as `unstated`; a verdict naming a
+workload the scan did not flag is dropped; at most 10 rows and a 4-line
+summary render. This contract is **prose, versioned in this document** — it
+crosses the model boundary, not kubeagent's own JSON output, so it is
+deliberately not one of the eight `schemaVersion` surfaces.
+
+**Size bounds:**
+
+| Bound | Value |
+| --- | --- |
+| Per read | 4 KiB |
+| Workloads gathered | 10 |
+| Candidates shown per workload | 8 |
+| Service issues in the prompt | 10 |
+| Whole prompt | 64 KiB |
+| Model response | 1 MiB (overflow detected explicitly) |
+| Model-written line | 512 runes |
+
+Every cut is marked `[truncated by kubeagent]`.
+
+**Injection posture.** Evidence is untrusted cluster data, carried inside
+the prompt's section delimiters; the system prompt pins that an instruction
+found inside evidence is never followed. Model output is itself untrusted:
+every string is sanitized, length-capped, and — for `workload` — matched
+against the set of workloads this scan actually flagged before it can enter
+the report.
+
+**Structured output.** The request asks for `response_format: json_schema`
+matching verdict contract v1; an endpoint that rejects the shape with a 400
+gets exactly one retry without it. Parsing is lenient either way: fenced or
+prose-wrapped JSON still parses, because kubeagent decodes the first
+complete JSON object it finds rather than requiring the whole reply to be
+JSON.
+
+**Model guidance.** A small instruction-tuned model is enough —
+closed-vocabulary adjudication over evidence it is handed suits a small
+model better than driving a multi-turn tool loop does. Recommend a context
+window of 32k tokens and treat 16k as the floor: the prompt alone may
+approach the 64 KiB bound above. The training arc for a model purpose-tuned
+to this contract runs on kubeagent's own artifacts — the chaos correctness
+corpus (`chaos-corpus-<minor>-<distro>.jsonl`, one row per injected fault
+with its verdict) and the [known-issues](known-issues.md) reference — but
+that training pipeline lives outside this repository; kubeagent ships the
+contract, not the model.
+
+**Privacy.** As with `--explain`'s local endpoint above: when
+`KUBEAGENT_EXPLAIN_ENDPOINT` is set, `ANTHROPIC_API_KEY` is not required and
+nothing leaves the network.
+
+**What does not change.** Local verdict mode is read-only toward the
+cluster and never fatal to the scan: a failed investigation reduces to one
+stderr warning, and the deterministic report still renders on stdout with
+exit 0. No `schemaVersion` moves — `scan` stays at 1.8. `--explain` is
+untouched in both modes.
 
 ## Status
 

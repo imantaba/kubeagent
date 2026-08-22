@@ -388,6 +388,38 @@ func TestLocalInvestigateErrorCarriesStatusAndSnippet(t *testing.T) {
 	}
 }
 
+// TestLocalInvestigateErrorSanitizesHostileBodySnippet asserts that a
+// non-2xx error body from a hostile or compromised endpoint (or a proxy in
+// front of it) cannot smuggle raw ANSI/terminal-control bytes into the
+// operator's terminal via the error message. bodySnippet must route the
+// body through safetext.Line, the same ingress rule every other unvalidated
+// external field is subject to.
+func TestLocalInvestigateErrorSanitizesHostileBodySnippet(t *testing.T) {
+	body := "bad request\x1b[2J\x07 mid\x01dle word" // ESC clear-screen, BEL, and a C0 control mid-word
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	_, err := NewLocal(srv.URL, "tiny-model", "").Investigate(context.Background(),
+		degraded(), nil, nil, nil, verdictTestWorkloads(), fake.NewSimpleClientset())
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	msg := err.Error()
+	for _, b := range []rune{'\x1b', '\x07', '\x01'} {
+		if strings.ContainsRune(msg, b) {
+			t.Errorf("raw control byte %#x must not survive into the error message: %q", b, msg)
+		}
+	}
+	if !strings.Contains(msg, "502") {
+		t.Errorf("error must still carry the status code: %v", err)
+	}
+	if !strings.Contains(msg, "bad request") || !strings.Contains(msg, "middle word") {
+		t.Errorf("error must still carry the legible part of the snippet: %v", err)
+	}
+}
+
 func TestLocalInvestigateFinishReasonLengthSetsTruncated(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write(chatReply(t, `{"verdicts":[{"workload":"shop/web","cause":"none_of_these","confidence":"low","rationale":"r"}],"summary":"s"}`, "length"))

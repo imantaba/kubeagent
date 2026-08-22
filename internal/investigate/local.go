@@ -289,15 +289,22 @@ func (c *LocalClient) post(ctx context.Context, prompt string, withFormat bool) 
 	return doc, chat.Choices[0].FinishReason == "length", false, nil
 }
 
-// bodySnippet bounds an error body to 200 runes for the error message —
-// the same bound explain's local summarizer uses.
+// bodySnippet bounds an error body to 200 runes for the error message — the
+// same bound explain's local summarizer uses — and sanitizes it through
+// safetext.Line before it can reach the error that ultimately prints to the
+// operator's terminal. The response body is untrusted: it comes from
+// whatever answered the configured endpoint, which may be hostile, a
+// misconfigured proxy, or compromised, and the same ingress rule that
+// governs every other unvalidated external field applies here too.
+// safetext.Line never increases rune count, so sanitizing after the cap
+// keeps the ≤200-rune bound intact.
 func bodySnippet(raw []byte) string {
 	s := strings.TrimSpace(string(raw))
 	r := []rune(s)
 	if len(r) > 200 {
-		return string(r[:200]) + "…"
+		s = string(r[:200]) + "…"
 	}
-	return s
+	return safetext.Line(s)
 }
 
 // parseVerdicts decodes the model's answer leniently: a clean JSON object

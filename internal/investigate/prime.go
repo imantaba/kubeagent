@@ -21,18 +21,7 @@ import (
 func renderTrace(workloads []inventory.Workload) string {
 	var b strings.Builder
 	for _, w := range workloads {
-		if len(w.RootCauseTrace) == 0 {
-			continue
-		}
-		fmt.Fprintf(&b, "- %s/%s (%s)", w.Namespace, w.Name, w.Kind)
-		if w.RootCauseConfidence != "" {
-			fmt.Fprintf(&b, " [confidence: %s]", w.RootCauseConfidence)
-		}
-		b.WriteString(":\n")
-		for _, h := range w.RootCauseTrace {
-			fmt.Fprintf(&b, "    considered %s: %s — %s\n",
-				h.Cause, strings.ReplaceAll(string(h.Verdict), "_", " "), h.Reason)
-		}
+		writeWorkloadTrace(&b, w, 0)
 	}
 	if b.Len() == 0 {
 		return ""
@@ -40,4 +29,42 @@ func renderTrace(workloads []inventory.Workload) string {
 	return "\n\nThe deterministic pass already evaluated these root-cause hypotheses:\n" +
 		b.String() +
 		"\nVerify each attributed cause with the tools before relying on it, and spend the rest of the budget on what the deterministic pass could not explain — the workloads with no attributed cause and the findings behind the ruled-out candidates."
+}
+
+// maxCandidatesPerWorkload bounds how many trace entries local verdict
+// mode's prompt shows per workload; renderTrace (the tool loop's primer)
+// passes 0 and stays unlimited.
+const maxCandidatesPerWorkload = 8
+
+// writeWorkloadTrace writes one workload's candidate lines. limit 0 means
+// unlimited; a positive limit cuts after that many entries and marks the cut.
+func writeWorkloadTrace(b *strings.Builder, w inventory.Workload, limit int) {
+	if len(w.RootCauseTrace) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "- %s/%s (%s)", w.Namespace, w.Name, w.Kind)
+	if w.RootCauseConfidence != "" {
+		fmt.Fprintf(b, " [confidence: %s]", w.RootCauseConfidence)
+	}
+	b.WriteString(":\n")
+	for i, h := range w.RootCauseTrace {
+		if limit > 0 && i == limit {
+			b.WriteString("    " + truncationMarker + "\n")
+			break
+		}
+		fmt.Fprintf(b, "    considered %s: %s — %s\n",
+			h.Cause, strings.ReplaceAll(string(h.Verdict), "_", " "), h.Reason)
+	}
+}
+
+// renderCandidates renders the same per-workload candidate lines for local
+// verdict mode's prompt — capped, and without renderTrace's wrapper, whose
+// "verify with the tools" instruction would be false in a mode with no
+// tools. "" when no workload carries a trace.
+func renderCandidates(workloads []inventory.Workload) string {
+	var b strings.Builder
+	for _, w := range workloads {
+		writeWorkloadTrace(&b, w, maxCandidatesPerWorkload)
+	}
+	return b.String()
 }

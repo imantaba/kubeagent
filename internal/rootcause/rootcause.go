@@ -44,12 +44,12 @@ func Annotate(workloads []inventory.Workload, down []clusterhealth.DownNode) {
 			cause := "node " + name + " (" + reasonByNode[name] + ")"
 			switch {
 			case !on[name]:
-				record(w, cause, "node", inventory.VerdictRuledOut, "no pod of this workload is scheduled on it")
+				record(w, cause, "node", name, inventory.VerdictRuledOut, "no pod of this workload is scheduled on it")
 			case w.RootCause == "":
 				w.RootCause = cause
-				record(w, cause, "node", inventory.VerdictAttributed, "pod "+podOn(*w, name)+" is scheduled on it")
+				record(w, cause, "node", name, inventory.VerdictAttributed, "pod "+podOn(*w, name)+" is scheduled on it")
 			default:
-				record(w, cause, "node", inventory.VerdictOutranked, w.RootCause+" is the stronger cause")
+				record(w, cause, "node", name, inventory.VerdictOutranked, w.RootCause+" is the stronger cause")
 			}
 		}
 	}
@@ -69,9 +69,9 @@ func podNodes(w inventory.Workload) map[string]bool {
 // record appends one evaluated candidate to the workload's trace. The trace
 // keeps everything the pass considered, whatever the verdict — "ruled out"
 // and "outranked" are answers, not omissions.
-func record(w *inventory.Workload, cause, kind string, verdict inventory.Verdict, reason string) {
+func record(w *inventory.Workload, cause, kind, object string, verdict inventory.Verdict, reason string) {
 	w.RootCauseTrace = append(w.RootCauseTrace, inventory.Hypothesis{
-		Cause: cause, Kind: kind, Verdict: verdict, Reason: reason,
+		Cause: cause, Kind: kind, Object: object, Verdict: verdict, Reason: reason,
 	})
 }
 
@@ -105,14 +105,15 @@ func AnnotateRegistry(workloads []inventory.Workload) {
 			continue
 		}
 		if img == "" {
-			record(w, "registry unknown", "registry", inventory.VerdictRuledOut, "image reference undeterminable")
-			continue
-		}
-		if w.RootCause != "" {
-			record(w, "registry "+safetext.Line(registryHost(img)), "registry", inventory.VerdictOutranked, w.RootCause+" is the stronger cause")
+			record(w, "registry unknown", "registry", "", inventory.VerdictRuledOut, "image reference undeterminable")
 			continue
 		}
 		host := registryHost(img)
+		if w.RootCause != "" {
+			record(w, "registry "+safetext.Line(host), "registry", host,
+				inventory.VerdictOutranked, w.RootCause+" is the stronger cause")
+			continue
+		}
 		groups[host] = append(groups[host], i)
 	}
 	hosts := make([]string, 0, len(groups))
@@ -124,7 +125,7 @@ func AnnotateRegistry(workloads []inventory.Workload) {
 		members := groups[host]
 		if len(members) < 2 {
 			for _, i := range members {
-				record(&workloads[i], "registry "+safetext.Line(host), "registry", inventory.VerdictRuledOut, "only workload failing to pull from this host; threshold is 2")
+				record(&workloads[i], "registry "+safetext.Line(host), "registry", host, inventory.VerdictRuledOut, "only workload failing to pull from this host; threshold is 2")
 			}
 			continue
 		}
@@ -132,7 +133,7 @@ func AnnotateRegistry(workloads []inventory.Workload) {
 		reason := fmt.Sprintf("%d workloads failing to pull from this host clear the threshold of 2", len(members))
 		for _, i := range members {
 			workloads[i].RootCause = cause
-			record(&workloads[i], cause, "registry", inventory.VerdictAttributed, reason)
+			record(&workloads[i], cause, "registry", host, inventory.VerdictAttributed, reason)
 		}
 	}
 }
@@ -210,12 +211,12 @@ func AnnotatePVC(workloads []inventory.Workload, podPVCs map[string][]string, is
 			pod, isMounted := mounted[key]
 			switch {
 			case !isMounted:
-				record(w, cause, "pvc", inventory.VerdictRuledOut, "not mounted by this workload's pods")
+				record(w, cause, "pvc", name, inventory.VerdictRuledOut, "not mounted by this workload's pods")
 			case w.RootCause == "":
 				w.RootCause = cause
-				record(w, cause, "pvc", inventory.VerdictAttributed, "pod "+pod+" mounts it")
+				record(w, cause, "pvc", name, inventory.VerdictAttributed, "pod "+pod+" mounts it")
 			default:
-				record(w, cause, "pvc", inventory.VerdictOutranked, w.RootCause+" is the stronger cause")
+				record(w, cause, "pvc", name, inventory.VerdictOutranked, w.RootCause+" is the stronger cause")
 			}
 		}
 	}

@@ -294,6 +294,28 @@ func (r Reader) describeService(ctx context.Context, svc *corev1.Service) string
 
 type eventsInput struct{ Namespace, Name string }
 
+// eventsFor renders the events for one named object — shared by the
+// get_events tool and local verdict mode's evidence gather. The returned
+// string is fully sanitized; err is the raw client-go error for the caller
+// to reduce (redact.Error at both call sites).
+func eventsFor(ctx context.Context, client kubernetes.Interface, namespace, name string) (string, error) {
+	evs, err := client.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{
+		FieldSelector: "involvedObject.name=" + name,
+	})
+	if err != nil {
+		return "", err
+	}
+	if len(evs.Items) == 0 {
+		return fmt.Sprintf("no events for %s/%s", namespace, name), nil
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "events for %s/%s:\n", namespace, name)
+	for _, e := range evs.Items {
+		fmt.Fprintf(&b, "  %s: %s (x%d)\n", sanitize(e.Reason), sanitize(e.Message), e.Count)
+	}
+	return b.String(), nil
+}
+
 func (r Reader) getEvents(ctx context.Context, c toolCall, scope *Scope) toolResult {
 	var in eventsInput
 	if err := json.Unmarshal(c.Input, &in); err != nil {
@@ -302,21 +324,11 @@ func (r Reader) getEvents(ctx context.Context, c toolCall, scope *Scope) toolRes
 	if !scope.HasName(in.Namespace, in.Name) {
 		return errResult(c.ID, fmt.Sprintf("%s/%s is not in scope for this investigation", in.Namespace, in.Name))
 	}
-	evs, err := r.client.CoreV1().Events(in.Namespace).List(ctx, metav1.ListOptions{
-		FieldSelector: "involvedObject.name=" + in.Name,
-	})
+	content, err := eventsFor(ctx, r.client, in.Namespace, in.Name)
 	if err != nil {
 		return errResult(c.ID, redact.Error(err))
 	}
-	if len(evs.Items) == 0 {
-		return okResult(c.ID, fmt.Sprintf("no events for %s/%s", in.Namespace, in.Name))
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "events for %s/%s:\n", in.Namespace, in.Name)
-	for _, e := range evs.Items {
-		fmt.Fprintf(&b, "  %s: %s (x%d)\n", sanitize(e.Reason), sanitize(e.Message), e.Count)
-	}
-	return okResult(c.ID, b.String())
+	return okResult(c.ID, content)
 }
 
 type relatedInput struct{ Namespace, Name, Relation string }

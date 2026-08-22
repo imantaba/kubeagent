@@ -575,8 +575,8 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   only via that hop from an in-scope pod, so scope seeding is unchanged.
   Every failed read inside the loop now reduces through `redact.Error`
   instead of returning the raw client-go error. Loop bounds are unchanged
-  (8 reads, 6 turns), Anthropic-only and never-fatal are unchanged, and no
-  JSON schema moves.
+  (8 reads, 6 turns), Anthropic-only (until the local verdict slice below)
+  and never-fatal are unchanged, and no JSON schema moves.
   Slice 3 has since shipped (v1.22.0), and **the hypothesis engine is complete**: every
   chaos run writes a correctness corpus beside its report —
   `chaos-corpus-<minor>-<distro>.jsonl`, one JSON row per scenario carrying

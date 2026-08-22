@@ -1366,7 +1366,8 @@ cause, on top of the tool loop's direct node reads (`describe` on a node,
 - **Never writes** — all tool calls are `get`/`list` only. The read-only
   invariant is not relaxed.
 - **Model selection** — reuses `--model` / `KUBEAGENT_MODEL` (default
-  `claude-opus-4-8`).
+  `claude-opus-4-8` in this Anthropic mode; the local verdict mode below
+  has no default).
 
 #### Local verdict mode
 

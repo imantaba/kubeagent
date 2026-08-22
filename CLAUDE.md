@@ -592,7 +592,7 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   failed — not a process exit code. No production Go code: the corpus is a
   training contract for consumers outside this repository, and nothing in
   kubeagent reads it.
-  A further slice ships `--investigate`'s local verdict mode: with no
+  A further slice has shipped (v1.23.0): `--investigate`'s local verdict mode — with no
   `ANTHROPIC_API_KEY`, setting `KUBEAGENT_EXPLAIN_ENDPOINT` plus a model name
   (`--model` or `KUBEAGENT_MODEL`, no default) selects it instead of
   refusing; the key still wins whenever it is set, and both refusals — no

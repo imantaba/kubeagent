@@ -80,6 +80,32 @@ func TestBuildVerdictPromptDefensiveCap(t *testing.T) {
 	}
 }
 
+// TestBuildVerdictPromptDefensiveCapRealisticBundleShape uses a bundle
+// shaped like gatherEvidence's real output: appendRead always closes its
+// last section with two trailing newlines, not one, and a long unwrapped
+// line leaves no interior newline near the cut point to trim back to. The
+// keep arithmetic must hold the maxPromptBytes bound for this shape too, not
+// just the evenly-newlined, single-trailing-newline shape above.
+func TestBuildVerdictPromptDefensiveCapRealisticBundleShape(t *testing.T) {
+	huge := strings.Repeat("e", 70*1024) + "\n\n"
+	prompt := buildVerdictPrompt(clusterhealth.ClusterHealth{Verdict: "Degraded"}, nil, nil, nil, nil, huge)
+	if len(prompt) > maxPromptBytes {
+		t.Fatalf("prompt is %d bytes, cap is %d", len(prompt), maxPromptBytes)
+	}
+	if !strings.Contains(prompt, truncationMarker) {
+		t.Errorf("a cut prompt must carry the marker")
+	}
+	for _, marker := range []string{
+		"== BEGIN inventory ==", "== END inventory ==",
+		"== BEGIN candidates ==", "== END candidates ==",
+		"== BEGIN evidence ==", "== END evidence ==",
+	} {
+		if !strings.Contains(prompt, marker) {
+			t.Errorf("prompt missing %q after the cut:\n%s", marker, prompt)
+		}
+	}
+}
+
 func TestBuildVerdictPromptScopesToTenWorkloads(t *testing.T) {
 	var ws []inventory.Workload
 	for i := 0; i < 11; i++ {

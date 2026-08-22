@@ -69,12 +69,20 @@ func buildVerdictPrompt(cluster clusterhealth.ClusterHealth, summary *resources.
 	}
 	prompt := assemble(bundle)
 	if len(prompt) > maxPromptBytes {
+		// section() trims the body's trailing newlines before wrapping it,
+		// so the budget must be measured against the trimmed bundle — not
+		// the raw one, which gatherEvidence's real output always ends with
+		// two newlines, not one. cutEvidence below is "cut + \n +
+		// truncationMarker + \n"; section() trims its own single trailing
+		// "\n" back off, so it contributes len(cut) + 1 + len(truncationMarker)
+		// bytes, which is what "- 1" accounts for.
 		over := len(prompt) - maxPromptBytes
-		keep := len(bundle) - over - len(truncationMarker) - 2
+		trimmed := strings.TrimRight(bundle, "\n")
+		keep := len(trimmed) - over - len(truncationMarker) - 1
 		if keep < 0 {
 			keep = 0
 		}
-		cut := bundle[:keep]
+		cut := trimmed[:keep]
 		if i := strings.LastIndexByte(cut, '\n'); i > 0 {
 			cut = cut[:i]
 		}

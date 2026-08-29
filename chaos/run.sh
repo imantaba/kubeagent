@@ -1260,7 +1260,10 @@ NP
   recovery_scan="$(scan 2>&1)" && recovery_rc=0 || recovery_rc=$?
   blocked_lines="$(scan_body "$blocked_scan"  | grep -c 'chaos-np/blocked' || true)"
   recovery_lines="$(scan_body "$recovery_scan" | grep -c 'chaos-np/blocked' || true)"
-  np_hint="$(scan_body "$blocked_scan" | grep -c 'NetworkPolicy: pods selected by' || true)"
+  # Scoped to the policy this scenario created, not just to the hint's prefix:
+  # the scan is cluster-wide, so a bare prefix count could in principle be
+  # satisfied by some other workload's hint.
+  np_hint="$(scan_body "$blocked_scan" | grep -c 'NetworkPolicy: pods selected by deny-all' || true)"
 
   {
     printf 'blocked ready replicas before the policy: %s (must be 1)\n' "$baseline"

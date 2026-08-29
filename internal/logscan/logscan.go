@@ -60,7 +60,11 @@ var signatures = []signature{
 	// "auth" or "perm-denied" below it; none of those messages contain parse
 	// language.
 	{"config", regexp.MustCompile(`(?i)^yaml:|invalid character .* looking for|(?:failed to|unable to|cannot) parse|error (?:during )?parsing|parse error|unknown directive|invalid config`), func([]string) string { return "configuration parse/validation error" }},
-	{"addr-in-use", regexp.MustCompile(`(?i)bind: address already in use`), func([]string) string { return "port already in use" }},
+	// Not anchored on "bind:" — that prefix is Go's net package, and the same
+	// failure is what nginx reports as "bind() to 0.0.0.0:80 failed (98:
+	// Address already in use)". The phrase on its own is specific enough to
+	// stand alone, and the two signatures below carry no address language.
+	{"addr-in-use", regexp.MustCompile(`(?i)address already in use`), func([]string) string { return "port already in use" }},
 	{"auth", regexp.MustCompile(`(?i)password authentication failed|access denied|401 unauthorized|403 forbidden`), func([]string) string { return "authentication/authorization failure to a dependency" }},
 	{"perm-denied", regexp.MustCompile(`(?i)permission denied|eacces`), func([]string) string { return "permission denied — check securityContext / file permissions" }},
 }

@@ -167,6 +167,7 @@ func TestClassify_ConfigSignatureCatchesCommonFormats(t *testing.T) {
 func TestClassify_ConfigWideningDoesNotStealFromLaterSignatures(t *testing.T) {
 	cases := []struct{ log, wantSignature string }{
 		{"listen tcp :8080: bind: address already in use", "addr-in-use"},
+		{"nginx: [emerg] bind() to 0.0.0.0:80 failed (98: Address already in use)", "addr-in-use"},
 		{"FATAL: password authentication failed for user \"app\"", "auth"},
 		{"HTTP 401 Unauthorized from the token endpoint", "auth"},
 		{"open /var/run/secrets/token: permission denied", "perm-denied"},

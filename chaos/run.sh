@@ -1177,7 +1177,7 @@ scenario_05_coredns() {   # bad Corefile -> CoreDNS CrashLoop
 scenario_04_networkpolicy() {   # Calico-enforced deny-all as the *cause* of a degraded app
   requires netpol_enforced || return 0
   log "scenario 4: NetworkPolicy blocking traffic"
-  local ns=chaos-np i baseline broken recovered blocked_scan recovery_scan probe_event blocked_lines recovery_lines blocked_rc recovery_rc
+  local ns=chaos-np i baseline broken recovered blocked_scan recovery_scan probe_event blocked_lines recovery_lines blocked_rc recovery_rc np_hint
   kubectl --context "$CTX" create ns "$ns" --dry-run=client -o yaml | kubectl --context "$CTX" apply -f - >/dev/null
   # The probe must be *pod-sourced* for the policy to matter. Calico permits the
   # kubelet's own probe traffic to a local pod even under a deny-all Ingress
@@ -1260,6 +1260,10 @@ NP
   recovery_scan="$(scan 2>&1)" && recovery_rc=0 || recovery_rc=$?
   blocked_lines="$(scan_body "$blocked_scan"  | grep -c 'chaos-np/blocked' || true)"
   recovery_lines="$(scan_body "$recovery_scan" | grep -c 'chaos-np/blocked' || true)"
+  # Scoped to the policy this scenario created, not just to the hint's prefix:
+  # the scan is cluster-wide, so a bare prefix count could in principle be
+  # satisfied by some other workload's hint.
+  np_hint="$(scan_body "$blocked_scan" | grep -c 'NetworkPolicy: pods selected by deny-all' || true)"
 
   {
     printf 'blocked ready replicas before the policy: %s (must be 1)\n' "$baseline"
@@ -1278,6 +1282,7 @@ NP
     echo
     printf 'scan exit code under deny-all: %s\n' "$blocked_rc"
     printf 'chaos-np/blocked lines in that scan: %s\n' "$blocked_lines"
+    printf 'NetworkPolicy hint lines in that scan: %s\n' "$np_hint"
     echo
     echo '--- scan after deleting ONLY the NetworkPolicy ---'
     printf '%s\n' "$recovery_scan"
@@ -1291,13 +1296,18 @@ NP
     expect_eq "blocked ready replicas after deletion"    "$recovered" 1
     expect_eq "scan exit code under deny-all"          "$blocked_rc"  0
     expect_ge "chaos-np/blocked reported under deny-all" "$blocked_lines"  1
+    # The scenario's whole point is that the policy is demonstrably the cause,
+    # so the scan has to say so. This assertion could not have passed before
+    # netpolicy.Annotate's guard was narrowed — it is the regression test for
+    # that fix, at the only layer that exercises a real CNI.
+    expect_ge "NetworkPolicy hint shown under deny-all"  "$np_hint"       1
     # The exit code is asserted before the line count on purpose: a scan that
     # crashed prints no object names either, so "0 lines" alone would read as a
     # clean recovery. Only a scan that succeeded makes the count meaningful.
     expect_eq "scan exit code after deleting the policy" "$recovery_rc" 0
     expect_eq "chaos-np/blocked gone from the recovery scan" "$recovery_lines" 0
   } | record "4. NetworkPolicy blocking traffic (Calico deny-all, causal)" \
-    "expect: the three replica counts read 1 / 0 / 1 (a \"?\" means the query itself failed — a harness fault, not a reading). That triple is the whole point of this scenario — the workload is healthy before the policy, degraded while it is in force, and healthy again once it is deleted with nothing else changed, so the policy is demonstrably the cause rather than merely present. The Unhealthy event must show the wget call timing out; the old version of this scenario used an exec probe of \"false\", which failed identically with or without the policy and therefore proved nothing. In the scan taken under deny-all, chaos-np/blocked is reported 0/1 Degraded with a ProbeFailure finding and NO NetworkPolicy hint. The absent hint is correct, not a miss: netpolicy.Annotate (internal/netpolicy/netpolicy.go) attaches policy names only to a workload that is Flagged() with zero detector findings, because the hint exists to explain a degraded workload nothing else accounts for. A failing readiness probe already accounts for this one, so the hint is suppressed by design. In the recovery scan, chaos-np/blocked must not appear at all: its line count must be 0 while the count in the first scan is non-zero. Note the CNI subtlety this scenario encodes: Calico still lets the kubelet probe a local pod under a deny-all Ingress policy, so a network-dependent probe here has to be pod-sourced (exec) and blocked by the Egress half."
+    "expect: the three replica counts read 1 / 0 / 1 (a \"?\" means the query itself failed — a harness fault, not a reading). That triple is the whole point of this scenario — the workload is healthy before the policy, degraded while it is in force, and healthy again once it is deleted with nothing else changed, so the policy is demonstrably the cause rather than merely present. The Unhealthy event must show the wget call timing out; the old version of this scenario used an exec probe of \"false\", which failed identically with or without the policy and therefore proved nothing. In the scan taken under deny-all, chaos-np/blocked is reported 0/1 Degraded with a ProbeFailure finding AND the NetworkPolicy hint naming the policy that selects it. This paragraph previously asserted the opposite — that the absent hint was correct by design, because netpolicy.Annotate attached policy names only to a workload that is Flagged() with zero detector findings and \"a failing readiness probe already accounts for this one\". That reasoning was wrong and this scenario had codified it: a ProbeFailure restates that the probe fails, it does not account for WHY, and the policy is the account. The old guard therefore suppressed the hint in precisely the shape a NetworkPolicy most often takes — traffic is blocked, so the probe times out — and it survived only when nothing else was wrong, which for a network block is close to never. The guard is now narrowed to \"no finding that already explains it\": findings that are all ProbeFailure keep the hint, every other kind still suppresses. The hint count is asserted rather than described, so this cannot silently regress again. In the recovery scan, chaos-np/blocked must not appear at all: its line count must be 0 while the count in the first scan is non-zero. Note the CNI subtlety this scenario encodes: Calico still lets the kubelet probe a local pod under a deny-all Ingress policy, so a network-dependent probe here has to be pod-sourced (exec) and blocked by the Egress half."
   kubectl --context "$CTX" delete ns "$ns" --wait=true --timeout=120s >/dev/null 2>&1 || true
 }
 

@@ -80,3 +80,42 @@ func TestAnnotate_CrossNamespaceNoHint(t *testing.T) {
 		t.Errorf("a policy in another namespace must not match, got %+v", ws[0].NetworkPolicies)
 	}
 }
+
+// TestAnnotate_ProbeFailureStillGetsHint pins the narrowing of the guard.
+//
+// The original guard attached the hint only to a flagged workload with ZERO
+// detector findings. That suppressed it in the single commonest way a
+// NetworkPolicy actually manifests: the policy blocks traffic to the pod, the
+// readiness probe times out, a ProbeFailure finding is recorded, and the hint
+// that would have explained the ProbeFailure is dropped because the
+// ProbeFailure exists. The conjunction "probe failing AND a policy selects
+// these pods" is specific and worth saying; that is why it is exempted while
+// every other finding kind still suppresses.
+func TestAnnotate_ProbeFailureStillGetsHint(t *testing.T) {
+	w := degraded("default", "api", "api-1")
+	w.Findings = []diagnose.Finding{{Pod: "default/api-1", Issue: "ProbeFailure"}}
+	ws := []inventory.Workload{w}
+	Annotate(ws, map[string]map[string]string{"default/api-1": {"app": "api"}},
+		[]networkingv1.NetworkPolicy{np("default", "deny-all", nil)})
+	if got := ws[0].NetworkPolicies; len(got) != 1 || got[0] != "deny-all" {
+		t.Errorf("a probe-failing workload selected by a policy must get the hint, got %+v", got)
+	}
+}
+
+// TestAnnotate_MixedFindingsStillSuppressed keeps the narrowing narrow: the
+// exemption is for workloads whose findings are ALL probe failures. A workload
+// that is also OOMKilled has a cause that explains it, so the policy hint is
+// still noise there.
+func TestAnnotate_MixedFindingsStillSuppressed(t *testing.T) {
+	w := degraded("default", "api", "api-1")
+	w.Findings = []diagnose.Finding{
+		{Pod: "default/api-1", Issue: "ProbeFailure"},
+		{Pod: "default/api-1", Issue: "OOMKilled"},
+	}
+	ws := []inventory.Workload{w}
+	Annotate(ws, map[string]map[string]string{"default/api-1": {"app": "api"}},
+		[]networkingv1.NetworkPolicy{np("default", "deny-all", nil)})
+	if ws[0].NetworkPolicies != nil {
+		t.Errorf("a workload with a non-probe finding must stay suppressed, got %+v", ws[0].NetworkPolicies)
+	}
+}

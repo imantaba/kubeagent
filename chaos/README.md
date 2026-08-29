@@ -199,7 +199,7 @@ mistaken for covering:
   redaction, not the real Anthropic backend, which stays covered by unit
   tests only.
 
-Each **kind** cell runs 134 assertions. The k3s cell runs 110 — fewer because
+Each **kind** cell runs 135 assertions. The k3s cell runs 110 — fewer because
 five scenarios skip for the reasons named above, not because anything is
 weaker. On a GitHub-hosted runner a cell takes roughly 17 minutes; locally
 it's 35-40. All three supported minors have gone green on real runners.

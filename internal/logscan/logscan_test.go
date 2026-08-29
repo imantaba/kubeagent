@@ -158,7 +158,7 @@ func TestClassify_ConfigSignatureCatchesCommonFormats(t *testing.T) {
 }
 
 // TestClassify_ConfigWideningDoesNotStealFromLaterSignatures is the other half
-// of the widening above. "config" is fifth of nine and the first matching
+// of the widening above. "config" is sixth of nine and the first matching
 // signature wins, so a widened alternative can only take a line away from the
 // three signatures declared below it. Each canonical line here must still
 // reach its own signature; if a future alternative is broad enough to swallow

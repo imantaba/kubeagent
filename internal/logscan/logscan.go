@@ -55,7 +55,7 @@ var signatures = []signature{
 	// unchanged, and it must stay unchanged: four of the nine cause strings
 	// are verbatim targets in the verdict model's training set, so a tenth
 	// string here would be a phrase the model has never been trained to
-	// produce. This signature sits fifth of nine and first match wins, so a
+	// produce. This signature sits sixth of nine and first match wins, so a
 	// widened alternative can only take a line away from "addr-in-use",
 	// "auth" or "perm-denied" below it; none of those messages contain parse
 	// language.

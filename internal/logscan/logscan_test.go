@@ -112,3 +112,71 @@ func TestClassify_FallbackMissesASignatureOutsideTheTailWindow(t *testing.T) {
 		t.Errorf("Excerpt = %q, want %q", got.Excerpt, want)
 	}
 }
+
+// TestClassify_ConfigSignatureCatchesCommonFormats pins the config signature
+// against the shapes real components actually print when their configuration
+// will not parse. The signature originally matched four spellings — a line
+// starting "yaml:", "invalid character … looking for", "failed to parse" and
+// "invalid config" — and missed CoreDNS, which writes
+//
+//	/etc/coredns/Corefile:2 - Error during parsing: Unknown directive 'x'
+//
+// A miss is not silent-but-harmless: Classify falls through all nine
+// signatures to the last-line fallback, so the operator is told "no signature
+// in the last 25 lines" for one of the commonest config crashes in a cluster,
+// and the same degraded string is what --investigate's get_log_causes hands a
+// model. Every case here must resolve to the one existing cause string; a new
+// cause string is deliberately not added, because four of the nine are
+// verbatim training targets for the local verdict model and a tenth would
+// create a train/serve mismatch.
+func TestClassify_ConfigSignatureCatchesCommonFormats(t *testing.T) {
+	const want = "configuration parse/validation error"
+	cases := []struct{ name, log string }{
+		{"coredns", "/etc/coredns/Corefile:2 - Error during parsing: Unknown directive 'this_is_an_invalid_plugin'"},
+		{"yaml prefix", "yaml: line 3: mapping values are not allowed in this context"},
+		{"json", "invalid character '}' looking for beginning of object key string"},
+		{"failed to parse", "Error: failed to parse config"},
+		{"unable to parse", "level=fatal msg=\"unable to parse configuration file\""},
+		{"cannot parse", "cannot parse /etc/app/settings.toml: expected '=' after key"},
+		{"error parsing", "error parsing /conf/rules.conf line 12"},
+		{"parse error", "parse error near line 7: unexpected token"},
+		{"unknown directive", "nginx: [emerg] unknown directive \"lisen\" in /etc/nginx/nginx.conf:7"},
+		{"invalid config", "FATAL: invalid config: missing required field"},
+		{"invalid configuration", "invalid configuration: no listen address set"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := Classify(c.log)
+			if got.Cause != want {
+				t.Errorf("Classify(%q).Cause = %q, want %q", c.log, got.Cause, want)
+			}
+			if got.Signature != "config" {
+				t.Errorf("Classify(%q).Signature = %q, want %q", c.log, got.Signature, "config")
+			}
+		})
+	}
+}
+
+// TestClassify_ConfigWideningDoesNotStealFromLaterSignatures is the other half
+// of the widening above. "config" is fifth of nine and the first matching
+// signature wins, so a widened alternative can only take a line away from the
+// three signatures declared below it. Each canonical line here must still
+// reach its own signature; if a future alternative is broad enough to swallow
+// one, this fails rather than silently relabelling a port clash or an auth
+// rejection as a config error.
+func TestClassify_ConfigWideningDoesNotStealFromLaterSignatures(t *testing.T) {
+	cases := []struct{ log, wantSignature string }{
+		{"listen tcp :8080: bind: address already in use", "addr-in-use"},
+		{"FATAL: password authentication failed for user \"app\"", "auth"},
+		{"HTTP 401 Unauthorized from the token endpoint", "auth"},
+		{"open /var/run/secrets/token: permission denied", "perm-denied"},
+	}
+	for _, c := range cases {
+		t.Run(c.wantSignature+"/"+c.log[:12], func(t *testing.T) {
+			if got := Classify(c.log); got.Signature != c.wantSignature {
+				t.Errorf("Classify(%q).Signature = %q, want %q (config widening stole it)",
+					c.log, got.Signature, c.wantSignature)
+			}
+		})
+	}
+}

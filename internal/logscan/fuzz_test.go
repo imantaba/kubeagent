@@ -19,6 +19,7 @@ func FuzzClassify(f *testing.F) {
 	f.Add("dial tcp \x1b]0;pwned\x07: connect: connection refused")
 	f.Add("dial tcp \xff\xfe: connect: connection refused")
 	f.Add("yaml: line 3: found character that cannot start any token\n\u202e")
+	f.Add("/etc/coredns/Corefile:2 - Error during parsing: Unknown directive 'this_is_an_invalid_plugin'")
 	f.Add("\n\n   \n")
 	f.Add("unable to retrieve container logs for containerd://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 

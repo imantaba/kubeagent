@@ -65,8 +65,9 @@ sed -i "s#^version: $CHART_VER\$#version: $CHART_NEW#" "$CHART"
 # docs/superpowers, and CLAUDE.md's roadmap, whose every shipped bullet carries
 # the release that shipped it. CLAUDE.md holds no image tag and no install line,
 # so nothing there can go stale. What remains in scope is every file that tells
-# someone which version to deploy.
-STALE="$(grep -rn "v$OLD" --include=*.yaml --include=*.md . \
+# someone which version to deploy. git grep searches tracked files only, so a
+# git-ignored test report that names the binary it tested cannot trip the check.
+STALE="$(git grep -n "v$OLD" -- '*.yaml' '*.md' \
   | grep -v "$CHANGELOG" | grep -v docs/superpowers | grep -v '.superpowers/' \
   | grep -vE '^(\./)?CLAUDE\.md:' || true)"
 [ -z "$STALE" ] || { echo "STALE references to v$OLD remain:" >&2; echo "$STALE" >&2; exit 1; }

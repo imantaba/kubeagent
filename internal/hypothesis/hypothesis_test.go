@@ -1,6 +1,7 @@
 package hypothesis
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -584,5 +585,93 @@ func TestParenthesizedReadsTheLastPair(t *testing.T) {
 		if got := parenthesized(s); got != want {
 			t.Errorf("parenthesized(%q) = %q, want %q", s, got, want)
 		}
+	}
+}
+
+// confirmedIn builds a confirmed row in the given group.
+func confirmedIn(workload, key, text string) Result {
+	return Result{Workload: workload, Decided: true, Outcome: Confirmed, Cause: text, GroupKey: key, GroupText: text}
+}
+
+func TestSharedNeedsTwoConfirmedRows(t *testing.T) {
+	if got := Shared(nil); got != nil {
+		t.Errorf("nil results → nil, got %v", got)
+	}
+	one := []Result{confirmedIn("shop/web", "node/worker-1", "node worker-1 (NotReady)")}
+	if got := Shared(one); got != nil {
+		t.Errorf("one confirmed row → nil, got %v", got)
+	}
+}
+
+func TestSharedNoSharedCause(t *testing.T) {
+	rs := []Result{
+		confirmedIn("shop/web", "node/worker-1", "node worker-1 (NotReady)"),
+		confirmedIn("shop/api", "node/worker-2", "node worker-2 (NotReady)"),
+	}
+	want := []string{"no shared cause among the 2 workloads decided by rules"}
+	if got := Shared(rs); len(got) != 1 || got[0] != want[0] {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestSharedOneGroup(t *testing.T) {
+	rs := []Result{
+		confirmedIn("shop/web", "node/worker-1", "node worker-1 (NotReady)"),
+		confirmedIn("shop/api", "node/worker-1", "node worker-1 (NotReady)"),
+		confirmedIn("shop/cart", "node/worker-1", "node worker-1 (NotReady)"),
+	}
+	want := "3 workloads share one upstream cause: node worker-1 (NotReady)"
+	if got := Shared(rs); len(got) != 1 || got[0] != want {
+		t.Errorf("got %v, want [%q]", got, want)
+	}
+}
+
+func TestSharedSortsBySizeThenKey(t *testing.T) {
+	rs := []Result{
+		confirmedIn("a/1", "registry/registry.example.com", "registry registry.example.com (2 workloads failing to pull)"),
+		confirmedIn("a/2", "registry/registry.example.com", "registry registry.example.com (2 workloads failing to pull)"),
+		confirmedIn("a/3", "node/worker-1", "node worker-1 (NotReady)"),
+		confirmedIn("a/4", "node/worker-1", "node worker-1 (NotReady)"),
+		confirmedIn("a/5", "node/worker-1", "node worker-1 (NotReady)"),
+		confirmedIn("a/6", "pvc/shop/web-data", "PVC web-data (ProvisioningFailed)"),
+	}
+	want := []string{
+		"3 workloads share one upstream cause: node worker-1 (NotReady)",
+		"2 workloads share one upstream cause: registry registry.example.com (2 workloads failing to pull)",
+	}
+	got := Shared(rs)
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestSharedCapsAtFourLinesAndMarks(t *testing.T) {
+	var rs []Result
+	for g := 0; g < 5; g++ {
+		key := fmt.Sprintf("node/worker-%d", g)
+		for i := 0; i < 2; i++ {
+			rs = append(rs, confirmedIn(fmt.Sprintf("shop/w%d-%d", g, i), key, fmt.Sprintf("node worker-%d (NotReady)", g)))
+		}
+	}
+	got := Shared(rs)
+	if len(got) != MaxSharedLines+1 {
+		t.Fatalf("want %d lines plus the marker, got %d: %v", MaxSharedLines, len(got), got)
+	}
+	if got[MaxSharedLines] != TruncationMarker {
+		t.Errorf("last line must be the marker, got %q", got[MaxSharedLines])
+	}
+	if got[0] != "2 workloads share one upstream cause: node worker-0 (NotReady)" {
+		t.Errorf("equal sizes sort by key, got %q", got[0])
+	}
+}
+
+func TestSharedIgnoresUnverifiedAndUndecided(t *testing.T) {
+	rs := []Result{
+		confirmedIn("shop/web", "node/worker-1", "node worker-1 (NotReady)"),
+		{Workload: "shop/api", Decided: true, Outcome: Unverified, Cause: "node worker-1 (NotReady)"},
+		{Workload: "shop/cart"},
+	}
+	if got := Shared(rs); got != nil {
+		t.Errorf("one confirmed row plus noise → nil, got %v", got)
 	}
 }

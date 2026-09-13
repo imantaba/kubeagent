@@ -623,9 +623,10 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   output is untrusted: sanitized, capped, and matched against the
   flagged-workload set before it can enter the report. `--explain` is
   untouched in both modes, and `scan` stays at schema 1.8.
-  A further slice adds rule-decided verdicts to that mode: `internal/hypothesis`
-  re-checks each candidate against the gather's fresh reads, a decided
-  workload renders as a `[rule, …]` row whose cause never comes from the
-  model, shared-cause lines precede the model's summary, and a failed model
-  call still renders the rule rows with a notice — `scan` stays at 1.8.
+  A further slice has shipped (v1.24.0) and adds rule-decided verdicts to that
+  mode: `internal/hypothesis` re-checks each candidate against the gather's
+  fresh reads, a decided workload renders as a `[rule, …]` row whose cause
+  never comes from the model, shared-cause lines precede the model's summary,
+  and a failed model call still renders the rule rows with a notice — `scan`
+  stays at 1.8.
   The remaining post-1.0 work is other baseline dimensions.

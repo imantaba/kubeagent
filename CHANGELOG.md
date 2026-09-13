@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `--investigate`'s local verdict mode re-checks each node, PVC and registry
+  candidate against the objects it read and decides the workload by rule
+  before the model is called. The rules live in the new pure package
+  `internal/hypothesis`. The prompt shows each outcome as a `fresh read:`
+  line and a `decided by rules:` line. When the model call fails, the
+  rule-decided rows still render and the stderr notice says the model was
+  absent.
+
+### Changed
+
+- The local verdict section's header is now `Root-cause verdicts:`. Each row
+  carries a label: `[rule, confirmed]`, `[rule, unverified]` or
+  `[model, confidence: …]`. When two or more rule rows share a node, a
+  registry, a storage class or a claim, a shared-cause line renders before the
+  model's summary.
+
 ## [1.23.0] - 2026-08-22
 
 ### Added

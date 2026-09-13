@@ -1396,6 +1396,25 @@ it still counts against the budget — a refusal is evidence too. The
 report's `consulted:` trail shows every read that was made, in the same
 label format the tool loop's trail uses.
 
+**Rules decide the candidates.** Before the model is called, kubeagent
+re-checks each node, PVC and registry candidate against the objects the gather
+read. A node candidate is confirmed when the node's Ready condition is False or
+Unknown now, and refuted when it is True. A node candidate that came from a
+missed kubelet heartbeat is not refuted by Ready True alone; it stays
+unverified, because the lease is not re-read. A PVC candidate is confirmed when
+the claim is still Pending or Lost, and refuted when it is Bound. A registry
+candidate is confirmed when a pull event on the pod names a connection error.
+An auth error leaves it unverified, because the reads cannot tell one bad
+secret from a broken host. An image error refutes it, because that pull fails
+for one image, not the host. A read that failed, or was never made because the
+read budget ran out, leaves the candidate unverified. The first confirmed
+candidate decides the workload; with none confirmed, the first unverified one
+does. A workload whose candidates were all refuted is left to the model. The
+rules live in `internal/hypothesis`, a pure package with no client and no model
+call. The prompt shows the model each outcome as a `fresh read:` line under the
+candidate and a `decided by rules:` line under the workload, so the model can
+write a rationale that agrees with what the cluster said.
+
 **Verdict contract v1.** The model answers with one JSON object:
 
 ```json
@@ -1412,13 +1431,38 @@ label format the tool loop's trail uses.
 }
 ```
 
-`cause` is a candidate's text verbatim, `none_of_these`, or a cause the
-model grounds in its own reading of the evidence; `confidence` is `low`,
-`medium` or `high` — anything else renders as `unstated`; a verdict naming a
-workload the scan did not flag is dropped; at most 10 rows and a 4-line
-summary render. This contract is **prose, versioned in this document** — it
-crosses the model boundary, not kubeagent's own JSON output, so it is
-deliberately not one of the eight `schemaVersion` surfaces.
+`cause` is a candidate's text verbatim, `none_of_these`, or a cause the model
+grounds in its own reading of the evidence; `confidence` is `low`, `medium` or
+`high` — anything else renders as `unstated`; a verdict naming a workload the
+scan did not flag is dropped; a rule row's cause never comes from the model; at
+most 10 rows and a 4-line summary render. This contract is **prose, versioned
+in this document** — it crosses the model boundary, not kubeagent's own JSON
+output, so it is deliberately not one of the eight `schemaVersion` surfaces.
+
+**What renders.** The section starts with the header `Root-cause verdicts:` and
+holds one row per workload, at most 10. A row has one of three labels:
+
+```
+- shop/web: node worker-1 (NotReady) [rule, confirmed] — Ready condition is False now
+- shop/api: PVC api-data (ProvisioningFailed) [rule, unverified] — not re-read: the read budget was spent first
+- shop/cart: none_of_these [model, confidence: low] — evidence is thin
+```
+
+A `[rule, …]` row's cause is the candidate text from the scan, never the
+model's. Its rationale is the model's only when the model named the same cause
+word for word; otherwise it is the rule's own evidence sentence. A `[model, …]`
+row is the model's answer for a workload the rules could not decide, with the
+cause, confidence and rationale sanitized and capped as before. Workloads in
+the gather's scope come first, in report order: a rule row when a rule decided,
+a model row when it did not. The model's rows for flagged workloads outside the
+scope follow, in the model's order.
+
+**The shared line.** When two or more rule rows are confirmed on the same node,
+the same registry, the same storage class or the same claim, one line under the
+rows says so: `2 workloads share one upstream cause: node worker-1 (NotReady)`.
+When two or more rows are confirmed and none share a cause, the line is `no
+shared cause among the 2 workloads decided by rules`. At most 4 shared lines
+render, and they come before the model's summary.
 
 **Size bounds:**
 
@@ -1431,6 +1475,8 @@ deliberately not one of the eight `schemaVersion` surfaces.
 | Whole prompt | 64 KiB |
 | Model response | 1 MiB (overflow detected explicitly) |
 | Model-written line | 512 runes |
+| Rule lines in the prompt | 1 per shown candidate, plus 1 per decided workload |
+| Shared-cause summary lines | 4 |
 
 Every cut is marked `[truncated by kubeagent]`.
 
@@ -1462,6 +1508,13 @@ contract, not the model.
 **Privacy.** As with `--explain`'s local endpoint above: when
 `KUBEAGENT_EXPLAIN_ENDPOINT` is set, `ANTHROPIC_API_KEY` is not required and
 nothing leaves the network.
+
+**When the model fails.** A failed call, or a reply with no usable row and
+no summary, no longer drops the whole section. The rule rows and the shared
+lines still render, and the notice on stderr reads
+`--investigate: <reason>; rule-decided verdicts rendered without the model`.
+When no rule decided anything, the run behaves as before: no section, and a
+notice with the reason.
 
 **What does not change.** Local verdict mode is read-only toward the
 cluster and never fatal to the scan: a failed investigation reduces to one

@@ -219,6 +219,18 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   credential: an `Entry` has three string fields decoded with
   `yaml.UnmarshalStrict`, so `server:`, `token:` and `certificate-authority-data:`
   are load errors rather than ignored keys.
+  `internal/hypothesis` (local verdict mode's rule engine) is an eleventh case
+  and pure: no client, no context, no I/O beyond the values it is handed, and
+  no model call. It imports only the standard library, `k8s.io/api` and
+  `internal/inventory`; it must never import `k8s.io/client-go`,
+  `k8s.io/apimachinery`, `internal/cluster`, `internal/investigate`,
+  `internal/remediate`, `internal/explain`, `internal/report` or
+  `internal/scan`, and never `context`, `io` or `time`.
+  `internal/hypothesis/imports_test.go` enforces that. No function in it
+  returns an error, and no API text reaches an evidence sentence: every
+  sentence is a fixed string, or a fixed string plus a literal from a closed
+  list, or a fixed prefix plus a failed-read message the gather already reduced
+  and sanitized, so nothing the cluster wrote needs sanitizing there.
 - **Untrusted API text is sanitized at ingress, not at each renderer.** Every
   value read from a field the API server does not validate — `waiting.Message`,
   `terminated.Reason`, condition and event messages, `involvedObject.fieldPath`,
@@ -611,4 +623,9 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   output is untrusted: sanitized, capped, and matched against the
   flagged-workload set before it can enter the report. `--explain` is
   untouched in both modes, and `scan` stays at schema 1.8.
+  A further slice adds rule-decided verdicts to that mode: `internal/hypothesis`
+  re-checks each candidate against the gather's fresh reads, a decided
+  workload renders as a `[rule, …]` row whose cause never comes from the
+  model, shared-cause lines precede the model's summary, and a failed model
+  call still renders the rule rows with a notice — `scan` stays at 1.8.
   The remaining post-1.0 work is other baseline dimensions.

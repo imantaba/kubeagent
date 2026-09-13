@@ -22,6 +22,8 @@ func check(w inventory.Workload, h inventory.Hypothesis, reads Reads) (Outcome, 
 		return checkNode(h, reads)
 	case "pvc":
 		return checkPVC(w, h, reads)
+	case "registry":
+		return checkRegistry(w, h, reads)
 	}
 	return Unverified, evidenceNoRule
 }
@@ -111,4 +113,116 @@ func parenthesized(s string) string {
 		return ""
 	}
 	return s[start+1 : end]
+}
+
+// The three closed literal lists. Matching runs on the lowercased raw
+// message; only a literal from these lists ever enters a sentence.
+// authLiterals is ordered most-specific-first so that Docker Hub's
+// "pull access denied … repository does not exist" reads as auth.
+var (
+	connectionLiterals = []string{"dial tcp", "i/o timeout", "connection refused", "connection reset",
+		"no such host", "network is unreachable", "tls handshake", "x509:", "502 bad gateway",
+		"503 service unavailable", "504 gateway timeout", "toomanyrequests", "429 too many requests"}
+	authLiterals  = []string{"pull access denied", "no basic auth credentials", "unauthorized", "denied"}
+	imageLiterals = []string{"manifest unknown", "not found", "name unknown", "repository does not exist",
+		"invalid reference format"}
+)
+
+const (
+	evidenceNoPullEvent   = "no pull event names the failure; events may have aged out"
+	evidencePullPodUnread = "events of the pulling pod were not read"
+)
+
+// pullPod is the pod name of the first pull finding, or "" when there is none.
+func pullPod(w inventory.Workload) string {
+	for _, f := range w.Findings {
+		if f.Issue == "ImagePullBackOff" || f.Issue == "ErrImagePull" {
+			return podPart(f.Pod)
+		}
+	}
+	return ""
+}
+
+// eventsPod is the pod whose events the gather reads for this workload:
+// the first finding's pod, or the workload name when there is no finding.
+// It mirrors the gather's choice exactly.
+func eventsPod(w inventory.Workload) string {
+	if len(w.Findings) > 0 {
+		if p := podPart(w.Findings[0].Pod); p != "" {
+			return p
+		}
+	}
+	return w.Name
+}
+
+// podPart returns the name half of a "namespace/name" pod reference, or
+// "" when the reference has no slash. It matches the gather's copy.
+func podPart(pod string) string {
+	if _, name, ok := strings.Cut(pod, "/"); ok {
+		return name
+	}
+	return ""
+}
+
+// checkRegistry re-checks a registry candidate against the pull pod's
+// fresh events. The gather reads one pod's events per workload; when that
+// is not the pulling pod, the rule says so instead of guessing.
+func checkRegistry(w inventory.Workload, h inventory.Hypothesis, reads Reads) (Outcome, string) {
+	pod := pullPod(w)
+	key := w.Namespace + "/" + pod
+	if pod != "" {
+		if evs, ok := reads.Events[key]; ok {
+			return classifyPullEvents(evs)
+		}
+		if msg, ok := reads.Failed["events/"+key]; ok {
+			return Unverified, evidenceFailedPrefix + msg
+		}
+	}
+	if pod == "" || pod != eventsPod(w) {
+		return Unverified, evidencePullPodUnread
+	}
+	return Unverified, evidenceNeverRead
+}
+
+// isPullEvent reports whether e is a kubelet pull failure: Reason Failed
+// or BackOff, and a message that mentions a pull.
+func isPullEvent(e corev1.Event) bool {
+	if e.Reason != "Failed" && e.Reason != "BackOff" {
+		return false
+	}
+	return strings.Contains(strings.ToLower(e.Message), "pull")
+}
+
+// classifyPullEvents picks the strongest class any pull event shows:
+// connection beats auth beats image.
+func classifyPullEvents(evs []corev1.Event) (Outcome, string) {
+	var msgs []string
+	for _, e := range evs {
+		if isPullEvent(e) {
+			msgs = append(msgs, strings.ToLower(e.Message))
+		}
+	}
+	if lit := firstMatch(msgs, connectionLiterals); lit != "" {
+		return Confirmed, "a pull event shows a connection error: " + lit
+	}
+	if lit := firstMatch(msgs, authLiterals); lit != "" {
+		return Unverified, "a pull event shows an auth error: " + lit + "; that can be one image or the whole host"
+	}
+	if lit := firstMatch(msgs, imageLiterals); lit != "" {
+		return Refuted, "a pull event shows an image error: " + lit + "; this pull fails for this image, not the host"
+	}
+	return Unverified, evidenceNoPullEvent
+}
+
+// firstMatch returns the first literal, in list order, that any message
+// contains, or "".
+func firstMatch(msgs, literals []string) string {
+	for _, lit := range literals {
+		for _, m := range msgs {
+			if strings.Contains(m, lit) {
+				return lit
+			}
+		}
+	}
+	return ""
 }

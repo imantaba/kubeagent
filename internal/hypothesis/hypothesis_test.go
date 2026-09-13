@@ -193,3 +193,94 @@ func TestDecideUnknownKindIsUnverified(t *testing.T) {
 		t.Errorf("an unverified-only row is decided as unverified, got %+v", r)
 	}
 }
+
+// pvcCandidate is an attributed PVC candidate for shop/web.
+func pvcCandidate(name, reason string) inventory.Hypothesis {
+	return inventory.Hypothesis{Cause: "PVC " + name + " (" + reason + ")", Kind: "pvc", Object: name,
+		Verdict: inventory.VerdictAttributed, Reason: "pod web-abc mounts it"}
+}
+
+// pvcWith builds a PVC in the given phase.
+func pvcWith(ns, name string, phase corev1.PersistentVolumeClaimPhase) *corev1.PersistentVolumeClaim {
+	return &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name},
+		Status: corev1.PersistentVolumeClaimStatus{Phase: phase}}
+}
+
+func TestPVCRulePhases(t *testing.T) {
+	cases := []struct {
+		name     string
+		phase    corev1.PersistentVolumeClaimPhase
+		outcome  Outcome
+		evidence string
+	}{
+		{"bound", corev1.ClaimBound, Refuted, "phase is Bound now"},
+		{"pending", corev1.ClaimPending, Confirmed, "phase is still Pending"},
+		{"lost", corev1.ClaimLost, Confirmed, "phase is Lost"},
+		{"empty", "", Unverified, "phase is not one kubeagent expects"},
+		{"odd", corev1.PersistentVolumeClaimPhase("Odd"), Unverified, "phase is not one kubeagent expects"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rd := emptyReads()
+			rd.PVCs["shop/web-data"] = pvcWith("shop", "web-data", tc.phase)
+			d := Decide(workloadWith(pvcCandidate("web-data", "ProvisioningFailed")), rd).Decisions[0]
+			if d.Outcome != tc.outcome || d.Evidence != tc.evidence {
+				t.Errorf("got %q %q, want %q %q", d.Outcome, d.Evidence, tc.outcome, tc.evidence)
+			}
+		})
+	}
+}
+
+func TestPVCRuleFailedRead(t *testing.T) {
+	rd := emptyReads()
+	rd.PVCs["shop/web-data"] = pvcWith("shop", "web-data", corev1.ClaimPending)
+	rd.Failed["pvc/shop/web-data"] = "persistentvolumeclaims \"web-data\" is forbidden"
+	d := Decide(workloadWith(pvcCandidate("web-data", "ProvisioningFailed")), rd).Decisions[0]
+	if d.Outcome != Unverified || d.Evidence != "fresh read failed: persistentvolumeclaims \"web-data\" is forbidden" {
+		t.Errorf("got %q %q", d.Outcome, d.Evidence)
+	}
+}
+
+func TestPVCRuleNeverRead(t *testing.T) {
+	d := Decide(workloadWith(pvcCandidate("web-data", "ProvisioningFailed")), emptyReads()).Decisions[0]
+	if d.Outcome != Unverified || d.Evidence != "not re-read: the read budget was spent first" {
+		t.Errorf("got %q %q", d.Outcome, d.Evidence)
+	}
+}
+
+func TestPVCRuleEmptyObjectIsNeverRead(t *testing.T) {
+	h := pvcCandidate("web-data", "ProvisioningFailed")
+	h.Object = ""
+	rd := emptyReads()
+	rd.PVCs["shop/web-data"] = pvcWith("shop", "web-data", corev1.ClaimPending)
+	d := Decide(workloadWith(h), rd).Decisions[0]
+	if d.Outcome != Unverified || d.Evidence != "not re-read: the read budget was spent first" {
+		t.Errorf("got %q %q", d.Outcome, d.Evidence)
+	}
+}
+
+// The PVC is keyed by the workload's namespace, not by anything in the candidate.
+func TestPVCRuleKeyUsesWorkloadNamespace(t *testing.T) {
+	rd := emptyReads()
+	rd.PVCs["other/web-data"] = pvcWith("other", "web-data", corev1.ClaimPending)
+	d := Decide(workloadWith(pvcCandidate("web-data", "ProvisioningFailed")), rd).Decisions[0]
+	if d.Outcome != Unverified || d.Evidence != "not re-read: the read budget was spent first" {
+		t.Errorf("a PVC in another namespace must not be found, got %q %q", d.Outcome, d.Evidence)
+	}
+}
+
+func TestDecideOutrankedPVCConfirmedBeatsRefutedNode(t *testing.T) {
+	rd := emptyReads()
+	rd.Nodes["worker-1"] = nodeWithReady("worker-1", corev1.ConditionTrue)
+	rd.PVCs["shop/web-data"] = pvcWith("shop", "web-data", corev1.ClaimPending)
+	pvc := pvcCandidate("web-data", "ProvisioningFailed")
+	pvc.Verdict = inventory.VerdictOutranked
+	pvc.Reason = "node worker-1 (NotReady) is the stronger cause"
+	r := Decide(workloadWith(nodeCandidateOn("worker-1", "NotReady"), pvc), rd)
+	if !r.Decided || r.Outcome != Confirmed || r.Cause != "PVC web-data (ProvisioningFailed)" {
+		t.Errorf("an outranked candidate a fresh read confirms beats the attributed one it refutes, got %+v", r)
+	}
+	if r.Evidence != "phase is still Pending" {
+		t.Errorf("evidence = %q", r.Evidence)
+	}
+}

@@ -20,6 +20,8 @@ func check(w inventory.Workload, h inventory.Hypothesis, reads Reads) (Outcome, 
 	switch h.Kind {
 	case "node":
 		return checkNode(h, reads)
+	case "pvc":
+		return checkPVC(w, h, reads)
 	}
 	return Unverified, evidenceNoRule
 }
@@ -58,6 +60,32 @@ func checkNode(h inventory.Hypothesis, reads Reads) (Outcome, string) {
 		return Refuted, "Ready condition is True now"
 	}
 	return Unverified, "Ready condition is not one kubeagent expects"
+}
+
+// checkPVC re-checks a PVC candidate against the fresh claim read. The
+// claim is keyed by the workload's namespace, because a PVC candidate
+// names a claim the workload's pods mount.
+func checkPVC(w inventory.Workload, h inventory.Hypothesis, reads Reads) (Outcome, string) {
+	if h.Object == "" {
+		return Unverified, evidenceNeverRead
+	}
+	key := w.Namespace + "/" + h.Object
+	if msg, ok := reads.Failed["pvc/"+key]; ok {
+		return Unverified, evidenceFailedPrefix + msg
+	}
+	pvc, ok := reads.PVCs[key]
+	if !ok || pvc == nil {
+		return Unverified, evidenceNeverRead
+	}
+	switch pvc.Status.Phase {
+	case corev1.ClaimBound:
+		return Refuted, "phase is Bound now"
+	case corev1.ClaimPending:
+		return Confirmed, "phase is still Pending"
+	case corev1.ClaimLost:
+		return Confirmed, "phase is Lost"
+	}
+	return Unverified, "phase is not one kubeagent expects"
 }
 
 // readyCondition returns the node's Ready condition status and whether the

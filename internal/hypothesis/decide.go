@@ -33,6 +33,7 @@ func check(w inventory.Workload, h inventory.Hypothesis, reads Reads) (Outcome, 
 // heartbeat reasons cannot be refuted by a Ready=True condition alone,
 // because the lease was not re-read; every other reason reads like NotReady.
 func checkNode(h inventory.Hypothesis, reads Reads) (Outcome, string) {
+	// A candidate with no object does not occur: rootcause always names the node or claim.
 	if h.Object == "" {
 		return Unverified, evidenceNeverRead
 	}
@@ -68,6 +69,7 @@ func checkNode(h inventory.Hypothesis, reads Reads) (Outcome, string) {
 // claim is keyed by the workload's namespace, because a PVC candidate
 // names a claim the workload's pods mount.
 func checkPVC(w inventory.Workload, h inventory.Hypothesis, reads Reads) (Outcome, string) {
+	// A candidate with no object does not occur: rootcause always names the node or claim.
 	if h.Object == "" {
 		return Unverified, evidenceNeverRead
 	}

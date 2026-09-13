@@ -75,6 +75,8 @@ func writeCandidateLine(b *strings.Builder, h inventory.Hypothesis) {
 // and a decided workload ends with the decided-by-rules line. r.Decisions
 // holds one entry per non-ruled-out candidate in trace order, so a cursor
 // over it stays aligned with the trace.
+// Decide walks the whole trace, so the decided-by-rules line may name a
+// candidate that sits past the cap and was not shown.
 func writeWorkloadCandidates(b *strings.Builder, w inventory.Workload, r *hypothesis.Result) {
 	if len(w.RootCauseTrace) == 0 {
 		return

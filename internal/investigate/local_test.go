@@ -566,6 +566,18 @@ func TestRenderVerdictsRowShapes(t *testing.T) {
 	if got := renderVerdicts(doc, results, nil, ws); got != want {
 		t.Errorf("got:\n%s\nwant:\n%s", got, want)
 	}
+
+	// The order is report order over the scoped workloads, whichever kind of
+	// row each gets — an undecided workload with a model row does not sink.
+	ws = []inventory.Workload{gatherWL("shop", "cart"), gatherWL("shop", "web"), gatherWL("shop", "api")}
+	results = []hypothesis.Result{results[2], results[0], results[1]}
+	want = "Root-cause verdicts:\n" +
+		"- shop/cart: none_of_these [model, confidence: low] — evidence is thin\n" +
+		"- shop/web: node worker-1 (NotReady) [rule, confirmed] — Ready condition is False now\n" +
+		"- shop/api: PVC api-data (ProvisioningFailed) [rule, unverified] — not re-read: the read budget was spent first"
+	if got := renderVerdicts(doc, results, nil, ws); got != want {
+		t.Errorf("reordered: got:\n%s\nwant:\n%s", got, want)
+	}
 }
 
 func TestRenderVerdictsRuleRowRationale(t *testing.T) {

@@ -1396,24 +1396,24 @@ it still counts against the budget — a refusal is evidence too. The
 report's `consulted:` trail shows every read that was made, in the same
 label format the tool loop's trail uses.
 
-**Rules decide the candidates.** Before the model is called, kubeagent
-re-checks each node, PVC and registry candidate against the objects the gather
-read. A node candidate is confirmed when the node's Ready condition is False or
-Unknown now, and refuted when it is True. A node candidate that came from a
-missed kubelet heartbeat is not refuted by Ready True alone; it stays
-unverified, because the lease is not re-read. A PVC candidate is confirmed when
-the claim is still Pending or Lost, and refuted when it is Bound. A registry
-candidate is confirmed when a pull event on the pod names a connection error.
-An auth error leaves it unverified, because the reads cannot tell one bad
-secret from a broken host. An image error refutes it, because that pull fails
-for one image, not the host. A read that failed, or was never made because the
-read budget ran out, leaves the candidate unverified. The first confirmed
-candidate decides the workload; with none confirmed, the first unverified one
-does. A workload whose candidates were all refuted is left to the model. The
-rules live in `internal/hypothesis`, a pure package with no client and no model
-call. The prompt shows the model each outcome as a `fresh read:` line under the
-candidate and a `decided by rules:` line under the workload, so the model can
-write a rationale that agrees with what the cluster said.
+**Rules decide the candidates.** Before the model is called, kubeagent re-checks
+each node, PVC and registry candidate against the objects the gather read. A
+node candidate is confirmed when the node's Ready condition is False or Unknown
+now, or when the node has no Ready condition at all, and refuted when it is
+True. A node candidate that came from a missed kubelet heartbeat is not refuted
+by Ready True alone; it stays unverified, because the lease is not re-read. A
+PVC candidate is confirmed when the claim is still Pending or Lost, and refuted
+when it is Bound. A registry candidate is confirmed when a pull event on the pod
+names a connection error. An auth error leaves it unverified, because the reads
+cannot tell one bad secret from a broken host. An image error refutes it,
+because that pull fails for one image, not the host. A read that failed, or was
+never made because the read budget ran out, leaves the candidate unverified. The
+first confirmed candidate decides the workload; with none confirmed, the first
+unverified one does. A workload whose candidates were all refuted is left to the
+model. The rules live in `internal/hypothesis`, a pure package with no client
+and no model call. The prompt shows the model each outcome as a `fresh read:`
+line under the candidate and a `decided by rules:` line under the workload, so
+the model can write a rationale that agrees with what the cluster said.
 
 **Verdict contract v1.** The model answers with one JSON object:
 
@@ -1440,7 +1440,8 @@ in this document** — it crosses the model boundary, not kubeagent's own JSON
 output, so it is deliberately not one of the eight `schemaVersion` surfaces.
 
 **What renders.** The section starts with the header `Root-cause verdicts:` and
-holds one row per workload, at most 10. A row has one of three labels:
+holds at most one row per flagged workload, at most 10 rows. A row has one of
+three labels:
 
 ```
 - shop/web: node worker-1 (NotReady) [rule, confirmed] — Ready condition is False now
@@ -1475,7 +1476,7 @@ render, and they come before the model's summary.
 | Whole prompt | 64 KiB |
 | Model response | 1 MiB (overflow detected explicitly) |
 | Model-written line | 512 runes |
-| Rule lines in the prompt | 1 per shown candidate, plus 1 per decided workload |
+| Rule lines in the prompt | at most 1 per shown candidate (none for a ruled-out one), plus 1 per decided workload |
 | Shared-cause summary lines | 4 |
 
 Every cut is marked `[truncated by kubeagent]`.

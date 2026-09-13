@@ -42,7 +42,7 @@ func enrichmentFailure(err error) string {
 // modelPathResult is what running the model-enrichment path produces: the
 // state a successful arm feeds into the report (explanation, investigation),
 // or, on failure, a notice for stderr — and in local verdict mode a failed
-// investigate arm may carry both, a notice and the rule-decided
+// investigate arm may carry both a notice and the rule-decided
 // investigation. An enrichment failure is never fatal to the scan (R223), so
 // this carries no error.
 type modelPathResult struct {

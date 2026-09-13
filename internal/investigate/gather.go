@@ -5,12 +5,15 @@ import (
 	"fmt"
 	"strings"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/imantaba/kubeagent/internal/collect"
+	"github.com/imantaba/kubeagent/internal/hypothesis"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/redact"
+	"github.com/imantaba/kubeagent/internal/safetext"
 )
 
 // Size bounds for local verdict mode's evidence pre-fetch. The global read
@@ -46,19 +49,27 @@ func flaggedScope(workloads []inventory.Workload) []inventory.Workload {
 // PVC candidate (deduped globally; registry candidates have nothing to
 // read), and a classified previous-log cause per crash-family finding
 // (deduped per container). It returns the evidence trail — byte-for-byte the
-// tool loop's label() formats — and the bundle the prompt embeds. A failed
-// read still consumes budget (refusal is evidence) and renders as a reduced
-// error, never a raw client-go message.
-func gatherEvidence(ctx context.Context, client kubernetes.Interface, scoped []inventory.Workload) ([]string, string) {
+// tool loop's label() formats —, the bundle the prompt embeds, and the
+// objects it read, keyed for the rules. A failed read still consumes budget
+// (refusal is evidence) and renders as a reduced error, never a raw
+// client-go message; the same reduced error, passed through safetext.Line,
+// is what the rules see under Reads.Failed.
+func gatherEvidence(ctx context.Context, client kubernetes.Interface, scoped []inventory.Workload) ([]string, string, hypothesis.Reads) {
 	var (
 		b     strings.Builder
 		trail []string
-		reads int
+		spent int
 	)
+	fresh := hypothesis.Reads{
+		Nodes:  map[string]*corev1.Node{},
+		PVCs:   map[string]*corev1.PersistentVolumeClaim{},
+		Events: map[string][]corev1.Event{},
+		Failed: map[string]string{},
+	}
 	seenDescribe := map[string]bool{}
 	seenLog := map[string]bool{}
 	for _, w := range scoped {
-		if reads >= maxToolCalls {
+		if spent >= maxToolCalls {
 			break
 		}
 		name := w.Name
@@ -67,14 +78,19 @@ func gatherEvidence(ctx context.Context, client kubernetes.Interface, scoped []i
 				name = p
 			}
 		}
-		content, err := eventsFor(ctx, client, w.Namespace, name)
+		var content string
+		items, err := listEvents(ctx, client, w.Namespace, name)
 		if err != nil {
+			fresh.Failed["events/"+w.Namespace+"/"+name] = safetext.Line(redact.Error(err))
 			content = "read failed: " + redact.Error(err)
+		} else {
+			fresh.Events[w.Namespace+"/"+name] = items
+			content = formatEvents(w.Namespace, name, items)
 		}
-		appendRead(&b, &trail, &reads, fmt.Sprintf("events %s/%s", w.Namespace, name), content)
+		appendRead(&b, &trail, &spent, fmt.Sprintf("events %s/%s", w.Namespace, name), content)
 
 		for _, h := range w.RootCauseTrace {
-			if reads >= maxToolCalls {
+			if spent >= maxToolCalls {
 				break
 			}
 			if h.Verdict == inventory.VerdictRuledOut || h.Object == "" {
@@ -97,23 +113,27 @@ func gatherEvidence(ctx context.Context, client kubernetes.Interface, scoped []i
 			case "node":
 				n, err := client.CoreV1().Nodes().Get(ctx, h.Object, metav1.GetOptions{})
 				if err != nil {
+					fresh.Failed["node/"+h.Object] = safetext.Line(redact.Error(err))
 					content = "read failed: " + redact.Error(err)
 				} else {
+					fresh.Nodes[h.Object] = n
 					content = describeNode(n)
 				}
 			case "pvc":
 				pvc, err := client.CoreV1().PersistentVolumeClaims(ns).Get(ctx, h.Object, metav1.GetOptions{})
 				if err != nil {
+					fresh.Failed["pvc/"+ns+"/"+h.Object] = safetext.Line(redact.Error(err))
 					content = "read failed: " + redact.Error(err)
 				} else {
+					fresh.PVCs[ns+"/"+h.Object] = pvc
 					content = describePVC(pvc)
 				}
 			}
-			appendRead(&b, &trail, &reads, fmt.Sprintf("describe %s %s/%s", h.Kind, ns, h.Object), content)
+			appendRead(&b, &trail, &spent, fmt.Sprintf("describe %s %s/%s", h.Kind, ns, h.Object), content)
 		}
 
 		for _, f := range w.Findings {
-			if reads >= maxToolCalls {
+			if spent >= maxToolCalls {
 				break
 			}
 			if !crashFamily(f.Issue) || f.Container == "" {
@@ -130,19 +150,19 @@ func gatherEvidence(ctx context.Context, client kubernetes.Interface, scoped []i
 			seenLog[key] = true
 			log, ok, err := collect.PreviousLogs(ctx, client, w.Namespace, pod, f.Container)
 			res := logCauseResult("", w.Namespace, pod, f.Container, log, ok, err)
-			appendRead(&b, &trail, &reads, fmt.Sprintf("log causes %s/%s container %s", w.Namespace, pod, f.Container), res.Content)
+			appendRead(&b, &trail, &spent, fmt.Sprintf("log causes %s/%s container %s", w.Namespace, pod, f.Container), res.Content)
 		}
 	}
-	return trail, b.String()
+	return trail, b.String(), fresh
 }
 
 // appendRead records one completed read: one trail entry, one budget unit,
 // one bundle section. Content arrives already reduced (never a raw error)
 // and is capped at maxReadBytes here; trailing newlines are normalized so a
 // section is always exactly "== label ==\n<content>\n\n".
-func appendRead(b *strings.Builder, trail *[]string, reads *int, label, content string) {
+func appendRead(b *strings.Builder, trail *[]string, spent *int, label, content string) {
 	*trail = append(*trail, label)
-	*reads++
+	*spent++
 	b.WriteString("== " + label + " ==\n")
 	b.WriteString(strings.TrimRight(capContent(content), "\n"))
 	b.WriteString("\n\n")

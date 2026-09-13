@@ -970,3 +970,18 @@ func TestReaderReadsStayWithinGrantedRBAC(t *testing.T) {
 		}
 	}
 }
+
+func TestFormatEventsBytes(t *testing.T) {
+	if got := formatEvents("shop", "web-abc", nil); got != "no events for shop/web-abc" {
+		t.Errorf("no items: %q", got)
+	}
+	items := []corev1.Event{{Reason: "BackOff", Message: "Back-off restarting failed container", Count: 4}}
+	want := "events for shop/web-abc:\n  BackOff: Back-off restarting failed container (x4)\n"
+	if got := formatEvents("shop", "web-abc", items); got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	hostile := []corev1.Event{{Reason: "Failed", Message: "pull\x1b[31m failed", Count: 1}}
+	if got := formatEvents("shop", "web-abc", hostile); strings.Contains(got, "\x1b") {
+		t.Errorf("formatting must sanitize: %q", got)
+	}
+}

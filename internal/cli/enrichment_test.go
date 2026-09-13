@@ -143,6 +143,31 @@ func TestRunModelPath(t *testing.T) {
 		if res.investigation.Narrative != "" {
 			t.Errorf("investigation.Narrative = %q, want empty on failure", res.investigation.Narrative)
 		}
+		if strings.Contains(res.notice, "; rule-decided") {
+			t.Errorf("notice = %q, want no rule-decided suffix on an empty report", res.notice)
+		}
+	})
+
+	t.Run("investigate failure with rule-decided rows keeps the report and extends the notice", func(t *testing.T) {
+		rep := investigate.Report{
+			Narrative: "Root-cause verdicts:\n- shop/web: node worker-1 (NotReady) [rule, unverified] — not re-read: the read budget was spent first",
+			Consulted: []string{"events shop/web-abc"},
+		}
+		res := runModelPath(scanOptions{investigate: true},
+			func() (investigate.Report, error) { return rep, errors.New("investigating: post: 500") },
+			func() (explain.Explanation, error) { return explain.Explanation{}, nil },
+		)
+		for _, want := range []string{"--investigate", "investigating: post: 500", "; rule-decided verdicts rendered without the model"} {
+			if !strings.Contains(res.notice, want) {
+				t.Errorf("notice = %q, want it to contain %q", res.notice, want)
+			}
+		}
+		if res.investigation.Narrative != rep.Narrative {
+			t.Errorf("investigation.Narrative = %q, want the rule rows kept", res.investigation.Narrative)
+		}
+		if len(res.investigation.Consulted) != 1 || res.investigation.Consulted[0] != "events shop/web-abc" {
+			t.Errorf("investigation.Consulted = %v, want the trail kept", res.investigation.Consulted)
+		}
 	})
 
 	t.Run("explain failure produces a notice naming --explain instead of an error", func(t *testing.T) {

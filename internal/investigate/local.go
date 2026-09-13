@@ -203,7 +203,7 @@ func (c *LocalClient) Investigate(ctx context.Context, cluster clusterhealth.Clu
 		return Report{}, nil
 	}
 	scoped := flaggedScope(workloads)
-	trail, bundle := gatherEvidence(ctx, client, scoped)
+	trail, bundle, _ := gatherEvidence(ctx, client, scoped)
 	prompt := buildVerdictPrompt(cluster, summary, facts, serviceIssues, scoped, bundle)
 	doc, truncated, err := c.call(ctx, prompt)
 	if err != nil {

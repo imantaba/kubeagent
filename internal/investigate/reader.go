@@ -294,26 +294,42 @@ func (r Reader) describeService(ctx context.Context, svc *corev1.Service) string
 
 type eventsInput struct{ Namespace, Name string }
 
-// eventsFor renders the events for one named object — shared by the
-// get_events tool and local verdict mode's evidence gather. The returned
-// string is fully sanitized; err is the raw client-go error for the caller
-// to reduce (redact.Error at both call sites).
-func eventsFor(ctx context.Context, client kubernetes.Interface, namespace, name string) (string, error) {
+// listEvents lists the events for one named object. err is the raw
+// client-go error for the caller to reduce (redact.Error at both call
+// sites).
+func listEvents(ctx context.Context, client kubernetes.Interface, namespace, name string) ([]corev1.Event, error) {
 	evs, err := client.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{
 		FieldSelector: "involvedObject.name=" + name,
 	})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	if len(evs.Items) == 0 {
-		return fmt.Sprintf("no events for %s/%s", namespace, name), nil
+	return evs.Items, nil
+}
+
+// formatEvents renders listed events. The returned string is fully
+// sanitized; the bytes are what eventsFor has always produced.
+func formatEvents(namespace, name string, items []corev1.Event) string {
+	if len(items) == 0 {
+		return fmt.Sprintf("no events for %s/%s", namespace, name)
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "events for %s/%s:\n", namespace, name)
-	for _, e := range evs.Items {
+	for _, e := range items {
 		fmt.Fprintf(&b, "  %s: %s (x%d)\n", sanitize(e.Reason), sanitize(e.Message), e.Count)
 	}
-	return b.String(), nil
+	return b.String()
+}
+
+// eventsFor renders the events for one named object — the get_events tool's
+// read. Local verdict mode's gather calls the two halves itself so the
+// listed items can also reach the rules.
+func eventsFor(ctx context.Context, client kubernetes.Interface, namespace, name string) (string, error) {
+	items, err := listEvents(ctx, client, namespace, name)
+	if err != nil {
+		return "", err
+	}
+	return formatEvents(namespace, name, items), nil
 }
 
 func (r Reader) getEvents(ctx context.Context, c toolCall, scope *Scope) toolResult {

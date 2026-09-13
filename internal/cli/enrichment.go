@@ -39,10 +39,12 @@ func enrichmentFailure(err error) string {
 	return redact.Error(err)
 }
 
-// modelPathResult is what running the model-enrichment path produces: either
-// the state a successful arm feeds into the report (explanation,
-// investigation), or, on failure, a notice for stderr. An enrichment failure
-// is never fatal to the scan (R223), so this carries no error.
+// modelPathResult is what running the model-enrichment path produces: the
+// state a successful arm feeds into the report (explanation, investigation),
+// or, on failure, a notice for stderr — and in local verdict mode a failed
+// investigate arm may carry both, a notice and the rule-decided
+// investigation. An enrichment failure is never fatal to the scan (R223), so
+// this carries no error.
 type modelPathResult struct {
 	explanation string
 	// explanationTruncated is true when explanation was cut short at the
@@ -55,7 +57,10 @@ type modelPathResult struct {
 
 // runModelPath runs whichever model-enrichment arm is selected —
 // --investigate supersedes --explain, matching the flag's own description —
-// and reduces a failure to one notice line instead of aborting the run.
+// and reduces a failure to one notice line instead of aborting the run. When
+// the failed call still returns a report with a narrative (local verdict
+// mode's rule-decided rows), the report is kept and the notice says the
+// model was absent.
 // investigateFn and explainFn are the actual calls, injected so this is
 // testable with no network and no cluster.
 func runModelPath(o scanOptions, investigateFn func() (investigate.Report, error), explainFn func() (explain.Explanation, error)) modelPathResult {
@@ -63,7 +68,14 @@ func runModelPath(o scanOptions, investigateFn func() (investigate.Report, error
 	case o.investigate:
 		rep, err := investigateFn()
 		if err != nil {
-			return modelPathResult{notice: fmt.Sprintf("--investigate: %s", enrichmentFailure(err))}
+			notice := fmt.Sprintf("--investigate: %s", enrichmentFailure(err))
+			if rep.Narrative != "" {
+				// Local verdict mode returns the rule-decided rows beside its
+				// error; they render, and the notice says the model was absent.
+				notice += "; rule-decided verdicts rendered without the model"
+				return modelPathResult{investigation: rep, notice: notice}
+			}
+			return modelPathResult{notice: notice}
 		}
 		return modelPathResult{investigation: rep}
 	case o.explain:

@@ -335,7 +335,9 @@ func runScan(o scanOptions) error {
 	// error. A narrative-less investigation is covered by the same rule
 	// (R220): it reaches runModelPath as just another error and gets the
 	// same notice-not-failure treatment, so the report renders with no
-	// Investigation section rather than nothing at all.
+	// Investigation section rather than nothing at all — unless the rules
+	// decided a workload, in which case the rule rows still render and the
+	// notice says the model was absent.
 	modelRes := runModelPath(o,
 		func() (investigate.Report, error) {
 			if os.Getenv("ANTHROPIC_API_KEY") == "" && explainEndpoint != "" {
@@ -426,11 +428,12 @@ func runScan(o scanOptions) error {
 	// InvestigationSkipped names the one case that is otherwise
 	// indistinguishable from --investigate never having been passed: with
 	// o.investigate set, runModelPath always enters the investigate arm
-	// above; a failure sets modelRes.notice (handled above, and leaves
-	// investigationReport zero); and a success with an empty narrative is
-	// impossible because Investigate itself returns an error rather than an
-	// empty report for that case. So this conjunction is exactly the skip
-	// and nothing else.
+	// above; a failure sets modelRes.notice (handled above) and leaves
+	// investigationReport zero unless the rules decided something, in which
+	// case the report is kept and the notice says so; and a success with an
+	// empty narrative is impossible because Investigate itself returns an
+	// error rather than an empty report for that case. So this conjunction
+	// is exactly the skip and nothing else.
 	in.InvestigationSkipped = o.investigate && modelRes.notice == "" && investigationReport.Narrative == ""
 	// ExplanationSkipped follows the same argument one flag over: with
 	// o.explain set and o.investigate clear, runModelPath enters the explain

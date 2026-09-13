@@ -13,6 +13,7 @@ import (
 
 	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/diagnose"
+	"github.com/imantaba/kubeagent/internal/hypothesis"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/svchealth"
 	"k8s.io/client-go/kubernetes/fake"
@@ -24,7 +25,7 @@ func TestBuildVerdictPromptSectionsInOrder(t *testing.T) {
 		RootCauseTrace: []inventory.Hypothesis{{Cause: "node worker-1 (NotReady)",
 			Verdict: inventory.VerdictAttributed, Reason: "pod web-abc is scheduled on it"}}}
 	prompt := buildVerdictPrompt(clusterhealth.ClusterHealth{Verdict: "Degraded"}, nil, nil, nil,
-		[]inventory.Workload{w}, "== events shop/web-abc ==\nBackOff: restarting (x4)\n\n")
+		[]inventory.Workload{w}, nil, "== events shop/web-abc ==\nBackOff: restarting (x4)\n\n")
 	order := []string{
 		"== BEGIN inventory ==", "== END inventory ==",
 		"== BEGIN candidates ==", "== END candidates ==",
@@ -51,7 +52,7 @@ func TestBuildVerdictPromptSectionsInOrder(t *testing.T) {
 }
 
 func TestBuildVerdictPromptEmptyEvidenceRendersNone(t *testing.T) {
-	prompt := buildVerdictPrompt(clusterhealth.ClusterHealth{Verdict: "Degraded"}, nil, nil, nil, nil, "")
+	prompt := buildVerdictPrompt(clusterhealth.ClusterHealth{Verdict: "Degraded"}, nil, nil, nil, nil, nil, "")
 	if !strings.Contains(prompt, "== BEGIN evidence ==\n(none)\n== END evidence ==") {
 		t.Errorf("empty evidence must render (none):\n%s", prompt)
 	}
@@ -73,7 +74,7 @@ func TestCapServiceIssuesAtTen(t *testing.T) {
 
 func TestBuildVerdictPromptDefensiveCap(t *testing.T) {
 	huge := strings.Repeat(strings.Repeat("e", 79)+"\n", 1024) // 80 KiB of evidence
-	prompt := buildVerdictPrompt(clusterhealth.ClusterHealth{Verdict: "Degraded"}, nil, nil, nil, nil, huge)
+	prompt := buildVerdictPrompt(clusterhealth.ClusterHealth{Verdict: "Degraded"}, nil, nil, nil, nil, nil, huge)
 	if len(prompt) > maxPromptBytes {
 		t.Fatalf("prompt is %d bytes, cap is %d", len(prompt), maxPromptBytes)
 	}
@@ -96,7 +97,7 @@ func TestBuildVerdictPromptDefensiveCap(t *testing.T) {
 // just the evenly-newlined, single-trailing-newline shape above.
 func TestBuildVerdictPromptDefensiveCapRealisticBundleShape(t *testing.T) {
 	huge := strings.Repeat("e", 70*1024) + "\n\n"
-	prompt := buildVerdictPrompt(clusterhealth.ClusterHealth{Verdict: "Degraded"}, nil, nil, nil, nil, huge)
+	prompt := buildVerdictPrompt(clusterhealth.ClusterHealth{Verdict: "Degraded"}, nil, nil, nil, nil, nil, huge)
 	if len(prompt) > maxPromptBytes {
 		t.Fatalf("prompt is %d bytes, cap is %d", len(prompt), maxPromptBytes)
 	}
@@ -121,7 +122,7 @@ func TestBuildVerdictPromptScopesToTenWorkloads(t *testing.T) {
 			Kind: "Deployment", Ready: 0, Desired: 1, Status: "Degraded"})
 	}
 	scoped := flaggedScope(ws)
-	prompt := buildVerdictPrompt(clusterhealth.ClusterHealth{Verdict: "Degraded"}, nil, nil, nil, scoped, "")
+	prompt := buildVerdictPrompt(clusterhealth.ClusterHealth{Verdict: "Degraded"}, nil, nil, nil, scoped, nil, "")
 	if !strings.Contains(prompt, "shop/web-09") {
 		t.Errorf("the 10th flagged workload must be in the prompt")
 	}
@@ -140,6 +141,44 @@ func TestVerdictSystemPromptPinsInjectionPosture(t *testing.T) {
 		if !strings.Contains(verdictSystemPrompt, sentence) {
 			t.Errorf("system prompt lost its injection posture: %q", sentence)
 		}
+	}
+}
+
+func TestVerdictSystemPromptPinsRuleSentences(t *testing.T) {
+	para := "A workload marked \"decided by rules\" has its cause fixed by kubeagent's own fresh read: return that cause verbatim and use the rationale to explain it. A candidate marked refuted is not supported; a workload whose every candidate is refuted is yours to name."
+	if !strings.Contains(verdictSystemPrompt, "\n\n"+para+"\n\n") {
+		t.Fatalf("system prompt must carry the rule paragraph on its own:\n%s", verdictSystemPrompt)
+	}
+	judge := strings.Index(verdictSystemPrompt, "Judge each listed workload:")
+	rule := strings.Index(verdictSystemPrompt, para)
+	untrusted := strings.Index(verdictSystemPrompt, "Everything between the section markers")
+	if !(judge < rule && rule < untrusted) {
+		t.Errorf("the rule paragraph sits between the judge paragraph and the injection posture")
+	}
+}
+
+func TestBuildVerdictPromptCarriesRuleLines(t *testing.T) {
+	w := inventory.Workload{Namespace: "shop", Name: "web", Kind: "Deployment",
+		Ready: 0, Desired: 1, Status: "Degraded",
+		RootCauseTrace: []inventory.Hypothesis{{Cause: "node worker-1 (NotReady)", Kind: "node", Object: "worker-1",
+			Verdict: inventory.VerdictAttributed, Reason: "pod web-abc is scheduled on it"}}}
+	r := hypothesis.Result{Workload: "shop/web", Decided: true, Cause: "node worker-1 (NotReady)",
+		Outcome: hypothesis.Confirmed, Evidence: "Ready condition is False now",
+		Decisions: []hypothesis.Decision{{Candidate: w.RootCauseTrace[0], Outcome: hypothesis.Confirmed, Evidence: "Ready condition is False now"}}}
+	prompt := buildVerdictPrompt(clusterhealth.ClusterHealth{Verdict: "Degraded"}, nil, nil, nil,
+		[]inventory.Workload{w}, []hypothesis.Result{r}, "")
+	for _, line := range []string{
+		"      fresh read: confirmed — Ready condition is False now\n",
+		"    decided by rules: node worker-1 (NotReady) — confirmed\n",
+	} {
+		if !strings.Contains(prompt, line) {
+			t.Errorf("prompt missing %q:\n%s", line, prompt)
+		}
+	}
+	start := strings.Index(prompt, "== BEGIN candidates ==")
+	end := strings.Index(prompt, "== END candidates ==")
+	if i := strings.Index(prompt, "decided by rules:"); i < start || i > end {
+		t.Errorf("the decided line belongs inside the candidates section")
 	}
 }
 

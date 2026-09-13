@@ -489,3 +489,100 @@ func TestEvidenceIsAlwaysAFixedShape(t *testing.T) {
 		}
 	}
 }
+
+// withClass sets the PVC's storage class and returns it.
+func withClass(pvc *corev1.PersistentVolumeClaim, class string) *corev1.PersistentVolumeClaim {
+	pvc.Spec.StorageClassName = &class
+	return pvc
+}
+
+func TestGroupNode(t *testing.T) {
+	rd := emptyReads()
+	rd.Nodes["worker-1"] = nodeWithReady("worker-1", corev1.ConditionFalse)
+	r := Decide(workloadWith(nodeCandidateOn("worker-1", "NotReady")), rd)
+	if r.GroupKey != "node/worker-1" || r.GroupText != "node worker-1 (NotReady)" {
+		t.Errorf("got %q %q", r.GroupKey, r.GroupText)
+	}
+}
+
+func TestGroupRegistry(t *testing.T) {
+	rd := emptyReads()
+	rd.Events["shop/web-abc"] = []corev1.Event{pullEvent("Failed to pull image: connection refused")}
+	r := Decide(pullWorkload(), rd)
+	if r.GroupKey != "registry/registry.example.com" || r.GroupText != "registry registry.example.com (2 workloads failing to pull)" {
+		t.Errorf("got %q %q", r.GroupKey, r.GroupText)
+	}
+}
+
+func TestGroupPVCFallsBackToTheClaim(t *testing.T) {
+	rd := emptyReads()
+	rd.PVCs["shop/web-data"] = withClass(pvcWith("shop", "web-data", corev1.ClaimPending), "example-csi")
+	r := Decide(workloadWith(pvcCandidate("web-data", "ProvisioningFailed")), rd)
+	if r.GroupKey != "pvc/shop/web-data" || r.GroupText != "PVC web-data (ProvisioningFailed)" {
+		t.Errorf("a per-claim reason groups by claim even with a class, got %q %q", r.GroupKey, r.GroupText)
+	}
+}
+
+func TestGroupPVCStorageClass(t *testing.T) {
+	for _, reason := range []string{"ProvisionerNotResponding", "MissingStorageClass"} {
+		t.Run(reason, func(t *testing.T) {
+			rd := emptyReads()
+			rd.PVCs["shop/web-data"] = withClass(pvcWith("shop", "web-data", corev1.ClaimPending), "example-csi")
+			r := Decide(workloadWith(pvcCandidate("web-data", reason)), rd)
+			if r.GroupKey != "storageclass/example-csi/"+reason || r.GroupText != "storage class example-csi ("+reason+")" {
+				t.Errorf("got %q %q", r.GroupKey, r.GroupText)
+			}
+		})
+	}
+}
+
+func TestGroupPVCStorageClassNeedsAPlainClass(t *testing.T) {
+	cases := []struct {
+		name string
+		pvc  *corev1.PersistentVolumeClaim
+	}{
+		{"nil class", pvcWith("shop", "web-data", corev1.ClaimPending)},
+		{"empty class", withClass(pvcWith("shop", "web-data", corev1.ClaimPending), "")},
+		{"hostile class", withClass(pvcWith("shop", "web-data", corev1.ClaimPending), "Bad Class!\x1b")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rd := emptyReads()
+			rd.PVCs["shop/web-data"] = tc.pvc
+			r := Decide(workloadWith(pvcCandidate("web-data", "MissingStorageClass")), rd)
+			if r.GroupKey != "pvc/shop/web-data" || r.GroupText != "PVC web-data (MissingStorageClass)" {
+				t.Errorf("got %q %q", r.GroupKey, r.GroupText)
+			}
+		})
+	}
+}
+
+func TestGroupOnlyConfirmedRows(t *testing.T) {
+	rd := emptyReads()
+	rd.Nodes["worker-1"] = nodeWithReady("worker-1", corev1.ConditionTrue)
+	r := Decide(workloadWith(nodeCandidateOn("worker-1", "no kubelet lease")), rd)
+	if !r.Decided || r.Outcome != Unverified {
+		t.Fatalf("fixture must be an unverified row, got %+v", r)
+	}
+	if r.GroupKey != "" || r.GroupText != "" {
+		t.Errorf("an unverified row never joins a group, got %q %q", r.GroupKey, r.GroupText)
+	}
+}
+
+func TestPlainName(t *testing.T) {
+	for s, want := range map[string]bool{"example-csi": true, "a.b-c1": true, "": false,
+		"Bad Class!": false, "x\x1b": false, "über": false, "a/b": false} {
+		if got := plainName(s); got != want {
+			t.Errorf("plainName(%q) = %v, want %v", s, got, want)
+		}
+	}
+}
+
+func TestParenthesizedReadsTheLastPair(t *testing.T) {
+	for s, want := range map[string]string{"PVC a (b) (c)": "c", "no parens": "", "(x": "",
+		"node worker-1 (NotReady)": "NotReady", "x)": ""} {
+		if got := parenthesized(s); got != want {
+			t.Errorf("parenthesized(%q) = %q, want %q", s, got, want)
+		}
+	}
+}

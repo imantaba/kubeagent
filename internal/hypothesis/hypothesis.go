@@ -81,11 +81,16 @@ func Decide(w inventory.Workload, reads Reads) Result {
 	return r
 }
 
-// decided fills the row from the deciding candidate.
+// decided fills the row from the deciding candidate. Only a confirmed row
+// joins a group: an unverified cause is a guess and must not be counted
+// as shared.
 func decided(r Result, d Decision, w inventory.Workload, reads Reads) Result {
 	r.Decided = true
 	r.Cause = d.Candidate.Cause
 	r.Outcome = d.Outcome
 	r.Evidence = d.Evidence
+	if d.Outcome == Confirmed {
+		r.GroupKey, r.GroupText = group(w, d.Candidate, reads)
+	}
 	return r
 }

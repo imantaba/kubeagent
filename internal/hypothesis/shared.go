@@ -100,7 +100,7 @@ func Shared(results []Result) []string {
 		lines = append(lines, fmt.Sprintf("%d workloads share one upstream cause: %s", g.n, g.text))
 	}
 	if len(lines) == 0 {
-		return []string{fmt.Sprintf("no shared cause among the %d workloads decided by rules", confirmed)}
+		return []string{fmt.Sprintf("no shared cause among the %d workloads confirmed by rules", confirmed)}
 	}
 	return lines
 }

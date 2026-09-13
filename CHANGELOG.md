@@ -21,9 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The local verdict section's header is now `Root-cause verdicts:`. Each row
   carries a label: `[rule, confirmed]`, `[rule, unverified]` or
-  `[model, confidence: …]`. When two or more rule rows share a node, a
-  registry, a storage class or a claim, a shared-cause line renders before the
-  model's summary.
+  `[model, confidence: …]`. When two or more confirmed rule rows share a
+  node, a registry, a storage class or a claim, a shared-cause line renders
+  before the model's summary.
 
 ## [1.23.0] - 2026-08-22
 

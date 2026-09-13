@@ -1461,7 +1461,7 @@ scope follow, in the model's order.
 the same registry, the same storage class or the same claim, one line under the
 rows says so: `2 workloads share one upstream cause: node worker-1 (NotReady)`.
 When two or more rows are confirmed and none share a cause, the line is `no
-shared cause among the 2 workloads decided by rules`. At most 4 shared lines
+shared cause among the 2 workloads confirmed by rules`. At most 4 shared lines
 render, and they come before the model's summary.
 
 **Size bounds:**

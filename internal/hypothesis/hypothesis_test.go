@@ -608,7 +608,7 @@ func TestSharedNoSharedCause(t *testing.T) {
 		confirmedIn("shop/web", "node/worker-1", "node worker-1 (NotReady)"),
 		confirmedIn("shop/api", "node/worker-2", "node worker-2 (NotReady)"),
 	}
-	want := []string{"no shared cause among the 2 workloads decided by rules"}
+	want := []string{"no shared cause among the 2 workloads confirmed by rules"}
 	if got := Shared(rs); len(got) != 1 || got[0] != want[0] {
 		t.Errorf("got %v, want %v", got, want)
 	}

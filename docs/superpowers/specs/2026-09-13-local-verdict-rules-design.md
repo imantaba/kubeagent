@@ -279,7 +279,7 @@ packages are in scope, pins that `rootcause`'s format still parses.
   `N workloads share one upstream cause: <GroupText>`. Groups sort by size,
   largest first, then by key.
 - When there are two or more confirmed rows and no group of two: one line,
-  `no shared cause among the N workloads decided by rules`.
+  `no shared cause among the N workloads confirmed by rules`.
 - Fewer than two confirmed rows: no line.
 - At most `maxSummaryLines` (4) lines; more than that is cut and marked with
   the truncation marker, the same way `capSummary` marks a cut.

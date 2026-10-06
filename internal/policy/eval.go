@@ -174,7 +174,9 @@ func evidence(s Slot) string {
 	}
 	clean := []rune(safetext.Line(raw))
 	if len(clean) > evidenceLimit {
-		clean = clean[:evidenceLimit]
+		// The cut can land just after a space; Line again trims it, and on
+		// already-clean text trimming is all it does.
+		return safetext.Line(string(clean[:evidenceLimit]))
 	}
 	return string(clean)
 }

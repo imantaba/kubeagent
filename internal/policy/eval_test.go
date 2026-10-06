@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+
+	"github.com/imantaba/kubeagent/internal/safetext"
 )
 
 func pod(namespace, name string, labels map[string]string, images ...string) *unstructured.Unstructured {
@@ -303,6 +305,25 @@ func TestEvidenceIsSanitizedAndTruncated(t *testing.T) {
 	}
 	if n := len([]rune(ev)); n > 120 {
 		t.Errorf("evidence is %d runes, want at most 120", n)
+	}
+}
+
+// TestTruncatedEvidenceEndsOnNoSpace: the cap can land just after a space.
+// Evidence that ends in one is not what safetext.Line returns for it, so the
+// cut must not leave whitespace at the end. A no-break space is trimmed too.
+func TestTruncatedEvidenceEndsOnNoSpace(t *testing.T) {
+	for _, space := range []string{" ", "\u00a0"} {
+		p := pod("prod", "bad", nil, "docker.example.net/"+strings.Repeat("x", 100)+space+strings.Repeat("y", 50))
+		violations, _ := Evaluate([]Rule{registryRule()}, Inputs{
+			Objects: map[string][]*unstructured.Unstructured{"Pod": {p}},
+		})
+		if len(violations) != 1 {
+			t.Fatalf("got %d violations, want 1", len(violations))
+		}
+		ev := violations[0].Evidence
+		if safetext.Line(ev) != ev {
+			t.Errorf("evidence %q is not stable under safetext.Line", ev)
+		}
 	}
 }
 

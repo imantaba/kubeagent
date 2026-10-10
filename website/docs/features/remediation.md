@@ -73,11 +73,12 @@ retry, re-run the scan so a fresh preview is computed against current state.
 
 A save can also be refused because something else — usually the Deployment
 controller — wrote the object a moment before kubeagent did (an HTTP 409
-Conflict). That is not drift, so kubeagent tries again, up to five times:
-each try reads the object afresh and runs the same checks and the same
+Conflict). A conflict is not by itself drift, so kubeagent tries again, up
+to five tries in all: each try reads the object afresh and runs the same checks and the same
 permission preflight before saving. If the fresh copy fails a check, the
 action is refused with no write, exactly as above. Only a conflict is
-retried; any other error ends the action at once.
+retried; any other error ends the action at once. If the conflict is still
+there on the fifth try, the action fails as it did before.
 
 ## Example
 

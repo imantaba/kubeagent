@@ -9,12 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `--fix` and `--rollback` no longer fail when the object changes between
-  kubeagent's read and its save. A 409 Conflict — typically the Deployment
-  controller updating a Deployment it was just handed — is now retried up to
-  five times, and every try re-reads the object and re-runs every safety
-  check and the permission preflight. A fresh copy that fails a check is
-  refused with no write, as before. Only a conflict is retried.
+- `--fix` and `--rollback` no longer fail on a single conflicting write. A
+  409 Conflict — typically the Deployment controller updating a Deployment it
+  was just handed — is now retried, up to five tries in all, and every try
+  re-reads the object and re-runs every safety check and the permission
+  preflight. A fresh copy that fails a check is refused with no write, as
+  before. Only a conflict is retried; a conflict that is still there on the
+  fifth try fails the action as before.
 
 ## [1.24.0] - 2026-09-13
 

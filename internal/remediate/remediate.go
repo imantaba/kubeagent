@@ -15,6 +15,7 @@ import (
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/util/retry"
 
 	"github.com/imantaba/kubeagent/internal/inventory"
 )
@@ -307,55 +308,65 @@ func Apply(ctx context.Context, client kubernetes.Interface, a Action) Result {
 }
 
 func applyRolloutUndo(ctx context.Context, client kubernetes.Interface, a Action) Result {
-	res := Result{Action: a}
 	if protectedNamespaces[a.Namespace] {
-		res.Err = fmt.Errorf("refusing to act in protected namespace %q", a.Namespace)
-		return res
+		return Result{Action: a, Err: fmt.Errorf("refusing to act in protected namespace %q", a.Namespace)}
 	}
-	dep, err := client.AppsV1().Deployments(a.Namespace).Get(ctx, a.Name, metav1.GetOptions{})
+	// A 409 Conflict means something — usually the Deployment controller —
+	// wrote the object between the read and the save. Each try re-reads it and
+	// re-runs every guard and the preflight, so a save only ever lands on a copy
+	// the guards approved. Only the Update's own error leaves the closure, so
+	// only a conflict is retried.
+	var res Result
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		res = Result{Action: a}
+		dep, err := client.AppsV1().Deployments(a.Namespace).Get(ctx, a.Name, metav1.GetOptions{})
+		if err != nil {
+			res.Err = fmt.Errorf("get deployment: %w", err)
+			return nil
+		}
+		rsList, err := client.AppsV1().ReplicaSets(a.Namespace).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			res.Err = fmt.Errorf("list replicasets: %w", err)
+			return nil
+		}
+		target := pickTarget(dep, rsList.Items)
+		if target == nil {
+			res.Detail = "no differing prior revision to roll back to (state changed); no write made"
+			res.Refused = true
+			return nil
+		}
+		curRev, targetRev := revFromAnnotations(dep.Annotations), revFromAnnotations(target.Annotations)
+		if curRev != a.CurrentRevision || targetRev != a.TargetRevision {
+			res.Detail = fmt.Sprintf(
+				"state changed since preview (revision %d is now current and the rollback would land on %d; previewed %d → %d) — re-run kubeagent scan --fix; no write made",
+				curRev, targetRev, a.CurrentRevision, a.TargetRevision)
+			res.Refused = true
+			return nil
+		}
+		allowed, reason, err := Preflight(ctx, client, a)
+		if err != nil {
+			res.Err = fmt.Errorf("permission preflight failed: %w", err)
+			return nil
+		}
+		if !allowed {
+			res.PreflightDenied = true
+			res.Detail = reason + "; no write attempted"
+			return nil
+		}
+		tpl := *target.Spec.Template.DeepCopy()
+		delete(tpl.Labels, "pod-template-hash")
+		dep.Spec.Template = tpl
+		if _, err := client.AppsV1().Deployments(a.Namespace).Update(ctx, dep, metav1.UpdateOptions{}); err != nil {
+			return err
+		}
+		res.Applied = true
+		res.Detail = fmt.Sprintf("rolled back %s/%s to revision %d (pod template restored)",
+			a.Namespace, a.Name, revFromAnnotations(target.Annotations))
+		return nil
+	})
 	if err != nil {
-		res.Err = fmt.Errorf("get deployment: %w", err)
-		return res
-	}
-	rsList, err := client.AppsV1().ReplicaSets(a.Namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		res.Err = fmt.Errorf("list replicasets: %w", err)
-		return res
-	}
-	target := pickTarget(dep, rsList.Items)
-	if target == nil {
-		res.Detail = "no differing prior revision to roll back to (state changed); no write made"
-		res.Refused = true
-		return res
-	}
-	curRev, targetRev := revFromAnnotations(dep.Annotations), revFromAnnotations(target.Annotations)
-	if curRev != a.CurrentRevision || targetRev != a.TargetRevision {
-		res.Detail = fmt.Sprintf(
-			"state changed since preview (revision %d is now current and the rollback would land on %d; previewed %d → %d) — re-run kubeagent scan --fix; no write made",
-			curRev, targetRev, a.CurrentRevision, a.TargetRevision)
-		res.Refused = true
-		return res
-	}
-	allowed, reason, err := Preflight(ctx, client, a)
-	if err != nil {
-		res.Err = fmt.Errorf("permission preflight failed: %w", err)
-		return res
-	}
-	if !allowed {
-		res.PreflightDenied = true
-		res.Detail = reason + "; no write attempted"
-		return res
-	}
-	tpl := *target.Spec.Template.DeepCopy()
-	delete(tpl.Labels, "pod-template-hash")
-	dep.Spec.Template = tpl
-	if _, err := client.AppsV1().Deployments(a.Namespace).Update(ctx, dep, metav1.UpdateOptions{}); err != nil {
 		res.Err = fmt.Errorf("update deployment: %w", err)
-		return res
 	}
-	res.Applied = true
-	res.Detail = fmt.Sprintf("rolled back %s/%s to revision %d (pod template restored)",
-		a.Namespace, a.Name, revFromAnnotations(target.Annotations))
 	return res
 }
 
@@ -472,98 +483,105 @@ func Inverse(kind, namespace, name string, fromRevision, toRevision int) (Action
 // a content-based drift bond (Amendment 2026-07-25): find the target RS by TargetRevision,
 // verify the Deployment template is not already at the target, verify the Deployment's
 // per-container images still match the post-fix images recorded on the Action's Changes,
-// then the RBAC preflight, then the single write.
+// then the RBAC preflight, then the single write — the whole sequence retried on a write conflict.
 //
 // CurrentRevision is kept on the Action for display/audit but is NOT a precondition —
 // Kubernetes assigns a brand-new revision after a template-restore fix, so the numeric
 // bond can never match.
 func applyRolloutForward(ctx context.Context, client kubernetes.Interface, a Action) Result {
-	res := Result{Action: a}
 	if protectedNamespaces[a.Namespace] {
-		res.Err = fmt.Errorf("refusing to act in protected namespace %q", a.Namespace)
-		return res
+		return Result{Action: a, Err: fmt.Errorf("refusing to act in protected namespace %q", a.Namespace)}
 	}
-	dep, err := client.AppsV1().Deployments(a.Namespace).Get(ctx, a.Name, metav1.GetOptions{})
-	if err != nil {
-		res.Err = fmt.Errorf("get deployment: %w", err)
-		return res
-	}
-	rsList, err := client.AppsV1().ReplicaSets(a.Namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		res.Err = fmt.Errorf("list replicasets: %w", err)
-		return res
-	}
-
-	// 1. Find the restore target by TargetRevision (= fromRevision; survives the fix).
-	var target *appsv1.ReplicaSet
-	for i := range rsList.Items {
-		rs := &rsList.Items[i]
-		if ownedBy(*rs, a.Name) && revFromAnnotations(rs.Annotations) == a.TargetRevision {
-			target = rs
-			break
+	// Retried on a 409 Conflict exactly as applyRolloutUndo is: every try
+	// re-reads and re-runs steps 1-3 and the preflight.
+	var res Result
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		res = Result{Action: a}
+		dep, err := client.AppsV1().Deployments(a.Namespace).Get(ctx, a.Name, metav1.GetOptions{})
+		if err != nil {
+			res.Err = fmt.Errorf("get deployment: %w", err)
+			return nil
 		}
-	}
-	if target == nil {
-		res.Detail = fmt.Sprintf("revision %d no longer exists; no write made", a.TargetRevision)
-		res.Refused = true
-		return res
-	}
-
-	// 2. Nothing to undo: Deployment template is already the target template.
-	if templatesEqual(dep.Spec.Template, target.Spec.Template) {
-		res.Detail = "already at the pre-fix revision; no write made"
-		res.Refused = true
-		return res
-	}
-
-	// 3. Drift: the Deployment's current per-container images must still match the
-	// post-fix images recorded in the Action's Changes.  Any mismatch means a third
-	// party has changed something since the fix — refuse rather than clobber.
-	const imagePrefix = "image ("
-	for _, c := range a.Changes {
-		if !strings.HasPrefix(c.Field, imagePrefix) {
-			continue
+		rsList, err := client.AppsV1().ReplicaSets(a.Namespace).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			res.Err = fmt.Errorf("list replicasets: %w", err)
+			return nil
 		}
-		// Parse "image (<containerName>)" → containerName
-		name := strings.TrimSuffix(strings.TrimPrefix(c.Field, imagePrefix), ")")
-		want := c.To // what the fix left as the post-fix image
-		// Find the container by name in the current Deployment template.
-		var actual string
-		for _, container := range dep.Spec.Template.Spec.Containers {
-			if container.Name == name {
-				actual = container.Image
+
+		// 1. Find the restore target by TargetRevision (= fromRevision; survives the fix).
+		var target *appsv1.ReplicaSet
+		for i := range rsList.Items {
+			rs := &rsList.Items[i]
+			if ownedBy(*rs, a.Name) && revFromAnnotations(rs.Annotations) == a.TargetRevision {
+				target = rs
 				break
 			}
 		}
-		if actual != want {
-			res.Detail = fmt.Sprintf(
-				"state changed since the fix (container %q is now %s; the fix left it at %s) — no write made",
-				name, actual, want)
+		if target == nil {
+			res.Detail = fmt.Sprintf("revision %d no longer exists; no write made", a.TargetRevision)
 			res.Refused = true
-			return res
+			return nil
 		}
-	}
 
-	allowed, reason, err := Preflight(ctx, client, a)
+		// 2. Nothing to undo: Deployment template is already the target template.
+		if templatesEqual(dep.Spec.Template, target.Spec.Template) {
+			res.Detail = "already at the pre-fix revision; no write made"
+			res.Refused = true
+			return nil
+		}
+
+		// 3. Drift: the Deployment's current per-container images must still match the
+		// post-fix images recorded in the Action's Changes.  Any mismatch means a third
+		// party has changed something since the fix — refuse rather than clobber.
+		const imagePrefix = "image ("
+		for _, c := range a.Changes {
+			if !strings.HasPrefix(c.Field, imagePrefix) {
+				continue
+			}
+			// Parse "image (<containerName>)" → containerName
+			name := strings.TrimSuffix(strings.TrimPrefix(c.Field, imagePrefix), ")")
+			want := c.To // what the fix left as the post-fix image
+			// Find the container by name in the current Deployment template.
+			var actual string
+			for _, container := range dep.Spec.Template.Spec.Containers {
+				if container.Name == name {
+					actual = container.Image
+					break
+				}
+			}
+			if actual != want {
+				res.Detail = fmt.Sprintf(
+					"state changed since the fix (container %q is now %s; the fix left it at %s) — no write made",
+					name, actual, want)
+				res.Refused = true
+				return nil
+			}
+		}
+
+		allowed, reason, err := Preflight(ctx, client, a)
+		if err != nil {
+			res.Err = fmt.Errorf("permission preflight failed: %w", err)
+			return nil
+		}
+		if !allowed {
+			res.PreflightDenied = true
+			res.Detail = reason + "; no write attempted"
+			return nil
+		}
+		tpl := *target.Spec.Template.DeepCopy()
+		delete(tpl.Labels, "pod-template-hash")
+		dep.Spec.Template = tpl
+		if _, err := client.AppsV1().Deployments(a.Namespace).Update(ctx, dep, metav1.UpdateOptions{}); err != nil {
+			return err
+		}
+		res.Applied = true
+		res.Detail = fmt.Sprintf("rolled %s/%s forward to revision %d (pre-fix pod template restored)",
+			a.Namespace, a.Name, a.TargetRevision)
+		return nil
+	})
 	if err != nil {
-		res.Err = fmt.Errorf("permission preflight failed: %w", err)
-		return res
-	}
-	if !allowed {
-		res.PreflightDenied = true
-		res.Detail = reason + "; no write attempted"
-		return res
-	}
-	tpl := *target.Spec.Template.DeepCopy()
-	delete(tpl.Labels, "pod-template-hash")
-	dep.Spec.Template = tpl
-	if _, err := client.AppsV1().Deployments(a.Namespace).Update(ctx, dep, metav1.UpdateOptions{}); err != nil {
 		res.Err = fmt.Errorf("update deployment: %w", err)
-		return res
 	}
-	res.Applied = true
-	res.Detail = fmt.Sprintf("rolled %s/%s forward to revision %d (pre-fix pod template restored)",
-		a.Namespace, a.Name, a.TargetRevision)
 	return res
 }
 

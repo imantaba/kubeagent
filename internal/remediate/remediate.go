@@ -371,35 +371,43 @@ func applyRolloutUndo(ctx context.Context, client kubernetes.Interface, a Action
 }
 
 func applyUncordon(ctx context.Context, client kubernetes.Interface, a Action) Result {
-	res := Result{Action: a}
-	n, err := client.CoreV1().Nodes().Get(ctx, a.Name, metav1.GetOptions{})
+	// Retried on a 409 Conflict as applyRolloutUndo is: every try re-reads the
+	// node and re-runs the precondition and the preflight.
+	var res Result
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		res = Result{Action: a}
+		n, err := client.CoreV1().Nodes().Get(ctx, a.Name, metav1.GetOptions{})
+		if err != nil {
+			res.Err = fmt.Errorf("get node: %w", err)
+			return nil
+		}
+		// apply-time precondition: still cordoned and still no NoExecute taint
+		if !n.Spec.Unschedulable || hasNoExecuteTaint(*n) {
+			res.Detail = "node is no longer a safe uncordon target (already schedulable or NoExecute-tainted); no write made"
+			res.Refused = true
+			return nil
+		}
+		allowed, reason, err := Preflight(ctx, client, a)
+		if err != nil {
+			res.Err = fmt.Errorf("permission preflight failed: %w", err)
+			return nil
+		}
+		if !allowed {
+			res.PreflightDenied = true
+			res.Detail = reason + "; no write attempted"
+			return nil
+		}
+		n.Spec.Unschedulable = false
+		if _, err := client.CoreV1().Nodes().Update(ctx, n, metav1.UpdateOptions{}); err != nil {
+			return err
+		}
+		res.Applied = true
+		res.Detail = "uncordoned node " + a.Name
+		return nil
+	})
 	if err != nil {
-		res.Err = fmt.Errorf("get node: %w", err)
-		return res
-	}
-	// apply-time precondition: still cordoned and still no NoExecute taint
-	if !n.Spec.Unschedulable || hasNoExecuteTaint(*n) {
-		res.Detail = "node is no longer a safe uncordon target (already schedulable or NoExecute-tainted); no write made"
-		res.Refused = true
-		return res
-	}
-	allowed, reason, err := Preflight(ctx, client, a)
-	if err != nil {
-		res.Err = fmt.Errorf("permission preflight failed: %w", err)
-		return res
-	}
-	if !allowed {
-		res.PreflightDenied = true
-		res.Detail = reason + "; no write attempted"
-		return res
-	}
-	n.Spec.Unschedulable = false
-	if _, err := client.CoreV1().Nodes().Update(ctx, n, metav1.UpdateOptions{}); err != nil {
 		res.Err = fmt.Errorf("update node: %w", err)
-		return res
 	}
-	res.Applied = true
-	res.Detail = "uncordoned node " + a.Name
 	return res
 }
 
@@ -587,33 +595,40 @@ func applyRolloutForward(ctx context.Context, client kubernetes.Interface, a Act
 
 // applyCordon re-cordons a node that a previous fix uncordoned.
 func applyCordon(ctx context.Context, client kubernetes.Interface, a Action) Result {
-	res := Result{Action: a}
-	n, err := client.CoreV1().Nodes().Get(ctx, a.Name, metav1.GetOptions{})
+	// Retried on a 409 Conflict as applyRolloutUndo is.
+	var res Result
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		res = Result{Action: a}
+		n, err := client.CoreV1().Nodes().Get(ctx, a.Name, metav1.GetOptions{})
+		if err != nil {
+			res.Err = fmt.Errorf("get node: %w", err)
+			return nil
+		}
+		if n.Spec.Unschedulable {
+			res.Detail = "node is already cordoned; no write made"
+			res.Refused = true
+			return nil
+		}
+		allowed, reason, err := Preflight(ctx, client, a)
+		if err != nil {
+			res.Err = fmt.Errorf("permission preflight failed: %w", err)
+			return nil
+		}
+		if !allowed {
+			res.PreflightDenied = true
+			res.Detail = reason + "; no write attempted"
+			return nil
+		}
+		n.Spec.Unschedulable = true
+		if _, err := client.CoreV1().Nodes().Update(ctx, n, metav1.UpdateOptions{}); err != nil {
+			return err
+		}
+		res.Applied = true
+		res.Detail = "re-cordoned node " + a.Name
+		return nil
+	})
 	if err != nil {
-		res.Err = fmt.Errorf("get node: %w", err)
-		return res
-	}
-	if n.Spec.Unschedulable {
-		res.Detail = "node is already cordoned; no write made"
-		res.Refused = true
-		return res
-	}
-	allowed, reason, err := Preflight(ctx, client, a)
-	if err != nil {
-		res.Err = fmt.Errorf("permission preflight failed: %w", err)
-		return res
-	}
-	if !allowed {
-		res.PreflightDenied = true
-		res.Detail = reason + "; no write attempted"
-		return res
-	}
-	n.Spec.Unschedulable = true
-	if _, err := client.CoreV1().Nodes().Update(ctx, n, metav1.UpdateOptions{}); err != nil {
 		res.Err = fmt.Errorf("update node: %w", err)
-		return res
 	}
-	res.Applied = true
-	res.Detail = "re-cordoned node " + a.Name
 	return res
 }

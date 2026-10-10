@@ -1073,3 +1073,135 @@ func TestApply_DoesNotRetryNonConflictError(t *testing.T) {
 		t.Errorf("update calls = %d, want 1 (only a conflict is retried)", calls)
 	}
 }
+
+var nodesGVR = schema.GroupVersionResource{Version: "v1", Resource: "nodes"}
+
+func cordonedNode(name string) *corev1.Node {
+	n := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: name}}
+	n.Spec.Unschedulable = true
+	return n
+}
+
+func TestApply_UncordonRetriesAfterConflict(t *testing.T) {
+	cli := fake.NewSimpleClientset(cordonedNode("worker-1"))
+	allowFix(cli)
+	calls := conflictUpdates(cli, "nodes", 1, nil)
+	res := Apply(context.Background(), cli, Action{Kind: "Uncordon", Name: "worker-1"})
+	if !res.Applied || res.Err != nil || res.Refused {
+		t.Fatalf("one conflict must be retried and applied, got %+v", res)
+	}
+	if *calls != 2 {
+		t.Errorf("update calls = %d, want 2", *calls)
+	}
+	out, _ := cli.CoreV1().Nodes().Get(context.Background(), "worker-1", metav1.GetOptions{})
+	if out.Spec.Unschedulable {
+		t.Error("node should be schedulable after uncordon")
+	}
+}
+
+func TestApply_CordonRetriesAfterConflict(t *testing.T) {
+	cli := fake.NewSimpleClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1"}})
+	allowFix(cli)
+	calls := conflictUpdates(cli, "nodes", 1, nil)
+	a, _ := Inverse("Uncordon", "", "worker-1", 0, 0)
+	res := Apply(context.Background(), cli, a)
+	if !res.Applied || res.Err != nil || res.Refused {
+		t.Fatalf("one conflict must be retried and applied, got %+v", res)
+	}
+	if *calls != 2 {
+		t.Errorf("update calls = %d, want 2", *calls)
+	}
+	out, _ := cli.CoreV1().Nodes().Get(context.Background(), "worker-1", metav1.GetOptions{})
+	if !out.Spec.Unschedulable {
+		t.Error("node should be cordoned")
+	}
+}
+
+func TestApply_UncordonRefusesWhenConflictRevealsSchedulableNode(t *testing.T) {
+	// Between kubeagent's read and its save, someone else uncordons the node.
+	n := cordonedNode("worker-1")
+	cli := fake.NewSimpleClientset(n)
+	allowFix(cli)
+	calls := conflictUpdates(cli, "nodes", 1, func() {
+		moved := n.DeepCopy()
+		moved.Spec.Unschedulable = false
+		if err := cli.Tracker().Update(nodesGVR, moved, ""); err != nil {
+			t.Errorf("tracker update: %v", err)
+		}
+	})
+	res := Apply(context.Background(), cli, Action{Kind: "Uncordon", Name: "worker-1"})
+	if res.Applied || res.Err != nil || !res.Refused {
+		t.Fatalf("a fresh copy that fails the guard must be refused without error, got %+v", res)
+	}
+	if !strings.Contains(res.Detail, "no longer a safe uncordon target") {
+		t.Errorf("detail = %q, want the uncordon refusal", res.Detail)
+	}
+	if *calls != 1 {
+		t.Errorf("update calls = %d, want 1", *calls)
+	}
+}
+
+func TestApply_UncordonPreflightDeniedOnRetryMakesNoWrite(t *testing.T) {
+	// Permission is revoked between the first try and the retry.
+	cli := fake.NewSimpleClientset(cordonedNode("worker-1"))
+	reviews := 0
+	cli.PrependReactor("create", "selfsubjectaccessreviews", func(ktesting.Action) (bool, runtime.Object, error) {
+		reviews++
+		return true, &authorizationv1.SelfSubjectAccessReview{
+			Status: authorizationv1.SubjectAccessReviewStatus{Allowed: reviews == 1},
+		}, nil
+	})
+	calls := conflictUpdates(cli, "nodes", 1, nil)
+	res := Apply(context.Background(), cli, Action{Kind: "Uncordon", Name: "worker-1"})
+	if res.Applied || res.Err != nil || !res.PreflightDenied {
+		t.Fatalf("a denied preflight on the retry must skip the write, got %+v", res)
+	}
+	if reviews != 2 {
+		t.Errorf("preflight reviews = %d, want 2 (one per try)", reviews)
+	}
+	if *calls != 1 {
+		t.Errorf("update calls = %d, want 1", *calls)
+	}
+	out, _ := cli.CoreV1().Nodes().Get(context.Background(), "worker-1", metav1.GetOptions{})
+	if !out.Spec.Unschedulable {
+		t.Error("node must stay cordoned")
+	}
+}
+
+func TestApply_UncordonObjectGoneOnRetry(t *testing.T) {
+	// The node is deleted between the first try and the retry: the error is the
+	// retry's failed read, wrapped once, never "update node: get node: …".
+	cli := fake.NewSimpleClientset(cordonedNode("worker-1"))
+	allowFix(cli)
+	conflictUpdates(cli, "nodes", 1, func() {
+		if err := cli.Tracker().Delete(nodesGVR, "", "worker-1"); err != nil {
+			t.Errorf("tracker delete: %v", err)
+		}
+	})
+	res := Apply(context.Background(), cli, Action{Kind: "Uncordon", Name: "worker-1"})
+	if res.Applied || res.Err == nil {
+		t.Fatalf("a vanished node must end in an error, got %+v", res)
+	}
+	if !apierrors.IsNotFound(res.Err) {
+		t.Errorf("err = %v, want not-found", res.Err)
+	}
+	if !strings.HasPrefix(res.Err.Error(), "get node: ") || strings.Contains(res.Err.Error(), "update node") {
+		t.Errorf("err = %q, want only the %q prefix", res.Err, "get node: ")
+	}
+}
+
+func TestApply_UncordonGivesUpAfterRepeatedConflicts(t *testing.T) {
+	cli := fake.NewSimpleClientset(cordonedNode("worker-1"))
+	allowFix(cli)
+	calls := conflictUpdates(cli, "nodes", -1, nil)
+	res := Apply(context.Background(), cli, Action{Kind: "Uncordon", Name: "worker-1"})
+	if res.Applied || res.Err == nil || !apierrors.IsConflict(res.Err) {
+		t.Fatalf("endless conflicts must end in a conflict error, got %+v", res)
+	}
+	if !strings.HasPrefix(res.Err.Error(), "update node: ") || strings.Count(res.Err.Error(), "update node: ") != 1 {
+		t.Errorf("err = %q, want exactly one %q prefix", res.Err, "update node: ")
+	}
+	if *calls != 5 {
+		t.Errorf("update calls = %d, want 5", *calls)
+	}
+}

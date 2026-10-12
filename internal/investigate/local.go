@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"github.com/imantaba/kubeagent/internal/hypothesis"
 	"github.com/imantaba/kubeagent/internal/inventory"
 	"github.com/imantaba/kubeagent/internal/platform"
+	"github.com/imantaba/kubeagent/internal/redact"
 	"github.com/imantaba/kubeagent/internal/resources"
 	"github.com/imantaba/kubeagent/internal/safetext"
 	"github.com/imantaba/kubeagent/internal/svchealth"
@@ -62,35 +64,44 @@ func section(name, body string) string {
 	return "== BEGIN " + name + " ==\n" + strings.TrimRight(body, "\n") + "\n== END " + name + " ==\n\n"
 }
 
-// buildVerdictPrompt assembles the user message: the shared inventory (its
-// --explain closing instruction stripped — the contract here is JSON
-// verdicts, not prose), the capped candidate traces with each fresh read's
-// outcome and the rule decision beside them, and the evidence bundle, each
-// delimited. results[i] belongs to scoped[i]. If the whole prompt still
+// buildVerdictPrompt assembles the user message for one workload: the
+// inventory with that workload alone and only the service issues in its
+// namespace (its --explain closing instruction stripped — the contract here
+// is JSON verdicts, not prose), the workload's capped candidate trace with
+// each fresh read's outcome and the rule decision beside it, and the
+// workload's own evidence, each delimited. If the whole prompt still
 // exceeds maxPromptBytes, the evidence — the only unbounded-in-principle
 // section — is cut to fit, marked, and the sections reassembled so the
 // delimiters stay closed.
-func buildVerdictPrompt(cluster clusterhealth.ClusterHealth, summary *resources.Summary, facts *platform.Facts, serviceIssues []svchealth.Issue, scoped []inventory.Workload, results []hypothesis.Result, bundle string) string {
+func buildVerdictPrompt(cluster clusterhealth.ClusterHealth, summary *resources.Summary, facts *platform.Facts, serviceIssues []svchealth.Issue, w inventory.Workload, r hypothesis.Result, evidence string) string {
+	var own []svchealth.Issue
+	for _, is := range serviceIssues {
+		if is.Namespace == w.Namespace {
+			own = append(own, is)
+		}
+	}
+	one := []inventory.Workload{w}
 	inventorySection := strings.TrimSuffix(
-		explain.BuildInventoryPrompt(cluster, summary, facts, capServiceIssues(serviceIssues), scoped),
+		explain.BuildInventoryPrompt(cluster, summary, facts, capServiceIssues(own), one),
 		"\nExplain each problem and its fix using the required structure.")
-	assemble := func(evidence string) string {
+	candidates := renderCandidates(one, []hypothesis.Result{r})
+	assemble := func(ev string) string {
 		return section("inventory", inventorySection) +
-			section("candidates", renderCandidates(scoped, results)) +
-			section("evidence", evidence) +
+			section("candidates", candidates) +
+			section("evidence", ev) +
 			"Judge each listed workload now and answer with the JSON object only."
 	}
-	prompt := assemble(bundle)
+	prompt := assemble(evidence)
 	if len(prompt) > maxPromptBytes {
 		// section() trims the body's trailing newlines before wrapping it,
-		// so the budget must be measured against the trimmed bundle — not
+		// so the budget must be measured against the trimmed evidence — not
 		// the raw one, which gatherEvidence's real output always ends with
-		// two newlines, not one. cutEvidence below is "cut + \n +
+		// two newlines, not one. The cut evidence below is "cut + \n +
 		// truncationMarker + \n"; section() trims its own single trailing
 		// "\n" back off, so it contributes len(cut) + 1 + len(truncationMarker)
 		// bytes, which is what "- 1" accounts for.
 		over := len(prompt) - maxPromptBytes
-		trimmed := strings.TrimRight(bundle, "\n")
+		trimmed := strings.TrimRight(evidence, "\n")
 		keep := len(trimmed) - over - len(truncationMarker) - 1
 		if keep < 0 {
 			keep = 0
@@ -106,7 +117,9 @@ func buildVerdictPrompt(cluster clusterhealth.ClusterHealth, summary *resources.
 
 // Output bounds for what model text may enter the report. Model output is
 // untrusted: every string passes safetext.Line and a rune cap before it
-// reaches a kubeagent value.
+// reaches a kubeagent value. maxSummaryLines caps the rules' shared-cause
+// lines; hypothesis.MaxSharedLines must equal it
+// (TestSharedCapsMatchTheSummaryCaps).
 const (
 	maxVerdictRows    = 10
 	maxSummaryLines   = 4
@@ -187,8 +200,9 @@ var verdictSchema = map[string]any{
 }
 
 // LocalClient runs --investigate's local verdict mode: kubeagent gathers
-// the evidence deterministically and one local OpenAI-compatible model call
-// adjudicates it. No tool loop, no Anthropic dependency.
+// the evidence deterministically and a local OpenAI-compatible model
+// adjudicates it, one call per workload the rules left undecided. No tool
+// loop, no Anthropic dependency.
 type LocalClient struct {
 	endpoint, model, apiKey string
 	http                    *http.Client
@@ -202,47 +216,102 @@ func NewLocal(endpoint, model, apiKey string) *LocalClient {
 
 // Investigate matches Client.Investigate's signature and skip rule. It
 // gathers evidence under the tool loop's budget, lets the rules decide
-// each candidate from the fresh reads, sends one adjudication call, and
-// renders the verdicts with model text sanitized and bounded. When the
-// call fails, or the model gives no valid row and no summary, the error
-// comes back with the rules-only report: the trail, the rule rows and the
-// shared lines. That report is empty when no rule decided anything.
+// each candidate from the fresh reads, and asks the model once per scoped
+// workload the rules left undecided — one workload per prompt, one call at
+// a time, in report order, all under ctx. A rule-decided workload gets no
+// call, and once ctx is done no further request is sent. Each model row is
+// pinned to the workload its call was about. When some calls fail and at
+// least one succeeds, the report renders the rows it has and Notice says
+// how many workloads got no verdict. When every call fails, the first
+// failure comes back as the error with the rules-only report: the trail,
+// the rule rows and the shared lines. That report is empty when no rule
+// decided anything.
 func (c *LocalClient) Investigate(ctx context.Context, cluster clusterhealth.ClusterHealth, summary *resources.Summary, facts *platform.Facts, serviceIssues []svchealth.Issue, workloads []inventory.Workload, client kubernetes.Interface) (Report, error) {
 	if cluster.Verdict != "Degraded" && len(workloads) == 0 && len(serviceIssues) == 0 {
 		return Report{}, nil
 	}
 	scoped := flaggedScope(workloads)
 	trail, evidence, reads := gatherEvidence(ctx, client, scoped)
-	bundle := strings.Join(evidence, "") // interim: Task 2 gives each workload its own prompt
 	results := make([]hypothesis.Result, len(scoped))
 	for i, w := range scoped {
 		results[i] = hypothesis.Decide(w, reads)
 	}
 	shared := hypothesis.Shared(results)
-	rulesOnly := Report{Consulted: trail, Narrative: renderVerdicts(verdictDoc{}, results, shared, workloads)}
+	rulesOnly := Report{Consulted: trail, Narrative: renderVerdicts(nil, results, shared)}
 	if rulesOnly.Narrative == "" {
 		rulesOnly = Report{}
 	}
-	prompt := buildVerdictPrompt(cluster, summary, facts, serviceIssues, scoped, results, bundle)
-	doc, truncated, err := c.call(ctx, prompt)
-	if err != nil {
-		return rulesOnly, fmt.Errorf("investigating: %w", err)
+
+	model := map[string]verdictRow{}
+	withFormat := true
+	var (
+		undecided, failed int
+		firstErr          error
+		truncated         bool
+	)
+	for i, r := range results {
+		if r.Decided {
+			continue
+		}
+		undecided++
+		err := ctx.Err()
+		if err == nil {
+			prompt := buildVerdictPrompt(cluster, summary, facts, serviceIssues, scoped[i], r, evidence[i])
+			var (
+				row verdictRow
+				cut bool
+			)
+			row, cut, err = c.call(ctx, prompt, &withFormat)
+			if err == nil {
+				truncated = truncated || cut
+				model[r.Workload] = row
+				continue
+			}
+		}
+		failed++
+		if firstErr == nil {
+			firstErr = err
+		}
 	}
-	if rows, _ := firstModelRows(doc, workloads); len(rows) == 0 && capSummary(doc.Summary) == "" {
-		return rulesOnly, fmt.Errorf("investigating: model returned no text")
+	switch {
+	case undecided == 0:
+		return rulesOnly, nil
+	case failed == undecided:
+		return rulesOnly, fmt.Errorf("investigating: %w", firstErr)
 	}
-	return Report{Consulted: trail, Narrative: renderVerdicts(doc, results, shared, workloads), Truncated: truncated}, nil
+	rep := Report{Consulted: trail, Narrative: renderVerdicts(model, results, shared), Truncated: truncated}
+	if failed > 0 {
+		rep.Notice = fmt.Sprintf("model gave no verdict for %d of %d workloads: %s",
+			failed, undecided, safetext.Line(redact.Error(firstErr)))
+	}
+	return rep, nil
 }
 
-// call posts the prompt, retrying exactly once without response_format when
-// the endpoint 400s the first attempt — some local servers reject the
+// errNoVerdict is a reply that parsed but carried no usable row: no
+// verdicts at all, or a first row whose cause is blank once sanitized.
+var errNoVerdict = errors.New("model returned no verdict")
+
+// call posts one workload's prompt and returns the first verdict row and
+// whether the reply was cut at the length ceiling. The row's workload field
+// is not read — the caller pins the row to the workload it asked about —
+// and any further rows and the summary are ignored. When the endpoint 400s
+// a request that carried response_format, the request is retried once
+// without it and *withFormat is cleared, so every later call in the same
+// run goes out without it from the start: some local servers reject the
 // json_schema shape they do not implement.
-func (c *LocalClient) call(ctx context.Context, prompt string) (verdictDoc, bool, error) {
-	doc, truncated, retry, err := c.post(ctx, prompt, true)
+func (c *LocalClient) call(ctx context.Context, prompt string, withFormat *bool) (verdictRow, bool, error) {
+	doc, truncated, retry, err := c.post(ctx, prompt, *withFormat)
 	if retry {
+		*withFormat = false
 		doc, truncated, _, err = c.post(ctx, prompt, false)
 	}
-	return doc, truncated, err
+	if err != nil {
+		return verdictRow{}, false, err
+	}
+	if len(doc.Verdicts) == 0 || strings.TrimSpace(safetext.Line(capRunes(doc.Verdicts[0].Cause, maxModelLineRunes))) == "" {
+		return verdictRow{}, false, errNoVerdict
+	}
+	return doc.Verdicts[0], truncated, nil
 }
 
 // post makes one /chat/completions request. retry is true only for the
@@ -343,36 +412,21 @@ func parseVerdicts(content string) (verdictDoc, error) {
 	return doc, nil
 }
 
-// renderVerdicts builds the narrative from two sources. Every scoped
-// workload comes first, in report order: a rule-decided one always renders
-// as a rule row, an undecided one as a model row when the model gave one.
-// Then come the model's rows for flagged workloads outside the scope, in
-// the model's order — a flagged workload beyond the gather cap is still
-// the model's to judge from the inventory. At most maxVerdictRows rows
-// render, and the first model row per workload wins. Model output is
-// untrusted: a row naming a workload the scan did not flag is dropped,
-// every model string is sanitized and rune-capped, and an out-of-vocabulary
-// confidence renders as unstated. The summary is the shared lines, then
-// the model's summary through capSummary.
-func renderVerdicts(doc verdictDoc, results []hypothesis.Result, shared []string, workloads []inventory.Workload) string {
-	model, order := firstModelRows(doc, workloads)
-	scoped := map[string]bool{}
+// renderVerdicts builds the narrative: one row per scoped workload that has
+// one, in report order — a rule row for a rule-decided workload, a model
+// row for an undecided workload whose call returned one (model is keyed by
+// "namespace/name") — at most maxVerdictRows, then the rules' shared
+// lines. No model summary is rendered.
+func renderVerdicts(model map[string]verdictRow, results []hypothesis.Result, shared []string) string {
 	var rows []string
 	for _, r := range results {
-		scoped[r.Workload] = true
-		m, ok := model[r.Workload]
-		switch {
-		case r.Decided:
-			rows = append(rows, ruleRow(r, m, ok))
-		case ok:
-			rows = append(rows, modelRow(m))
-		}
-	}
-	for _, wl := range order {
-		if scoped[wl] {
+		if r.Decided {
+			rows = append(rows, ruleRow(r))
 			continue
 		}
-		rows = append(rows, modelRow(model[wl]))
+		if m, ok := model[r.Workload]; ok {
+			rows = append(rows, modelRow(r.Workload, m))
+		}
 	}
 	if len(rows) > maxVerdictRows {
 		rows = rows[:maxVerdictRows]
@@ -382,51 +436,20 @@ func renderVerdicts(doc verdictDoc, results []hypothesis.Result, shared []string
 		b.WriteString("Root-cause verdicts:\n")
 		b.WriteString(strings.Join(rows, "\n"))
 	}
-	summary := strings.Join(shared, "\n")
-	if s := capSummary(doc.Summary); s != "" {
-		if summary != "" {
-			summary += "\n"
-		}
-		summary += s
-	}
-	if summary != "" {
+	if len(shared) > 0 {
 		if b.Len() > 0 {
 			b.WriteString("\n\n")
 		}
-		b.WriteString(summary)
+		b.WriteString(strings.Join(shared, "\n"))
 	}
 	return b.String()
 }
 
-// firstModelRows keeps the first model row per flagged workload, keyed by
-// workload, and the order those workloads first appeared in. A row naming
-// a workload the scan did not flag is dropped here. Verdicts are checked
-// against ALL flagged workloads, not the gather's 10.
-func firstModelRows(doc verdictDoc, workloads []inventory.Workload) (map[string]verdictRow, []string) {
-	flagged := map[string]bool{}
-	for _, w := range workloads {
-		if w.Flagged() {
-			flagged[w.Namespace+"/"+w.Name] = true
-		}
-	}
-	rows := map[string]verdictRow{}
-	var order []string
-	for _, v := range doc.Verdicts {
-		if !flagged[v.Workload] {
-			continue
-		}
-		if _, seen := rows[v.Workload]; seen {
-			continue
-		}
-		rows[v.Workload] = v
-		order = append(order, v.Workload)
-	}
-	return rows, order
-}
-
-// modelRow renders one model-written row: cause and rationale sanitized
-// and capped, confidence normalized to the closed vocabulary.
-func modelRow(v verdictRow) string {
+// modelRow renders one model-written row under name, kubeagent's own
+// "namespace/name" for the workload the call was about — never the
+// model's workload string. Cause and rationale are sanitized and capped;
+// confidence is normalized to the closed vocabulary.
+func modelRow(name string, v verdictRow) string {
 	conf := v.Confidence
 	switch conf {
 	case "low", "medium", "high":
@@ -434,23 +457,15 @@ func modelRow(v verdictRow) string {
 		conf = "unstated"
 	}
 	return fmt.Sprintf("- %s: %s [model, confidence: %s] — %s",
-		v.Workload, safetext.Line(capRunes(v.Cause, maxModelLineRunes)), conf,
+		name, safetext.Line(capRunes(v.Cause, maxModelLineRunes)), conf,
 		safetext.Line(capRunes(v.Rationale, maxModelLineRunes)))
 }
 
-// ruleRow renders one rule-decided row. The cause is the trace's own text;
-// the model's cause on that row is ignored. The model's rationale is used
-// only when its cause equals the rule's cause verbatim and the sanitized,
-// capped rationale is not blank; otherwise the row prints the rule's
-// evidence sentence, so a row never argues against itself.
-func ruleRow(r hypothesis.Result, m verdictRow, hasModel bool) string {
-	why := r.Evidence
-	if hasModel && m.Cause == r.Cause {
-		if s := safetext.Line(capRunes(m.Rationale, maxModelLineRunes)); strings.TrimSpace(s) != "" {
-			why = s
-		}
-	}
-	return fmt.Sprintf("- %s: %s [rule, %s] — %s", r.Workload, r.Cause, r.Outcome, why)
+// ruleRow renders one rule-decided row: the trace's own cause text and the
+// rule's evidence sentence. A rule-decided workload gets no model call, so
+// nothing on this row comes from the model.
+func ruleRow(r hypothesis.Result) string {
+	return fmt.Sprintf("- %s: %s [rule, %s] — %s", r.Workload, r.Cause, r.Outcome, r.Evidence)
 }
 
 // capRunes bounds one model-written line to at most limit runes (including
@@ -472,27 +487,4 @@ func capRunes(s string, limit int) string {
 		cut = 0
 	}
 	return string(r[:cut]) + marker
-}
-
-// capSummary sanitizes the model's summary line by line, drops blank
-// lines, and keeps at most maxSummaryLines, marking an overflow. capRunes
-// runs before safetext.Line for the same reason renderVerdicts orders them
-// that way — see capRunes.
-func capSummary(s string) string {
-	var kept []string
-	total := 0
-	for _, ln := range strings.Split(s, "\n") {
-		ln = safetext.Line(capRunes(ln, maxModelLineRunes))
-		if strings.TrimSpace(ln) == "" {
-			continue
-		}
-		total++
-		if total <= maxSummaryLines {
-			kept = append(kept, ln)
-		}
-	}
-	if total > maxSummaryLines {
-		kept = append(kept, truncationMarker)
-	}
-	return strings.Join(kept, "\n")
 }

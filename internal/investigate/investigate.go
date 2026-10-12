@@ -135,6 +135,12 @@ type Report struct {
 	// Text-only: it renders, it is never marshalled to JSON (report.Input
 	// carries it the same way).
 	Truncated bool
+	// Notice is set only by local verdict mode, when some of its per-workload
+	// model calls failed and at least one succeeded: it says how many
+	// workloads got no verdict and why the first one failed. The CLI prints
+	// it on stderr. Text-only like Truncated: never marshalled to JSON. The
+	// tool loop never sets it.
+	Notice string
 }
 
 // Client runs a bounded, read-only investigation via a tool-use loop.

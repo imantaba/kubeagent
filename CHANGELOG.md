@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rules. When some calls fail, the rows that came back still render and
   stderr says `--investigate: model gave no verdict for <n> of <m>
   workloads: <reason>`.
+  Flagged workloads past the first 10 no longer get a model row. A scan
+  with no flagged workload no longer calls the model: it prints
+  `--investigate: no flagged workload for the model to judge` instead of a
+  model summary.
 
 ### Fixed
 

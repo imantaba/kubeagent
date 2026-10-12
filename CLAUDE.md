@@ -613,9 +613,9 @@ Full design in [docs/design.md](docs/design.md); task-by-task build plan in
   every read and the model only adjudicates, in one `/chat/completions`
   call per workload the rules left undecided (at most 10, one at a time,
   one workload per prompt, the model's summary not rendered) to the same
-  endpoint and bearer key `--explain`'s local path already uses. The gather shares the tool loop's 8-read global
-  budget and its trail-label format, over at most 10 flagged workloads. The
-  model answers with verdict contract v1 — `workload`, `cause`,
+  endpoint and bearer key `--explain`'s local path already uses. The
+  gather shares the tool loop's 8-read global budget and its trail-label
+  format, over at most 10 flagged workloads. The model answers with verdict contract v1 — `workload`, `cause`,
   `confidence` and `rationale` per row plus a `summary` — a prose contract
   versioned in `website/docs/features/diagnostics.md`, never a ninth
   `schemaVersion` surface. Every input and output dimension is bounded

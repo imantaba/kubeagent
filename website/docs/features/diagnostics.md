@@ -1335,9 +1335,9 @@ cause, on top of the tool loop's direct node reads (`describe` on a node,
   flags are passed, `--investigate` runs and `--explain` is silently ignored.
 - **Capped** — one loop per scan, bounded at **8 reads** and **6 turns** in
   total, shared across every finding, within a 90-second context budget;
-  local verdict mode runs on a 300-second budget instead — a small model
-  adjudicating a full evidence bundle needs more wall clock than one
-  Anthropic turn. The budget does not grow with the
+  local verdict mode runs on a 300-second budget instead, shared by up
+  to 10 sequential calls — one slow call can leave later workloads without
+  a verdict, and they appear in the notice. The budget does not grow with the
   number of findings: on a cluster with many problems the loop will
   investigate a few of them in depth rather than all of them shallowly. That
   bound is on the number of reads and turns, not on their size — a turn's
@@ -1389,10 +1389,10 @@ loop could make, under the same global budget of **8**, over at most the
 workload's events (the first finding's pod when there is one, the workload
 name otherwise); a `describe` for each surviving root-cause candidate that
 names a node or a PVC (a registry candidate has nothing to read); and, for
-each crash-family finding, a classified
-previous-instance log cause — the same bounded 25-line read `--logs` and
-`get_log_causes` use, deduplicated per pod and container, with only the
-classified, address-redacted cause string crossing the model boundary. A
+each crash-family finding, a classified previous-instance log cause — the
+same bounded 25-line read `--logs` and `get_log_causes` use, deduplicated
+per pod and container, with only the classified, address-redacted cause
+string crossing the model boundary. A
 failed read is reduced through `redact.Error` rather than surfaced raw, and
 it still counts against the budget — a refusal is evidence too. The
 report's `consulted:` trail shows every read that was made, in the same
@@ -1497,10 +1497,10 @@ every string is sanitized and length-capped before it can enter the report,
 and a reply can only ever place a row on the workload its call was about —
 a row naming another workload is ignored.
 
-**Structured output.** The request asks for `response_format: json_schema` matching verdict contract
-v1. The first call an endpoint rejects with a 400 is retried once without it,
-and every later call in the same run is sent without it from the start.
-Parsing is lenient either way: fenced or
+**Structured output.** The request asks for `response_format: json_schema`
+matching verdict contract v1. The first call an endpoint rejects with a 400
+is retried once without it, and every later call in the same run is sent
+without it from the start. Parsing is lenient either way: fenced or
 prose-wrapped JSON still parses, because kubeagent decodes the first
 complete JSON object it finds rather than requiring the whole reply to be
 JSON.
@@ -1534,7 +1534,9 @@ the first failure. When every call fails, the rule rows and the shared lines
 still render, and the notice reads
 `--investigate: <reason>; rule-decided verdicts rendered without the model`.
 When no rule decided anything either, there is no section, and the notice
-carries the reason alone.
+carries the reason alone. A scan with no flagged workload makes no call
+and prints `--investigate: no flagged workload for the model to judge` on
+stderr.
 
 **What does not change.** Local verdict mode is read-only toward the
 cluster and never fatal to the scan: a failed investigation reduces to one

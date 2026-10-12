@@ -46,53 +46,55 @@ func flaggedScope(workloads []inventory.Workload) []inventory.Workload {
 // kubeagent chooses the reads, in report order, under the tool loop's global
 // budget. Per workload, in order: the events of its first finding's pod (the
 // workload name when there is no finding), a describe per surviving node or
-// PVC candidate (deduped globally; registry candidates have nothing to
-// read), and a classified previous-log cause per crash-family finding
-// (deduped per container). It returns the evidence trail — byte-for-byte the
-// tool loop's label() formats —, the bundle the prompt embeds, and the
+// PVC candidate (registry candidates have nothing to read), and a classified
+// previous-log cause per crash-family finding (deduped per container). A
+// describe is read once: a later workload with the same node or PVC gets a
+// copy of the same section text, at no budget cost, even after the budget
+// is spent — each prompt holds one workload, so each needs it. It returns
+// the evidence trail — byte-for-byte the tool loop's label() formats, one
+// entry per read actually made —, one evidence string per scoped workload
+// (evidence[i] belongs to scoped[i]; "" when no read reached it), and the
 // objects it read, keyed for the rules. A failed read still consumes budget
 // (refusal is evidence) and renders as a reduced error, never a raw
 // client-go message; the same reduced error, passed through safetext.Line,
 // is what the rules see under Reads.Failed.
-func gatherEvidence(ctx context.Context, client kubernetes.Interface, scoped []inventory.Workload) ([]string, string, hypothesis.Reads) {
+func gatherEvidence(ctx context.Context, client kubernetes.Interface, scoped []inventory.Workload) ([]string, []string, hypothesis.Reads) {
 	var (
-		b     strings.Builder
 		trail []string
 		spent int
 	)
+	evidence := make([]string, len(scoped))
 	fresh := hypothesis.Reads{
 		Nodes:  map[string]*corev1.Node{},
 		PVCs:   map[string]*corev1.PersistentVolumeClaim{},
 		Events: map[string][]corev1.Event{},
 		Failed: map[string]string{},
 	}
-	seenDescribe := map[string]bool{}
+	described := map[string]string{} // describe key → the section it rendered
 	seenLog := map[string]bool{}
-	for _, w := range scoped {
-		if spent >= maxToolCalls {
-			break
-		}
-		name := w.Name
-		if len(w.Findings) > 0 {
-			if p := podPart(w.Findings[0].Pod); p != "" {
-				name = p
+	for i, w := range scoped {
+		var b strings.Builder
+		if spent < maxToolCalls {
+			name := w.Name
+			if len(w.Findings) > 0 {
+				if p := podPart(w.Findings[0].Pod); p != "" {
+					name = p
+				}
 			}
+			var content string
+			items, err := listEvents(ctx, client, w.Namespace, name)
+			if err != nil {
+				fresh.Failed["events/"+w.Namespace+"/"+name] = safetext.Line(redact.Error(err))
+				content = "read failed: " + redact.Error(err)
+			} else {
+				fresh.Events[w.Namespace+"/"+name] = items
+				content = formatEvents(w.Namespace, name, items)
+			}
+			appendRead(&b, &trail, &spent, fmt.Sprintf("events %s/%s", w.Namespace, name), content)
 		}
-		var content string
-		items, err := listEvents(ctx, client, w.Namespace, name)
-		if err != nil {
-			fresh.Failed["events/"+w.Namespace+"/"+name] = safetext.Line(redact.Error(err))
-			content = "read failed: " + redact.Error(err)
-		} else {
-			fresh.Events[w.Namespace+"/"+name] = items
-			content = formatEvents(w.Namespace, name, items)
-		}
-		appendRead(&b, &trail, &spent, fmt.Sprintf("events %s/%s", w.Namespace, name), content)
 
+		own := map[string]bool{} // describes already in this workload's evidence
 		for _, h := range w.RootCauseTrace {
-			if spent >= maxToolCalls {
-				break
-			}
 			if h.Verdict == inventory.VerdictRuledOut || h.Object == "" {
 				continue
 			}
@@ -104,10 +106,18 @@ func gatherEvidence(ctx context.Context, client kubernetes.Interface, scoped []i
 				ns = w.Namespace
 			}
 			key := h.Kind + "/" + ns + "/" + h.Object
-			if seenDescribe[key] {
+			if own[key] {
 				continue
 			}
-			seenDescribe[key] = true
+			if sec, ok := described[key]; ok {
+				own[key] = true
+				b.WriteString(sec)
+				continue
+			}
+			if spent >= maxToolCalls {
+				continue // a later candidate may still be a cached describe
+			}
+			own[key] = true
 			var content string
 			switch h.Kind {
 			case "node":
@@ -129,7 +139,7 @@ func gatherEvidence(ctx context.Context, client kubernetes.Interface, scoped []i
 					content = describePVC(pvc)
 				}
 			}
-			appendRead(&b, &trail, &spent, fmt.Sprintf("describe %s %s/%s", h.Kind, ns, h.Object), content)
+			described[key] = appendRead(&b, &trail, &spent, fmt.Sprintf("describe %s %s/%s", h.Kind, ns, h.Object), content)
 		}
 
 		for _, f := range w.Findings {
@@ -152,20 +162,22 @@ func gatherEvidence(ctx context.Context, client kubernetes.Interface, scoped []i
 			res := logCauseResult("", w.Namespace, pod, f.Container, log, ok, err)
 			appendRead(&b, &trail, &spent, fmt.Sprintf("log causes %s/%s container %s", w.Namespace, pod, f.Container), res.Content)
 		}
+		evidence[i] = b.String()
 	}
-	return trail, b.String(), fresh
+	return trail, evidence, fresh
 }
 
 // appendRead records one completed read: one trail entry, one budget unit,
-// one bundle section. Content arrives already reduced (never a raw error)
-// and is capped at maxReadBytes here; trailing newlines are normalized so a
-// section is always exactly "== label ==\n<content>\n\n".
-func appendRead(b *strings.Builder, trail *[]string, spent *int, label, content string) {
+// one evidence section, which it also returns so a describe can be copied
+// into a later workload's evidence. Content arrives already reduced (never a
+// raw error) and is capped at maxReadBytes here; trailing newlines are
+// normalized so a section is always exactly "== label ==\n<content>\n\n".
+func appendRead(b *strings.Builder, trail *[]string, spent *int, label, content string) string {
 	*trail = append(*trail, label)
 	*spent++
-	b.WriteString("== " + label + " ==\n")
-	b.WriteString(strings.TrimRight(capContent(content), "\n"))
-	b.WriteString("\n\n")
+	sec := "== " + label + " ==\n" + strings.TrimRight(capContent(content), "\n") + "\n\n"
+	b.WriteString(sec)
+	return sec
 }
 
 // capContent bounds one read's contribution to the prompt. A cut lands on

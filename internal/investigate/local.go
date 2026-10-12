@@ -212,7 +212,8 @@ func (c *LocalClient) Investigate(ctx context.Context, cluster clusterhealth.Clu
 		return Report{}, nil
 	}
 	scoped := flaggedScope(workloads)
-	trail, bundle, reads := gatherEvidence(ctx, client, scoped)
+	trail, evidence, reads := gatherEvidence(ctx, client, scoped)
+	bundle := strings.Join(evidence, "") // interim: Task 2 gives each workload its own prompt
 	results := make([]hypothesis.Result, len(scoped))
 	for i, w := range scoped {
 		results[i] = hypothesis.Decide(w, reads)

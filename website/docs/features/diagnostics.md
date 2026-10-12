@@ -1373,21 +1373,23 @@ cause, on top of the tool loop's direct node reads (`describe` on a node,
 
 In the Anthropic tool-use loop above, the model chooses which reads to make.
 Local verdict mode inverts that: kubeagent chooses the reads, and the model
-does nothing but adjudicate them. It makes exactly one call to
-`/chat/completions` on the OpenAI-compatible endpoint `KUBEAGENT_EXPLAIN_ENDPOINT`
-names — the same endpoint and `KUBEAGENT_EXPLAIN_API_KEY` bearer key
-`--explain`'s local path already uses — sending one prompt built from three
-delimited sections (inventory, candidates, evidence) and reading back JSON
-verdicts. There is no tool loop and no back-and-forth: kubeagent gathers,
-then asks once.
+does nothing but adjudicate them. It calls `/chat/completions` on the
+OpenAI-compatible endpoint `KUBEAGENT_EXPLAIN_ENDPOINT` names — the same
+endpoint and `KUBEAGENT_EXPLAIN_API_KEY` bearer key `--explain`'s local path
+already uses — once per flagged workload the rules did not decide: at most
+10 calls, one at a time, in report order. Each prompt holds one workload,
+built from three delimited sections (inventory, candidates, evidence), and
+each reply is read back as JSON. There is no tool loop and no back-and-forth:
+kubeagent gathers, decides what the rules can, then asks about each
+workload that is left.
 
 **The deterministic gather.** The pre-fetch draws on the same reads the tool
 loop could make, under the same global budget of **8**, over at most the
 **10** flagged workloads in report order. Per workload, in order: that
 workload's events (the first finding's pod when there is one, the workload
 name otherwise); a `describe` for each surviving root-cause candidate that
-names a node or a PVC, deduplicated across workloads (a registry candidate
-has nothing to read); and, for each crash-family finding, a classified
+names a node or a PVC (a registry candidate has nothing to read); and, for
+each crash-family finding, a classified
 previous-instance log cause — the same bounded 25-line read `--logs` and
 `get_log_causes` use, deduplicated per pod and container, with only the
 classified, address-redacted cause string crossing the model boundary. A
@@ -1395,6 +1397,9 @@ failed read is reduced through `redact.Error` rather than surfaced raw, and
 it still counts against the budget — a refusal is evidence too. The
 report's `consulted:` trail shows every read that was made, in the same
 label format the tool loop's trail uses.
+Each workload gets its own evidence: its own reads, and nothing read for
+another workload. A node or PVC shared by two workloads is read once, and
+its text goes into both workloads' evidence at no extra budget cost.
 
 **Rules decide the candidates.** Before the model is called, kubeagent re-checks
 each node, PVC and registry candidate against the objects the gather read. A
@@ -1414,6 +1419,7 @@ model. The rules live in `internal/hypothesis`, a pure package with no client
 and no model call. The prompt shows the model each outcome as a `fresh read:`
 line under the candidate and a `decided by rules:` line under the workload, so
 the model can write a rationale that agrees with what the cluster said.
+A workload the rules decided gets no model call.
 
 **Verdict contract v1.** The model answers with one JSON object:
 
@@ -1433,11 +1439,15 @@ the model can write a rationale that agrees with what the cluster said.
 
 `cause` is a candidate's text verbatim, `none_of_these`, or a cause the model
 grounds in its own reading of the evidence; `confidence` is `low`, `medium` or
-`high` — anything else renders as `unstated`; a verdict naming a workload the
-scan did not flag is dropped; a rule row's cause never comes from the model; at
-most 10 rows and a 4-line summary render. This contract is **prose, versioned
-in this document** — it crosses the model boundary, not kubeagent's own JSON
-output, so it is deliberately not one of the eight `schemaVersion` surfaces.
+`high` — anything else renders as `unstated`. Only the first row of a reply is
+used, and it is placed on the workload the call was about: the `workload`
+field is part of the shape but is not used to place the row, and any further
+rows are ignored. `summary` is part of the shape too and is not rendered. A
+reply with no row, or whose first row has a blank cause, counts as no
+verdict for that workload. A rule row's cause never comes from the model.
+This contract is **prose, versioned in this document** — it crosses the model
+boundary, not kubeagent's own JSON output, so it is deliberately not one of
+the eight `schemaVersion` surfaces.
 
 **What renders.** The section starts with the header `Root-cause verdicts:` and
 holds at most one row per flagged workload, at most 10 rows. A row has one of
@@ -1450,20 +1460,19 @@ three labels:
 ```
 
 A `[rule, …]` row's cause is the candidate text from the scan, never the
-model's. Its rationale is the model's only when the model named the same cause
-word for word; otherwise it is the rule's own evidence sentence. A `[model, …]`
+model's, and its rationale is the rule's own evidence sentence. A `[model, …]`
 row is the model's answer for a workload the rules could not decide, with the
-cause, confidence and rationale sanitized and capped as before. Workloads in
-the gather's scope come first, in report order: a rule row when a rule decided,
-a model row when it did not. The model's rows for flagged workloads outside the
-scope follow, in the model's order.
+cause, confidence and rationale sanitized and capped. Rows come in report
+order: a rule row when a rule decided, a model row when it did not and the
+call returned one. A flagged workload beyond the gather's 10 gets no row: it
+had no evidence, and the model could only guess from its inventory line.
 
 **The shared line.** When two or more rule rows are confirmed on the same node,
 the same registry, the same storage class or the same claim, one line under the
 rows says so: `2 workloads share one upstream cause: node worker-1 (NotReady)`.
 When two or more rows are confirmed and none share a cause, the line is `no
 shared cause among the 2 workloads confirmed by rules`. At most 4 shared lines
-render, and they come before the model's summary.
+render. No model summary follows them.
 
 **Size bounds:**
 
@@ -1473,24 +1482,25 @@ render, and they come before the model's summary.
 | Workloads gathered | 10 |
 | Candidates shown per workload | 8 |
 | Service issues in the prompt | 10 |
-| Whole prompt | 64 KiB |
+| Whole prompt (one per workload) | 64 KiB |
 | Model response | 1 MiB (overflow detected explicitly) |
 | Model-written line | 512 runes |
 | Rule lines in the prompt | at most 1 per shown candidate (none for a ruled-out one), plus 1 per decided workload |
-| Shared-cause summary lines | 4 |
+| Shared-cause lines | 4 |
 
 Every cut is marked `[truncated by kubeagent]`.
 
 **Injection posture.** Evidence is untrusted cluster data, carried inside
 the prompt's section delimiters; the system prompt pins that an instruction
 found inside evidence is never followed. Model output is itself untrusted:
-every string is sanitized, length-capped, and — for `workload` — matched
-against the set of workloads this scan actually flagged before it can enter
-the report.
+every string is sanitized and length-capped before it can enter the report,
+and a reply can only ever place a row on the workload its call was about —
+a row naming another workload is ignored.
 
-**Structured output.** The request asks for `response_format: json_schema`
-matching verdict contract v1; an endpoint that rejects the shape with a 400
-gets exactly one retry without it. Parsing is lenient either way: fenced or
+**Structured output.** The request asks for `response_format: json_schema` matching verdict contract
+v1. The first call an endpoint rejects with a 400 is retried once without it,
+and every later call in the same run is sent without it from the start.
+Parsing is lenient either way: fenced or
 prose-wrapped JSON still parses, because kubeagent decodes the first
 complete JSON object it finds rather than requiring the whole reply to be
 JSON.
@@ -1498,8 +1508,11 @@ JSON.
 **Model guidance.** A small instruction-tuned model is enough —
 closed-vocabulary adjudication over evidence it is handed suits a small
 model better than driving a multi-turn tool loop does. Recommend a context
-window of 32k tokens and treat 16k as the floor: the prompt alone may
-approach the 64 KiB bound above. The training arc for a model purpose-tuned
+window of 32k tokens and treat 16k as the floor: one prompt may approach the
+64 KiB bound above. A prompt holds one workload: in a live chaos run, a small
+model tuned to this contract found the right cause for 1 of 45 workloads when
+several shared one prompt, and for 6 of 11 when it was asked about one at a
+time. The training arc for a model purpose-tuned
 to this contract runs on kubeagent's own artifacts — the chaos correctness
 corpus (`chaos-corpus-<minor>-<distro>.jsonl`, one row per injected fault
 with its verdict) and the [known-issues](known-issues.md) reference — but
@@ -1510,12 +1523,18 @@ contract, not the model.
 `KUBEAGENT_EXPLAIN_ENDPOINT` is set, `ANTHROPIC_API_KEY` is not required and
 nothing leaves the network.
 
-**When the model fails.** A failed call, or a reply with no usable row and
-no summary, no longer drops the whole section. The rule rows and the shared
-lines still render, and the notice on stderr reads
+**When the model fails.** A call fails when the request errors, the endpoint
+returns a non-2xx status, the reply does not parse, or the reply has no
+usable row; once the 300-second budget runs out, the workloads not yet asked
+count as failed too and get no request. When some calls fail and at least
+one returns a row, the section renders with the rows it has and stderr reads
+`--investigate: model gave no verdict for <n> of <m> workloads: <reason>`,
+where `<m>` counts the workloads the rules left undecided and `<reason>` is
+the first failure. When every call fails, the rule rows and the shared lines
+still render, and the notice reads
 `--investigate: <reason>; rule-decided verdicts rendered without the model`.
-When no rule decided anything, the run behaves as before: no section, and a
-notice with the reason.
+When no rule decided anything either, there is no section, and the notice
+carries the reason alone.
 
 **What does not change.** Local verdict mode is read-only toward the
 cluster and never fatal to the scan: a failed investigation reduces to one

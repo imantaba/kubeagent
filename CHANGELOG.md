@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `--investigate`'s local verdict mode now asks the model once per flagged
+  workload the rules did not decide — at most 10 calls, one at a time —
+  instead of once for all of them. Each prompt holds one workload and only
+  its own evidence. In a live chaos run, a small model tuned for this mode
+  found the right cause for 1 of 45 workloads when several shared one
+  prompt, and for 6 of 11 when asked about one at a time. The model's
+  summary is no longer rendered; the shared-cause lines still come from the
+  rules. When some calls fail, the rows that came back still render and
+  stderr says `--investigate: model gave no verdict for <n> of <m>
+  workloads: <reason>`.
+
 ### Fixed
 
 - `--fix` and `--rollback` no longer fail on a single conflicting write. A

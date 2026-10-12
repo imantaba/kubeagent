@@ -60,7 +60,9 @@ type modelPathResult struct {
 // and reduces a failure to one notice line instead of aborting the run. When
 // the failed call still returns a report with a narrative (local verdict
 // mode's rule-decided rows), the report is kept and the notice says the
-// model was absent.
+// model was absent. When local verdict mode succeeds but some of its
+// per-workload calls failed, the report is kept and its Notice becomes the
+// notice line.
 // investigateFn and explainFn are the actual calls, injected so this is
 // testable with no network and no cluster.
 func runModelPath(o scanOptions, investigateFn func() (investigate.Report, error), explainFn func() (explain.Explanation, error)) modelPathResult {
@@ -76,6 +78,11 @@ func runModelPath(o scanOptions, investigateFn func() (investigate.Report, error
 				return modelPathResult{investigation: rep, notice: notice}
 			}
 			return modelPathResult{notice: notice}
+		}
+		if rep.Notice != "" {
+			// Local verdict mode: some per-workload calls failed, the rows
+			// that came back render, and the notice says how many did not.
+			return modelPathResult{investigation: rep, notice: "--investigate: " + rep.Notice}
 		}
 		return modelPathResult{investigation: rep}
 	case o.explain:

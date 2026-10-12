@@ -170,6 +170,28 @@ func TestRunModelPath(t *testing.T) {
 		}
 	})
 
+	t.Run("investigate partial failure keeps the report and prints the notice", func(t *testing.T) {
+		rep := investigate.Report{
+			Narrative: "Root-cause verdicts:\n- shop/web: none_of_these [model, confidence: low] — r",
+			Consulted: []string{"events shop/web"},
+			Notice:    "model gave no verdict for 1 of 3 workloads: local investigate endpoint returned 500: upstream is down",
+		}
+		res := runModelPath(scanOptions{investigate: true},
+			func() (investigate.Report, error) { return rep, nil },
+			func() (explain.Explanation, error) { return explain.Explanation{}, nil },
+		)
+		want := "--investigate: model gave no verdict for 1 of 3 workloads: local investigate endpoint returned 500: upstream is down"
+		if res.notice != want {
+			t.Errorf("notice = %q, want %q", res.notice, want)
+		}
+		if res.investigation.Narrative != rep.Narrative {
+			t.Errorf("investigation.Narrative = %q, want the rows kept", res.investigation.Narrative)
+		}
+		if strings.Contains(res.notice, "; rule-decided") {
+			t.Errorf("notice = %q, a partial failure is not the model-absent case", res.notice)
+		}
+	})
+
 	t.Run("explain failure produces a notice naming --explain instead of an error", func(t *testing.T) {
 		res := runModelPath(scanOptions{explain: true},
 			func() (investigate.Report, error) { return investigate.Report{}, nil },

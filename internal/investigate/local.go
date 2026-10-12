@@ -117,9 +117,9 @@ func buildVerdictPrompt(cluster clusterhealth.ClusterHealth, summary *resources.
 
 // Output bounds for what model text may enter the report. Model output is
 // untrusted: every string passes safetext.Line and a rune cap before it
-// reaches a kubeagent value. maxSummaryLines caps the rules' shared-cause
-// lines; hypothesis.MaxSharedLines must equal it
-// (TestSharedCapsMatchTheSummaryCaps).
+// reaches a kubeagent value. maxSummaryLines caps nothing in production;
+// it is kept only so TestSharedCapsMatchTheSummaryCaps can pin it to
+// hypothesis.MaxSharedLines.
 const (
 	maxVerdictRows    = 10
 	maxSummaryLines   = 4
@@ -231,6 +231,13 @@ func (c *LocalClient) Investigate(ctx context.Context, cluster clusterhealth.Clu
 		return Report{}, nil
 	}
 	scoped := flaggedScope(workloads)
+	if len(scoped) == 0 {
+		// Past the early gate (a Degraded cluster, or service issues) with
+		// nothing flagged: there is no workload to judge and no call to make.
+		// A notice, not an empty report, so the scan does not claim the
+		// investigation was skipped for want of findings.
+		return Report{Notice: "no flagged workload for the model to judge"}, nil
+	}
 	trail, evidence, reads := gatherEvidence(ctx, client, scoped)
 	results := make([]hypothesis.Result, len(scoped))
 	for i, w := range scoped {
@@ -242,7 +249,7 @@ func (c *LocalClient) Investigate(ctx context.Context, cluster clusterhealth.Clu
 		rulesOnly = Report{}
 	}
 
-	model := map[string]verdictRow{}
+	model := map[int]verdictRow{}
 	withFormat := true
 	var (
 		undecided, failed int
@@ -264,7 +271,7 @@ func (c *LocalClient) Investigate(ctx context.Context, cluster clusterhealth.Clu
 			row, cut, err = c.call(ctx, prompt, &withFormat)
 			if err == nil {
 				truncated = truncated || cut
-				model[r.Workload] = row
+				model[i] = row
 				continue
 			}
 		}
@@ -415,16 +422,17 @@ func parseVerdicts(content string) (verdictDoc, error) {
 // renderVerdicts builds the narrative: one row per scoped workload that has
 // one, in report order — a rule row for a rule-decided workload, a model
 // row for an undecided workload whose call returned one (model is keyed by
-// "namespace/name") — at most maxVerdictRows, then the rules' shared
+// the workload's index in results, since namespace/name does not identify
+// a workload across kinds) — at most maxVerdictRows, then the rules' shared
 // lines. No model summary is rendered.
-func renderVerdicts(model map[string]verdictRow, results []hypothesis.Result, shared []string) string {
+func renderVerdicts(model map[int]verdictRow, results []hypothesis.Result, shared []string) string {
 	var rows []string
-	for _, r := range results {
+	for i, r := range results {
 		if r.Decided {
 			rows = append(rows, ruleRow(r))
 			continue
 		}
-		if m, ok := model[r.Workload]; ok {
+		if m, ok := model[i]; ok {
 			rows = append(rows, modelRow(r.Workload, m))
 		}
 	}

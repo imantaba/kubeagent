@@ -431,9 +431,11 @@ func runScan(o scanOptions) error {
 	// above; a failure sets modelRes.notice (handled above) and leaves
 	// investigationReport zero unless the rules decided something, in which
 	// case the report is kept and the notice says so; and a success with an
-	// empty narrative is impossible because Investigate itself returns an
-	// error rather than an empty report for that case. So this conjunction
-	// is exactly the skip and nothing else.
+	// empty narrative carries a notice too: Investigate returns an error
+	// rather than an empty report when a call yields nothing, and local
+	// verdict mode returns a notice ("no flagged workload for the model to
+	// judge") when there is nothing to judge. Only the early gate returns a
+	// bare empty report, so this conjunction is exactly the skip.
 	in.InvestigationSkipped = o.investigate && modelRes.notice == "" && investigationReport.Narrative == ""
 	// ExplanationSkipped follows the same argument one flag over: with
 	// o.explain set and o.investigate clear, runModelPath enters the explain

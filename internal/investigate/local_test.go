@@ -321,11 +321,11 @@ func TestLocalInvestigateParsesFencedJSON(t *testing.T) {
 
 func TestRenderVerdictsCapsRows(t *testing.T) {
 	var results []hypothesis.Result
-	model := map[string]verdictRow{}
+	model := map[int]verdictRow{}
 	for i := 0; i < 11; i++ {
 		wl := fmt.Sprintf("shop/web-%02d", i)
 		results = append(results, hypothesis.Result{Workload: wl})
-		model[wl] = verdictRow{Cause: fmt.Sprintf("cause-%02d", i), Confidence: "low", Rationale: "r"}
+		model[i] = verdictRow{Cause: fmt.Sprintf("cause-%02d", i), Confidence: "low", Rationale: "r"}
 	}
 	got := renderVerdicts(model, results, nil)
 	if n := strings.Count(got, "cause-"); n != maxVerdictRows {
@@ -337,7 +337,7 @@ func TestRenderVerdictsCapsRows(t *testing.T) {
 }
 
 func TestRenderVerdictsSanitizesAndBoundsModelText(t *testing.T) {
-	model := map[string]verdictRow{"shop/web": {
+	model := map[int]verdictRow{0: {
 		Workload:   "shop/web",
 		Cause:      "bad\x1b[31mcause\nwith newline",
 		Confidence: "certain!!",
@@ -495,8 +495,8 @@ func TestRenderVerdictsRowShapes(t *testing.T) {
 		decidedResult("shop/api", "PVC api-data (ProvisioningFailed)", hypothesis.Unverified, "not re-read: the read budget was spent first"),
 		{Workload: "shop/cart"},
 	}
-	// The model wrote a short name; the row is placed by the map key.
-	model := map[string]verdictRow{"shop/cart": {Workload: "cart", Cause: "none_of_these", Confidence: "low", Rationale: "evidence is thin"}}
+	// The model wrote a short name; the row is placed by the map key (the result index).
+	model := map[int]verdictRow{2: {Workload: "cart", Cause: "none_of_these", Confidence: "low", Rationale: "evidence is thin"}}
 	want := "Root-cause verdicts:\n" +
 		"- shop/web: node worker-1 (NotReady) [rule, confirmed] — Ready condition is False now\n" +
 		"- shop/api: PVC api-data (ProvisioningFailed) [rule, unverified] — not re-read: the read budget was spent first\n" +
@@ -507,6 +507,7 @@ func TestRenderVerdictsRowShapes(t *testing.T) {
 
 	// The order is report order, whichever kind of row each gets.
 	results = []hypothesis.Result{results[2], results[0], results[1]}
+	model = map[int]verdictRow{0: model[2]}
 	want = "Root-cause verdicts:\n" +
 		"- shop/cart: none_of_these [model, confidence: low] — evidence is thin\n" +
 		"- shop/web: node worker-1 (NotReady) [rule, confirmed] — Ready condition is False now\n" +
@@ -521,11 +522,11 @@ func TestRenderVerdictsRuleRowRationale(t *testing.T) {
 	want := "Root-cause verdicts:\n- shop/web: node worker-1 (NotReady) [rule, confirmed] — Ready condition is False now"
 	cases := []struct {
 		name  string
-		model map[string]verdictRow
+		model map[int]verdictRow
 	}{
 		{"no model row", nil},
-		{"model row with the same cause", map[string]verdictRow{"shop/web": {Cause: "node worker-1 (NotReady)", Confidence: "high", Rationale: "events show the pod stuck on the down node"}}},
-		{"model row with another cause", map[string]verdictRow{"shop/web": {Cause: "none_of_these", Confidence: "high", Rationale: "the node looks fine"}}},
+		{"model row with the same cause", map[int]verdictRow{0: {Cause: "node worker-1 (NotReady)", Confidence: "high", Rationale: "events show the pod stuck on the down node"}}},
+		{"model row with another cause", map[int]verdictRow{0: {Cause: "none_of_these", Confidence: "high", Rationale: "the node looks fine"}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -538,7 +539,7 @@ func TestRenderVerdictsRuleRowRationale(t *testing.T) {
 
 func TestRenderVerdictsRuleRowRendersWhenModelDropsIt(t *testing.T) {
 	results := []hypothesis.Result{nodeDown("shop/web"), {Workload: "shop/api"}}
-	model := map[string]verdictRow{"shop/api": {Cause: "none_of_these", Confidence: "low", Rationale: "r"}}
+	model := map[int]verdictRow{1: {Cause: "none_of_these", Confidence: "low", Rationale: "r"}}
 	want := "Root-cause verdicts:\n" +
 		"- shop/web: node worker-1 (NotReady) [rule, confirmed] — Ready condition is False now\n" +
 		"- shop/api: none_of_these [model, confidence: low] — r"
@@ -553,12 +554,12 @@ func TestRenderVerdictsRuleRowRendersWhenModelDropsIt(t *testing.T) {
 
 func TestRenderVerdictsCapCountsBothSources(t *testing.T) {
 	var results []hypothesis.Result
-	model := map[string]verdictRow{}
+	model := map[int]verdictRow{}
 	for i := 0; i < 6; i++ {
 		r := fmt.Sprintf("shop/r-%02d", i)
 		m := fmt.Sprintf("shop/m-%02d", i)
 		results = append(results, nodeDown(r), hypothesis.Result{Workload: m})
-		model[m] = verdictRow{Cause: "none_of_these", Confidence: "low", Rationale: "r"}
+		model[len(results)-1] = verdictRow{Cause: "none_of_these", Confidence: "low", Rationale: "r"}
 	}
 	got := renderVerdicts(model, results, nil)
 	if strings.Count(got, "[rule, ") != 5 || strings.Count(got, "[model, ") != 5 {
@@ -589,7 +590,7 @@ func TestRenderVerdictsAllRefutedRowFallsToModel(t *testing.T) {
 	ws := verdictTestWorkloads()
 	refuted := hypothesis.Result{Workload: "shop/web", Decisions: []hypothesis.Decision{{
 		Candidate: ws[0].RootCauseTrace[0], Outcome: hypothesis.Refuted, Evidence: "Ready condition is True now"}}}
-	model := map[string]verdictRow{"shop/web": {Cause: "none_of_these", Confidence: "medium", Rationale: "the node is healthy now"}}
+	model := map[int]verdictRow{0: {Cause: "none_of_these", Confidence: "medium", Rationale: "the node is healthy now"}}
 	want := "Root-cause verdicts:\n- shop/web: none_of_these [model, confidence: medium] — the node is healthy now"
 	if got := renderVerdicts(model, []hypothesis.Result{refuted}, nil); got != want {
 		t.Errorf("an undecided workload is the model's to name:\ngot:\n%s\nwant:\n%s", got, want)

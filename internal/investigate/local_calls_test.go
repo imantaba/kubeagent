@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,7 +16,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
+	"github.com/imantaba/kubeagent/internal/clusterhealth"
 	"github.com/imantaba/kubeagent/internal/inventory"
+	"github.com/imantaba/kubeagent/internal/svchealth"
 )
 
 // verdictCall is one request the test endpoint received.
@@ -236,6 +239,8 @@ func TestLocalInvestigateAllDecidedMakesNoCall(t *testing.T) {
 	}
 }
 
+const noFlaggedNotice = "no flagged workload for the model to judge"
+
 func TestLocalInvestigateDegradedWithNoWorkloadMakesNoCall(t *testing.T) {
 	url, calls := verdictEndpoint(t, ownRow)
 	rep, err := NewLocal(url, "tiny-model", "").Investigate(context.Background(), degraded(), nil, nil, nil, nil, fake.NewSimpleClientset())
@@ -245,8 +250,49 @@ func TestLocalInvestigateDegradedWithNoWorkloadMakesNoCall(t *testing.T) {
 	if n := len(calls()); n != 0 {
 		t.Errorf("no flagged workload: want 0 requests, got %d", n)
 	}
-	if rep.Narrative != "" || len(rep.Consulted) != 0 || rep.Notice != "" || rep.Truncated {
-		t.Errorf("want an empty report, got %+v", rep)
+	if rep.Notice != noFlaggedNotice || rep.Narrative != "" || rep.Truncated {
+		t.Errorf("want only the no-flagged-workload notice, got %+v", rep)
+	}
+}
+
+func TestLocalInvestigateServiceIssuesOnlyMakesNoCall(t *testing.T) {
+	url, calls := verdictEndpoint(t, ownRow)
+	issues := []svchealth.Issue{{Namespace: "shop", Name: "web"}}
+	healthy := clusterhealth.ClusterHealth{Verdict: "Healthy"}
+	rep, err := NewLocal(url, "tiny-model", "").Investigate(context.Background(), healthy, nil, nil, issues, nil, fake.NewSimpleClientset())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(calls()); n != 0 {
+		t.Errorf("no flagged workload: want 0 requests, got %d", n)
+	}
+	if rep.Notice != noFlaggedNotice || rep.Narrative != "" {
+		t.Errorf("want only the no-flagged-workload notice, got %+v", rep)
+	}
+}
+
+func TestLocalInvestigateSameNameDifferentKindsGetOwnRows(t *testing.T) {
+	url, calls := verdictEndpoint(t, func(i int, _ string) verdictReply {
+		return verdictReply{Content: oneRow("shop/web", fmt.Sprintf("cause-%d", i), "why")}
+	})
+	sts := refutedWL("web")
+	sts.Kind = "StatefulSet"
+	ws := []inventory.Workload{refutedWL("web"), sts}
+	rep, err := NewLocal(url, "tiny-model", "").Investigate(context.Background(), degraded(), nil, nil, nil, ws,
+		fake.NewSimpleClientset(boundPVC("web-data")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(calls()); n != 2 {
+		t.Fatalf("want 2 calls, got %d", n)
+	}
+	for _, c := range []string{"cause-0", "cause-1"} {
+		if strings.Count(rep.Narrative, c) != 1 {
+			t.Errorf("want one row carrying %s:\n%s", c, rep.Narrative)
+		}
+	}
+	if strings.Count(rep.Narrative, "- shop/web:") != 2 {
+		t.Errorf("want two distinct rows:\n%s", rep.Narrative)
 	}
 }
 

@@ -192,6 +192,21 @@ func TestRunModelPath(t *testing.T) {
 		}
 	})
 
+	t.Run("investigate with nothing to judge keeps its notice and no narrative", func(t *testing.T) {
+		rep := investigate.Report{Notice: "no flagged workload for the model to judge"}
+		res := runModelPath(scanOptions{investigate: true},
+			func() (investigate.Report, error) { return rep, nil },
+			func() (explain.Explanation, error) { return explain.Explanation{}, nil },
+		)
+		want := "--investigate: no flagged workload for the model to judge"
+		if res.notice != want {
+			t.Errorf("notice = %q, want %q", res.notice, want)
+		}
+		if res.investigation.Narrative != "" {
+			t.Errorf("investigation.Narrative = %q, want empty", res.investigation.Narrative)
+		}
+	})
+
 	t.Run("explain failure produces a notice naming --explain instead of an error", func(t *testing.T) {
 		res := runModelPath(scanOptions{explain: true},
 			func() (investigate.Report, error) { return investigate.Report{}, nil },

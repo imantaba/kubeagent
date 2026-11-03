@@ -26,3 +26,4 @@ jobs:
         run: |
           bash chaos/assert-selftest.sh
           bash chaos/version-selftest.sh
+          bash chaos/scan-selftest.sh

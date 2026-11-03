@@ -440,6 +440,13 @@ after the same credential grep clears both files. The corpus is a data
 contract for training and evaluation OUTSIDE this repository; no Go code in
 kubeagent reads it.
 
+When that grep refuses a run, nothing is published, so the step's log is all
+there is to judge the hit by. It names the file, the pattern and the line
+number, and never the matched text; `bash chaos/scan-selftest.sh` runs the real
+step against planted fake credentials to hold it to that. A corpus line number
+is exact, one row per scenario. A report line number is a rough guide: compare
+it with the same line of a published report from a good night.
+
 ## Scenarios
 
 | # | Outage | How it's injected | Expected kubeagent signal |

@@ -194,8 +194,18 @@ jobs:
           done
           if [ "${#files[@]}" -eq 0 ]; then echo "nothing to scan"; exit 0; fi
           hits=0
+          # Where a pattern matched, read from `grep -n` output on stdin. A
+          # refused run publishes nothing, so this is all anyone gets to judge
+          # a hit by. cut keeps only the number `grep -n` writes before the
+          # first colon, and -s drops a line that has no colon rather than
+          # printing it: matched text must never reach this log.
+          where() {   # where <what> <file>
+            local lines
+            lines="$(cut -s -d: -f1 | uniq | paste -sd' ' -)"
+            [ -z "$lines" ] || printf '  %s in %s at line %s\n' "$1" "${2##*/}" "$lines"
+          }
           scan() {   # scan <what> <extended-regexp>
-            local n
+            local n f
             # `--` stops option parsing: the PEM pattern below begins with a
             # literal `-`, which grep would otherwise read as an option string
             # and refuse to run at all. cat feeds every artifact through one
@@ -205,6 +215,9 @@ jobs:
             n="$(cat "${files[@]}" | grep -acE -- "$2" || true)"
             printf '%-34s %s\n' "$1" "$n"
             [ "$n" = 0 ] || hits=$((hits + 1))
+            for f in "${files[@]}"; do
+              { grep -anE -- "$2" "$f" || true; } | where "$1" "$f"
+            done
           }
           # A JWT's three dot-separated base64url segments: what a mounted
           # ServiceAccount token looks like on the wire.
@@ -220,6 +233,9 @@ jobs:
           n="$(cat "${files[@]}" | grep -aoE 'AKIA[A-Z0-9]{16}' | grep -vxF 'AKIAIOSFODNN7EXAMPLE' | grep -ac . || true)"
           printf '%-34s %s\n' 'unexpected AWS keys' "$n"
           [ "$n" = 0 ] || hits=$((hits + 1))
+          for f in "${files[@]}"; do
+            { grep -anoE 'AKIA[A-Z0-9]{16}' "$f" | grep -avE ':AKIAIOSFODNN7EXAMPLE$' || true; } | where 'unexpected AWS keys' "$f"
+          done
           if [ "$hits" -ne 0 ]; then
             echo "refusing to upload: the artifacts matched $hits credential pattern(s)" >&2
             exit 1

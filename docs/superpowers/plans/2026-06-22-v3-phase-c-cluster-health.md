@@ -350,7 +350,7 @@ In `internal/report/report_test.go`, add the import `"github.com/imantaba/kubeag
 func sampleCluster() clusterhealth.ClusterHealth {
 	return clusterhealth.ClusterHealth{
 		Verdict: "Degraded", NodesTotal: 3, NodesReady: 2,
-		NodeIssues:   []string{"nova-worker-2 NotReady"},
+		NodeIssues:   []string{"worker-2 NotReady"},
 		SystemIssues: []string{"kube-system/coredns 1/2 Degraded"},
 	}
 }
@@ -361,7 +361,7 @@ func TestPrintInventory_TextLeadsWithClusterVerdict(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
-	for _, want := range []string{"Cluster: Degraded", "2/3 nodes Ready", "nova-worker-2 NotReady", "kube-system/coredns 1/2 Degraded"} {
+	for _, want := range []string{"Cluster: Degraded", "2/3 nodes Ready", "worker-2 NotReady", "kube-system/coredns 1/2 Degraded"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("text output missing %q:\n%s", want, out)
 		}

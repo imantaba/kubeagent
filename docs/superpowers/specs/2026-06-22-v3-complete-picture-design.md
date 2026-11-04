@@ -97,7 +97,7 @@ type ClusterHealth struct {
     Verdict      string   // Healthy | Degraded
     NodesTotal   int
     NodesReady   int
-    NodeIssues   []string // e.g. "nova-worker-2 NotReady", "nova-worker-1 DiskPressure"
+    NodeIssues   []string // e.g. "worker-2 NotReady", "worker-1 DiskPressure"
     SystemIssues []string // e.g. "kube-system/coredns 1/2 Degraded"
 }
 ```
@@ -172,9 +172,9 @@ Cluster: DEGRADED — 3/3 nodes Ready · system: kube-system/coredns 1/2 Degrade
 
 cattle-system/rancher  Deployment  3/3 Running  · 64 restarts, last 20d ago
     image rancher/rancher:v2.14.1
-    …64smq  1/1  Running  31 (20d ago)  nova-worker-3  10.42.4.41   36d
-    …6gc4c  1/1  Running   1 (20d ago)  nova-worker-1  10.42.6.223  35d
-    …d2th5  1/1  Running  32 (30d ago)  nova-worker-2  10.42.7.133  36d
+    …64smq  1/1  Running  31 (20d ago)  worker-3  10.42.4.41   36d
+    …6gc4c  1/1  Running   1 (20d ago)  worker-1  10.42.6.223  35d
+    …d2th5  1/1  Running  32 (30d ago)  worker-2  10.42.7.133  36d
 ⚠ kube-system/coredns  Deployment  1/2 Degraded  → CrashLoopBackOff: <reason>
     …
 ```

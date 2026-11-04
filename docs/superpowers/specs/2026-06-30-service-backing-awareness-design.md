@@ -12,13 +12,13 @@ no endpoints — those backed by a CronJob/Job (no pods between runs) or by a
 DaemonSet/Deployment/StatefulSet whose desired count is `0` (e.g. a Windows
 node-exporter DaemonSet on an all-Linux cluster).
 
-Observed on the nova cluster:
+Observed on a production cluster:
 
 ```text
 Service issues:
   ⚠ cattle-monitoring-system/rancher-monitoring-windows-exporter  ClusterIP  no ready endpoints
-  ⚠ ekb-js-nightly/clickhouse-sync  ClusterIP  no ready endpoints
-  ⚠ ekb-js-staging/clickhouse-sync  ClusterIP  no ready endpoints
+  ⚠ tenant-a-nightly/sync-service  ClusterIP  no ready endpoints
+  ⚠ tenant-a-staging/sync-service  ClusterIP  no ready endpoints
 ```
 
 `windows-exporter` backs a DaemonSet with 0 desired; `clickhouse-sync` backs a

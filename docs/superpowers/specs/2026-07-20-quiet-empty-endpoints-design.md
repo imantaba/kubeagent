@@ -159,7 +159,7 @@ ingressIssues := ingresshealth.Assess(ings, svcs, slices, backends)   // + backe
 - `printNotes` gains `expectedIng` and renders `printIngressIssues(expectedIng, "  •", &b)` right after the expected services.
 
 Result: the superset route moves from an alarm to
-`• ingress superset/superset  infrasuperset.journals.ekb.eg/  backend Service superset is intentionally empty (scaled to 0) — route parked`,
+`• ingress superset/superset  superset.example.com/  backend Service superset is intentionally empty (scaled to 0) — route parked`,
 and (once annotated) a route to `paradedb-cluster-ro` reads `(declared via kubeagent.io/expected-empty)`.
 
 ## Global constraints

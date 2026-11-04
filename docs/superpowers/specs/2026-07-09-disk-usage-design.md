@@ -118,8 +118,8 @@ failure), only when the report is non-empty (i.e. the check ran and found
 something). Format:
 
 ```
-✗ node 195.43.22.161  disk 84% full (168Gi/200Gi)
-✗ pvc clickhouse/data-ekb-clickhouse-shard0-0  92% full (46Gi/50Gi)
+✗ node 203.0.113.10  disk 85% full (170Gi/200Gi)
+✗ pvc db/data-db-0  90% full (45Gi/50Gi)
 ```
 
 Percent is `round(ratio*100)`; sizes reuse a Gi/Mi formatter. JSON serializes the

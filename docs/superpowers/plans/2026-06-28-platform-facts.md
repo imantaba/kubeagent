@@ -77,9 +77,9 @@ func node(kubelet, runtime, providerID string) corev1.Node {
 	}
 }
 
-func TestDetect_HetznerNovaCombo(t *testing.T) {
+func TestDetect_ExampleCombo(t *testing.T) {
 	f := Detect(
-		[]corev1.Node{node("v1.35.4+rke2r1", "containerd://2.2.3-k3s1", "hcloud://131304002")},
+		[]corev1.Node{node("v1.35.4+rke2r1", "containerd://2.2.3-k3s1", "hcloud://1234567")},
 		[]appsv1.DaemonSet{ds("cilium"), ds("hcloud-csi-node"), ds("rke2-traefik")},
 		[]storagev1.StorageClass{sc("hcloud-volumes", "csi.hetzner.cloud", true), sc("hcloud-volumes-retain", "csi.hetzner.cloud", false), sc("nfs", "nfs.csi.k8s.io", false)},
 		[]networkingv1.IngressClass{ic("traefik", "traefik.io/ingress-controller")},

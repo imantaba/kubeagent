@@ -671,7 +671,7 @@ to:
 - [ ] **Step 2: Verify**
 
 Run: `export PATH=$PATH:$HOME/.local/bin:/usr/local/bin && helm lint deploy/helm/kubeagent && helm template x deploy/helm/kubeagent | grep -m1 -A1 'resources: \[pods'`
-Expected: lint clean; the printed core rule includes `namespaces`. Also `kubectl --context ekb apply --dry-run=client -f deploy/rbac.yaml` if a cluster is reachable (read-only client validation), else note skipped.
+Expected: lint clean; the printed core rule includes `namespaces`. Also `kubectl --context <CONTEXT> apply --dry-run=client -f deploy/rbac.yaml` if a cluster is reachable (read-only client validation), else note skipped.
 
 - [ ] **Step 3: Commit**
 

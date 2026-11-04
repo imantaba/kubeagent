@@ -64,7 +64,7 @@ func Assess(nodes []corev1.Node, hb Heartbeat, expected []string, workloads []in
   callers may pass a raw comma-split slice.
 
 The `NodeIssues` entries render as `✗ node <entry>` (existing `printHeader`
-format), so an absent node reads `✗ node nova-worker-2 expected but absent from
+format), so an absent node reads `✗ node worker-2 expected but absent from
 the cluster`.
 
 ### `internal/scan`

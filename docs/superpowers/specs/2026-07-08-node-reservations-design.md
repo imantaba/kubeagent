@@ -85,8 +85,8 @@ New "Node reservations" section in the text report:
 
 ```
 Node reservations
-  nova-worker-1  cpu=0    mem=0      WARNING: kubelet reserves no memory
-  nova-worker-2  cpu=200m mem=800Mi  OK
+  worker-1  cpu=0    mem=0      WARNING: kubelet reserves no memory
+  worker-2  cpu=200m mem=800Mi  OK
 ```
 
 JSON output serializes `Report` under `nodeReserve`.

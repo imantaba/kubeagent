@@ -36,13 +36,13 @@ Then add these tests (helpers `hbReadyNode(name)` and `notReadyNode(name, reason
 
 ```go
 func TestAssess_ExpectedNodeAbsentDegrades(t *testing.T) {
-	nodes := []corev1.Node{hbReadyNode("nova-worker-1")}
-	ch := Assess(nodes, Heartbeat{}, []string{"nova-worker-1", "nova-worker-2"}, nil)
+	nodes := []corev1.Node{hbReadyNode("worker-1")}
+	ch := Assess(nodes, Heartbeat{}, []string{"worker-1", "worker-2"}, nil)
 	if ch.Verdict != "Degraded" || ch.NodesExpectedAbsent != 1 {
 		t.Fatalf("an absent expected node must degrade + count: %+v", ch)
 	}
-	if len(ch.NodeIssues) != 1 || !strings.Contains(ch.NodeIssues[0], "nova-worker-2 expected but absent from the cluster") {
-		t.Errorf("want absent issue for nova-worker-2, got %+v", ch.NodeIssues)
+	if len(ch.NodeIssues) != 1 || !strings.Contains(ch.NodeIssues[0], "worker-2 expected but absent from the cluster") {
+		t.Errorf("want absent issue for worker-2, got %+v", ch.NodeIssues)
 	}
 }
 
@@ -391,9 +391,9 @@ Add a new `## [Unreleased]` section above the current top entry with:
 
 ### Added
 
-- **Expected-node baseline.** Opt-in `scan --expected-nodes nova-worker-1,…`
+- **Expected-node baseline.** Opt-in `scan --expected-nodes worker-1,…`
   declares the node names you expect; kubeagent flags each declared node that has
-  **no `Node` object** in the cluster — `node nova-worker-2 expected but absent
+  **no `Node` object** in the cluster — `node worker-2 expected but absent
   from the cluster` — catching a node that never registered or dropped out. It
   degrades the cluster verdict, and the watch daemon exposes
   `kubeagent_nodes_expected_absent` (set `KUBEAGENT_EXPECTED_NODES`). A node that
@@ -411,9 +411,9 @@ Add a subsection (matching the heading level/style) after the node-heartbeat mat
 ```markdown
 ### Expected-node baseline
 
-`scan --expected-nodes nova-worker-1,nova-worker-2,…` declares the node names you
+`scan --expected-nodes worker-1,worker-2,…` declares the node names you
 expect. kubeagent flags each declared node that has **no `Node` object** in the
-cluster — `✗ node nova-worker-2 expected but absent from the cluster` — which
+cluster — `✗ node worker-2 expected but absent from the cluster` — which
 catches a kubelet that never registered its node, or a node that dropped out of
 the cluster entirely. It degrades the cluster verdict. A node that exists but is
 `NotReady` counts as **present** (its health is flagged by the NotReady /

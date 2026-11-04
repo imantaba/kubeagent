@@ -175,7 +175,7 @@ facts := platform.Detect(nodes, sysDS, scs, ics)
 
 - `platform.Detect` — table tests: each CNI / ingress / storage / cloud / distro
   mapping; the raw-string fallbacks; the "unknown"/empty cases; default-first
-  storage ordering and dedupe; the full hetzner-nova combination
+  storage ordering and dedupe; the full example combination
   (Cilium/Traefik/Hetzner CSI+NFS/v1.35 RKE2/containerd/Hetzner Cloud).
 - `collect` — `StorageClasses`, `IngressClasses`, `SystemDaemonSets` via the fake
   clientset (objects across namespaces; kube-system filter for DaemonSets).

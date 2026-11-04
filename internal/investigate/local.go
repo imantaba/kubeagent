@@ -134,9 +134,17 @@ type chatVerdictMessage struct {
 	Content string `json:"content"`
 }
 
+// verdictTemperature is the sampling temperature of every verdict request. A
+// server's own default must not decide a verdict: llama-server's is 0.80, and
+// at that value the same prompt can get a different cause from one try to the
+// next.
+const verdictTemperature = 0
+
 type verdictRequest struct {
-	Model          string               `json:"model"`
-	Stream         bool                 `json:"stream"`
+	Model  string `json:"model"`
+	Stream bool   `json:"stream"`
+	// Temperature has no omitempty: the value sent is 0, which omitempty drops.
+	Temperature    float64              `json:"temperature"`
 	Messages       []chatVerdictMessage `json:"messages"`
 	ResponseFormat *responseFormat      `json:"response_format,omitempty"`
 }
@@ -325,8 +333,9 @@ func (c *LocalClient) call(ctx context.Context, prompt string, withFormat *bool)
 // 400-with-response_format case.
 func (c *LocalClient) post(ctx context.Context, prompt string, withFormat bool) (verdictDoc, bool, bool, error) {
 	reqBody := verdictRequest{
-		Model:  c.model,
-		Stream: false,
+		Model:       c.model,
+		Stream:      false,
+		Temperature: verdictTemperature,
 		Messages: []chatVerdictMessage{
 			{Role: "system", Content: verdictSystemPrompt},
 			{Role: "user", Content: prompt},

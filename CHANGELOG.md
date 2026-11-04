@@ -23,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with no flagged workload no longer calls the model: it prints
   `--investigate: no flagged workload for the model to judge` instead of a
   model summary.
+- `--investigate`'s local verdict mode now sends `temperature: 0` on every
+  request, so a server's own default no longer decides a verdict.
+  `llama-server` defaults to 0.80, and at that value the same prompt can get
+  a different cause from one try to the next. An endpoint that refuses the
+  field answers with an error, and that workload gets no model verdict.
+  `--explain` is unchanged.
 
 ### Fixed
 

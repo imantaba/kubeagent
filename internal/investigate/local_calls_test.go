@@ -23,8 +23,9 @@ import (
 
 // verdictCall is one request the test endpoint received.
 type verdictCall struct {
-	User       string // the user message: the delimited prompt
-	WithFormat bool   // the request carried response_format
+	User        string   // the user message: the delimited prompt
+	WithFormat  bool     // the request carried response_format
+	Temperature *float64 // the request's temperature; nil when the key is absent
 }
 
 // verdictReply is how the test endpoint answers one request.
@@ -48,6 +49,7 @@ func verdictEndpoint(t *testing.T, reply func(i int, user string) verdictReply) 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			ResponseFormat json.RawMessage `json:"response_format"`
+			Temperature    *float64        `json:"temperature"`
 			Messages       []struct {
 				Role, Content string
 			} `json:"messages"`
@@ -59,7 +61,7 @@ func verdictEndpoint(t *testing.T, reply func(i int, user string) verdictReply) 
 		}
 		mu.Lock()
 		i := len(calls)
-		calls = append(calls, verdictCall{User: req.Messages[1].Content, WithFormat: len(req.ResponseFormat) > 0})
+		calls = append(calls, verdictCall{User: req.Messages[1].Content, WithFormat: len(req.ResponseFormat) > 0, Temperature: req.Temperature})
 		mu.Unlock()
 		rep := reply(i, req.Messages[1].Content)
 		switch {
@@ -434,6 +436,36 @@ func TestLocalInvestigate400DropsResponseFormatForTheRun(t *testing.T) {
 	}
 	if !strings.Contains(rep.Narrative, modelRowFor("alpha")) || !strings.Contains(rep.Narrative, modelRowFor("bravo")) {
 		t.Errorf("both rows must render:\n%s", rep.Narrative)
+	}
+}
+
+// TestLocalInvestigateAsksAtTemperatureZero pins the key on the wire, on the
+// first attempt and on the retry that drops response_format. A server's own
+// default must not decide a verdict, and omitempty on the field would drop a
+// zero without any other test noticing.
+func TestLocalInvestigateAsksAtTemperatureZero(t *testing.T) {
+	url, calls := verdictEndpoint(t, func(i int, user string) verdictReply {
+		if i == 0 {
+			return verdictReply{Status: http.StatusBadRequest, Content: `{"error":"response_format is not supported"}`}
+		}
+		return ownRow(i, user)
+	})
+	ws := []inventory.Workload{refutedWL("alpha"), refutedWL("bravo")}
+	if _, err := NewLocal(url, "tiny-model", "").Investigate(context.Background(), degraded(), nil, nil, nil, ws,
+		fake.NewSimpleClientset(boundPVC("alpha-data"), boundPVC("bravo-data"))); err != nil {
+		t.Fatal(err)
+	}
+	got := calls()
+	if len(got) != 3 {
+		t.Fatalf("want 3 requests (alpha, alpha retried, bravo), got %d", len(got))
+	}
+	for i, c := range got {
+		switch {
+		case c.Temperature == nil:
+			t.Errorf("request %d: no temperature key, so the server's default would decide", i)
+		case *c.Temperature != 0:
+			t.Errorf("request %d: temperature %v, want 0", i, *c.Temperature)
+		}
 	}
 }
 

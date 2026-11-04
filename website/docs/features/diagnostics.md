@@ -1505,6 +1505,11 @@ prose-wrapped JSON still parses, because kubeagent decodes the first
 complete JSON object it finds rather than requiring the whole reply to be
 JSON.
 
+**Temperature.** Every request sends `temperature: 0`, so a server's own
+default cannot change a verdict: `llama-server`'s default is 0.80. An endpoint
+that refuses the field answers with an error, and that workload gets no model
+verdict.
+
 **Model guidance.** A small instruction-tuned model is enough —
 closed-vocabulary adjudication over evidence it is handed suits a small
 model better than driving a multi-turn tool loop does. Recommend a context

@@ -1505,6 +1505,17 @@ prose-wrapped JSON still parses, because kubeagent decodes the first
 complete JSON object it finds rather than requiring the whole reply to be
 JSON.
 
+**Temperature.** Every request sends `temperature: 0`, so a server's default
+temperature cannot change a verdict: `llama-server`'s default is 0.80. An
+endpoint that refuses the field answers with an error, and that workload gets
+no model verdict.
+
+Temperature 0 alone does not make every reply repeat exactly. `llama-server`
+keeps its prompt cache on by default, and with the cache on the same request
+can get different wording and, rarely, a different cause. Start the server with
+`--no-cache-prompt` when you need exact repeats. Each call then works through
+its full prompt again.
+
 **Model guidance.** A small instruction-tuned model is enough —
 closed-vocabulary adjudication over evidence it is handed suits a small
 model better than driving a multi-turn tool loop does. Recommend a context

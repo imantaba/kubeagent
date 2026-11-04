@@ -21,7 +21,7 @@ Service issues:
   ⚠ tenant-a-staging/sync-service  ClusterIP  no ready endpoints
 ```
 
-`windows-exporter` backs a DaemonSet with 0 desired; `clickhouse-sync` backs a
+`windows-exporter` backs a DaemonSet with 0 desired; `sync-service` backs a
 CronJob. Neither is a primary problem.
 
 ## Decision (from brainstorming)

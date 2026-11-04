@@ -2503,7 +2503,7 @@ expect. kubeagent flags each declared node that has **no `Node` object** in the
 cluster — `✗ node node-b expected but absent from the cluster` — which
 ```
 
-Verify with `grep -rn "<cluster-name>-" README.md website/`, which must return nothing.
+Verify with `grep -rn "<cluster-name>-" README.md website/`, with your own cluster's node prefix in place of `<cluster-name>`. It must return nothing.
 
 - [ ] **Step 6: Update the roadmap's post-1.0 row**
 
@@ -2591,6 +2591,7 @@ Expected: tests PASS; mkdocs exits 0 with no `WARNING` lines naming your pages. 
 - [ ] **Step 10: Secret-leak sweep**
 
 ```bash
+# put your own cluster's node prefix in place of <cluster-name>
 grep -rn "<cluster-name>-" README.md website/ CLAUDE.md CHANGELOG.md
 grep -rnE "https?://" website/docs/features/baseline.md
 ```

@@ -76,7 +76,7 @@ In Tasks 2, 3 and 4, run the package under test plus its neighbours — `go test
 
 ```bash
 export PATH=$PATH:/usr/local/go/bin
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git checkout main
 git checkout -b fleet-selection-file
 git log --oneline -2     # expect this plan's commit on top of the spec at 95b81fc
@@ -1907,8 +1907,8 @@ go build ./... && go test -p 2 ./...
 gofmt -l internal/
 go vet ./...
 git diff --stat main -- go.mod go.sum internal/report/testdata/golden-scan.txt   # must print nothing
-(cd website && /tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/mkdocs-venv/bin/mkdocs build --strict -f mkdocs.yml)
-cd /home/ubuntu/git/kubeagent
+(cd website && <scratch path>/mkdocs-venv/bin/mkdocs build --strict -f mkdocs.yml)
+cd <kubeagent checkout>
 ```
 
 Expected: all packages `ok`; `mkdocs` exits 0 with no `WARNING` line naming a page you edited. The red "Material for MkDocs 2.0" banner is cosmetic. **The bash working directory persists between calls and has drifted into `website/` before — `cd` back to the repo root, as the last line does.**

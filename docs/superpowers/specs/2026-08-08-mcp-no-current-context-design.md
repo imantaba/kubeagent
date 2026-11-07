@@ -16,7 +16,7 @@ MCP error -32000: Connection closed
 Two independent causes, found by running the manifest's own command line by
 hand.
 
-**The binary on `PATH` predated the MCP server.** `/home/ubuntu/.local/bin/kubeagent`
+**The binary on `PATH` predated the MCP server.** `~/.local/bin/kubeagent`
 was a `dev` build whose usage line named only `scan`, `watch` and `version`.
 `kubeagent mcp` was not a subcommand, so the process printed usage, exited 1,
 and the client reported a closed connection. Upgrading fixed it.

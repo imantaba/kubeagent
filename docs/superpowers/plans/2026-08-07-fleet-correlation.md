@@ -86,7 +86,7 @@ Adding `Report.Shared` in Task 2 changes the fleet document's shape, so from the
 
 ```bash
 export PATH=$PATH:/usr/local/go/bin
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git checkout main
 git status --short           # must be empty
 git rev-parse HEAD           # must be de135c0...
@@ -1558,9 +1558,9 @@ Under `## [Unreleased]`, in an `### Added` block (create it if the section has n
 - [ ] **Step 6: Build the docs**
 
 ```bash
-cd /home/ubuntu/git/kubeagent/website
-/tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/mkdocs-venv/bin/mkdocs build --strict -f mkdocs.yml 2>&1 | tail -20
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>/website
+<scratch path>/mkdocs-venv/bin/mkdocs build --strict -f mkdocs.yml 2>&1 | tail -20
+cd <kubeagent checkout>
 ```
 
 Expected: exit 0, "Documentation built", and **no `WARNING` lines naming `fleet.md` or `roadmap.md`**. The red "Material for MkDocs 2.0" banner is cosmetic — judge by the exit code and the absence of page warnings.
@@ -1571,7 +1571,7 @@ Expected: exit 0, "Documentation built", and **no `WARNING` lines naming `fleet.
 
 ```bash
 export PATH=$PATH:/usr/local/go/bin
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 go build ./... && go test -p 2 ./... 2>&1 | grep -v '^ok' | head -20
 gofmt -l internal/ && go vet ./...
 git status --short internal/report/testdata/golden-scan.txt go.mod go.sum

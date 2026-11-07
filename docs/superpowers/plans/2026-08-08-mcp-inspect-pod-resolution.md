@@ -125,7 +125,7 @@ needs the same row. Exporting one function beats duplicating four.
 
 ```bash
 export PATH=$PATH:/usr/local/go/bin
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git branch --show-current          # must print: main
 git status --short                 # must be empty
 git log --oneline -1               # must be the spec commit: "docs: design for kubeagent_inspect object resolution"
@@ -1754,8 +1754,8 @@ which must not claim an owner it does not have — and for every kind other than
 - [ ] **Step 3: Build the docs**
 
 ```bash
-/tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/mkdocs-venv2/bin/mkdocs build --strict -f website/mkdocs.yml
-cd /home/ubuntu/git/kubeagent
+<scratch path>/mkdocs-venv2/bin/mkdocs build --strict -f website/mkdocs.yml
+cd <kubeagent checkout>
 ```
 
 Expected: exit 0, no `WARNING` line naming `features/mcp.md`. The red "Material
@@ -1794,7 +1794,7 @@ Insert as the **first** bullet under `[Unreleased]`'s `### Fixed` heading (line
 
 ```bash
 export PATH=$PATH:/usr/local/go/bin
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 go build ./... && go test -p 2 -count=1 ./...
 git diff --stat main -- go.mod go.sum internal/report/testdata/golden-scan.txt website/docs/schemas/ website/docs/quickstart.md
 ```

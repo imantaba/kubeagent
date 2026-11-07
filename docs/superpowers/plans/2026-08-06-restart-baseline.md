@@ -2583,7 +2583,7 @@ Under `## [Unreleased]` in `CHANGELOG.md`:
 ```bash
 export PATH=$PATH:/usr/local/go/bin
 go build ./... && go test -p 2 ./...
-(cd website && /tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/mkdocs-venv/bin/mkdocs build --strict -f mkdocs.yml)
+(cd website && <scratch path>/mkdocs-venv/bin/mkdocs build --strict -f mkdocs.yml)
 ```
 
 Expected: tests PASS; mkdocs exits 0 with no `WARNING` lines naming your pages. The red "Material for MkDocs 2.0" banner is cosmetic.
@@ -2630,7 +2630,7 @@ git diff main -- internal/report/testdata/golden-scan.txt   # must be empty
 git diff main -- go.mod go.sum                              # must be empty
 go test ./internal/schemadoc -run TestSchemaDrift            # clean, no -update
 bash scripts/dco-check.sh main HEAD
-(cd website && /tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/mkdocs-venv/bin/mkdocs build --strict -f mkdocs.yml)
+(cd website && <scratch path>/mkdocs-venv/bin/mkdocs build --strict -f mkdocs.yml)
 ```
 
 Plus the live checks in Task 4 step 6, Task 5 step 7 and Task 6 step 7, and:

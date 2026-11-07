@@ -247,7 +247,7 @@ python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/chaos-matrix.yml
 Then prove the matrix-resolution shell does what the YAML claims, outside Actions:
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 bash -c 'set -euo pipefail; . chaos/versions.sh; picked="$(chaos_versions)";
   for v in $picked; do chaos_image "$v" >/dev/null; done;
   printf "%s\n" $picked | jq -R . | jq -sc .'
@@ -513,7 +513,7 @@ Follow the wording pattern the earlier Theme H slices already use in that file.
 - [ ] **Step 4: Build the site if `website/` changed**
 
 ```bash
-(cd website && /tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/mkdocs-venv/bin/mkdocs build --strict -f mkdocs.yml)
+(cd website && <scratch path>/mkdocs-venv/bin/mkdocs build --strict -f mkdocs.yml)
 ```
 
 Expected: exit 0, no `WARNING` lines naming your pages. The red "Material for

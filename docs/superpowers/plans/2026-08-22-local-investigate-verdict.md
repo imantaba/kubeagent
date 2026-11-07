@@ -62,7 +62,7 @@ Two plan-level resolutions (decided here, spec-compatible): (1) `buildVerdictPro
 - [ ] **Step 1: Create the feature branch**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git checkout main && git checkout -b local-investigate-verdict
 ```
 
@@ -1963,7 +1963,7 @@ Under `## [Unreleased]`, add:
 - [ ] **Step 5: Build the docs site strictly**
 
 ```bash
-cd website && /tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/mkdocs-venv2/bin/mkdocs build --strict -f mkdocs.yml; cd /home/ubuntu/git/kubeagent
+cd website && <scratch path>/mkdocs-venv2/bin/mkdocs build --strict -f mkdocs.yml; cd <kubeagent checkout>
 ```
 
 Expected: exit 0, no WARNING lines about the touched pages. (That venv is the only working mkdocs on this machine; always cd back to the repo root.)

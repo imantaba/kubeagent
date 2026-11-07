@@ -140,7 +140,7 @@ func TestWriter_LogSurfacesWriteError(t *testing.T) {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go test ./internal/audit/`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go test ./internal/audit/`
 Expected: FAIL — the package/`RecordFor`/`NewWriter` don't exist yet.
 
 - [ ] **Step 3: Implement `audit.go`**
@@ -211,13 +211,13 @@ func (a *Writer) Log(r Record) error {
 
 - [ ] **Step 4: Run the tests**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go build ./... && go test ./internal/audit/`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go build ./... && go test ./internal/audit/`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git add internal/audit/
 git commit -m "feat(audit): JSON-Lines remediation audit record and writer"
 ```
@@ -294,7 +294,7 @@ func TestApply_CleanApplyNotRefused(t *testing.T) {
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go test ./internal/remediate/ -run TestApply_Refused`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go test ./internal/remediate/ -run TestApply_Refused`
 Expected: FAIL — `res.Refused` unknown field.
 
 - [ ] **Step 3: Add the field and set it on the three paths**
@@ -341,13 +341,13 @@ Leave the protected-namespace guard and all `res.Err = ...` returns unchanged.
 
 - [ ] **Step 4: Run the tests**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go build ./... && go test ./internal/remediate/`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go build ./... && go test ./internal/remediate/`
 Expected: PASS (new Refused tests + all existing Apply/Plan tests unchanged).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git add internal/remediate/
 git commit -m "feat(remediate): Result.Refused flag on guarded no-write paths"
 ```
@@ -436,7 +436,7 @@ Note on fixtures: reuse the existing `fixWorkload()` / `fixRS()` helpers. For th
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go test . -run TestRunFixes_Audit`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go test . -run TestRunFixes_Audit`
 Expected: FAIL — compile error (runFixes takes 7 args, tests pass 8).
 
 - [ ] **Step 3: Add the audit param + per-disposition logging to `runFixes`**
@@ -538,13 +538,13 @@ The four existing `TestRunFixes_*` tests call `runFixes(..., &out, strings.NewRe
 
 - [ ] **Step 6: Build, test, and smoke**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go build ./... && go test . ./internal/...`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go build ./... && go test . ./internal/...`
 Expected: PASS (including golden — no report change).
 
 Binary smoke:
 
 ```bash
-cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go build -o kubeagent .
+cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go build -o kubeagent .
 ./kubeagent scan --help 2>&1 | grep -i audit-log      # flag documented
 ./kubeagent scan --fix --audit-log /root/no/such/dir/x 2>&1 | head -1   # unwritable path → fail-fast error (if a cluster is reachable; otherwise a cluster error is fine)
 rm -f kubeagent
@@ -555,7 +555,7 @@ Expected: the `--audit-log` flag appears in help.
 - [ ] **Step 7: Commit**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git add main.go main_test.go
 git commit -m "feat: --audit-log flag records every --fix disposition (JSON lines)"
 ```
@@ -592,13 +592,13 @@ git commit -m "feat: --audit-log flag records every --fix disposition (JSON line
 
 - [ ] **Step 5: Verify the site builds**
 
-Run: `cd /home/ubuntu/git/kubeagent/website && /tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/mkvenv/bin/mkdocs build --strict -f mkdocs.yml 2>&1 | tail -1` (fall back to `mkdocs` on PATH if missing)
+Run: `cd <kubeagent checkout>/website && <scratch path>/mkvenv/bin/mkdocs build --strict -f mkdocs.yml 2>&1 | tail -1` (fall back to `mkdocs` on PATH if missing)
 Expected: `Documentation built`, no page WARNINGs.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git add website/docs/features/remediation.md README.md CHANGELOG.md website/docs/roadmap.md
 git commit -m "docs: document the --fix audit log"
 ```

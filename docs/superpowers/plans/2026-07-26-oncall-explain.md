@@ -2949,7 +2949,7 @@ grep -n "scenario_12" chaos/run.sh
 export PATH=$PATH:/usr/local/go/bin:$HOME/.local/bin
 unset ANTHROPIC_API_KEY
 go build -o kubeagent .
-./chaos/run.sh --only 14 --out /tmp/claude-1000/-home-ubuntu-git-kubeagent/scratchpad/chaos14.md
+./chaos/run.sh --only 14 --out <scratch path>/chaos14.md
 ```
 
 Expected: the report shows `calls: 1`, one `"reason":"explanation"`

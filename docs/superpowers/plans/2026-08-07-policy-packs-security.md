@@ -69,7 +69,7 @@ Not touched by any task: `internal/policy/**`, `internal/policypack/packs_test.g
 - [ ] **Step 1: Cut the branch**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 export PATH=$PATH:/usr/local/go/bin
 git checkout main
 git checkout -b policy-pack-security
@@ -1441,9 +1441,9 @@ The other three bullets in that section stay exactly as they are.
 - [ ] **Step 2: Build the docs**
 
 ```bash
-cd /home/ubuntu/git/kubeagent/website
-/tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/mkdocs-venv2/bin/mkdocs build --strict -f mkdocs.yml
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>/website
+<scratch path>/mkdocs-venv2/bin/mkdocs build --strict -f mkdocs.yml
+cd <kubeagent checkout>
 ```
 
 Expected: exit 0, "Documentation built", and no `WARNING` line naming `features/policy-packs.md`. The red "Material for MkDocs 2.0" banner is cosmetic. **Return to the repository root afterwards** — the shell's working directory persists between commands.
@@ -1541,7 +1541,7 @@ narrowed to the cost pack rather than deleted."
 ## Verification Before the Whole-Branch Review
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 export PATH=$PATH:/usr/local/go/bin
 go build ./... && go vet ./... && gofmt -l internal/     # gofmt prints nothing
 go test -p 2 -count=1 ./...                              # every package ok

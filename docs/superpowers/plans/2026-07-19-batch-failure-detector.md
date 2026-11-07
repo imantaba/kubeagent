@@ -525,7 +525,7 @@ detected modes, append `and failed Jobs/CronJobs` there too. (Run `grep -n "Init
 
 - [ ] **Step 5: Verify docs build**
 
-Run: `cd website && /tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/mkvenv/bin/mkdocs build --strict -f mkdocs.yml --site-dir /tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/site-batch`
+Run: `cd website && <scratch path>/mkvenv/bin/mkdocs build --strict -f mkdocs.yml --site-dir <scratch path>/site-batch`
 Expected: exit 0, "Documentation built", no `WARNING` lines about these pages. Then `export PATH=$PATH:/usr/local/go/bin && go build ./...`.
 
 - [ ] **Step 6: Commit**

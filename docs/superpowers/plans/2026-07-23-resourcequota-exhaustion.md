@@ -851,7 +851,7 @@ git commit -m "test(report): cover a ResourceQuota issue in the golden scan snap
 
 - [ ] **Step 2: Verify the docs build**
 
-Run: `(cd website && mkdocs build --strict -f mkdocs.yml)` (venv fallback: `/tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/mkvenv/bin/mkdocs`).
+Run: `(cd website && mkdocs build --strict -f mkdocs.yml)` (venv fallback: `<scratch path>/mkvenv/bin/mkdocs`).
 Expected: exit 0, "Documentation built", no page WARNINGs.
 
 - [ ] **Step 3: Run the whole suite**

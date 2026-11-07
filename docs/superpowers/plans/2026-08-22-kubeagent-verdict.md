@@ -8,14 +8,14 @@
 
 **Tech Stack:** Python 3.12 (venv), pytest, ruff, torch (CPU wheels), transformers, peft, llama.cpp at a pinned tag (fetched by script — not a pip dependency), Ollama for serving. The generator, contract, and eval layers are stdlib-only.
 
-**Spec:** `docs/superpowers/plans/../superpowers/specs/2026-08-22-kubeagent-verdict-training-repo-design.md` in the kubeagent repo (`/home/ubuntu/git/kubeagent`, committed on main as 56b52f3). The plan argues from that spec; executors read both.
+**Spec:** `docs/superpowers/plans/../superpowers/specs/2026-08-22-kubeagent-verdict-training-repo-design.md` in the kubeagent repo (`<kubeagent checkout>`, committed on main as 56b52f3). The plan argues from that spec; executors read both.
 
 ## Global Constraints
 
 Every task's requirements implicitly include this section.
 
-- **The repo is new and separate.** It lives at `/home/ubuntu/git/kubeagent-verdict`, module identity `github.com/imantaba/kubeagent-verdict`, license Apache-2.0. It is a fresh git repository — NOT a branch, submodule, or subdirectory of kubeagent. Tasks commit there directly on `main` (it is a new repo; there is no other branch to protect yet).
-- **kubeagent (`/home/ubuntu/git/kubeagent`, on `main`) is a read-only reference.** No task creates, modifies, or commits anything there — with exactly one temporary exception: Task 3's scratch capture test, which is created, run, and **deleted**, leaving `git status` in kubeagent clean. Nothing in kubeagent-verdict ever imports, vendores, or links kubeagent Go code.
+- **The repo is new and separate.** It lives at `<kubeagent-verdict checkout>`, module identity `github.com/imantaba/kubeagent-verdict`, license Apache-2.0. It is a fresh git repository — NOT a branch, submodule, or subdirectory of kubeagent. Tasks commit there directly on `main` (it is a new repo; there is no other branch to protect yet).
+- **kubeagent (`<kubeagent checkout>`, on `main`) is a read-only reference.** No task creates, modifies, or commits anything there — with exactly one temporary exception: Task 3's scratch capture test, which is created, run, and **deleted**, leaving `git status` in kubeagent clean. Nothing in kubeagent-verdict ever imports, vendores, or links kubeagent Go code.
 - **Commits:** every commit uses `git commit -s` (DCO sign-off), author `imantaba <itn.taba@gmail.com>`. No `Co-Authored-By: Claude`, no AI attribution of any kind, anywhere (commits, docs, README, code comments).
 - **No live identifiers in any tracked file.** Synthetic names only (the `names.py` allowlist). No real hostnames, no private IPs, no kubeconfig paths, no context names. Corpus snapshots come **only** from nightly CI artifacts (`gh run download` from the `chaos-matrix` workflow) — **never** from kubeagent's local `docs/testing/` directory, which holds live-cluster output.
 - **CPU-only everywhere.** Training, export, eval, and CI all run without a GPU. torch installs from the CPU wheel index (`https://download.pytorch.org/whl/cpu`). No CUDA package may enter `requirements.lock`.
@@ -97,17 +97,17 @@ Dependency direction inside the package: `contract.py` and `vocab.py` import not
 ### Task 1: Repository scaffold
 
 **Files:**
-- Create: `/home/ubuntu/git/kubeagent-verdict/` (git init), `LICENSE`, `README.md`, `pyproject.toml`, `.gitignore`, `src/kubeagent_verdict/__init__.py`, `.github/workflows/ci.yml`, `requirements.lock`, `tests/test_package.py`
+- Create: `<kubeagent-verdict checkout>/` (git init), `LICENSE`, `README.md`, `pyproject.toml`, `.gitignore`, `src/kubeagent_verdict/__init__.py`, `.github/workflows/ci.yml`, `requirements.lock`, `tests/test_package.py`
 
 **Interfaces:**
 - Consumes: nothing (first task).
-- Produces: the installed editable package `kubeagent_verdict` with `__version__ = "0.1.0"`; a venv at `/home/ubuntu/git/kubeagent-verdict/.venv` (python3.12) that every later task uses via `.venv/bin/python` / `.venv/bin/pytest`; console script stubs are NOT registered yet (each CLI task adds its own `[project.scripts]` line).
+- Produces: the installed editable package `kubeagent_verdict` with `__version__ = "0.1.0"`; a venv at `<kubeagent-verdict checkout>/.venv` (python3.12) that every later task uses via `.venv/bin/python` / `.venv/bin/pytest`; console script stubs are NOT registered yet (each CLI task adds its own `[project.scripts]` line).
 
 - [ ] **Step 1: Initialize the repository and identity**
 
 ```bash
-mkdir -p /home/ubuntu/git/kubeagent-verdict
-cd /home/ubuntu/git/kubeagent-verdict
+mkdir -p <kubeagent-verdict checkout>
+cd <kubeagent-verdict checkout>
 git init -b main
 git config user.name imantaba
 git config user.email itn.taba@gmail.com
@@ -118,7 +118,7 @@ git config user.email itn.taba@gmail.com
 Fetch the canonical Apache-2.0 text from the kubeagent checkout (same license, byte-for-byte is fine):
 
 ```bash
-cp /home/ubuntu/git/kubeagent/LICENSE /home/ubuntu/git/kubeagent-verdict/LICENSE
+cp <kubeagent checkout>/LICENSE <kubeagent-verdict checkout>/LICENSE
 ```
 
 - [ ] **Step 3: Write .gitignore**
@@ -194,7 +194,7 @@ def test_version():
 - [ ] **Step 6: Create the venv, install, verify the test fails before install and passes after**
 
 ```bash
-cd /home/ubuntu/git/kubeagent-verdict
+cd <kubeagent-verdict checkout>
 python3.12 -m venv .venv
 .venv/bin/pip install --upgrade pip
 .venv/bin/pip install -e ".[dev]"
@@ -307,16 +307,16 @@ This is the load-bearing wall: a Python reimplementation of exactly what kubeage
 Never retype it — extract the raw-string literal mechanically:
 
 ```bash
-mkdir -p /home/ubuntu/git/kubeagent-verdict/contract
+mkdir -p <kubeagent-verdict checkout>/contract
 python3 - <<'EXTRACT'
 import re
-src = open("/home/ubuntu/git/kubeagent/internal/investigate/local.go", encoding="utf-8").read()
+src = open("<kubeagent checkout>/internal/investigate/local.go", encoding="utf-8").read()
 m = re.search(r"const verdictSystemPrompt = `(.*?)`", src, re.S)
 assert m, "verdictSystemPrompt literal not found"
-open("/home/ubuntu/git/kubeagent-verdict/contract/system_prompt.txt", "w", encoding="utf-8").write(m.group(1))
+open("<kubeagent-verdict checkout>/contract/system_prompt.txt", "w", encoding="utf-8").write(m.group(1))
 print("wrote", len(m.group(1)), "bytes")
 EXTRACT
-head -c 80 /home/ubuntu/git/kubeagent-verdict/contract/system_prompt.txt
+head -c 80 <kubeagent-verdict checkout>/contract/system_prompt.txt
 ```
 
 Expected: the file starts with `You are kubeagent's root-cause adjudicator for a Kubernetes cluster scan.` and ends with `No markdown, no code fences, no text outside the JSON object.` (no trailing newline — the Go literal has none).
@@ -825,7 +825,7 @@ Captures the ground truth from kubeagent's `buildVerdictPrompt` via a **temporar
 
 **Files:**
 - Create: `contract/golden/input.json`, `contract/golden/user_message.txt`, `contract/golden/answer.json`, `contract/PIN.md`
-- Create then DELETE: `/home/ubuntu/git/kubeagent/internal/investigate/kv_golden_capture_test.go`
+- Create then DELETE: `<kubeagent checkout>/internal/investigate/kv_golden_capture_test.go`
 - Test: `tests/test_golden.py`
 
 **Interfaces:**
@@ -835,12 +835,12 @@ Captures the ground truth from kubeagent's `buildVerdictPrompt` via a **temporar
 - [ ] **Step 1: Verify kubeagent is clean and on main**
 
 ```bash
-cd /home/ubuntu/git/kubeagent && git branch --show-current && git status --short
+cd <kubeagent checkout> && git branch --show-current && git status --short
 ```
 
 Expected: `main`, empty status. If not empty, STOP and report BLOCKED (never work over someone's dirty tree).
 
-- [ ] **Step 2: Write the scratch capture test** at `/home/ubuntu/git/kubeagent/internal/investigate/kv_golden_capture_test.go`
+- [ ] **Step 2: Write the scratch capture test** at `<kubeagent checkout>/internal/investigate/kv_golden_capture_test.go`
 
 ```go
 //go:build goldencapture
@@ -937,24 +937,24 @@ func TestCaptureVerdictGolden(t *testing.T) {
 }
 ```
 
-If the compiler rejects a field or type name (e.g. the trace element type), read the declared names in `/home/ubuntu/git/kubeagent/internal/inventory/inventory.go` (the trace type is `Hypothesis`, fields `Cause`, `Kind`, `Object`, `Verdict`, `Reason`) and correct the literal — change nothing else.
+If the compiler rejects a field or type name (e.g. the trace element type), read the declared names in `<kubeagent checkout>/internal/inventory/inventory.go` (the trace type is `Hypothesis`, fields `Cause`, `Kind`, `Object`, `Verdict`, `Reason`) and correct the literal — change nothing else.
 
 - [ ] **Step 3: Run the capture**
 
 ```bash
-mkdir -p /home/ubuntu/git/kubeagent-verdict/contract/golden
-cd /home/ubuntu/git/kubeagent
+mkdir -p <kubeagent-verdict checkout>/contract/golden
+cd <kubeagent checkout>
 export PATH=$PATH:/usr/local/go/bin
-KV_GOLDEN_DIR=/home/ubuntu/git/kubeagent-verdict/contract/golden \
+KV_GOLDEN_DIR=<kubeagent-verdict checkout>/contract/golden \
   go test -tags goldencapture -run TestCaptureVerdictGolden ./internal/investigate -v
 ```
 
 Expected: PASS, and `contract/golden/user_message.txt` + a second `system_prompt.txt` written. Verify the captured system prompt matches Task 2's extraction, then drop the duplicate:
 
 ```bash
-cmp /home/ubuntu/git/kubeagent-verdict/contract/golden/system_prompt.txt \
-    /home/ubuntu/git/kubeagent-verdict/contract/system_prompt.txt
-rm /home/ubuntu/git/kubeagent-verdict/contract/golden/system_prompt.txt
+cmp <kubeagent-verdict checkout>/contract/golden/system_prompt.txt \
+    <kubeagent-verdict checkout>/contract/system_prompt.txt
+rm <kubeagent-verdict checkout>/contract/golden/system_prompt.txt
 ```
 
 Expected: `cmp` silent (identical).
@@ -962,8 +962,8 @@ Expected: `cmp` silent (identical).
 - [ ] **Step 4: Delete the scratch test and verify kubeagent is clean**
 
 ```bash
-rm /home/ubuntu/git/kubeagent/internal/investigate/kv_golden_capture_test.go
-cd /home/ubuntu/git/kubeagent && git status --short
+rm <kubeagent checkout>/internal/investigate/kv_golden_capture_test.go
+cd <kubeagent checkout> && git status --short
 ```
 
 Expected: empty output. This step is not optional and never deferred.
@@ -1254,14 +1254,14 @@ Run the vocab test — PASS.
 The latest successful `chaos-matrix` run at plan-writing time is `32548862821` (2026-08-22, artifacts `chaos-report-kind-v1.32`, `chaos-report-kind-v1.33`, `chaos-report-kind-v1.34`, `chaos-report-k3s-v1.34`). Use the latest successful run at execution time:
 
 ```bash
-DL=/tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/kv-corpus-dl
+DL=<scratch path>/kv-corpus-dl
 RUN=$(gh run list --repo imantaba/kubeagent --workflow chaos-matrix --status success --limit 1 --json databaseId --jq '.[0].databaseId')
 echo "downloading run $RUN"
 mkdir -p "$DL" && gh run download "$RUN" --repo imantaba/kubeagent --dir "$DL"
 find "$DL" -name 'chaos-corpus-*.jsonl' -exec wc -l {} +
-mkdir -p /home/ubuntu/git/kubeagent-verdict/data/corpus
-find "$DL" -name 'chaos-corpus-*.jsonl' -exec cp {} /home/ubuntu/git/kubeagent-verdict/data/corpus/ \;
-ls -la /home/ubuntu/git/kubeagent-verdict/data/corpus/
+mkdir -p <kubeagent-verdict checkout>/data/corpus
+find "$DL" -name 'chaos-corpus-*.jsonl' -exec cp {} <kubeagent-verdict checkout>/data/corpus/ \;
+ls -la <kubeagent-verdict checkout>/data/corpus/
 ```
 
 Expected: 4 files, 23 lines each. If the download fails or an artifact is missing its corpus file, STOP and report BLOCKED — never substitute a file from kubeagent's local `docs/testing/`.
@@ -1432,7 +1432,7 @@ Run the corpus tests — PASS. If `test_loads_committed_snapshots` reports withh
 
 - [ ] **Step 7: Derive `data/knownissues/knownissues.json` from kubeagent's reference**
 
-Read `/home/ubuntu/git/kubeagent/internal/knownissues/entries.go` and transcribe **all 16 entries** into one JSON array. Each element: `{"kind": ..., "summary": ..., "detail": ..., "causes": [...], "checks": [...], "docs": ...}` with every string copied verbatim from the Go literals (join multi-line Go string concatenations exactly as Go would). Do not paraphrase, reorder, or drop fields. The 16 kinds are the ones in `vocab.ISSUE_KINDS`.
+Read `<kubeagent checkout>/internal/knownissues/entries.go` and transcribe **all 16 entries** into one JSON array. Each element: `{"kind": ..., "summary": ..., "detail": ..., "causes": [...], "checks": [...], "docs": ...}` with every string copied verbatim from the Go literals (join multi-line Go string concatenations exactly as Go would). Do not paraphrase, reorder, or drop fields. The 16 kinds are the ones in `vocab.ISSUE_KINDS`.
 
 - [ ] **Step 8: Write the failing known-issues test** (`tests/test_knownissues.py`)
 
@@ -1527,7 +1527,7 @@ Run all Task 4 tests — PASS.
 
 - [ ] **Step 10: Controller checkpoint — secret scan, then commit**
 
-The **controller** (not this task's subagent) dispatches the session's `secret-leak-auditor` agent over `/home/ubuntu/git/kubeagent-verdict/data/` before this commit is pushed anywhere. The implementer commits locally:
+The **controller** (not this task's subagent) dispatches the session's `secret-leak-auditor` agent over `<kubeagent-verdict checkout>/data/` before this commit is pushed anywhere. The implementer commits locally:
 
 ```bash
 .venv/bin/pytest -q && .venv/bin/ruff check .
@@ -1868,7 +1868,7 @@ Fill `entries_slugs.py` (15 more) and `entries_kinds.py` (10 more) following the
 
 - [ ] **Step 1: Read the source material first**
 
-1. `/home/ubuntu/git/kubeagent/internal/rootcause/rootcause.go` — lift `winner_cause`/loser cause phrasing from the `Hypothesis` literals kubeagent actually constructs (e.g. the node, PVC, and rollout cause sentences). The model should train on kubeagent's own vocabulary.
+1. `<kubeagent checkout>/internal/rootcause/rootcause.go` — lift `winner_cause`/loser cause phrasing from the `Hypothesis` literals kubeagent actually constructs (e.g. the node, PVC, and rollout cause sentences). The model should train on kubeagent's own vocabulary.
 2. `data/knownissues/knownissues.json` — lift `reason`, `next_step`-adjacent wording, and evidence phrasing per kind.
 3. The committed corpus rows per slug: for each slug entry, read its assertion lines (`fault=="<slug>"`) before writing the entry. Where the assertions name a workload finding kind, model the entry on that; where no verdict-mode call can occur (scan cannot run, or nothing is flagged), set `trains=False` with a one-sentence `notes` and leave the template fields empty.
 
@@ -2316,7 +2316,7 @@ def main() -> None:
 Register it in `pyproject.toml` under `[project.scripts]`, reinstall (`.venv/bin/pip install -e ".[dev]"`), and smoke it:
 
 ```bash
-.venv/bin/kv-dataset --seed 17 --size 20 --out /tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/kv-ds-smoke
+.venv/bin/kv-dataset --seed 17 --size 20 --out <scratch path>/kv-ds-smoke
 ```
 
 Expected: `wrote 20 examples …`.
@@ -2710,7 +2710,7 @@ def main() -> None:
 (`import json` joins the imports.) Smoke:
 
 ```bash
-.venv/bin/kv-dataset --seed 17 --size 200 --out /tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/kv-ds-full
+.venv/bin/kv-dataset --seed 17 --size 200 --out <scratch path>/kv-ds-full
 ```
 
 Expected: manifest JSON printed; four files in the out dir; `test` count > 0.
@@ -3916,7 +3916,7 @@ contract behavior, no cluster involved.
 - [ ] **Step 5: Copy the spec and complete the README**
 
 ```bash
-cp /home/ubuntu/git/kubeagent/docs/superpowers/specs/2026-08-22-kubeagent-verdict-training-repo-design.md docs/design.md
+cp <kubeagent checkout>/docs/superpowers/specs/2026-08-22-kubeagent-verdict-training-repo-design.md docs/design.md
 ```
 
 Rewrite `README.md` to its final form (replacing the Task 1 stub — keep its provenance hard rule verbatim):

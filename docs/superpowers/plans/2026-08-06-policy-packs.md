@@ -85,7 +85,7 @@ Creates the branch, the stdlib-only package, the embedded YAML with all fourteen
 
 ```bash
 export PATH=$PATH:/usr/local/go/bin
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git checkout main
 git checkout -b policy-packs
 git log --oneline -1   # expect 3ea8bc5 spec: curated policy packs …
@@ -1703,9 +1703,9 @@ Two edits:
 - [ ] **Step 6: Build the docs**
 
 ```bash
-cd /home/ubuntu/git/kubeagent/website
-/tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/mkdocs-venv/bin/mkdocs build --strict -f mkdocs.yml
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>/website
+<scratch path>/mkdocs-venv/bin/mkdocs build --strict -f mkdocs.yml
+cd <kubeagent checkout>
 ```
 
 Expected: `Documentation built in …`, exit 0, and **no `WARNING` line naming your pages**. The red "Material for MkDocs 2.0" banner is cosmetic.
@@ -1716,7 +1716,7 @@ Expected: `Documentation built in …`, exit 0, and **no `WARNING` line naming y
 
 ```bash
 export PATH=$PATH:/usr/local/go/bin
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 go build ./...
 go test -p 2 ./...
 gofmt -l internal/

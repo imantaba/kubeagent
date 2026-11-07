@@ -700,7 +700,7 @@ Replace the `Upload the report` step's name and `with:` block (the long comment 
 
 - [ ] **Step 4: Verify the YAML parses and the diff is bounded**
 
-Run: `/tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/mkdocs-venv2/bin/python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/chaos-matrix.yml")); print("YAML-OK")'`
+Run: `<scratch path>/mkdocs-venv2/bin/python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/chaos-matrix.yml")); print("YAML-OK")'`
 Expected: `YAML-OK`.
 Run: `git diff --stat` — exactly one file, `.github/workflows/chaos-matrix.yml`.
 
@@ -869,7 +869,7 @@ Do NOT add a `(vX.Y.Z)` parenthetical — the later `release:` commit adds it, n
 
 Run:
 ```bash
-cd website && /tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/mkdocs-venv2/bin/mkdocs build --strict -f mkdocs.yml; cd /home/ubuntu/git/kubeagent
+cd website && <scratch path>/mkdocs-venv2/bin/mkdocs build --strict -f mkdocs.yml; cd <kubeagent checkout>
 ```
 Expected: exit 0, no `WARNING` lines about pages. (The red "Material for MkDocs 2.0" banner is cosmetic.)
 Run: `git diff --stat` — exactly four files: `chaos/README.md`, `CHANGELOG.md`, `website/docs/roadmap.md`, `CLAUDE.md`.

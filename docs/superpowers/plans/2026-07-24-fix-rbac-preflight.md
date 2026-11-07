@@ -136,7 +136,7 @@ func TestPreflight_APIErrorSurfaces(t *testing.T) {
 
 - [ ] **Step 3: Run to verify failure**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go test ./internal/remediate/ -run TestPreflight`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go test ./internal/remediate/ -run TestPreflight`
 Expected: FAIL — `undefined: Preflight`.
 
 - [ ] **Step 4: Implement `Preflight` + the field**
@@ -188,13 +188,13 @@ func Preflight(ctx context.Context, client kubernetes.Interface, a Action) (bool
 
 - [ ] **Step 5: Run the tests**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go build ./... && go test ./internal/remediate/`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go build ./... && go test ./internal/remediate/`
 Expected: PASS — the four new Preflight tests pass; all existing Apply/Plan tests still pass (the gate is not wired yet).
 
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git add internal/remediate/
 git commit -m "feat(remediate): SelfSubjectAccessReview preflight and PreflightDenied result"
 ```
@@ -284,7 +284,7 @@ Add `allowFix(cli)` immediately after the `cli := fake.NewSimpleClientset(...)` 
 
 - [ ] **Step 3: Run to verify the new + existing tests fail**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go test ./internal/remediate/ -run TestApply`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go test ./internal/remediate/ -run TestApply`
 Expected: FAIL — the new denial/error tests fail (no gate yet, so they'd write/apply), and the three allow-reactored tests still pass (gate absent). This confirms the gate is missing.
 
 - [ ] **Step 4: Insert the gate in both apply funcs**
@@ -308,13 +308,13 @@ In `applyUncordon`, after the precondition block and **before** the `n.Spec.Unsc
 
 - [ ] **Step 5: Run the tests**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go build ./... && go test ./internal/remediate/`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go build ./... && go test ./internal/remediate/`
 Expected: PASS — new integration tests pass; the three allow-reactored tests apply; all refusal/drift/protected-ns tests still pass (they short-circuit before the gate).
 
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git add internal/remediate/
 git commit -m "feat(remediate): gate each write behind the RBAC preflight"
 ```
@@ -400,7 +400,7 @@ Add `allowFixM(cli)` immediately after the `cli := fake.NewSimpleClientset(...)`
 
 - [ ] **Step 3: Run to verify failure**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go test . -run TestRunFixes`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go test . -run TestRunFixes`
 Expected: FAIL — the new preflight/dry-run-report tests fail (no `preflight` case, dry-run doesn't report yet), and (once the gate from Task 2 is present) the successful-apply tests would fail without their allow reactor — confirming the wiring is needed.
 
 - [ ] **Step 4: Add the `preflight` disposition case**
@@ -437,19 +437,19 @@ Replace the current dry-run block:
 
 - [ ] **Step 6: Build, test, smoke**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go build ./... && go test . ./internal/...`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go build ./... && go test . ./internal/...`
 Expected: PASS (including golden — no report change).
 
 Binary smoke (no cluster needed for the help line):
 
 ```bash
-cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go build -o kubeagent . && ./kubeagent scan --help 2>&1 | grep -i fix | head -1 && rm -f kubeagent
+cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go build -o kubeagent . && ./kubeagent scan --help 2>&1 | grep -i fix | head -1 && rm -f kubeagent
 ```
 
 - [ ] **Step 7: Commit**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git add main.go main_test.go
 git commit -m "feat: --fix RBAC preflight disposition and dry-run permission report"
 ```
@@ -487,13 +487,13 @@ git commit -m "feat: --fix RBAC preflight disposition and dry-run permission rep
 
 - [ ] **Step 5: Verify the site builds**
 
-Run: `cd /home/ubuntu/git/kubeagent/website && /tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/mkvenv/bin/mkdocs build --strict -f mkdocs.yml 2>&1 | tail -1` (fall back to `mkdocs` on PATH if missing)
+Run: `cd <kubeagent checkout>/website && <scratch path>/mkvenv/bin/mkdocs build --strict -f mkdocs.yml 2>&1 | tail -1` (fall back to `mkdocs` on PATH if missing)
 Expected: `Documentation built`, no page WARNINGs.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git add website/docs/features/remediation.md README.md CHANGELOG.md website/docs/roadmap.md
 git commit -m "docs: document the --fix RBAC preflight"
 ```

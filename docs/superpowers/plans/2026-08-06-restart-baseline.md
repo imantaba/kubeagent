@@ -2495,7 +2495,7 @@ Three places call the static `--expected-nodes` list a "baseline". Reword each t
 - `website/docs/features/diagnostics.md:316` — `### Expected-node baseline` → `### Expected-node list`
 - `website/docs/roadmap.md:74` — `- **Expected-node baseline** —` → `- **Expected-node list** —`
 
-**In the same edit**, fix a real leak in the section at `website/docs/features/diagnostics.md:318-320`: the published example names `nova-worker-1` and `nova-worker-2`, which are internal hostnames from a real estate. Replace them with generic names throughout that paragraph:
+**In the same edit**, tidy the section at `website/docs/features/diagnostics.md:318-320`: the published example uses node names that look like internal hostnames. Replace them with generic names throughout that paragraph:
 
 ```markdown
 `scan --expected-nodes node-a,node-b,…` declares the node names you
@@ -2503,7 +2503,7 @@ expect. kubeagent flags each declared node that has **no `Node` object** in the
 cluster — `✗ node node-b expected but absent from the cluster` — which
 ```
 
-Verify with `grep -rn "nova-" README.md website/`, which must return nothing.
+Verify with `grep -rn "<cluster-name>-" README.md website/`, with your own cluster's node prefix in place of `<cluster-name>`. It must return nothing.
 
 - [ ] **Step 6: Update the roadmap's post-1.0 row**
 
@@ -2591,7 +2591,8 @@ Expected: tests PASS; mkdocs exits 0 with no `WARNING` lines naming your pages. 
 - [ ] **Step 10: Secret-leak sweep**
 
 ```bash
-grep -rn "nova-\|ekb-" README.md website/ CLAUDE.md CHANGELOG.md
+# put your own cluster's node prefix in place of <cluster-name>
+grep -rn "<cluster-name>-" README.md website/ CLAUDE.md CHANGELOG.md
 grep -rnE "https?://" website/docs/features/baseline.md
 ```
 

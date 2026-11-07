@@ -361,13 +361,13 @@ func TestAssess_HeartbeatUnavailableDisablesCheck(t *testing.T) {
 }
 
 func TestAssess_ExpectedNodeAbsentDegrades(t *testing.T) {
-	nodes := []corev1.Node{hbReadyNode("nova-worker-1")}
-	ch := Assess(nodes, Heartbeat{}, []string{"nova-worker-1", "nova-worker-2"}, nil)
+	nodes := []corev1.Node{hbReadyNode("worker-1")}
+	ch := Assess(nodes, Heartbeat{}, []string{"worker-1", "worker-2"}, nil)
 	if ch.Verdict != "Degraded" || ch.NodesExpectedAbsent != 1 {
 		t.Fatalf("an absent expected node must degrade + count: %+v", ch)
 	}
-	if len(ch.NodeIssues) != 1 || !strings.Contains(ch.NodeIssues[0], "nova-worker-2 expected but absent from the cluster") {
-		t.Errorf("want absent issue for nova-worker-2, got %+v", ch.NodeIssues)
+	if len(ch.NodeIssues) != 1 || !strings.Contains(ch.NodeIssues[0], "worker-2 expected but absent from the cluster") {
+		t.Errorf("want absent issue for worker-2, got %+v", ch.NodeIssues)
 	}
 }
 

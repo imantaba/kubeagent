@@ -71,7 +71,7 @@ the new zones). Purely informational NOTES/CONTEXT do not suppress it.
 ### PVC reclaim (new `--pvc-reclaim` flag)
 
 - **Default:** one NOTE line, grouped by StorageClass, counts descending:
-  `• 18 PVCs on Delete reclaim policy — longhorn-single-replica ×11, nfs-client ×7   [--pvc-reclaim]`
+  `• 6 PVCs on Delete reclaim policy — fast-ssd ×4, nfs-client ×2   [--pvc-reclaim]`
   - PVCs with an empty StorageClass group under `(no class)`.
   - Group order: by count descending, then class name ascending for ties.
 - **With `--pvc-reclaim`:** the full per-PVC rows (current format:

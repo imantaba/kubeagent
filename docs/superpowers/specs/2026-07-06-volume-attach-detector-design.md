@@ -15,7 +15,7 @@ Result: the pod shows as a degraded workload with **no explanatory finding**.
 
 ## Motivation (live test)
 
-On the `hetzner-nova` cluster, a Multi-Attach pod would raise
+On a production cluster, a Multi-Attach pod would raise
 `kubeagent_workloads_flagged` but produce no finding naming the cause. This
 detector closes that gap.
 
@@ -126,7 +126,7 @@ no-ops. The RBAC remains strictly read-only (no write verbs).
 - **`scan.Evaluate` integration** (fake clientset): a stuck pod + a
   `FailedAttachVolume` event → the result's workload carries a `VolumeAttachError`
   finding. Existing behavior for healthy clusters is unchanged.
-- **Live validation:** the real Multi-Attach repro on `hetzner-nova` (a small RWO
+- **Live validation:** the real Multi-Attach repro on a production cluster (a small RWO
   PVC forced onto two nodes) → the deployed daemon emits
   `kubeagent_findings{issue="VolumeAttachError"}` and the scan shows the finding.
 

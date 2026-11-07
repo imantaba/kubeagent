@@ -12,7 +12,7 @@ the raw Go transport error with a clear, actionable diagnosis.
 Today a failed scan prints, e.g.:
 
 ```text
-kubeagent: listing pods: Get "https://rancher.nova…/api/v1/pods": read tcp …: connection reset by peer
+kubeagent: listing pods: Get "https://rancher.example.com/api/v1/pods": read tcp …: connection reset by peer
 ```
 
 After this feature it prints an actionable diagnosis plus a `details:` line with

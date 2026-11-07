@@ -45,7 +45,7 @@ func sampleWorkloads() []inventory.Workload {
 		Desired: 3, Ready: 3, Status: "Running", Restarts: 64, LastRestart: "2026-06-02T08:14:03Z",
 		Image: "rancher/rancher:v2.14.1",
 		Pods: []inventory.PodRow{
-			{Name: "rancher-64smq", Phase: "Running", State: "Running", Ready: "1/1", Restarts: 31, LastRestart: "2026-06-02T08:14:03Z", Node: "nova-worker-3", IP: "10.42.4.41", Age: "36d", Image: "rancher/rancher:v2.14.1"},
+			{Name: "rancher-64smq", Phase: "Running", State: "Running", Ready: "1/1", Restarts: 31, LastRestart: "2026-06-02T08:14:03Z", Node: "worker-3", IP: "10.42.4.41", Age: "36d", Image: "rancher/rancher:v2.14.1"},
 		},
 	}}
 }
@@ -53,7 +53,7 @@ func sampleWorkloads() []inventory.Workload {
 func sampleCluster() clusterhealth.ClusterHealth {
 	return clusterhealth.ClusterHealth{
 		Verdict: "Degraded", NodesTotal: 3, NodesReady: 2,
-		NodeIssues:   []string{"nova-worker-2 NotReady"},
+		NodeIssues:   []string{"worker-2 NotReady"},
 		SystemIssues: []string{"kube-system/coredns 1/2 Degraded"},
 	}
 }
@@ -64,7 +64,7 @@ func TestPrintInventory_TextShowsWorkloadAndPods(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
-	for _, want := range []string{"cattle-system/rancher", "Deployment", "3/3", "Running", "64", "rancher-64smq", "nova-worker-3"} {
+	for _, want := range []string{"cattle-system/rancher", "Deployment", "3/3", "Running", "64", "rancher-64smq", "worker-3"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("text output missing %q:\n%s", want, out)
 		}
@@ -209,7 +209,7 @@ func TestPrintInventory_TextLeadsWithClusterVerdict(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
-	for _, want := range []string{"Cluster: Degraded", "2/3 nodes Ready", "nova-worker-2 NotReady", "kube-system/coredns 1/2 Degraded"} {
+	for _, want := range []string{"Cluster: Degraded", "2/3 nodes Ready", "worker-2 NotReady", "kube-system/coredns 1/2 Degraded"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("text output missing %q:\n%s", want, out)
 		}

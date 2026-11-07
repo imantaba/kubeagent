@@ -12,7 +12,7 @@ only covers memory kills, and a healthy-now-but-restarted workload is hidden
 behind the opt-in `--include-restarts`. So a genuinely flapping pod reads as
 Healthy and produces no finding.
 
-## Motivation (proven live on hetzner-nova)
+## Motivation (proven live on a production cluster)
 
 A `flapper` pod (runs ~50s, `exit 1`, restart, repeat) accumulated 3 restarts
 while `scan` reported **"No issues found. ✅"** and the daemon's
@@ -98,7 +98,7 @@ with no changes to those paths.
 - **`scan.Evaluate` integration** (fake clientset): a flapper-like pod (Running,
   young, 3 restarts, exit-1 last termination) → the workload carries a
   `RestartLoop` finding.
-- **Live validation:** re-run the nova flapper scenario → the deployed-style
+- **Live validation:** re-run the flapper scenario → the deployed-style
   daemon now emits `kubeagent_findings{issue="RestartLoop"}` and the scan shows
   the finding on every reconcile in a Running window.
 

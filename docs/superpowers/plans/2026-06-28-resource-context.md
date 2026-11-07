@@ -935,7 +935,7 @@ Expected: all packages `ok`, build succeeds.
 - [ ] **Step 3: Verify live against the cluster**
 
 Run: `/tmp/kubeagent scan -n cattle-system`
-Expected: a `Resources (cluster):` block appears under the verdict with CPU/Memory `req/lim/used` lines (metrics-server is present on `hetzner-nova`).
+Expected: a `Resources (cluster):` block appears under the verdict with CPU/Memory `req/lim/used` lines (metrics-server is present on a production cluster).
 
 Run: `/tmp/kubeagent scan -o json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d["resources"], indent=2))'`
 Expected: a `resources` object with `cpu`, `memory`, and `metricsAvailable: true`.

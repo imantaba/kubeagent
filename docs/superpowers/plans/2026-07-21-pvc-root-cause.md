@@ -480,7 +480,7 @@ git commit -m "docs: document failed-PVC root-cause attribution"
 
 ## Notes for the executor
 
-- **Release gate (post-merge):** touches `rootcause`/`scan`/`report tests` only — **not** `internal/collect`/`cluster`/`watch`/RBAC/Helm — so a **lightweight real-cluster smoke** (ekb negative + a Kind cluster with a PVC on a nonexistent StorageClass mounted by a deployment) suffices. Version bump: **minor**, v0.30.0 → **v0.31.0**.
+- **Release gate (post-merge):** touches `rootcause`/`scan`/`report tests` only — **not** `internal/collect`/`cluster`/`watch`/RBAC/Helm — so a **lightweight real-cluster smoke** (a production-cluster negative + a Kind cluster with a PVC on a nonexistent StorageClass mounted by a deployment) suffices. Version bump: **minor**, v0.30.0 → **v0.31.0**.
 - **Precedence is load-bearing:** `AnnotatePVC` between `Annotate` (nodes) and `AnnotateRegistry` in `scan.Evaluate`; it must skip workloads with an existing `RootCause`.
 - **Threshold 1 is deliberate** (evidence-backed join) — do not add a higher threshold; do not strengthen the hedged "likely" wording.
 - **In-file anchor check** (Task 4): confirm the `#pending-pvc-storage-provisioning` link resolves against the actual heading before committing docs.

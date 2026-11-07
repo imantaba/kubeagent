@@ -6,12 +6,12 @@
 ## Goal
 
 Make `scan --security` output readable on real clusters. Today the text
-`SECURITY` section is a flat per-finding wall: a real hetzner-nova run produced
-**374 findings across 121 workloads = 498 lines**, dominated by three
-near-universal `restricted` checks (`RunAsRoot` ×106, `AllowPrivilegeEscalation`
-×119, `CapabilitiesNotDropped` ×134 = 359 of 374) that bury the ~15 genuinely
-dangerous `baseline` findings (privileged, hostPath, host namespaces, hostPort,
-added capabilities).
+`SECURITY` section is a flat per-finding wall: a real production run produced
+**hundreds of findings across about a hundred workloads, about 500 lines**,
+dominated by three near-universal `restricted` checks (`RunAsRoot`,
+`AllowPrivilegeEscalation`, `CapabilitiesNotDropped`, together over 90% of the
+findings) that bury the few genuinely dangerous `baseline` findings (privileged,
+hostPath, host namespaces, hostPort, added capabilities).
 
 Redesign the section to be **signal-first**: lead with a one-line summary, show
 the workloads with `baseline`/`kubeagent` findings in full (the act-on-these),
@@ -43,7 +43,7 @@ Findings split into two display tiers by `Profile`:
 
 ```text
 SECURITY  (advisory — does not affect the cluster verdict)
-  15 baseline · 359 restricted hardening gaps · 121 workloads
+  12 baseline · 300 restricted hardening gaps · 100 workloads
 
   ✗ cattle-monitoring-system/rancher-monitoring-prometheus-node-exporter  DaemonSet
       [baseline] HostNamespaces — pod shares the host network/PID namespace
@@ -55,8 +55,8 @@ SECURITY  (advisory — does not affect the cluster verdict)
       [baseline] HostPath — mounts hostPath /var/log/rancher-audit (writable host filesystem)
       … (act-on-these findings for the remaining flagged workloads)
 
-  restricted (hardening gaps, near-universal): 359 across 118 workloads
-    RunAsRoot ×106 · AllowPrivilegeEscalation ×119 · CapabilitiesNotDropped ×134
+  restricted (hardening gaps, near-universal): 300 across 98 workloads
+    RunAsRoot ×90 · AllowPrivilegeEscalation ×100 · CapabilitiesNotDropped ×110
     → run with --security-verbose to list every finding per workload
 ```
 

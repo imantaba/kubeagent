@@ -2375,7 +2375,7 @@ git commit -m "feat(cli): make --context repeatable and name the default cluster
 
 - [ ] **Step 1: Write the failing check**
 
-Create the assertion script at `<scratch path>/helm-multicluster-check.sh`:
+Create the assertion script at `<scratch dir>/helm-multicluster-check.sh`:
 
 ```bash
 #!/usr/bin/env bash
@@ -2461,8 +2461,8 @@ echo "all checks passed"
 - [ ] **Step 2: Run it to verify it fails**
 
 ```bash
-chmod +x <scratch path>/helm-multicluster-check.sh
-<scratch path>/helm-multicluster-check.sh
+chmod +x <scratch dir>/helm-multicluster-check.sh
+<scratch dir>/helm-multicluster-check.sh
 ```
 
 Expected: several `FAIL:` lines — `multicluster` is not a known value yet, so the guard-rails never fire and the arguments never render.
@@ -2553,7 +2553,7 @@ Add the volume, immediately before the `{{- with .Values.nodeSelector }}` block 
 
 ```bash
 export PATH=$PATH:/usr/local/bin
-<scratch path>/helm-multicluster-check.sh
+<scratch dir>/helm-multicluster-check.sh
 helm lint deploy/helm/kubeagent
 helm template x deploy/helm/kubeagent --set multicluster.enabled=true \
   --set multicluster.existingSecret=kubeagent-clusters \

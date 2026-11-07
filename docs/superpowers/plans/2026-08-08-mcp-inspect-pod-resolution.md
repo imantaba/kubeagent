@@ -1754,7 +1754,7 @@ which must not claim an owner it does not have — and for every kind other than
 - [ ] **Step 3: Build the docs**
 
 ```bash
-<scratch path>/mkdocs-venv2/bin/mkdocs build --strict -f website/mkdocs.yml
+<scratch dir>/mkdocs-venv2/bin/mkdocs build --strict -f website/mkdocs.yml
 cd <kubeagent checkout>
 ```
 

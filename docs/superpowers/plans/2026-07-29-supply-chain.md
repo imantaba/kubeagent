@@ -10,7 +10,7 @@
 
 **Spec:** [docs/superpowers/specs/2026-07-29-supply-chain-design.md](../specs/2026-07-29-supply-chain-design.md) (commit `8835cb4`).
 
-**Branch:** `supply-chain`, cut off `main` at `ffd4a09`. Work happens in the worktree at `<scratch path>/wt-supply`.
+**Branch:** `supply-chain`, cut off `main` at `ffd4a09`. Work happens in the worktree at `<scratch dir>/wt-supply`.
 
 ## Global Constraints
 

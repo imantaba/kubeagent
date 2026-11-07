@@ -1120,7 +1120,7 @@ Under `## [Unreleased]`, an **Added** entry: `chaos/run.sh --distro kind|k3s`, t
 Run:
 
 ```bash
-<scratch path>/mkdocs-venv/bin/mkdocs build --strict -f website/mkdocs.yml
+<scratch dir>/mkdocs-venv/bin/mkdocs build --strict -f website/mkdocs.yml
 ```
 
 Expected: exit 0 with no `WARNING` naming a changed page. The red "Material for MkDocs 2.0" banner is cosmetic.

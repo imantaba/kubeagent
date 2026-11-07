@@ -1442,7 +1442,7 @@ The other three bullets in that section stay exactly as they are.
 
 ```bash
 cd <kubeagent checkout>/website
-<scratch path>/mkdocs-venv2/bin/mkdocs build --strict -f mkdocs.yml
+<scratch dir>/mkdocs-venv2/bin/mkdocs build --strict -f mkdocs.yml
 cd <kubeagent checkout>
 ```
 

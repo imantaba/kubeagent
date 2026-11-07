@@ -38,8 +38,8 @@
 Create a throwaway venv, install the latest mkdocs-material, and pin the exact installed version:
 
 ```bash
-python3 -m venv <scratch path>/site-venv
-VENV=<scratch path>/site-venv
+python3 -m venv <scratch dir>/site-venv
+VENV=<scratch dir>/site-venv
 "$VENV/bin/pip" install --quiet --upgrade pip
 "$VENV/bin/pip" install --quiet mkdocs-material
 VER=$("$VENV/bin/pip" show mkdocs-material | awk '/^Version:/{print $2}')
@@ -262,8 +262,8 @@ website/.venv/
 - [ ] **Step 6: Build strict to verify the skeleton**
 
 ```bash
-VENV=<scratch path>/site-venv
-"$VENV/bin/mkdocs" build --strict -f website/mkdocs.yml -d <scratch path>/site-out
+VENV=<scratch dir>/site-venv
+"$VENV/bin/mkdocs" build --strict -f website/mkdocs.yml -d <scratch dir>/site-out
 ```
 
 Expected: `INFO - Documentation built in ... seconds` with **no WARNING/ERROR** lines (strict mode fails on any). If `pymdownx.emoji`'s `!!python/name:` lines cause a build error, that means the mkdocs-material version differs — keep the lines (they are the documented Material syntax) and re-run; do not remove icons.
@@ -363,8 +363,8 @@ Open source on [GitHub](https://github.com/imantaba/kubeagent) ·
 - [ ] **Step 2: Build strict**
 
 ```bash
-VENV=<scratch path>/site-venv
-"$VENV/bin/mkdocs" build --strict -f website/mkdocs.yml -d <scratch path>/site-out
+VENV=<scratch dir>/site-venv
+"$VENV/bin/mkdocs" build --strict -f website/mkdocs.yml -d <scratch dir>/site-out
 ```
 
 Expected: builds with no warnings/errors. (Visual check optional: `mkdocs serve -f website/mkdocs.yml` and open the local URL.)
@@ -417,8 +417,8 @@ Read `README.md` lines 17–25 (Status) and 171–178 (Roadmap). Write `website/
 - [ ] **Step 4: Build strict**
 
 ```bash
-VENV=<scratch path>/site-venv
-"$VENV/bin/mkdocs" build --strict -f website/mkdocs.yml -d <scratch path>/site-out
+VENV=<scratch dir>/site-venv
+"$VENV/bin/mkdocs" build --strict -f website/mkdocs.yml -d <scratch dir>/site-out
 ```
 
 Expected: no warnings/errors (strict catches any broken relative link).
@@ -455,8 +455,8 @@ Read `README.md` and adapt each section into its page (keep the wording faithful
 - [ ] **Step 2: Build strict**
 
 ```bash
-VENV=<scratch path>/site-venv
-"$VENV/bin/mkdocs" build --strict -f website/mkdocs.yml -d <scratch path>/site-out
+VENV=<scratch dir>/site-venv
+"$VENV/bin/mkdocs" build --strict -f website/mkdocs.yml -d <scratch dir>/site-out
 ```
 
 Expected: no warnings/errors.
@@ -535,8 +535,8 @@ Expected: `pages.yml: valid YAML`.
 Run the exact command the workflow runs (output to scratchpad, not the repo) to prove parity:
 
 ```bash
-VENV=<scratch path>/site-venv
-( cd website && "$VENV/bin/mkdocs" build --strict -f mkdocs.yml -d <scratch path>/ci-parity )
+VENV=<scratch dir>/site-venv
+( cd website && "$VENV/bin/mkdocs" build --strict -f mkdocs.yml -d <scratch dir>/ci-parity )
 ```
 
 Expected: builds clean (no warnings/errors).
@@ -568,7 +568,7 @@ git commit -m "ci(site): GitHub Pages deploy workflow; link site from README"
 
 ```bash
 # user places the token here (outside the repo); value never printed
-TOKENFILE=<scratch path>/cf_token
+TOKENFILE=<scratch dir>/cf_token
 export CF_API_TOKEN="$(cat "$TOKENFILE")"
 test -n "$CF_API_TOKEN" && echo "token loaded (${#CF_API_TOKEN} chars)" || echo "NO TOKEN"
 ```

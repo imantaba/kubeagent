@@ -737,7 +737,7 @@ Add a one-line mention of the kubelet-health probe alongside the existing featur
 Run:
 
 ```bash
-cd website && <scratch path>/mkvenv/bin/mkdocs build --strict -f mkdocs.yml
+cd website && <scratch dir>/mkvenv/bin/mkdocs build --strict -f mkdocs.yml
 ```
 
 Expected: exit 0, "Documentation built", no page `WARNING` lines (the Material for MkDocs team banner is cosmetic — ignore it). If the venv is missing, recreate: `python3 -m venv <path> && <path>/bin/pip install -r requirements.txt`.

@@ -1039,7 +1039,7 @@ In the "Agentic investigation (`--investigate`)" section, apply exactly these ch
 
 - [ ] **Step 4: Build the docs strictly**
 
-Run: `cd website && <scratch path>/mkdocs-venv2/bin/mkdocs build --strict -f mkdocs.yml; cd <kubeagent checkout>`
+Run: `cd website && <scratch dir>/mkdocs-venv2/bin/mkdocs build --strict -f mkdocs.yml; cd <kubeagent checkout>`
 Expected: exit 0, no WARNING lines about the edited pages. (The working directory persists between shell calls — always cd back to the repo root.)
 
 - [ ] **Step 5: Full verification and commit**

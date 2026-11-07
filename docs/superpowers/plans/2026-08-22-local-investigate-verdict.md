@@ -1963,7 +1963,7 @@ Under `## [Unreleased]`, add:
 - [ ] **Step 5: Build the docs site strictly**
 
 ```bash
-cd website && <scratch path>/mkdocs-venv2/bin/mkdocs build --strict -f mkdocs.yml; cd <kubeagent checkout>
+cd website && <scratch dir>/mkdocs-venv2/bin/mkdocs build --strict -f mkdocs.yml; cd <kubeagent checkout>
 ```
 
 Expected: exit 0, no WARNING lines about the touched pages. (That venv is the only working mkdocs on this machine; always cd back to the repo root.)

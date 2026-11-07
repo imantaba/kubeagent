@@ -83,7 +83,7 @@ Every task's requirements implicitly include this section.
 `export PATH=$PATH:/usr/local/go/bin`. The bash working directory persists
 between calls, so `cd <kubeagent checkout>` when in doubt. The only
 working mkdocs on this machine is
-`<scratch path>/mkdocs-venv2/bin/mkdocs`.
+`<scratch dir>/mkdocs-venv2/bin/mkdocs`.
 
 ---
 
@@ -1041,7 +1041,7 @@ way.
 
 ```bash
 cd <kubeagent checkout>/website
-<scratch path>/mkdocs-venv2/bin/mkdocs build --strict -f mkdocs.yml
+<scratch dir>/mkdocs-venv2/bin/mkdocs build --strict -f mkdocs.yml
 cd <kubeagent checkout>
 ```
 
@@ -1388,7 +1388,7 @@ with:
 
 ```bash
 cd <kubeagent checkout>/website
-<scratch path>/mkdocs-venv2/bin/mkdocs build --strict -f mkdocs.yml
+<scratch dir>/mkdocs-venv2/bin/mkdocs build --strict -f mkdocs.yml
 cd <kubeagent checkout>
 ```
 

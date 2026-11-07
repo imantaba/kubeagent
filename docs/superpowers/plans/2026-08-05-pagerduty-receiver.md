@@ -1663,8 +1663,8 @@ format is `pagerduty`. Templates **and** values both move, so the chart takes a
 
 ```bash
 export PATH=$PATH:$HOME/.local/bin
-helm template x deploy/helm/kubeagent > <scratch path>/chart-before.yaml
-wc -l <scratch path>/chart-before.yaml
+helm template x deploy/helm/kubeagent > <scratch dir>/chart-before.yaml
+wc -l <scratch dir>/chart-before.yaml
 ```
 
 - [ ] **Step 2: Update the `alerts:` comments in `values.yaml`**
@@ -1724,8 +1724,8 @@ export PATH=$PATH:$HOME/.local/bin
 helm lint deploy/helm/kubeagent
 
 # The default render must be byte-identical to before this task.
-helm template x deploy/helm/kubeagent > <scratch path>/chart-after.yaml
-diff <scratch path>/chart-{before,after}.yaml && echo "DEFAULT RENDER UNCHANGED"
+helm template x deploy/helm/kubeagent > <scratch dir>/chart-after.yaml
+diff <scratch dir>/chart-{before,after}.yaml && echo "DEFAULT RENDER UNCHANGED"
 
 # A slack install still gets the webhook variable.
 helm template x deploy/helm/kubeagent \
@@ -1954,7 +1954,7 @@ scenario).
 ```bash
 export PATH=$PATH:/usr/local/go/bin:$HOME/.local/bin
 unset ANTHROPIC_API_KEY
-./chaos/run.sh --only 23 --recreate --out <scratch path>/chaos-23.md
+./chaos/run.sh --only 23 --recreate --out <scratch dir>/chaos-23.md
 ```
 
 Expected: exit `0` and `assertions: 6 run, 0 failed`. If no cluster can be
@@ -1965,7 +1965,7 @@ slice's full gate**. Do not claim it passed.
 - [ ] **Step 4: Confirm the report carries no credential**
 
 ```bash
-grep -c 'not-a-real-routing-key' <scratch path>/chaos-23.md
+grep -c 'not-a-real-routing-key' <scratch dir>/chaos-23.md
 ```
 
 Expected: `0`. Skip if Step 3 was skipped.
@@ -1984,7 +1984,7 @@ If Step 3 ran live, the summary line is the authority — confirm the number
 before editing eleven files against it:
 
 ```bash
-grep 'assertions:' <scratch path>/chaos-23.md || true
+grep 'assertions:' <scratch dir>/chaos-23.md || true
 ```
 
 Expected: `assertions: 6 run, 0 failed`. Update that count, and the scenario
@@ -2270,7 +2270,7 @@ Under `## [Unreleased]` in `CHANGELOG.md`, add:
 - [ ] **Step 7: Build the site strictly**
 
 ```bash
-cd website && <scratch path>/mkdocs-venv/bin/mkdocs build --strict -f mkdocs.yml; cd ..
+cd website && <scratch dir>/mkdocs-venv/bin/mkdocs build --strict -f mkdocs.yml; cd ..
 ```
 
 Expected: `Documentation built in …` and exit `0`, with **no `WARNING` lines

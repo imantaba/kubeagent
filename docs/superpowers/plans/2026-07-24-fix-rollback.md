@@ -927,7 +927,7 @@ git commit -m "test(chaos): exercise fix-then-rollback in the faulty-rollout sce
 
 - [ ] **Step 5: Verify the site builds**
 
-Run: `cd <kubeagent checkout>/website && <scratch path>/mkvenv/bin/mkdocs build --strict -f mkdocs.yml 2>&1 | tail -1` (fall back to `mkdocs` on PATH)
+Run: `cd <kubeagent checkout>/website && <scratch dir>/mkvenv/bin/mkdocs build --strict -f mkdocs.yml 2>&1 | tail -1` (fall back to `mkdocs` on PATH)
 Expected: `Documentation built`, no page WARNINGs.
 
 - [ ] **Step 6: Commit**

@@ -525,7 +525,7 @@ detected modes, append `and failed Jobs/CronJobs` there too. (Run `grep -n "Init
 
 - [ ] **Step 5: Verify docs build**
 
-Run: `cd website && <scratch path>/mkvenv/bin/mkdocs build --strict -f mkdocs.yml --site-dir <scratch path>/site-batch`
+Run: `cd website && <scratch dir>/mkvenv/bin/mkdocs build --strict -f mkdocs.yml --site-dir <scratch dir>/site-batch`
 Expected: exit 0, "Documentation built", no `WARNING` lines about these pages. Then `export PATH=$PATH:/usr/local/go/bin && go build ./...`.
 
 - [ ] **Step 6: Commit**

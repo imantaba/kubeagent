@@ -787,7 +787,7 @@ If the README contains a sample scan block reflecting the old layout, update it 
 Run:
 
 ```bash
-cd website && <scratch path>/mkvenv/bin/mkdocs build --strict -f mkdocs.yml
+cd website && <scratch dir>/mkvenv/bin/mkdocs build --strict -f mkdocs.yml
 ```
 
 Expected: "Documentation built" with no strict WARNING lines about the edited pages.

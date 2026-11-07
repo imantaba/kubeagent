@@ -1134,7 +1134,7 @@ Add a one-line mention of the security-posture check alongside the existing feat
 Run:
 
 ```bash
-cd website && <scratch path>/mkvenv/bin/mkdocs build --strict -f mkdocs.yml
+cd website && <scratch dir>/mkvenv/bin/mkdocs build --strict -f mkdocs.yml
 ```
 
 Expected: exit 0, "Documentation built", no page `WARNING` lines (the Material for MkDocs team banner is cosmetic baseline noise — ignore it).

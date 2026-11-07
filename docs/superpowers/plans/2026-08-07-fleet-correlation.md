@@ -1559,7 +1559,7 @@ Under `## [Unreleased]`, in an `### Added` block (create it if the section has n
 
 ```bash
 cd <kubeagent checkout>/website
-<scratch path>/mkdocs-venv/bin/mkdocs build --strict -f mkdocs.yml 2>&1 | tail -20
+<scratch dir>/mkdocs-venv/bin/mkdocs build --strict -f mkdocs.yml 2>&1 | tail -20
 cd <kubeagent checkout>
 ```
 

@@ -1907,7 +1907,7 @@ go build ./... && go test -p 2 ./...
 gofmt -l internal/
 go vet ./...
 git diff --stat main -- go.mod go.sum internal/report/testdata/golden-scan.txt   # must print nothing
-(cd website && <scratch path>/mkdocs-venv/bin/mkdocs build --strict -f mkdocs.yml)
+(cd website && <scratch dir>/mkdocs-venv/bin/mkdocs build --strict -f mkdocs.yml)
 cd <kubeagent checkout>
 ```
 

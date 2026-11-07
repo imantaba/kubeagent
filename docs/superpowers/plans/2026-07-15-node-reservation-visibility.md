@@ -428,7 +428,7 @@ extra permissions, and it is advisory: it never changes the cluster verdict.
 
 - [ ] **Step 3: Verify docs build**
 
-Run: `cd website && <scratch path>/mkvenv/bin/mkdocs build --strict -f mkdocs.yml`
+Run: `cd website && <scratch dir>/mkvenv/bin/mkdocs build --strict -f mkdocs.yml`
 Expected: exit 0, "Documentation built", no page WARNING lines (ignore the cosmetic Material team banner). If the venv is missing, recreate: `python3 -m venv <path> && <path>/bin/pip install -r requirements.txt`.
 
 - [ ] **Step 4: Commit**

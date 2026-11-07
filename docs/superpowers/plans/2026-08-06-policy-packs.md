@@ -1704,7 +1704,7 @@ Two edits:
 
 ```bash
 cd <kubeagent checkout>/website
-<scratch path>/mkdocs-venv/bin/mkdocs build --strict -f mkdocs.yml
+<scratch dir>/mkdocs-venv/bin/mkdocs build --strict -f mkdocs.yml
 cd <kubeagent checkout>
 ```
 

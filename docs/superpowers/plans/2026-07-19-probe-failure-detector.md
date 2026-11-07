@@ -672,7 +672,7 @@ and ProbeFailure pods, in text or JSON.`
 
 - [ ] **Step 5: Verify docs build**
 
-Run: `cd website && <scratch path>/mkvenv/bin/mkdocs build --strict -f mkdocs.yml --site-dir <scratch path>/site-check`
+Run: `cd website && <scratch dir>/mkvenv/bin/mkdocs build --strict -f mkdocs.yml --site-dir <scratch dir>/site-check`
 Expected: exit 0, "Documentation built", no `WARNING` lines about these pages. (The red Material-for-MkDocs banner is cosmetic.)
 
 - [ ] **Step 6: Commit**

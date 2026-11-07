@@ -302,7 +302,7 @@ Add or extend a short note (matching the surrounding heading level/style) explai
 Run:
 
 ```bash
-cd website && <scratch path>/mkvenv/bin/mkdocs build --strict -f mkdocs.yml
+cd website && <scratch dir>/mkvenv/bin/mkdocs build --strict -f mkdocs.yml
 ```
 
 Expected: "Documentation built" with no strict WARNING lines about the edited page.

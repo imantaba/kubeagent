@@ -1889,7 +1889,7 @@ wording, headings and link style rather than inventing a new shape.
 - [ ] **Step 8: Build the site strictly**
 
 ```bash
-cd website && <scratch path>/mkdocs-venv/bin/mkdocs build --strict -f mkdocs.yml
+cd website && <scratch dir>/mkdocs-venv/bin/mkdocs build --strict -f mkdocs.yml
 ```
 
 Expected: exit 0, no `WARNING` lines naming `known-issues.md` or

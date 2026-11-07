@@ -793,7 +793,7 @@ Add a one-line mention of the ingress route-health check alongside the existing 
 Run:
 
 ```bash
-cd website && <scratch path>/mkvenv/bin/mkdocs build --strict -f mkdocs.yml
+cd website && <scratch dir>/mkvenv/bin/mkdocs build --strict -f mkdocs.yml
 ```
 
 Expected: "Documentation built" with no strict WARNING lines about the edited pages.

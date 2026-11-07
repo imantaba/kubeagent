@@ -513,7 +513,7 @@ Follow the wording pattern the earlier Theme H slices already use in that file.
 - [ ] **Step 4: Build the site if `website/` changed**
 
 ```bash
-(cd website && <scratch path>/mkdocs-venv/bin/mkdocs build --strict -f mkdocs.yml)
+(cd website && <scratch dir>/mkdocs-venv/bin/mkdocs build --strict -f mkdocs.yml)
 ```
 
 Expected: exit 0, no `WARNING` lines naming your pages. The red "Material for

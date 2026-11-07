@@ -44,7 +44,7 @@ export PATH=$PATH:$HOME/.local/bin           # helm
 ```
 
 mkdocs exists only in the scratchpad venv:
-`<scratch path>/mkdocs-venv/bin/mkdocs`
+`<scratch dir>/mkdocs-venv/bin/mkdocs`
 
 ### Per-task verification gate
 
@@ -3163,7 +3163,7 @@ Under `## [Unreleased]` in `CHANGELOG.md`, in an `### Added` block:
 - [ ] **Step 9: Verify the docs build**
 
 ```bash
-cd website && <scratch path>/mkdocs-venv/bin/mkdocs build --strict -f mkdocs.yml; cd ..
+cd website && <scratch dir>/mkdocs-venv/bin/mkdocs build --strict -f mkdocs.yml; cd ..
 ```
 
 Expected: "Documentation built", exit 0, and **no `WARNING` line naming any page**. The red "Material for MkDocs 2.0" banner is cosmetic — judge by the exit code and the absence of page warnings.

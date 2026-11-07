@@ -26,7 +26,7 @@ Every task's requirements implicitly include all of these:
 - **Every commit `git commit -s`** (DCO, identity `imantaba <itn.taba@gmail.com>`), authored solely by the human — NO `Co-Authored-By`, no AI attribution anywhere. Commit messages never cite a `docs/testing/` path or a scenario record ID.
 - Work on branch `hypothesis-engine`, **never on `main`**. Never run `./chaos/run.sh` in any form. No cluster is needed for any task.
 - `internal/report` may import `internal/confidence` and `internal/inventory` (it already does). No package wall changes: nothing here imports `internal/remediate` or `internal/explain`.
-- MkDocs check (Task 8 only): the ONLY working mkdocs is `<scratch path>/mkdocs-venv2/bin/mkdocs`; run it from `website/` and `cd` back to the repo root afterwards.
+- MkDocs check (Task 8 only): the ONLY working mkdocs is `<scratch dir>/mkdocs-venv2/bin/mkdocs`; run it from `website/` and `cd` back to the repo root afterwards.
 
 ## Fixed vocabulary (used verbatim across tasks)
 
@@ -1263,7 +1263,7 @@ And extend the row's closing "— plus other baseline dimensions, and loading a 
 
 Run:
 ```bash
-cd website && <scratch path>/mkdocs-venv2/bin/mkdocs build --strict -f mkdocs.yml; cd <kubeagent checkout>
+cd website && <scratch dir>/mkdocs-venv2/bin/mkdocs build --strict -f mkdocs.yml; cd <kubeagent checkout>
 ```
 Expected: exit 0, "Documentation built", no WARNING lines about the edited pages. (The red "Material for MkDocs 2.0" banner is cosmetic.) **`cd` back to the repo root — the working directory persists.**
 

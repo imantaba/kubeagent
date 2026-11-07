@@ -586,7 +586,7 @@ In the `## Status`-area summary sentence and/or the advisory-checks bullet list,
 
 - [ ] **Step 5: Verify docs build**
 
-Run: `cd website && <scratch path>/mkvenv/bin/mkdocs build --strict -f mkdocs.yml --site-dir <scratch path>/site-pvc`
+Run: `cd website && <scratch dir>/mkvenv/bin/mkdocs build --strict -f mkdocs.yml --site-dir <scratch dir>/site-pvc`
 Expected: exit 0, "Documentation built", no `WARNING` lines about these pages. Then `export PATH=$PATH:/usr/local/go/bin && go build ./...`.
 
 - [ ] **Step 6: Commit**

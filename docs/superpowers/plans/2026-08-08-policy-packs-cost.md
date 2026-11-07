@@ -1105,7 +1105,7 @@ Find the curated-policy-packs item and give it the same treatment: the cost pack
 
 ```bash
 cd <kubeagent checkout>/website
-<scratch path>/mkdocs-venv2/bin/mkdocs build --strict -f mkdocs.yml
+<scratch dir>/mkdocs-venv2/bin/mkdocs build --strict -f mkdocs.yml
 cd <kubeagent checkout>
 ```
 

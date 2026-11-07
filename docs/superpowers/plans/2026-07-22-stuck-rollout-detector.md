@@ -521,7 +521,7 @@ git commit -m "test(report): cover a RolloutStuck workload in the golden scan sn
 
 - [ ] **Step 2: Verify the docs build (only `website/` changed)**
 
-Run: `(cd website && mkdocs build --strict -f mkdocs.yml)` (if `mkdocs` is not on `PATH`, use the venv: `<scratch path>/mkvenv/bin/mkdocs`).
+Run: `(cd website && mkdocs build --strict -f mkdocs.yml)` (if `mkdocs` is not on `PATH`, use the venv: `<scratch dir>/mkvenv/bin/mkdocs`).
 Expected: exit 0, "Documentation built", no `WARNING` about your pages.
 
 - [ ] **Step 3: Run the whole suite**

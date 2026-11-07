@@ -1254,7 +1254,7 @@ Run the vocab test — PASS.
 The latest successful `chaos-matrix` run at plan-writing time is `32548862821` (2026-08-22, artifacts `chaos-report-kind-v1.32`, `chaos-report-kind-v1.33`, `chaos-report-kind-v1.34`, `chaos-report-k3s-v1.34`). Use the latest successful run at execution time:
 
 ```bash
-DL=<scratch path>/kv-corpus-dl
+DL=<scratch dir>/kv-corpus-dl
 RUN=$(gh run list --repo imantaba/kubeagent --workflow chaos-matrix --status success --limit 1 --json databaseId --jq '.[0].databaseId')
 echo "downloading run $RUN"
 mkdir -p "$DL" && gh run download "$RUN" --repo imantaba/kubeagent --dir "$DL"
@@ -2316,7 +2316,7 @@ def main() -> None:
 Register it in `pyproject.toml` under `[project.scripts]`, reinstall (`.venv/bin/pip install -e ".[dev]"`), and smoke it:
 
 ```bash
-.venv/bin/kv-dataset --seed 17 --size 20 --out <scratch path>/kv-ds-smoke
+.venv/bin/kv-dataset --seed 17 --size 20 --out <scratch dir>/kv-ds-smoke
 ```
 
 Expected: `wrote 20 examples …`.
@@ -2710,7 +2710,7 @@ def main() -> None:
 (`import json` joins the imports.) Smoke:
 
 ```bash
-.venv/bin/kv-dataset --seed 17 --size 200 --out <scratch path>/kv-ds-full
+.venv/bin/kv-dataset --seed 17 --size 200 --out <scratch dir>/kv-ds-full
 ```
 
 Expected: manifest JSON printed; four files in the out dir; `test` count > 0.

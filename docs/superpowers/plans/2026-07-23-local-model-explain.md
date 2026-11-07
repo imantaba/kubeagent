@@ -432,7 +432,7 @@ git commit -m "feat(main): route --explain to a local model when KUBEAGENT_EXPLA
 
 - [ ] **Step 2: Verify the docs build**
 
-Run: `(cd website && mkdocs build --strict -f mkdocs.yml)` (venv fallback: `<scratch path>/mkvenv/bin/mkdocs`).
+Run: `(cd website && mkdocs build --strict -f mkdocs.yml)` (venv fallback: `<scratch dir>/mkvenv/bin/mkdocs`).
 Expected: exit 0, no page WARNINGs.
 
 - [ ] **Step 3: Run the whole suite**

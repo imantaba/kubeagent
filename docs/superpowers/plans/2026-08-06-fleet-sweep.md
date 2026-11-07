@@ -2598,7 +2598,7 @@ language. One example is enough.
 - [ ] **Step 8: Build the docs**
 
 ```bash
-cd website && /tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/mkdocs-venv/bin/mkdocs build --strict -f mkdocs.yml; cd ..
+cd website && <scratch dir>/mkdocs-venv/bin/mkdocs build --strict -f mkdocs.yml; cd ..
 ```
 
 Expected: exit 0, "Documentation built", and no `WARNING` naming

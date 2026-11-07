@@ -367,7 +367,7 @@ In the Security posture subsection, add a sentence describing the output shape: 
 Run:
 
 ```bash
-cd website && /tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/mkvenv/bin/mkdocs build --strict -f mkdocs.yml
+cd website && <scratch dir>/mkvenv/bin/mkdocs build --strict -f mkdocs.yml
 ```
 
 Expected: exit 0, "Documentation built", no page `WARNING` lines (the Material for MkDocs team banner is cosmetic — ignore it). If the venv path is missing, recreate it: `python3 -m venv <path> && <path>/bin/pip install -r requirements.txt`.

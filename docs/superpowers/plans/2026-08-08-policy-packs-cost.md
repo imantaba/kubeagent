@@ -107,7 +107,7 @@ Nine rules use `exists`; seven use `lte`. There are no other operators in this p
 
 ```bash
 export PATH=$PATH:/usr/local/go/bin
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git checkout main
 git checkout -b policy-pack-cost
 git status --short   # must be empty
@@ -1104,9 +1104,9 @@ Find the curated-policy-packs item and give it the same treatment: the cost pack
 - [ ] **Step 6: Build the site strictly**
 
 ```bash
-cd /home/ubuntu/git/kubeagent/website
-/tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/mkdocs-venv2/bin/mkdocs build --strict -f mkdocs.yml
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>/website
+<scratch dir>/mkdocs-venv2/bin/mkdocs build --strict -f mkdocs.yml
+cd <kubeagent checkout>
 ```
 
 Expected: exit 0, no `WARNING` lines naming your pages. The red "Material for MkDocs 2.0" banner is cosmetic. **The bash working directory persists between calls and has drifted into `website/` before — the `cd` back is not optional.**

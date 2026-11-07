@@ -81,9 +81,9 @@ Every task's requirements implicitly include this section.
 
 **Environment:** Go lives outside the default `PATH` —
 `export PATH=$PATH:/usr/local/go/bin`. The bash working directory persists
-between calls, so `cd /home/ubuntu/git/kubeagent` when in doubt. The only
+between calls, so `cd <kubeagent checkout>` when in doubt. The only
 working mkdocs on this machine is
-`/tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/mkdocs-venv2/bin/mkdocs`.
+`<scratch dir>/mkdocs-venv2/bin/mkdocs`.
 
 ---
 
@@ -257,7 +257,7 @@ steps as written.
 - [ ] **Step 1: Cut the branch**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 export PATH=$PATH:/usr/local/go/bin
 git checkout main
 git status --short          # must be empty
@@ -332,7 +332,7 @@ func TestEveryEmbeddedPackIsRegistered(t *testing.T) {
 - [ ] **Step 3: Run it — expect PASS**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 export PATH=$PATH:/usr/local/go/bin
 go test ./internal/policypack -run TestEveryEmbeddedPackIsRegistered -v
 ```
@@ -361,7 +361,7 @@ Create `internal/policypack/packs/orphan.yaml` with exactly this content:
 - [ ] **Step 5: Run it — expect FAIL**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 go test ./internal/policypack -run TestEveryEmbeddedPackIsRegistered -v
 ```
 
@@ -377,7 +377,7 @@ investigate and fix the test, do not proceed.
 - [ ] **Step 6: Revert the break**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 rm internal/policypack/packs/orphan.yaml
 git status --short
 ```
@@ -388,7 +388,7 @@ Expected: `git status --short` shows exactly one line,
 - [ ] **Step 7: Run the whole package — expect PASS**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 go test -p 2 -count=1 ./internal/policypack/... -v
 ```
 
@@ -397,7 +397,7 @@ Expected: **PASS**, every test in the package.
 - [ ] **Step 8: Verify nothing else moved**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 gofmt -l internal/policypack/
 go vet ./internal/policypack/...
 git diff --stat main -- go.mod go.sum internal/policy/ internal/policypack/policypack.go internal/policypack/packs/
@@ -409,7 +409,7 @@ is **empty**.
 - [ ] **Step 9: Commit**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git add internal/policypack/registry_test.go
 git commit -s -m "test(policypack): fail an embedded pack with no registry entry
 
@@ -546,7 +546,7 @@ func TestPackNameRulesRefuseHostileNames(t *testing.T) {
 - [ ] **Step 2: Run both tests — expect PASS**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 export PATH=$PATH:/usr/local/go/bin
 go test ./internal/policypack -run 'TestPackName' -v
 ```
@@ -576,7 +576,7 @@ slice literal:
 - [ ] **Step 4: Run it — expect FAIL**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 go test ./internal/policypack -run TestPackNamesAreUniqueAndCLISafe -v
 ```
 
@@ -596,7 +596,7 @@ report.)
 Revert first, then re-break:
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git checkout -- internal/policypack/policypack.go
 ```
 
@@ -620,7 +620,7 @@ Report the actual output.
 Revert, then re-break:
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git checkout -- internal/policypack/policypack.go
 ```
 
@@ -638,7 +638,7 @@ independently of the pattern. Report the actual output.
 - [ ] **Step 7: Revert and confirm clean**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git checkout -- internal/policypack/policypack.go
 git status --short
 git diff --stat main -- internal/policypack/policypack.go
@@ -651,7 +651,7 @@ against `main` for `policypack.go` is **empty**.
 - [ ] **Step 8: Run the whole package — expect PASS**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 go test -p 2 -count=1 ./internal/policypack/... -v
 gofmt -l internal/policypack/
 go vet ./internal/policypack/...
@@ -664,7 +664,7 @@ Expected: all tests **PASS**, `gofmt` prints nothing, `go vet` is silent, the
 - [ ] **Step 9: Commit**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git add internal/policypack/registry_test.go
 git commit -s -m "test(policypack): fail a duplicate or unusable pack name
 
@@ -756,7 +756,7 @@ func TestPackSummaryShape(t *testing.T) {
 - [ ] **Step 2: Run it — expect PASS**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 export PATH=$PATH:/usr/local/go/bin
 go test ./internal/policypack -run TestPackSummaryShape -v
 ```
@@ -770,7 +770,7 @@ In `internal/policypack/policypack.go`, append a single `.` to the first
 registry entry's `Summary` value, then run:
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 go test ./internal/policypack -run TestPackSummaryShape -v
 ```
 
@@ -787,7 +787,7 @@ Report the actual output.
 Revert, then re-break:
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git checkout -- internal/policypack/policypack.go
 ```
 
@@ -806,7 +806,7 @@ the actual output.
 Revert, then re-break:
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git checkout -- internal/policypack/policypack.go
 ```
 
@@ -823,7 +823,7 @@ output.
 - [ ] **Step 6: Revert and confirm clean**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git checkout -- internal/policypack/policypack.go
 git status --short
 git diff --stat main -- internal/policypack/policypack.go
@@ -835,7 +835,7 @@ Expected: only `internal/policypack/registry_test.go` is modified, and the
 - [ ] **Step 7: Run the full suite — expect PASS**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 go build ./...
 go vet ./...
 gofmt -l internal/
@@ -849,7 +849,7 @@ passes**, and the `git diff --stat` is **empty**.
 - [ ] **Step 8: Commit**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git add internal/policypack/registry_test.go
 git commit -s -m "test(policypack): fail a summary the listing cannot align
 
@@ -1029,7 +1029,7 @@ The removed bullet's content is not lost: it is the final paragraph of
 - [ ] **Step 3: Check for a stale "two packs" or "three packs" claim**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 grep -n 'two packs\|three packs\|both packs\|the two shipped' website/docs/features/policy-packs.md
 ```
 
@@ -1040,9 +1040,9 @@ way.
 - [ ] **Step 4: Build the site**
 
 ```bash
-cd /home/ubuntu/git/kubeagent/website
-/tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/mkdocs-venv2/bin/mkdocs build --strict -f mkdocs.yml
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>/website
+<scratch dir>/mkdocs-venv2/bin/mkdocs build --strict -f mkdocs.yml
+cd <kubeagent checkout>
 ```
 
 Expected: exit 0 and no `WARNING` line naming `policy-packs.md`. The red
@@ -1053,7 +1053,7 @@ working directory persists between commands.
 - [ ] **Step 5: Verify nothing else moved**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git status --short
 git diff --stat main -- go.mod go.sum internal/ deploy/ website/docs/schemas/ website/docs/quickstart.md
 ```
@@ -1065,7 +1065,7 @@ Expected: `git status --short` shows only
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git add website/docs/features/policy-packs.md
 git commit -s -m "docs: the route for a pack written outside kubeagent
 
@@ -1196,7 +1196,7 @@ insert:
 - [ ] **Step 5: Verify nothing else moved**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git status --short
 git diff --stat main -- go.mod go.sum internal/ website/ deploy/
 ```
@@ -1207,7 +1207,7 @@ Expected: `git status --short` shows only `CONTRIBUTING.md`, and the
 - [ ] **Step 6: Re-read your own diff**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git diff CONTRIBUTING.md
 ```
 
@@ -1217,7 +1217,7 @@ revert it — the task is bounded.
 - [ ] **Step 7: Commit**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git add CONTRIBUTING.md
 git commit -s -m "docs: point a pack contributor at the route, and fix what CONTRIBUTING claimed
 
@@ -1299,7 +1299,7 @@ Verify afterwards that the row still has the same number of `|` cell
 separators it had before — a stray pipe would break the table:
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 awk 'NR==559 {n=gsub(/\|/,"|"); print "pipes:", n}' website/docs/roadmap.md
 ```
 
@@ -1387,9 +1387,9 @@ with:
 - [ ] **Step 5: Build the site**
 
 ```bash
-cd /home/ubuntu/git/kubeagent/website
-/tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/mkdocs-venv2/bin/mkdocs build --strict -f mkdocs.yml
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>/website
+<scratch dir>/mkdocs-venv2/bin/mkdocs build --strict -f mkdocs.yml
+cd <kubeagent checkout>
 ```
 
 Expected: exit 0, no `WARNING` naming `roadmap.md`. **`cd` back to the
@@ -1398,7 +1398,7 @@ repository root**, as shown.
 - [ ] **Step 6: Full verification**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 export PATH=$PATH:/usr/local/go/bin
 go build ./...
 go vet ./...
@@ -1415,7 +1415,7 @@ and the `git diff --stat` is **empty**.
 - [ ] **Step 7: Confirm no version parenthetical leaked in**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git diff CLAUDE.md website/docs/roadmap.md CHANGELOG.md | grep -n 'v1\.14\|(v1\.' || echo "clean: no version parenthetical"
 ```
 
@@ -1425,7 +1425,7 @@ commit's job.
 - [ ] **Step 8: Commit**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git add website/docs/roadmap.md CHANGELOG.md CLAUDE.md
 git commit -s -m "docs: record the pack contribution path, and split a bundled roadmap clause
 

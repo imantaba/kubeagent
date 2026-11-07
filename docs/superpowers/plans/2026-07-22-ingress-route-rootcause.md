@@ -424,7 +424,7 @@ Expected: PASS (if any report test referenced the old exact storefront Detail st
 
 - [ ] **Step 6: Verify docs build (only website/ changed)**
 
-Run: `(cd website && mkdocs build --strict -f mkdocs.yml)` (use the venv mkdocs if not on PATH: `/tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/mkvenv/bin/mkdocs`).
+Run: `(cd website && mkdocs build --strict -f mkdocs.yml)` (use the venv mkdocs if not on PATH: `<scratch dir>/mkvenv/bin/mkdocs`).
 Expected: exit 0, "Documentation built", no WARNING about your pages.
 
 - [ ] **Step 7: Run the whole suite**

@@ -653,7 +653,7 @@ git commit -m "test(report): cover a WebhookSlow issue in the golden scan snapsh
 
 - [ ] **Step 2: Verify the docs build**
 
-Run: `(cd website && mkdocs build --strict -f mkdocs.yml)` (venv fallback: `/tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/mkvenv/bin/mkdocs`).
+Run: `(cd website && mkdocs build --strict -f mkdocs.yml)` (venv fallback: `<scratch dir>/mkvenv/bin/mkdocs`).
 Expected: exit 0, no page WARNINGs.
 
 - [ ] **Step 3: Run the whole suite**

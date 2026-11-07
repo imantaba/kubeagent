@@ -995,7 +995,7 @@ feature list.
 Run:
 
 ```bash
-cd website && /tmp/claude-1000/-home-ubuntu-git-kubeagent/2cf9d068-6b9a-43b4-a854-5fe7b5f3453e/scratchpad/mkvenv/bin/mkdocs build --strict -f mkdocs.yml
+cd website && <scratch dir>/mkvenv/bin/mkdocs build --strict -f mkdocs.yml
 ```
 
 Expected: "Documentation built" with no strict WARNING lines about the edited pages.

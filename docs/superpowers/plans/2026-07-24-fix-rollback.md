@@ -121,7 +121,7 @@ func TestReadLast_MissingFileErrors(t *testing.T) {
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go test ./internal/audit/`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go test ./internal/audit/`
 Expected: FAIL — `r.FromRevision` unknown field, `undefined: ReadLast`.
 
 - [ ] **Step 3: Implement**
@@ -178,13 +178,13 @@ func ReadLast(path string, want func(Record) bool) (Record, bool, error) {
 
 - [ ] **Step 4: Run the tests**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go build ./... && go test ./internal/audit/`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go build ./... && go test ./internal/audit/`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git add internal/audit/
 git commit -m "feat(audit): structured revisions and ReadLast for rollback"
 ```
@@ -374,7 +374,7 @@ func TestPreflight_KnowsInverseKinds(t *testing.T) {
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go test ./internal/remediate/`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go test ./internal/remediate/`
 Expected: FAIL — `undefined: Inverse`.
 
 - [ ] **Step 3: Implement `Inverse`**
@@ -546,13 +546,13 @@ func applyCordon(ctx context.Context, client kubernetes.Interface, a Action) Res
 
 - [ ] **Step 6: Run the tests**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go build ./... && go test ./internal/remediate/`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go build ./... && go test ./internal/remediate/`
 Expected: PASS (all new tests plus every existing remediate test).
 
 - [ ] **Step 7: Commit**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git add internal/remediate/
 git commit -m "feat(remediate): Inverse mapping with guarded RolloutForward and Cordon"
 ```
@@ -704,7 +704,7 @@ Add `"os"` and `"path/filepath"` to `main_test.go`'s imports if absent.
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go test . -run 'TestRunRollback|TestRun_Rollback'`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go test . -run 'TestRunRollback|TestRun_Rollback'`
 Expected: FAIL — `undefined: runRollback`, `flag provided but not defined: -rollback`.
 
 - [ ] **Step 3: Add the flag and preconditions**
@@ -831,11 +831,11 @@ At the fix callsite in `runScan`, extend the existing `if *fix { … }` block so
 
 - [ ] **Step 5: Build, test, smoke**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go build ./... && go test . ./internal/...`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go build ./... && go test . ./internal/...`
 Expected: PASS (including golden).
 
 ```bash
-cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go build -o kubeagent .
+cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go build -o kubeagent .
 ./kubeagent scan --rollback 2>&1 | head -1          # expect the --audit-log requirement error
 ./kubeagent scan --help 2>&1 | grep -i rollback     # flag documented
 rm -f kubeagent
@@ -844,7 +844,7 @@ rm -f kubeagent
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git add main.go main_test.go
 git commit -m "feat: --rollback undoes the last applied fix through the same guard rails"
 ```
@@ -881,13 +881,13 @@ In `chaos/run.sh`, inside `scenario_9_rollout`, after the existing `record` line
 
 - [ ] **Step 2: Verify the script parses**
 
-Run: `cd /home/ubuntu/git/kubeagent && bash -n chaos/run.sh`
+Run: `cd <kubeagent checkout> && bash -n chaos/run.sh`
 Expected: no output (syntax OK).
 
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git add chaos/run.sh
 git commit -m "test(chaos): exercise fix-then-rollback in the faulty-rollout scenario"
 ```
@@ -927,13 +927,13 @@ git commit -m "test(chaos): exercise fix-then-rollback in the faulty-rollout sce
 
 - [ ] **Step 5: Verify the site builds**
 
-Run: `cd /home/ubuntu/git/kubeagent/website && /tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/mkvenv/bin/mkdocs build --strict -f mkdocs.yml 2>&1 | tail -1` (fall back to `mkdocs` on PATH)
+Run: `cd <kubeagent checkout>/website && <scratch dir>/mkvenv/bin/mkdocs build --strict -f mkdocs.yml 2>&1 | tail -1` (fall back to `mkdocs` on PATH)
 Expected: `Documentation built`, no page WARNINGs.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git add website/docs/features/remediation.md README.md CHANGELOG.md website/docs/roadmap.md
 git commit -m "docs: document --fix rollback"
 ```

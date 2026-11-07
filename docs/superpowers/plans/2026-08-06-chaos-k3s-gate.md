@@ -1120,7 +1120,7 @@ Under `## [Unreleased]`, an **Added** entry: `chaos/run.sh --distro kind|k3s`, t
 Run:
 
 ```bash
-/tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/mkdocs-venv/bin/mkdocs build --strict -f website/mkdocs.yml
+<scratch dir>/mkdocs-venv/bin/mkdocs build --strict -f website/mkdocs.yml
 ```
 
 Expected: exit 0 with no `WARNING` naming a changed page. The red "Material for MkDocs 2.0" banner is cosmetic.

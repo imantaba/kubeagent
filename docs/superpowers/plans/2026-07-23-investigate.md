@@ -47,7 +47,7 @@ This is a mechanical rename to export two existing identifiers with **no behavio
 
 - [ ] **Step 1: Find every reference to the two identifiers**
 
-Run: `cd /home/ubuntu/git/kubeagent && grep -rn 'systemPrompt\|buildInventoryPrompt' internal/explain/`
+Run: `cd <kubeagent checkout> && grep -rn 'systemPrompt\|buildInventoryPrompt' internal/explain/`
 Expected: references in `explain.go` (definition + use in `anthropicSummarizer.summarize`, `ExplainInventory`), `local.go` (uses `systemPrompt`), and the two test files.
 
 - [ ] **Step 2: Rename the const and function to exported names**
@@ -65,13 +65,13 @@ In `internal/explain/local_test.go`, the assertion `req.Messages[0].Content != s
 
 - [ ] **Step 4: Build and run the explain + report tests**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go build ./... && go test ./internal/explain/ ./internal/report/`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go build ./... && go test ./internal/explain/ ./internal/report/`
 Expected: PASS — behavior unchanged, and the golden snapshot in `internal/report` is untouched (proves `--explain` output is byte-identical).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git add internal/explain/
 git commit -m "refactor(explain): export SystemPrompt and BuildInventoryPrompt for reuse"
 ```
@@ -146,7 +146,7 @@ func TestScope_GrowsViaAdd(t *testing.T) {
 
 - [ ] **Step 2: Run it to verify it fails**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go test ./internal/investigate/`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go test ./internal/investigate/`
 Expected: FAIL — `undefined: NewScope`.
 
 - [ ] **Step 3: Implement `scope.go`**
@@ -227,13 +227,13 @@ func normKind(k string) string {
 
 - [ ] **Step 4: Run the tests**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go test ./internal/investigate/`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go test ./internal/investigate/`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git add internal/investigate/scope.go internal/investigate/scope_test.go
 git commit -m "feat(investigate): findings-closure scope guard"
 ```
@@ -378,7 +378,7 @@ func TestReader_GetRelated_OwnerAddsToScope(t *testing.T) {
 
 - [ ] **Step 2: Run it to verify it fails**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go test ./internal/investigate/`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go test ./internal/investigate/`
 Expected: FAIL — `undefined: Reader` / `undefined: toolCall`.
 
 - [ ] **Step 3: Implement `reader.go`**
@@ -648,13 +648,13 @@ func (r Reader) getRelated(ctx context.Context, c toolCall, scope *Scope) toolRe
 
 - [ ] **Step 4: Run the tests**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go test ./internal/investigate/`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go test ./internal/investigate/`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git add internal/investigate/reader.go internal/investigate/reader_test.go
 git commit -m "feat(investigate): read-only reader (describe/events/related, structured-only)"
 ```
@@ -797,7 +797,7 @@ func TestRunLoop_StartErrorPropagates(t *testing.T) {
 
 - [ ] **Step 2: Run it to verify it fails**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go test ./internal/investigate/`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go test ./internal/investigate/`
 Expected: FAIL — `undefined: runLoop` / `undefined: reply`.
 
 - [ ] **Step 3: Implement `tools.go`**
@@ -950,13 +950,13 @@ func label(c toolCall) string {
 
 - [ ] **Step 5: Run the tests**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go test ./internal/investigate/`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go test ./internal/investigate/`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git add internal/investigate/tools.go internal/investigate/investigate.go internal/investigate/loop_test.go
 git commit -m "feat(investigate): tool specs and the bounded tool-use loop"
 ```
@@ -1054,7 +1054,7 @@ func TestInvestigate_SkipsWhenNothingToDo(t *testing.T) {
 
 - [ ] **Step 2: Run it to verify it fails**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go test ./internal/investigate/`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go test ./internal/investigate/`
 Expected: FAIL — `undefined: Client` / `undefined: New`.
 
 - [ ] **Step 3: Append the backend + entrypoint to `investigate.go`**
@@ -1211,13 +1211,13 @@ func toAnthropicTools(specs []toolSpec) []anthropic.ToolUnionParam {
 
 - [ ] **Step 4: Run the tests + full build**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go build ./... && go test ./internal/investigate/ ./internal/explain/`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go build ./... && go test ./internal/investigate/ ./internal/explain/`
 Expected: PASS. (If `anthropic.String` is not the right optional-string constructor, use the SDK's `param.NewOpt(s)` — check `anthropic.String` exists first with `grep -rn 'func String' $(go env GOMODCACHE)/github.com/anthropics/anthropic-sdk-go@v1.51.0/`.)
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git add internal/investigate/investigate.go internal/investigate/investigate_test.go
 git commit -m "feat(investigate): Anthropic tool-use backend and Investigate entrypoint"
 ```
@@ -1277,7 +1277,7 @@ func TestPrintInventory_JSONIncludesInvestigation(t *testing.T) {
 
 - [ ] **Step 2: Run it to verify it fails**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go test ./internal/report/ -run TestReport_Investigation`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go test ./internal/report/ -run TestReport_Investigation`
 Expected: FAIL — `unknown field Investigation`.
 
 - [ ] **Step 3: Add the fields and rendering**
@@ -1340,13 +1340,13 @@ The text output is rendered by the unexported `printInventoryText(in, w)`. In th
 
 - [ ] **Step 4: Run the report tests (including the golden guard)**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go test ./internal/report/`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go test ./internal/report/`
 Expected: PASS — including `TestGoldenScanOutput` (golden unchanged) and `TestGoldenInputCoversAllSections`.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git add internal/report/report.go internal/report/report_test.go
 git commit -m "feat(report): render the Investigation section (text + JSON)"
 ```
@@ -1391,7 +1391,7 @@ func TestRun_InvestigateRejectsLocalOnlyEndpoint(t *testing.T) {
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go test . -run TestRun_Investigate`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go test . -run TestRun_Investigate`
 Expected: FAIL — `flag provided but not defined: -investigate`.
 
 - [ ] **Step 3: Add the flag**
@@ -1452,13 +1452,13 @@ Where the report `Input` is assembled (after `in := resultInput(res)` and the `i
 
 - [ ] **Step 6: Build and test**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go build ./... && go test . ./internal/...`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go build ./... && go test . ./internal/...`
 Expected: PASS.
 
 - [ ] **Step 7: Binary smoke**
 
 ```bash
-cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go build -o kubeagent .
+cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go build -o kubeagent .
 env -u ANTHROPIC_API_KEY ./kubeagent scan --investigate 2>&1 | head -1   # expect the ANTHROPIC_API_KEY error
 ./kubeagent scan --help 2>&1 | grep -i investigate                        # flag documented
 rm -f kubeagent
@@ -1469,7 +1469,7 @@ Expected: the precondition error and the flag appearing in help.
 - [ ] **Step 8: Commit**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git add main.go main_test.go
 git commit -m "feat: --investigate flag (agentic read-only follow-up reads; supersedes --explain)"
 ```
@@ -1513,13 +1513,13 @@ In `website/docs/roadmap.md`, under the Theme C "Shipped" list, add a bullet: `-
 
 - [ ] **Step 5: Verify the site builds**
 
-Run: `cd /home/ubuntu/git/kubeagent/website && $HOME/.local/bin/mkdocs build --strict -f mkdocs.yml 2>&1 | tail -1` (or the scratchpad mkdocs path used in this repo)
+Run: `cd <kubeagent checkout>/website && $HOME/.local/bin/mkdocs build --strict -f mkdocs.yml 2>&1 | tail -1` (or the scratchpad mkdocs path used in this repo)
 Expected: `Documentation built` with no page WARNINGs.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git add website/docs/features/diagnostics.md README.md CHANGELOG.md website/docs/roadmap.md
 git commit -m "docs: document --investigate (agentic read-only follow-up reads)"
 ```

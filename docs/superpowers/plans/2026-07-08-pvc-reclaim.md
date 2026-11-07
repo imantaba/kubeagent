@@ -736,7 +736,7 @@ Add a one-line mention alongside the existing detector/check list, matching the 
 Run (venv from prior sessions; if missing, `python3 -m venv <path> && <path>/bin/pip install -r website/requirements.txt`):
 
 ```bash
-cd website && /tmp/claude-1000/-home-ubuntu-git-kubeagent/2cf9d068-6b9a-43b4-a854-5fe7b5f3453e/scratchpad/mkvenv/bin/mkdocs build --strict -f mkdocs.yml
+cd website && <scratch dir>/mkvenv/bin/mkdocs build --strict -f mkdocs.yml
 ```
 
 Expected: "Documentation built" with no strict WARNING lines referencing the edited pages. (The red mkdocs-material 2.0 banner is cosmetic.)

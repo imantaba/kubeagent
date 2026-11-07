@@ -243,7 +243,7 @@ Expected: `assert-selftest: all checks passed`, exit 0, in well under a second.
 
 ```bash
 bash -n chaos/assert.sh && bash -n chaos/run.sh
-./chaos/run.sh --only 21 --out /tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/t1.md
+./chaos/run.sh --only 21 --out <scratch dir>/t1.md
 ```
 
 Expected: exit 0, and the console tail reads `assertions: 8 run, 0 failed; 0 scenarios skipped`.
@@ -569,7 +569,7 @@ Expected: `assert-selftest: all checks passed`, exit 0, in under a second — if
 - [ ] **Step 7: Confirm direct execution still runs the suite**
 
 ```bash
-./chaos/run.sh --only 21 --out /tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/t3.md
+./chaos/run.sh --only 21 --out <scratch dir>/t3.md
 ```
 
 Expected: exit 0, scenario 21 runs, console tail `assertions: 8 run, 0 failed; 0 scenarios skipped`.
@@ -666,7 +666,7 @@ Expected: three refusals, each printing its own named reason on **stderr** and `
 - [ ] **Step 5: Verify the kind path is unchanged**
 
 ```bash
-./chaos/run.sh --only 21 --out /tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/t4.md
+./chaos/run.sh --only 21 --out <scratch dir>/t4.md
 ```
 
 Expected: exit 0 — `--context` absent, so `PORTABLE=0` and nothing about the run changed.
@@ -997,10 +997,10 @@ probe_capabilities() { :; }
 
 ```bash
 bash -n chaos/run.sh
-git stash && ./chaos/run.sh --only 21 --out /tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/before.md; git stash pop
-./chaos/run.sh --only 21 --out /tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/after.md
-diff /tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/before.md \
-     /tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/after.md
+git stash && ./chaos/run.sh --only 21 --out <scratch dir>/before.md; git stash pop
+./chaos/run.sh --only 21 --out <scratch dir>/after.md
+diff <scratch dir>/before.md \
+     <scratch dir>/after.md
 ```
 
 Expected: the only differences are the header's `Kind vX.Y.Z` line (unchanged text) and the new `- scenarios skipped: 0` bullet from Task 1. The `## Baseline (healthy cluster)` heading, its `_Verdict: baseline_` line and all three baseline assertions must be present and identical.
@@ -1009,8 +1009,8 @@ Expected: the only differences are the header's `Kind vX.Y.Z` line (unchanged te
 
 ```bash
 ./chaos/run.sh --context kind-kubeagent-chaos --only 21 \
-  --out /tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/t6-portable.md
-grep -n 'kubeagent-chaos\|kind-' /tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/t6-portable.md
+  --out <scratch dir>/t6-portable.md
+grep -n 'kubeagent-chaos\|kind-' <scratch dir>/t6-portable.md
 ```
 
 Expected: exit 0. The report opens with `# kubeagent chaos-test results (portable mode)`, carries `- OS image:`, `- Container runtime:` and `- Kubelet:` lines, records `## Baseline` with two assertions, and runs scenario 21. **The `grep` must return nothing** — no context name and no node name anywhere in the report.
@@ -1115,7 +1115,7 @@ The trailing `log` line prints capability names only — six fixed strings from 
 
 ```bash
 bash -n chaos/run.sh
-./chaos/run.sh --only 21 --out /tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/t7-kind.md 2>&1 \
+./chaos/run.sh --only 21 --out <scratch dir>/t7-kind.md 2>&1 \
   | grep -A1 'probe cluster capabilities'
 ```
 
@@ -1126,7 +1126,7 @@ Expected: the `capabilities:` line names all six —
 
 ```bash
 ./chaos/run.sh --context kind-kubeagent-chaos --only 21 \
-  --out /tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/t7-portable.md 2>&1 \
+  --out <scratch dir>/t7-portable.md 2>&1 \
   | grep -A1 'probe cluster capabilities'
 ```
 
@@ -1220,7 +1220,7 @@ Note `${FUNCNAME[0]}` here (the scenario calls `scenario_title` itself) versus `
 
 ```bash
 bash -n chaos/run.sh
-./chaos/run.sh --only 05 --out /tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/t8-kind-05.md
+./chaos/run.sh --only 05 --out <scratch dir>/t8-kind-05.md
 ```
 
 Expected: exit 0, scenario 5 runs in full (`cluster_write` is present on kind), and the console tail reads `... ; 0 scenarios skipped`.
@@ -1229,7 +1229,7 @@ Expected: exit 0, scenario 5 runs in full (`cluster_write` is present on kind), 
 
 ```bash
 ./chaos/run.sh --context kind-kubeagent-chaos --only 05 \
-  --out /tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/t8-portable-05.md
+  --out <scratch dir>/t8-portable-05.md
 ```
 
 Expected: exit 0. The console shows
@@ -1239,7 +1239,7 @@ and ends `assertions: 2 run, 0 failed; 1 scenario skipped` (the two baseline ass
 - [ ] **Step 5: Verify scenario 02 is counted**
 
 ```bash
-./chaos/run.sh --only 02 --out /tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/t8-02.md
+./chaos/run.sh --only 02 --out <scratch dir>/t8-02.md
 ```
 
 Expected: exit 0, console tail `assertions: 3 run, 0 failed; 1 scenario skipped` (three baseline assertions on the kind path), and the report's skip block lists `SKIP	2. certs — control-plane certificate expiry cannot be forced quickly or safely`.
@@ -1248,7 +1248,7 @@ Expected: exit 0, console tail `assertions: 3 run, 0 failed; 1 scenario skipped`
 
 ```bash
 ./chaos/run.sh --context kind-kubeagent-chaos --only 07 \
-  --out /tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/t8-portable-07.md
+  --out <scratch dir>/t8-portable-07.md
 ```
 
 Expected: exit 0, scenario 7 (OOMKilled) runs in full against the existing cluster, `0 scenarios skipped` beyond the ones already counted, and `kubectl --context kind-kubeagent-chaos get ns | grep chaos-` returns nothing afterwards.
@@ -1390,10 +1390,10 @@ replacing `tools/call (id 3) coverage.context reads $CTX (the --context the serv
 
 ```bash
 bash -n chaos/run.sh
-./chaos/run.sh --only 15 --out /tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/t9-15.md
-./chaos/run.sh --only 19 --out /tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/t9-19.md
-grep -c 'kind-kubeagent-chaos' /tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/t9-15.md \
-  /tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/t9-19.md
+./chaos/run.sh --only 15 --out <scratch dir>/t9-15.md
+./chaos/run.sh --only 19 --out <scratch dir>/t9-19.md
+grep -c 'kind-kubeagent-chaos' <scratch dir>/t9-15.md \
+  <scratch dir>/t9-19.md
 ```
 
 Expected: both exit 0; scenario 15 reports 10 assertions passing (13 with the baseline), scenario 19 reports 5 (8 with the baseline); and **both `grep -c` print `0`**. That last number is the point of this task.
@@ -1613,7 +1613,7 @@ Under `## [Unreleased]` in `CHANGELOG.md`:
 - [ ] **Step 7: Build the site**
 
 ```bash
-(cd website && /tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/mkdocs-venv/bin/mkdocs build --strict -f mkdocs.yml)
+(cd website && <scratch dir>/mkdocs-venv/bin/mkdocs build --strict -f mkdocs.yml)
 ```
 
 Expected: "Documentation built", exit 0, no `WARNING` about `compatibility.md` or `roadmap.md`. The red "Material for MkDocs 2.0" banner is cosmetic.

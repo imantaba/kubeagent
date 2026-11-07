@@ -10,7 +10,7 @@
 
 **Spec:** [docs/superpowers/specs/2026-07-29-supply-chain-design.md](../specs/2026-07-29-supply-chain-design.md) (commit `8835cb4`).
 
-**Branch:** `supply-chain`, cut off `main` at `ffd4a09`. Work happens in the worktree at `/tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/wt-supply`.
+**Branch:** `supply-chain`, cut off `main` at `ffd4a09`. Work happens in the worktree at `<scratch dir>/wt-supply`.
 
 ## Global Constraints
 

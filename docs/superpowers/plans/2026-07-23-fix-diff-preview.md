@@ -144,7 +144,7 @@ The aligned selection requires a differing template, so update these tests in pl
 
 - [ ] **Step 3: Run to verify the new tests fail**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go test ./internal/remediate/`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go test ./internal/remediate/`
 Expected: FAIL — `undefined: Change` (and `a.CurrentRevision` unknown field).
 
 - [ ] **Step 4: Implement in `remediate.go`**
@@ -317,13 +317,13 @@ Remove the now-unused `sort` import if `previousRevision` was its only user.
 
 - [ ] **Step 5: Run the tests**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go build ./... && go test ./internal/remediate/`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go build ./... && go test ./internal/remediate/`
 Expected: PASS (new + updated tests; Apply tests still pass — the bond comes in Task 2).
 
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git add internal/remediate/
 git commit -m "feat(remediate): plan-time field-level diff and aligned target selection"
 ```
@@ -410,7 +410,7 @@ The bond is strict: `applyRolloutUndo` always enforces the revisions. Update:
 
 - [ ] **Step 3: Run to verify the new tests fail**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go test ./internal/remediate/ -run TestApply`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go test ./internal/remediate/ -run TestApply`
 Expected: FAIL — the drift tests apply (no bond yet), `Applied == true` where refusal expected.
 
 - [ ] **Step 4: Implement the bond**
@@ -429,13 +429,13 @@ In `applyRolloutUndo`, after the `target == nil` early return and before the tem
 
 - [ ] **Step 5: Run the tests**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go build ./... && go test ./internal/remediate/`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go build ./... && go test ./internal/remediate/`
 Expected: PASS — drift refuses with zero writes; matching preview applies exactly as before.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git add internal/remediate/
 git commit -m "feat(remediate): bind Apply to the previewed revisions (refuse on drift)"
 ```
@@ -488,7 +488,7 @@ func TestRunFixes_PrintsWillChangeBlock(t *testing.T) {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go test . -run TestRunFixes_PrintsWillChangeBlock`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go test . -run TestRunFixes_PrintsWillChangeBlock`
 Expected: FAIL — compile error (runFixes still takes workloads/replicaSets/nodes; `remediate.Change` used).
 
 - [ ] **Step 3: Change `runFixes` to take the planned actions and render the diff**
@@ -558,13 +558,13 @@ and for the uncordon pair: `actions := remediate.Plan(nil, nil, []corev1.Node{*n
 
 - [ ] **Step 6: Build and test everything**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go build ./... && go test . ./internal/remediate/`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go build ./... && go test . ./internal/remediate/`
 Expected: PASS — including the golden test (`go test ./internal/report/` also passes untouched).
 
 - [ ] **Step 7: Commit**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git add main.go main_test.go
 git commit -m "feat: render the will-change diff in --fix proposals (plan once)"
 ```
@@ -619,7 +619,7 @@ func TestPrintInventory_JSONOmitsRemediationPlanWhenNil(t *testing.T) {
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go test ./internal/report/ -run RemediationPlan`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go test ./internal/report/ -run RemediationPlan`
 Expected: FAIL — `unknown field RemediationPlan`.
 
 - [ ] **Step 3: Implement the view**
@@ -681,13 +681,13 @@ Import `"github.com/imantaba/kubeagent/internal/remediate"` in report.go. In `ma
 
 - [ ] **Step 4: Run all report tests + golden**
 
-Run: `cd /home/ubuntu/git/kubeagent && export PATH=$PATH:/usr/local/go/bin && go build ./... && go test ./internal/report/ .`
+Run: `cd <kubeagent checkout> && export PATH=$PATH:/usr/local/go/bin && go build ./... && go test ./internal/report/ .`
 Expected: PASS — including `TestGoldenScanOutput` (text path renders nothing new; golden untouched).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git add internal/report/ main.go
 git commit -m "feat(report): remediationPlan in JSON output"
 ```
@@ -725,13 +725,13 @@ git commit -m "feat(report): remediationPlan in JSON output"
 
 - [ ] **Step 5: Verify the site builds**
 
-Run: `cd /home/ubuntu/git/kubeagent/website && /tmp/claude-1000/-home-ubuntu-git-kubeagent/7d266e27-cc80-4715-920c-e608368180cc/scratchpad/mkvenv/bin/mkdocs build --strict -f mkdocs.yml 2>&1 | tail -1` (fall back to `mkdocs` on PATH if that venv path is missing)
+Run: `cd <kubeagent checkout>/website && <scratch dir>/mkvenv/bin/mkdocs build --strict -f mkdocs.yml 2>&1 | tail -1` (fall back to `mkdocs` on PATH if that venv path is missing)
 Expected: `Documentation built`, no page WARNINGs.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /home/ubuntu/git/kubeagent
+cd <kubeagent checkout>
 git add website/docs/features/remediation.md README.md CHANGELOG.md website/docs/roadmap.md
 git commit -m "docs: document the --fix diff preview and preview→apply contract"
 ```
